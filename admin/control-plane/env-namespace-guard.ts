@@ -136,6 +136,16 @@ export class EnvNamespaceGuard implements IKubectl
         await this.inner.DeleteBySelector(namespace, resource, selector)
     }
 
+    /** Only the env prefix itself (or a longer prefix inside it): the sweep never reaches a namespace outside pragmatic-env-*. */
+    public async DeleteNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
+    {
+        if (!namePrefix.startsWith(K8sManifestBuilder.EnvNamespacePrefix))
+        {
+            throw new EnvNamespaceRefusedError(namePrefix)
+        }
+        return this.inner.DeleteNamespacesBySelector(selector, namePrefix)
+    }
+
     public async RolloutStatus(namespace: string, deployment: string): Promise<void>
     {
         EnvNamespaceGuard.AssertEnvNamespace(namespace)

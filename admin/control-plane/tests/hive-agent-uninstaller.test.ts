@@ -41,6 +41,19 @@ class FakeKubectl implements IKubectl
         }
     }
 
+    public FailedNamespaces: string[] = []
+    public NamespaceListError: Error | undefined
+
+    public async DeleteNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
+    {
+        this.Calls.push(['DeleteNamespacesBySelector', selector, namePrefix])
+        if (this.NamespaceListError !== undefined)
+        {
+            throw this.NamespaceListError
+        }
+        return this.FailedNamespaces
+    }
+
     public async Apply(_m: string): Promise<void> { this.Calls.push(['Apply']) }
     public async ApplyServerSide(_m: string): Promise<void> { this.Calls.push(['ApplyServerSide']) }
     public async RolloutStatus(_n: string, _d: string): Promise<void> { }
@@ -116,7 +129,7 @@ describe('HiveAgentUninstaller', () =>
         assert.deepEqual(fx.Orchestrators.Kubectl.Calls, [
             ['DeleteManifest', HiveBootstrapBundle.RemovalManifest('h1')],
             ['Find', 'pragmatic-system', 'deployment/' + K8sManifestBuilder.TenantAdminNameOf('t1')],
-            ['DeleteManifest', TenantAdminBootstrap.CredentialRemovalManifest('t1')],
+            ['DeleteManifest', new K8sManifestBuilder().TenantConsoleRemovalManifest('t1', 'h1')],
             ['DeleteBySelector', 'pragmatic-system', 'deployment,service,serviceaccount,secret', 'pragmatic/hive=h1'],
             ['Find', 'pragmatic-system', 'persistentvolumeclaim/' + K8sManifestBuilder.TenantAdminClaimNameOf('t1')],
             ['Find', 'pragmatic-system', 'secret/' + K8sManifestBuilder.TenantAdminSeedSecretNameOf('t1')],
@@ -200,7 +213,7 @@ describe('HiveAgentUninstaller', () =>
         const retained = await fx.Uninstaller.Uninstall(Fixture.Hive('other', HiveBackend.Local, InfraMode.Attach))
         assert.deepEqual(retained, [])
         const calls = fx.Orchestrators.Kubectl.Calls
-        assert.ok(!calls.some(c => c[0] === 'DeleteManifest' && c[1] === TenantAdminBootstrap.CredentialRemovalManifest('t1')))
+        assert.ok(!calls.some(c => c[0] === 'DeleteManifest' && c[1] === new K8sManifestBuilder().TenantConsoleRemovalManifest('t1', 'other')))
         assert.deepEqual(calls.find(c => c[0] === 'DeleteBySelector'), ['DeleteBySelector', 'pragmatic-system', 'deployment,service,serviceaccount,secret', 'pragmatic/hive=other'])
     })
 
@@ -209,6 +222,43 @@ describe('HiveAgentUninstaller', () =>
         const fx = new Fixture()
         fx.Orchestrators.Kubectl.Objects.set('deployment/' + K8sManifestBuilder.TenantAdminNameOf('t1'), '{"metadata":{"name":"x"}}')
         await fx.Uninstaller.Uninstall(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach))
-        assert.ok(!fx.Orchestrators.Kubectl.Calls.some(c => c[0] === 'DeleteManifest' && c[1] === TenantAdminBootstrap.CredentialRemovalManifest('t1')))
+        assert.ok(!fx.Orchestrators.Kubectl.Calls.some(c => c[0] === 'DeleteManifest' && c[1] === new K8sManifestBuilder().TenantConsoleRemovalManifest('t1', 'h1')))
+    })
+
+    it('the console removal covers the cluster-scoped grants and admission fence a bootstrap install left, and every credential copy', async () =>
+    {
+        const fx = new Fixture()
+        await fx.Uninstaller.Uninstall(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach))
+        const removal = fx.Orchestrators.Kubectl.Calls.filter(c => c[0] === 'DeleteManifest')[1]?.[1] ?? ''
+        const kinds = (JSON.parse(removal) as { items: Array<{ kind: string; metadata: { name: string } }> }).items.map(i => i.kind + '/' + i.metadata.name)
+        const name = K8sManifestBuilder.TenantAdminNameOf('t1')
+        for (const expected of ['ClusterRole/' + name, 'ClusterRoleBinding/' + name, 'ValidatingAdmissionPolicy/' + name, 'ValidatingAdmissionPolicyBinding/' + name,
+            'ClusterRole/' + K8sManifestBuilder.TenantConsoleEnvRoleNameOf('t1'), 'Ingress/' + name])
+        {
+            assert.ok(kinds.includes(expected), expected)
+        }
+        const credentials = (JSON.parse(TenantAdminBootstrap.CredentialRemovalManifest('t1')) as { items: Array<{ metadata: { name: string } }> }).items
+        for (const secret of credentials)
+        {
+            assert.ok(kinds.includes('Secret/' + secret.metadata.name), secret.metadata.name)
+        }
+    })
+
+    it('environment namespaces: deletes those labelled for the hive inside pragmatic-env-*, and reports the ones that failed', async () =>
+    {
+        const fx = new Fixture()
+        fx.Orchestrators.Kubectl.FailedNamespaces = ['pragmatic-env-stuck']
+        const failed = await fx.Uninstaller.DeleteEnvironmentNamespaces(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach))
+        assert.deepEqual(failed, ['pragmatic-env-stuck'])
+        assert.deepEqual(fx.Orchestrators.Kubectl.Calls, [['DeleteNamespacesBySelector', 'pragmatic/hive=h1', 'pragmatic-env-']])
+    })
+
+    it('environment namespaces that cannot be listed are an AgentUninstallError; an unsafe id is refused before kubectl', async () =>
+    {
+        const fx = new Fixture()
+        fx.Orchestrators.Kubectl.NamespaceListError = new KubectlError('forbidden')
+        await assert.rejects(fx.Uninstaller.DeleteEnvironmentNamespaces(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach)), AgentUninstallError)
+        await assert.rejects(fx.Uninstaller.DeleteEnvironmentNamespaces(Fixture.Hive('Bad_Id', HiveBackend.Local, InfraMode.Attach)), AgentUninstallError)
+        assert.equal(fx.Orchestrators.Kubectl.Calls.length, 1)
     })
 })

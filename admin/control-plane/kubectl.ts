@@ -28,6 +28,49 @@ export interface IKubectl
     DeleteManifest(manifestJson: string): Promise<void>
     /** Deletes every `resource` in the namespace matching the label selector; none matching is not an error. */
     DeleteBySelector(namespace: string, resource: string, selector: string): Promise<void>
+    /**
+     * Deletes every Namespace that matches the label selector AND whose name starts with `namePrefix` (a matching namespace
+     * outside the prefix is left alone); returns the names whose delete failed. A failed listing throws. Refuses an empty prefix.
+     */
+    DeleteNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
+}
+
+/** The client-side name fence of DeleteNamespacesBySelector, shared by every IKubectl. */
+export class NamespaceSweep
+{
+    private static readonly EmptyPrefixMessage = 'a namespace sweep needs a non-empty name prefix'
+
+    /** The names that start with `prefix` and are longer than it; throws for an empty prefix. */
+    public static Select(names: readonly string[], prefix: string): string[]
+    {
+        if (prefix.length === 0)
+        {
+            throw new KubectlError(NamespaceSweep.EmptyPrefixMessage, '', false)
+        }
+        return names.filter(n => n.startsWith(prefix) && n.length > prefix.length)
+    }
+
+    /** Deletes each name through `remove`; a KubectlError marks that name failed, anything else propagates. */
+    public static async DeleteEach(names: readonly string[], remove: (name: string) => Promise<void>): Promise<string[]>
+    {
+        const failed: string[] = []
+        for (const name of names)
+        {
+            try
+            {
+                await remove(name)
+            }
+            catch (err)
+            {
+                if (!(err instanceof KubectlError))
+                {
+                    throw err
+                }
+                failed.push(name)
+            }
+        }
+        return failed
+    }
 }
 
 /** A long-lived child process (a kubectl port-forward): its stdout, a way to stop it, and an exit notification. */
@@ -218,6 +261,8 @@ export class KubectlCli implements IPortForwardingKubectl
     private static readonly Json = 'json'
     private static readonly Delete = 'delete'
     private static readonly Namespace = 'namespace'
+    private static readonly NamespacesResource = 'namespaces'
+    private static readonly BadNamespaceListMessage = 'kubectl returned a namespace list that is not valid JSON'
     private static readonly IgnoreNotFound = '--ignore-not-found'
     private static readonly NamespaceFlag = '-n'
     private static readonly DeploymentPrefix = 'deployment/'
@@ -308,6 +353,22 @@ export class KubectlCli implements IPortForwardingKubectl
     public async DeleteBySelector(namespace: string, resource: string, selector: string): Promise<void>
     {
         await this.Invoke([KubectlCli.Delete, resource, KubectlCli.SelectorFlag, selector, KubectlCli.NamespaceFlag, namespace, KubectlCli.IgnoreNotFound])
+    }
+
+    public async DeleteNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
+    {
+        const stdout = await this.Invoke([KubectlCli.GetVerb, KubectlCli.NamespacesResource, KubectlCli.SelectorFlag, selector, KubectlCli.OutputFlag, KubectlCli.Json])
+        let names: string[]
+        try
+        {
+            const list = JSON.parse(stdout) as { items?: Array<{ metadata?: { name?: unknown } }> }
+            names = (list.items ?? []).map(i => i.metadata?.name).filter((n): n is string => typeof n === 'string')
+        }
+        catch
+        {
+            throw new KubectlError(KubectlCli.BadNamespaceListMessage, '', false)
+        }
+        return NamespaceSweep.DeleteEach(NamespaceSweep.Select(names, namePrefix), name => this.DeleteNamespace(name))
     }
 
     /** Whether a kubectl can open port-forwards (it carries a context the platform can tunnel through). */

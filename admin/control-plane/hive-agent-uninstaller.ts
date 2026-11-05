@@ -4,7 +4,6 @@ import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KindError } from './kind.js'
 import { KubectlError, type IKubectl } from './kubectl.js'
 import { HiveBackend, InfraMode, type HiveRecord } from './platform-records.js'
-import { TenantAdminBootstrap } from './tenant-admin-bootstrap.js'
 
 /**
  * The hive's agent could not be removed from its cluster. Carries kubectl's (already redacted) text, or the fixed reason an
@@ -58,8 +57,9 @@ export class HiveClusterDestroyError extends Error
 
 /**
  * Removes a hive's agent from a cluster the control plane drives, for a hive delete:
- * - by name: the bundle's objects except the shared Namespace, the token Secret, and the tenant-admin's live-credential
- *   Secret copies (IdP CA, IdP admin token), which older clusters carry unlabelled;
+ * - by name: the bundle's objects except the shared Namespace, the token Secret, and (when this hive owns the tenant's console)
+ *   every TenantConsoleRemovalManifest object: the cluster-scoped ClusterRoles / ClusterRoleBinding / admission policy and
+ *   binding, the Ingress, the TLS-read Role, and the live-credential Secret copies older clusters carry unlabelled;
  * - by the hive label: every Deployment, Service, ServiceAccount and Secret in pragmatic-system (the agent, and the
  *   tenant-admin pod with its Service, ServiceAccount and labelled credentials such as a pull secret).
  * Deletes tolerate objects already gone, so a half-installed or hand-removed agent uninstalls cleanly. The tenant-admin data
@@ -76,8 +76,35 @@ export class HiveAgentUninstaller
     private static readonly SecretPrefix = 'secret/'
     private static readonly UnsafeIdReason = "the hive id is not a valid Kubernetes label value, so its objects cannot be selected safely (a selector could match another hive's)"
 
+    private readonly manifests = new K8sManifestBuilder()
+
     public constructor(private readonly orchestrators: IInstallOrchestratorSource)
     {
+    }
+
+    /**
+     * Deletes the environment namespaces left labelled for this hive (those its in-hive console created have no platform record):
+     * only Namespaces carrying this hive's label AND named pragmatic-env-*; an unlabelled pragmatic-env-* namespace is never touched.
+     * Returns the names whose delete failed. Throws AgentUninstallError when they cannot be listed or the id is unsafe.
+     */
+    public async DeleteEnvironmentNamespaces(hive: HiveRecord): Promise<string[]>
+    {
+        if (!K8sManifestBuilder.IsValidHiveId(hive.id))
+        {
+            throw new AgentUninstallError(HiveAgentUninstaller.UnsafeIdReason)
+        }
+        try
+        {
+            return await this.orchestrators.For(hive).Kubectl.DeleteNamespacesBySelector(K8sManifestBuilder.HiveLabelSelectorOf(hive.id), K8sManifestBuilder.EnvNamespacePrefix)
+        }
+        catch (err)
+        {
+            if (err instanceof KubectlError)
+            {
+                throw new AgentUninstallError(err.message)
+            }
+            throw err
+        }
     }
 
     /** Whether a delete of this hive uninstalls its agent first. */
@@ -88,7 +115,7 @@ export class HiveAgentUninstaller
 
     /**
      * Removes the agent's objects and returns the names of what it deliberately kept and that exists: the tenant-admin data
-     * PVC and its seed Secret. The tenant's credential copies are deleted by name, and the kept objects reported, only when
+     * PVC and its seed Secret. The tenant's console objects are deleted by name, and the kept objects reported, only when
      * this hive owns the tenant's tenant-admin (its Deployment carries this hive's label) or none is installed: another hive
      * of the same tenant on the same cluster keeps them. Throws AgentUninstallError when kubectl fails or the id cannot be
      * selected safely; any other failure is not an uninstall failure and propagates as is.
@@ -107,7 +134,8 @@ export class HiveAgentUninstaller
             const owns = await this.OwnsTenantAdmin(kubectl, hive)
             if (owns)
             {
-                await kubectl.DeleteManifest(TenantAdminBootstrap.CredentialRemovalManifest(hive.tenantId))
+                // The whole console, cluster-scoped grants and admission fence included (also for bootstrap / smoke installs).
+                await kubectl.DeleteManifest(this.manifests.TenantConsoleRemovalManifest(hive.tenantId, hive.id))
             }
             await kubectl.DeleteBySelector(ns, HiveAgentUninstaller.SelectedResources, K8sManifestBuilder.HiveLabelSelectorOf(hive.id))
             return owns ? await this.ExistingRetained(kubectl, hive) : []

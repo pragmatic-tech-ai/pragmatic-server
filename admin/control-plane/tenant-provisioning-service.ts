@@ -121,7 +121,8 @@ export class IdpUnreachableError extends Error
  */
 export class TenantProvisioningService
 {
-    private static readonly OwnerPrincipalId = 'owner';
+    /** The principal id every Owner account is seeded under (control-plane and in-hive IdPs alike). */
+    public static readonly OwnerPrincipalId = 'owner';
     private static readonly PasswordBytes = 24;
     private static readonly PasswordEncoding = 'base64url';
     private static readonly NotFoundStatus = 404;
@@ -292,12 +293,13 @@ export class TenantProvisioningService
     }
 
     /** The one generator (and strength) for Owner passwords: 24 random bytes, base64url. */
-    private static NewOwnerPassword(): string
+    public static NewOwnerPassword(): string
     {
         return randomBytes(TenantProvisioningService.PasswordBytes).toString(TenantProvisioningService.PasswordEncoding);
     }
 
-    private static ResetFailure(err: unknown): unknown
+    /** Maps an IdP admin failure of a password reset to the host's Owner errors (unknown account, refused, unreachable). */
+    public static ResetFailure(err: unknown): unknown
     {
         if (err instanceof IdpAdminError)
         {

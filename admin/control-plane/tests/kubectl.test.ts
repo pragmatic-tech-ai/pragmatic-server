@@ -15,10 +15,16 @@ class FakeExecFile implements IExecFile
     public readonly Calls: RunCall[] = []
     public Stdout = ''
     public FailStderr: string | undefined
+    /** Fails only the calls whose arguments include this word (with FailStderr unset). */
+    public FailOnArg: string | undefined
 
     public async Run(file: string, args: readonly string[], stdin?: string): Promise<{ stdout: string; stderr: string }>
     {
         this.Calls.push({ file, args, stdin })
+        if (this.FailOnArg !== undefined && args.includes(this.FailOnArg))
+        {
+            throw Object.assign(new Error('Command failed'), { stderr: 'namespace is stuck' })
+        }
         if (this.FailStderr !== undefined)
         {
             throw Object.assign(new Error('Command failed'), { stderr: this.FailStderr })
@@ -126,6 +132,32 @@ test('Get args and returns stdout', async () =>
     const out = await f.Cli.Get('ns1', 'pods')
     assert.equal(out, '{"items":[]}')
     assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'get', 'pods', '-n', 'ns1', '-o', 'json'])
+})
+
+test('DeleteNamespacesBySelector lists by label, deletes only names inside the prefix, and reports the failed ones', async () =>
+{
+    const f = new KubectlFixture()
+    f.Fake.Stdout = JSON.stringify({ items: [
+        { metadata: { name: 'pragmatic-env-a' } }, { metadata: { name: 'kube-system' } }, { metadata: { name: 'pragmatic-env-' } }, { metadata: { name: 'pragmatic-env-stuck' } },
+    ] })
+    f.Fake.FailOnArg = 'pragmatic-env-stuck'
+    const failed = await f.Cli.DeleteNamespacesBySelector('pragmatic/hive=h1', 'pragmatic-env-')
+    assert.deepEqual(failed, ['pragmatic-env-stuck'])
+    assert.deepEqual(f.Fake.Calls.map(c => c.args), [
+        ['--context', 'kind-hive', 'get', 'namespaces', '-l', 'pragmatic/hive=h1', '-o', 'json'],
+        ['--context', 'kind-hive', 'delete', 'namespace', 'pragmatic-env-a', '--ignore-not-found'],
+        ['--context', 'kind-hive', 'delete', 'namespace', 'pragmatic-env-stuck', '--ignore-not-found'],
+    ])
+})
+
+test('DeleteNamespacesBySelector refuses an empty prefix and a list that is not JSON, without deleting', async () =>
+{
+    const f = new KubectlFixture()
+    f.Fake.Stdout = JSON.stringify({ items: [{ metadata: { name: 'kube-system' } }] })
+    await assert.rejects(f.Cli.DeleteNamespacesBySelector('pragmatic/hive=h1', ''), KubectlError)
+    f.Fake.Stdout = 'not json'
+    await assert.rejects(f.Cli.DeleteNamespacesBySelector('pragmatic/hive=h1', 'pragmatic-env-'), KubectlError)
+    assert.ok(!f.Fake.Calls.some(c => c.args.includes('delete')))
 })
 
 test('DeleteNamespace args', async () =>

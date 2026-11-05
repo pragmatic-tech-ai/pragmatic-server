@@ -196,6 +196,30 @@ test('DeleteManifest tolerates objects already gone', async () =>
     assert.equal(fake.Calls.length, 2)
 })
 
+test('DeleteNamespacesBySelector lists namespaces by label and deletes only those inside the prefix', async () =>
+{
+    const { fake, kubectl } = Fixture.Make([
+        Fixture.Ok({ items: [{ metadata: { name: 'pragmatic-env-a' } }, { metadata: { name: 'default' } }] }),
+        Fixture.Empty, Fixture.Gone,
+    ])
+    assert.deepEqual(await kubectl.DeleteNamespacesBySelector('pragmatic/hive=h1', 'pragmatic-env-'), [])
+    assert.deepEqual(fake.Calls.map(c => [c[0], c[1]]), [
+        [KubeMethod.Get, '/api/v1/namespaces?labelSelector=' + encodeURIComponent('pragmatic/hive=h1')],
+        [KubeMethod.Delete, '/api/v1/namespaces/pragmatic-env-a'],
+        [KubeMethod.Get, '/api/v1/namespaces/pragmatic-env-a'],
+    ])
+})
+
+test('DeleteNamespacesBySelector reports a namespace whose delete failed and goes on', async () =>
+{
+    const { kubectl } = Fixture.Make([
+        Fixture.Ok({ items: [{ metadata: { name: 'pragmatic-env-a' } }, { metadata: { name: 'pragmatic-env-b' } }] }),
+        { status: 403, body: '{}' },
+        Fixture.Empty, Fixture.Gone,
+    ])
+    assert.deepEqual(await kubectl.DeleteNamespacesBySelector('pragmatic/hive=h1', 'pragmatic-env-'), ['pragmatic-env-a'])
+})
+
 test('DeleteBySelector lists then deletes every match per resource', async () =>
 {
     const { fake, kubectl } = Fixture.Make([

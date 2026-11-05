@@ -25,8 +25,10 @@ export class HiveOrchestratorFactory
     private static readonly DefaultLocalContext = 'docker-desktop'
 
     private static readonly DefaultDataRoot = resolve('.pragmatic-data/control-plane')
-    private static readonly SignaturesFileName = 'signatures.json'
-    private static readonly KeysDirName = 'keys'
+    /** The data-root file of image signatures (written by the platform signer, read by every verifier). */
+    public static readonly SignaturesFileName = 'signatures.json'
+    /** The data-root directory of the key store (trust-root public keys, the platform signing pair). */
+    public static readonly KeysDirName = 'keys'
 
     public constructor(
         private readonly localContext: string = HiveOrchestratorFactory.DefaultLocalContext,
@@ -63,17 +65,22 @@ export class HiveOrchestratorFactory
         throw new UnsupportedBackendError(backend, mode)
     }
 
+    /** The control plane's image verifier: local docker digests, the data root's signature store and key store. */
+    public static VerifierFor(dataRoot: string): CryptoImageVerifier
+    {
+        return new CryptoImageVerifier(
+            new DockerImageDigest(),
+            new FileSignatureStore(join(dataRoot, HiveOrchestratorFactory.SignaturesFileName)),
+            new FileKeyStore(join(dataRoot, HiveOrchestratorFactory.KeysDirName)))
+    }
+
     private BuildKubectl(hive: HiveRecord, context: string): KubectlHiveOrchestrator
     {
-        const verifier = new CryptoImageVerifier(
-            new DockerImageDigest(),
-            new FileSignatureStore(join(this.dataRoot, HiveOrchestratorFactory.SignaturesFileName)),
-            new FileKeyStore(join(this.dataRoot, HiveOrchestratorFactory.KeysDirName)))
         return new KubectlHiveOrchestrator(
             new KubectlCli(context),
             new K8sManifestBuilder(),
             EffectiveRegistry.For(hive),
-            verifier,
+            HiveOrchestratorFactory.VerifierFor(this.dataRoot),
             hive.trustRootRef)
     }
 }

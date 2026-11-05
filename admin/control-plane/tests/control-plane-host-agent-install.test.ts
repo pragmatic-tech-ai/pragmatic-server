@@ -92,6 +92,7 @@ class FakeKubectl implements IKubectl
     public async DeleteManifest(_m: string): Promise<void> { }
     public async Find(_n: string, _r: string): Promise<string | undefined> { return undefined }
     public async DeleteBySelector(_n: string, _r: string, _s: string): Promise<void> { }
+    public async DeleteNamespacesBySelector(_s: string, _p: string): Promise<string[]> { return [] }
     public async DeleteNamespace(n: string): Promise<void> { this.Args.push([n]) }
 }
 

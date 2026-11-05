@@ -24,6 +24,12 @@ import { AgentChannelHost } from './agent-channel-host.js'
 import { HiveObservationRegistry } from './hive-observation-record.js'
 import { HiveAgentInstaller } from './hive-agent-installer.js'
 import { HiveAgentUninstaller } from './hive-agent-uninstaller.js'
+import { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
+import { DevCertificateAuthority } from './dev-certificate-authority.js'
+import { InHiveIdpAdmin } from './in-hive-idp-admin.js'
+import { SealedSecretStore } from './sealed-secret-store.js'
+import { TenantAdminBootstrap } from './tenant-admin-bootstrap.js'
+import { PlatformConsoleImageApproval, TenantConsoleInstaller } from './tenant-console-installer.js'
 import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
 import { ReleasePolicyRegistry } from './release-policy-record.js'
 import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
@@ -104,9 +110,9 @@ export class ControlPlaneServer
     private static readonly BindHost = '127.0.0.1'
     private static readonly DataDir = 'data'
     public static readonly RegistryFile = 'registry.json'
-    private static readonly KeysDirName = 'keys'
+    private static readonly KeysDirName = HiveOrchestratorFactory.KeysDirName
     private static readonly SigningKeyRefEnvVar = 'PRAGMATIC_ADMIN_SIGNING_KEY_REF'
-    private static readonly SignaturesFileName = 'signatures.json'
+    private static readonly SignaturesFileName = HiveOrchestratorFactory.SignaturesFileName
     private static readonly TrustAdoptedPrefix = 'Platform signing key '
     private static readonly TrustAdoptedInfix = ' set as the trust root of hives: '
     private static readonly HiveIdSeparator = ', '
@@ -250,7 +256,13 @@ export class ControlPlaneServer
         // Installs a Local hive's agent through the same cluster access the orchestrators already hold; off with the channel.
         const agentInstaller = new HiveAgentInstaller(directory, orchestrators, deployments, observations, agentChannelUrl)
         const discovery = new DesktopDiscoveryEndpoint(accountIndex, directory, ControlPlaneServer.DesktopTenantPlaneUrlOf(process.env), DesktopDiscoveryEndpoint.NewThrottle())
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery)
+        // Installs a Local hive's tenant console through the same cluster access; its keys and the dev CA are sealed under the master key.
+        const sealed = await SealedSecretStore.Open(join(dataRoot, SealedSecretStore.FileName), masterKey)
+        const consoleInstaller = new TenantConsoleInstaller(directory, orchestrators, new TenantAdminBootstrap(deployments), new ConsoleFingerprintKeys(sealed),
+            new DevCertificateAuthority(join(dataRoot, DevCertificateAuthority.DirName), sealed), new InHiveIdpAdmin(orchestrators, sealed),
+            new PlatformConsoleImageApproval(signing.PlatformSigner, HiveOrchestratorFactory.VerifierFor(dataRoot)),
+            new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)), agentChannelUrl)
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery, consoleInstaller)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
             masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]), tenantSessions, principalSessions,

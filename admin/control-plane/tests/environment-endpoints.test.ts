@@ -88,6 +88,7 @@ class PlainKubectl implements IKubectl
     public async Find(): Promise<string | undefined> { return undefined }
     public async DeleteManifest(): Promise<void> { }
     public async DeleteBySelector(): Promise<void> { }
+    public async DeleteNamespacesBySelector(): Promise<string[]> { return [] }
 }
 
 class FakeKubectl extends PlainKubectl implements IPortForwardingKubectl

@@ -133,3 +133,27 @@ File and class names, advert interval constants, the advert store shape, how the
   tenant. The advert store is keyed per tenant (recording the hive it came from).
 - **Email domains for in-hive tenants come only from the advert.** The platform admin portal shows them read-only for
   those tenants; it edits them only for control-plane tenants.
+
+## Accepted deviations and rulings (implementation)
+
+- **The console reuses the hive agent token.** The control plane does not generate a separate token for the console:
+  the console install requires the hive agent to be installed first and mounts the agent's own token Secret. The agent
+  objects are not re-applied by the console install, so the running agent is never reverted.
+- **Environment rights are a ClusterRole bound per namespace.** Instead of a namespaced Role, the console's environment
+  rights are a ClusterRole that the console binds itself, with a RoleBinding in each environment namespace it creates.
+  For that it holds cluster-wide `create` on rolebindings and `bind` on that one ClusterRole. RBAC cannot fence namespace
+  name prefixes, so RBAC alone would let a stolen console token bind those rights in any namespace (pragmatic-system
+  included). The fence is the console's own guard plus the admission policy below; the residual privilege is noted in the
+  console ClusterRole's doc comment.
+- **An admission policy fences the console server-side.** Each console gets a ValidatingAdmissionPolicy and binding
+  (Kubernetes 1.30 or newer). It limits the console's service account to creating and deleting Namespaces named
+  `pragmatic-env-*` that carry this hive's label, and to creating only the console environment RoleBinding (fixed name,
+  console environment ClusterRole, console service account). The console's guard alone is client-side; the policy is what
+  the API server enforces.
+- **Environment namespaces enforce Pod Security `baseline`.** Every environment namespace carries the `baseline` enforce
+  label, and the console's admission policy requires `baseline` or `restricted` on any namespace the console creates, so a
+  stolen console token cannot run privileged pods (node root). Environment workloads must stay baseline-compliant.
+- **Hive delete removes the console and its environment namespaces.** Deleting a hive removes its console objects
+  (cluster-scoped grants and admission policy included, also for bootstrap installs) and every Namespace that carries the
+  hive's label and is named `pragmatic-env-*`; an unlabelled `pragmatic-env-*` namespace is never touched. Namespaces that
+  cannot be deleted are reported to the operator as failed. A delete anyway skips the cluster entirely.

@@ -49,6 +49,8 @@ import { HiveConsoleSpecs, InvalidHiveConsoleError } from './hive-console-spec.j
 import { InvalidIngressTlsError } from './ingress-tls.js'
 import { AgentInstallInProgressError, AgentInstallUnavailableError, type HiveAgentInstaller, type InstallStatus } from './hive-agent-installer.js'
 import { AgentUninstallError, HiveClusterDestroyError, type HiveAgentUninstaller } from './hive-agent-uninstaller.js'
+import { ConsoleInstallInProgressError, ConsoleInstallUnavailableError, ConsoleNotConfiguredError, type ConsoleInstallStatus, type TenantConsoleInstaller } from './tenant-console-installer.js'
+import { InHiveIdpUnavailableError, type InHiveOwnerPassword } from './in-hive-idp-admin.js'
 import { HiveBackend, InfraMode, InvalidRecordIdError } from './platform-records.js'
 import { PlaneHttp } from './plane-http.js'
 import { ProvisioningOrchestrator, ProvisionFailedError } from './provisioning-orchestrator.js'
@@ -170,8 +172,11 @@ export type FleetHiveDto = {
 export type ChangedEvent = { type: string }
 
 type ErrorCtor = abstract new (...args: never[]) => Error
-/** A hive delete's outcome for the operator: what was deliberately kept, and what a delete anyway may have left behind. */
-type HiveDeleteOutcome = { retained: string[]; notice?: string }
+/**
+ * A hive delete's outcome for the operator: what was deliberately kept, what could not be removed (environment namespaces whose
+ * delete failed), and what a delete anyway may have left behind.
+ */
+type HiveDeleteOutcome = { retained: string[]; failed: string[]; notice?: string }
 type LoginBody = { email?: unknown; password?: unknown }
 
 export class ControlPlaneHost
@@ -268,6 +273,22 @@ export class ControlPlaneHost
     private static readonly ConsoleSegment = 'console'
     private static readonly HiveConsolePathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.ConsoleSegment + '$')
+    private static readonly ConsoleInstallSegment = 'console-install'
+    private static readonly HiveConsoleInstallPathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.ConsoleInstallSegment + '$')
+    private static readonly ConsoleInstallOffMessage = 'Installing the console is not available on this control plane.'
+    private static readonly ConsoleInstallRunningMessage = 'A console install is running for this hive. Wait for it to finish (or fail), then try again.'
+    private static readonly AgentInstallRunningMessage = 'An agent install is running for this hive. Wait for it to finish (or fail) before installing the console.'
+    private static readonly ConsoleRemoveFailedPrefix = "Could not remove the hive's console from its cluster: "
+    private static readonly ConsoleLeftNotice = 'The console was not removed: its objects (including its cluster-wide grants) and the environment namespaces it created may remain in the cluster until someone removes them.'
+    private static readonly ForgetFailedLogPrefix = '[hive-delete] hive '
+    private static readonly ForgetFailedLogInfix = ': forgetting its console keys failed: '
+    private static readonly UnknownErrorName = 'Error'
+    private static readonly NamespacesLeftNoticePrefix = 'These environment namespaces could not be deleted and may remain in the cluster: '
+    private static readonly NoticeSeparator = ' '
+    private static readonly SentenceEnd = '.'
+    private static readonly FailedNotePrefix = 'failed: '
+    private static readonly AuditNoteSeparator = '; '
     private static readonly HiveItemPathPattern = new RegExp('^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/[^/]+$')
     private static readonly AgentLeftNotice = 'The agent was not removed: the agent may remain in the cluster, locked out (its token is revoked), until someone removes it.'
     private static readonly KindClusterLeftNotice = "The hive's kind cluster was not destroyed: the kind cluster may be left behind on this machine."
@@ -298,6 +319,9 @@ export class ControlPlaneHost
     private static readonly OwnerPasswordSegment = 'owner-password'
     private static readonly TenantOwnerPasswordPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.TenantsSegment + '/([^/]+)/' + ControlPlaneHost.OwnerPasswordSegment + '$')
+    /** POST /api/hives/ID/console/owner-password: a fresh Owner password in the hive's in-hive IdP. */
+    private static readonly HiveConsoleOwnerPasswordPathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.ConsoleSegment + '/' + ControlPlaneHost.OwnerPasswordSegment + '$')
     private static readonly TenantPolicyPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.TenantsSegment + '/([^/]+)/' + ControlPlaneHost.PolicySegment + '/(' +
         [ControlPlaneHost.ChannelsSegment, ControlPlaneHost.MinVersionSegment, ControlPlaneHost.HoldSegment].join('|') + ')$')
@@ -431,6 +455,10 @@ export class ControlPlaneHost
         [InvalidHiveConsoleError, ControlPlaneHost.StatusBadRequest],
         [InvalidIngressTlsError, ControlPlaneHost.StatusBadRequest],
         [InHiveConsoleTakenError, ControlPlaneHost.StatusConflict],
+        [ConsoleNotConfiguredError, ControlPlaneHost.StatusConflict],
+        [ConsoleInstallUnavailableError, ControlPlaneHost.StatusConflict],
+        [ConsoleInstallInProgressError, ControlPlaneHost.StatusConflict],
+        [InHiveIdpUnavailableError, ControlPlaneHost.StatusConflict],
         // The hive's cluster refused or could not be reached while its agent was being removed: the operator fixes cluster
         // access and retries, or deletes anyway. A conflict, not a server error (5xx answers are masked as generic 500s).
         [AgentUninstallError, ControlPlaneHost.StatusConflict],
@@ -495,7 +523,9 @@ export class ControlPlaneHost
         /** Removes a hive's agent from its cluster when the hive is deleted; undefined removes only platform state. */
         private readonly agentUninstaller?: HiveAgentUninstaller,
         /** Public desktop email discovery (POST /api/desktop/discover); undefined leaves the route unmounted. */
-        private readonly discovery?: DesktopDiscoveryEndpoint)
+        private readonly discovery?: DesktopDiscoveryEndpoint,
+        /** Installs (and removes) a Local hive's in-hive tenant console; undefined disables the console routes' actions. */
+        private readonly consoleInstaller?: TenantConsoleInstaller)
     {
         this.allowedHosts = new Set([...ControlPlaneHost.DefaultAllowedHosts, ...allowedHosts.map(h => h.toLowerCase())])
         this.staticRootAbs = resolve(staticRoot)
@@ -1078,6 +1108,16 @@ export class ControlPlaneHost
         {
             return await this.RouteHiveConsole(req, res, method, hcm)
         }
+        const hcim = ControlPlaneHost.HiveConsoleInstallPathPattern.exec(path)
+        if (hcim !== null)
+        {
+            return this.RouteHiveConsoleInstall(res, method, hcim)
+        }
+        const hcpm = ControlPlaneHost.HiveConsoleOwnerPasswordPathPattern.exec(path)
+        if (hcpm !== null)
+        {
+            return await this.RouteHiveConsoleOwnerPassword(res, method, hcpm)
+        }
         const plm = ControlPlaneHost.PlatformPathPattern.exec(path)
         if (plm !== null)
         {
@@ -1165,9 +1205,10 @@ export class ControlPlaneHost
                 {
                     this.hiveWrites.delete(id)
                 }
-                if (outcome.retained.length > 0)
+                const note = ControlPlaneHost.HiveDeleteNote(outcome)
+                if (note !== undefined)
                 {
-                    this.auditNotes.set(res, ControlPlaneHost.RetainedNotePrefix + outcome.retained.join(ControlPlaneHost.NoteSeparator))
+                    this.auditNotes.set(res, note)
                 }
                 PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { ok: true, ...outcome })
                 return true
@@ -1322,20 +1363,106 @@ export class ControlPlaneHost
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.HiveBusyMessage })
             return true
         }
+        if (this.consoleInstaller?.IsInstalling(id) === true)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.ConsoleInstallRunningMessage })
+            return true
+        }
         this.WriteInstallStatus(res, ControlPlaneHost.StatusAccepted, installer.Start(id))
         return true
     }
 
-    /** Serves PUT /api/hives/ID/console: stores where the hive serves its tenant's console and returns the updated hive. False for any other method. */
-    private async RouteHiveConsole(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    /**
+     * Serves /api/hives/ID/console-install: POST starts the in-hive console install (202 + its first status, no-store; 409 when it
+     * cannot run, one is running, the agent is being installed, or another hive operation is in flight), GET reads the latest install's
+     * status (404 when none has run). Neither carries a secret. False for any other method.
+     */
+    private RouteHiveConsoleInstall(res: ServerResponse, method: string, m: RegExpExecArray): boolean
     {
-        if (method !== PlaneHttp.MethodPut)
+        if (method !== PlaneHttp.MethodGet && method !== PlaneHttp.MethodPost)
         {
             return false
         }
         const id = this.KnownHiveId(res, m)
         if (id === undefined)
         {
+            return true
+        }
+        const installer = this.consoleInstaller
+        if (method === PlaneHttp.MethodGet)
+        {
+            const status = installer?.StatusFor(id)
+            if (status === undefined)
+            {
+                PlaneHttp.WriteNotFound(res)
+                return true
+            }
+            this.WriteConsoleInstallStatus(res, PlaneHttp.StatusOk, status)
+            return true
+        }
+        if (installer === undefined)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.ConsoleInstallOffMessage })
+            return true
+        }
+        if (this.RefuseIfHiveBusy(res, id, ControlPlaneHost.AgentInstallRunningMessage))
+        {
+            return true
+        }
+        this.WriteConsoleInstallStatus(res, ControlPlaneHost.StatusAccepted, installer.Start(id))
+        return true
+    }
+
+    /**
+     * Serves POST /api/hives/ID/console/owner-password: sets a fresh Owner password in the hive's in-hive IdP and returns
+     * { ownerEmail, ownerPassword } once (no-store). The password is never logged or audited; false for any other method.
+     */
+    private async RouteHiveConsoleOwnerPassword(res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        if (method !== PlaneHttp.MethodPost)
+        {
+            return false
+        }
+        const id = this.KnownHiveId(res, m)
+        if (id === undefined)
+        {
+            return true
+        }
+        if (this.consoleInstaller === undefined)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.ConsoleInstallOffMessage })
+            return true
+        }
+        const reset: InHiveOwnerPassword = await this.consoleInstaller.ResetOwnerPassword(id)
+        res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, reset)
+        return true
+    }
+
+    /**
+     * Serves /api/hives/ID/console. PUT stores where the hive serves its tenant's console and returns the updated hive. DELETE removes
+     * the console from a cluster the control plane drives (a refusing cluster answers 409 with kubectl's redacted text and keeps the
+     * setting), then clears the setting and returns the hive. Both refuse (409) while a console install runs. False for any other method.
+     */
+    private async RouteHiveConsole(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
+    {
+        if (method !== PlaneHttp.MethodPut && method !== PlaneHttp.MethodDelete)
+        {
+            return false
+        }
+        const id = this.KnownHiveId(res, m)
+        if (id === undefined)
+        {
+            return true
+        }
+        if (this.consoleInstaller?.IsInstalling(id) === true)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.ConsoleInstallRunningMessage })
+            return true
+        }
+        if (method === PlaneHttp.MethodDelete)
+        {
+            await this.RemoveHiveConsole(res, id)
             return true
         }
         const body = await this.ReadJsonObject(req, res)
@@ -1346,6 +1473,42 @@ export class ControlPlaneHost
         const hive: HiveDto = await this.directory.SetHiveConsole(id, HiveConsoleSpecs.Parse(body))
         PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, hive)
         return true
+    }
+
+    /** DELETE /api/hives/ID/console under the per-hive operation lock (a delete, reissue or install in flight answers 409). */
+    private async RemoveHiveConsole(res: ServerResponse, id: string): Promise<void>
+    {
+        if (this.RefuseIfHiveBusy(res, id, ControlPlaneHost.AgentInstallRunningMessage))
+        {
+            return
+        }
+        this.hiveWrites.add(id)
+        try
+        {
+            const hive = this.directory.GetHive(id)
+            if (hive?.console !== undefined && this.consoleInstaller?.CanUninstall(hive) === true)
+            {
+                try
+                {
+                    await this.consoleInstaller.Uninstall(hive)
+                }
+                catch (err)
+                {
+                    if (!(err instanceof KubectlError))
+                    {
+                        throw err
+                    }
+                    PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.ConsoleRemoveFailedPrefix + err.message })
+                    return
+                }
+            }
+            const updated: HiveDto = await this.directory.SetHiveConsole(id, undefined)
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, updated)
+        }
+        finally
+        {
+            this.hiveWrites.delete(id)
+        }
     }
 
     /**
@@ -1372,13 +1535,18 @@ export class ControlPlaneHost
 
     /**
      * Writes 409 and returns true when a token- or lifecycle-writing operation is already in flight for the hive: a
-     * running install (with its own message) or a reissue / delete.
+     * running agent install (with its own message), a running console install, or a reissue / delete / console removal.
      */
     private RefuseIfHiveBusy(res: ServerResponse, id: string, installingMessage: string): boolean
     {
         if (this.agentInstaller?.IsInstalling(id) === true)
         {
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: installingMessage })
+            return true
+        }
+        if (this.consoleInstaller?.IsInstalling(id) === true)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.ConsoleInstallRunningMessage })
             return true
         }
         if (this.hiveWrites.has(id))
@@ -1390,6 +1558,12 @@ export class ControlPlaneHost
     }
 
     private WriteInstallStatus(res: ServerResponse, status: number, body: InstallStatus): void
+    {
+        res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
+        PlaneHttp.WriteJson(res, status, body)
+    }
+
+    private WriteConsoleInstallStatus(res: ServerResponse, status: number, body: ConsoleInstallStatus): void
     {
         res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
         PlaneHttp.WriteJson(res, status, body)
@@ -1775,25 +1949,69 @@ export class ControlPlaneHost
         }
     }
 
+    /** The audit note of a hive delete: what it kept (`retained: ...`) and which environment namespaces it could not delete (`failed: ...`). */
+    private static HiveDeleteNote(outcome: HiveDeleteOutcome): string | undefined
+    {
+        const C = ControlPlaneHost
+        const parts: string[] = []
+        if (outcome.retained.length > 0)
+        {
+            parts.push(C.RetainedNotePrefix + outcome.retained.join(C.NoteSeparator))
+        }
+        if (outcome.failed.length > 0)
+        {
+            parts.push(C.FailedNotePrefix + outcome.failed.join(C.NoteSeparator))
+        }
+        return parts.length === 0 ? undefined : parts.join(C.AuditNoteSeparator)
+    }
+
     /**
-     * Deletes a hive, fail-closed, in this order: remove its agent from the cluster (attached Local hives; skipped when
-     * forced, for a cluster that is unreachable or gone), destroy a provisioned cluster, revoke the agent token, then the
-     * record. A failure before the record's removal leaves the record (and, before the revoke, the token) for a retry. The
-     * environments guard runs first so a non-empty hive never loses its cluster.
+     * Deletes a hive, fail-closed, in this order: remove its in-hive console (when configured), its agent (and any console a
+     * bootstrap installed) and the environment namespaces left labelled for it from the cluster (attached Local hives; all skipped
+     * when forced, for a cluster that is unreachable or gone), destroy a provisioned cluster, revoke the agent token, the record, and
+     * finally the console's sealed keys. A failure before the record's removal leaves the record (and, before the revoke, the token)
+     * for a retry; a namespace that cannot be deleted is reported in `failed`, not retried. The environments guard runs first so a
+     * non-empty hive never loses its cluster.
      */
     private async DeleteHiveEverywhere(id: string, force: boolean): Promise<HiveDeleteOutcome>
     {
         this.directory.AssertHiveDeletable(id)
         const hive = this.directory.GetHive(id)
         const uninstalls = hive !== undefined && this.agentUninstaller?.Covers(hive) === true
-        const outcome: HiveDeleteOutcome = { retained: [] }
+        const removesConsole = hive?.console !== undefined && this.consoleInstaller?.CanUninstall(hive) === true
+        const outcome: HiveDeleteOutcome = { retained: [], failed: [] }
+        const notices: string[] = []
+        if (removesConsole && !force)
+        {
+            try
+            {
+                await this.consoleInstaller!.Uninstall(hive!)
+            }
+            catch (err)
+            {
+                if (err instanceof KubectlError)
+                {
+                    throw new AgentUninstallError(err.message)
+                }
+                throw err
+            }
+        }
+        else if (removesConsole)
+        {
+            notices.push(ControlPlaneHost.ConsoleLeftNotice)
+        }
         if (uninstalls && !force)
         {
             outcome.retained = await this.agentUninstaller!.Uninstall(hive!)
+            outcome.failed = await this.agentUninstaller!.DeleteEnvironmentNamespaces(hive!)
+            if (outcome.failed.length > 0)
+            {
+                notices.push(ControlPlaneHost.NamespacesLeftNoticePrefix + outcome.failed.join(ControlPlaneHost.NoteSeparator) + ControlPlaneHost.SentenceEnd)
+            }
         }
         else if (uninstalls)
         {
-            outcome.notice = ControlPlaneHost.AgentLeftNotice
+            notices.push(ControlPlaneHost.AgentLeftNotice)
         }
         if (!force)
         {
@@ -1808,10 +2026,27 @@ export class ControlPlaneHost
         }
         else if (hive?.cluster.mode === InfraMode.Provision && hive.cluster.backend === HiveBackend.Local)
         {
-            outcome.notice = ControlPlaneHost.KindClusterLeftNotice
+            notices.push(ControlPlaneHost.KindClusterLeftNotice)
         }
         await this.deployments.DeregisterHive(id)
         await this.directory.DeleteHive(id)
+        // The console's fingerprint key and in-hive IdP credentials go with the hive, forced or not. Best effort: the hive is already
+        // gone, so a sealed-store failure only leaves unreachable sealed keys behind and must not turn the delete into an error.
+        if (hive !== undefined && this.consoleInstaller !== undefined)
+        {
+            try
+            {
+                await this.consoleInstaller.Forget(hive)
+            }
+            catch (err)
+            {
+                console.error(ControlPlaneHost.ForgetFailedLogPrefix + id + ControlPlaneHost.ForgetFailedLogInfix + (err instanceof Error ? err.name : ControlPlaneHost.UnknownErrorName))
+            }
+        }
+        if (notices.length > 0)
+        {
+            outcome.notice = notices.join(ControlPlaneHost.NoticeSeparator)
+        }
         return outcome
     }
 

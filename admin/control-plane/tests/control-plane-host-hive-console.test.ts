@@ -16,6 +16,14 @@ import { OperatorAuthorization } from '../operator-authorization.js'
 import { AuditRegistry } from '../audit-record.js'
 import { PlatformDirectory } from '../platform-directory.js'
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
+import { HiveAgentInstaller } from '../hive-agent-installer.js'
+import { HiveAgentUninstaller } from '../hive-agent-uninstaller.js'
+import { HiveBootstrapBundle } from '../hive-bootstrap-bundle.js'
+import { IngressTlsSource } from '../ingress-tls.js'
+import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
+import { KubectlError } from '../kubectl.js'
+import type { TenantConsoleInstaller } from '../tenant-console-installer.js'
+import { ConsoleInstallFixture, FakeInHiveIdpAdmin } from './console-install-fakes.js'
 
 type Reply = { status: number; body: string }
 
@@ -192,5 +200,280 @@ describe('ControlPlaneHost hive console settings', () =>
         const entries = audit.Recent(10).filter(e => e.path.endsWith('/console'))
         assert.deepEqual(entries.map(e => [e.actor, e.method, e.path, e.status]).sort(),
             [['op@example.com', 'PUT', '/api/hives/h1/console', 200], ['op@example.com', 'PUT', '/api/hives/h2/console', 409]])
+    })
+})
+
+class Send
+{
+    public static Request(host: ControlPlaneHost, method: string, path: string, body?: unknown, token: string = FakeOperator.FullToken): Promise<Reply & { headers: Record<string, string | string[] | undefined> }>
+    {
+        const headers: Record<string, string> = { 'content-type': 'application/json', cookie: 'cp_session=' + token }
+        const addr = host.Address()
+        return new Promise((resolve, reject) =>
+        {
+            const req = request({ host: addr.address, port: addr.port, method, path, headers }, res =>
+            {
+                const chunks: Buffer[] = []
+                res.on('data', c => chunks.push(c as Buffer))
+                res.on('end', () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8'), headers: res.headers }))
+            })
+            req.on('error', reject)
+            req.end(body === undefined ? undefined : JSON.stringify(body))
+        })
+    }
+}
+
+// The agent's check-ins: none until Arrive(), so a started agent install stays in its check-in wait.
+class HeldCheckIns
+{
+    private arrived: string | undefined
+
+    public LatestRecord(_hiveId: string): { reportedAt: string } | undefined
+    {
+        return this.arrived === undefined ? undefined : { reportedAt: this.arrived }
+    }
+
+    public Arrive(): void
+    {
+        this.arrived = new Date(Date.now() + 60000).toISOString()
+    }
+}
+
+// Keeps a console install in its first step until released.
+class InstallHold
+{
+    private release: () => void = () => undefined
+
+    public constructor(private readonly fx: ConsoleInstallFixture, private readonly installer: TenantConsoleInstaller)
+    {
+    }
+
+    public Engage(): void
+    {
+        this.fx.Kubectl.Hold = new Promise<void>(resolve => { this.release = resolve })
+    }
+
+    public async Release(): Promise<void>
+    {
+        this.fx.Kubectl.Hold = undefined
+        this.release()
+        await this.installer.WhenSettled('h1')
+    }
+}
+
+describe('ControlPlaneHost in-hive console install', () =>
+{
+    let host: ControlPlaneHost
+    let parent: string
+    let directory: PlatformDirectory
+    let audit: AuditRegistry
+    let fx: ConsoleInstallFixture
+    let installer: TenantConsoleInstaller
+    let agentInstaller: HiveAgentInstaller
+    let checkIns: HeldCheckIns
+    let hold: InstallHold
+
+    beforeEach(async () =>
+    {
+        parent = mkdtempSync(join(tmpdir(), 'cp-console-install-'))
+        const root = join(parent, 'static')
+        mkdirSync(root)
+        writeFileSync(join(root, 'index.html'), '<h1>portal</h1>')
+        directory = new PlatformDirectory(
+            new ClientRegistry(join(parent, 'clients.json')),
+            new TenantRegistry(join(parent, 'tenants.json')),
+            new HiveRegistry(join(parent, 'hives.json')),
+            { List: () => [] })
+        await directory.Load()
+        await directory.UseDefaultTrustRoot('platform-signing')
+        await directory.CreateClient({ id: 'acme', displayName: 'Acme' })
+        await directory.CreateProvisionedTenant({ id: 't1', clientId: 'acme', displayName: 'T', ownerEmail: 'owner@t1.test', ownerPrincipalId: 'owner', idpBaseUrl: 'https://idp.test' })
+        await directory.CreateHive({ id: 'h1', tenantId: 't1', displayName: 'H1', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
+        await directory.SetHiveConsole('h1', { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } })
+        audit = new AuditRegistry(join(parent, 'audit.json'))
+        await audit.Load()
+        fx = await ConsoleInstallFixture.Create()
+        fx.SeedRunningIdp('t1')
+        installer = fx.InstallerOver(directory)
+        hold = new InstallHold(fx, installer)
+        const deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
+        await deployments.RegisterHive('h1')
+        checkIns = new HeldCheckIns()
+        agentInstaller = new HiveAgentInstaller(directory, fx.Orchestrators, deployments, checkIns, ConsoleInstallFixture.ChannelUrl, undefined, { pollIntervalMs: 20, timeoutMs: 60000 })
+        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
+            new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent),
+            undefined, undefined, undefined, undefined, undefined, undefined, new OperatorAuthorization(), audit, undefined, undefined,
+            ConsoleInstallFixture.ChannelUrl, agentInstaller, new HiveAgentUninstaller(fx.Orchestrators), undefined, installer)
+        await host.Listen(0, '127.0.0.1')
+    })
+
+    afterEach(async () =>
+    {
+        checkIns.Arrive()
+        await agentInstaller.WhenSettled('h1')
+        await host.Close()
+        fx.Dispose()
+        rmSync(parent, { recursive: true, force: true })
+    })
+
+    it('POST console-install answers 202 with no-store', async () =>
+    {
+        const r = await Send.Request(host, 'POST', '/api/hives/h1/console-install')
+        assert.equal(r.status, 202)
+        assert.equal(r.headers['cache-control'], 'no-store')
+        assert.equal((JSON.parse(r.body) as { state: string }).state, 'installing')
+        assert.equal((await installer.WhenSettled('h1'))?.state, 'deployed')
+        const g = await Send.Request(host, 'GET', '/api/hives/h1/console-install')
+        assert.equal(g.status, 200)
+        assert.equal(g.headers['cache-control'], 'no-store')
+        assert.equal((JSON.parse(g.body) as { consoleUrl: string }).consoleUrl, 'https://console-t1.localtest.me')
+    })
+
+    it('GET console-install is 404 before any run', async () =>
+    {
+        assert.equal((await Send.Request(host, 'GET', '/api/hives/h1/console-install')).status, 404)
+        assert.equal((await Send.Request(host, 'GET', '/api/hives/nope/console-install')).status, 404)
+    })
+
+    it('POST console-install is 409 for a hive without console settings', async () =>
+    {
+        await directory.CreateHive({ id: 'h2', tenantId: 't1', displayName: 'H2', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
+        const r = await Send.Request(host, 'POST', '/api/hives/h2/console-install')
+        assert.equal(r.status, 409)
+        assert.match(JSON.parse(r.body).error as string, /no console settings/)
+    })
+
+    it('owner-password answers once with no-store and is not audited with the password', async () =>
+    {
+        const r = await Send.Request(host, 'POST', '/api/hives/h1/console/owner-password')
+        assert.equal(r.status, 200)
+        assert.equal(r.headers['cache-control'], 'no-store')
+        assert.deepEqual(JSON.parse(r.body), { ownerEmail: 'owner@t1.test', ownerPassword: FakeInHiveIdpAdmin.Password })
+        const entries = audit.Recent(10).filter(e => e.path.includes('owner-password'))
+        assert.deepEqual(entries.map(e => [e.method, e.path, e.status]), [['POST', '/api/hives/h1/console/owner-password', 200]])
+        assert.ok(!JSON.stringify(audit.Recent(50)).includes(FakeInHiveIdpAdmin.Password))
+    })
+
+    it('owner-password and console-install refuse a read-only operator', async () =>
+    {
+        assert.equal((await Send.Request(host, 'POST', '/api/hives/h1/console/owner-password', undefined, FakeOperator.ReadOnlyToken)).status, 403)
+        assert.equal((await Send.Request(host, 'POST', '/api/hives/h1/console-install', undefined, FakeOperator.ReadOnlyToken)).status, 403)
+        assert.equal((await Send.Request(host, 'DELETE', '/api/hives/h1/console', undefined, FakeOperator.ReadOnlyToken)).status, 403)
+        assert.equal(installer.StatusFor('h1'), undefined)
+    })
+
+    it('DELETE console refuses while installing', async () =>
+    {
+        hold.Engage()
+        assert.equal((await Send.Request(host, 'POST', '/api/hives/h1/console-install')).status, 202)
+        const refused = await Send.Request(host, 'DELETE', '/api/hives/h1/console')
+        assert.equal(refused.status, 409)
+        assert.ok(directory.GetHive('h1')?.console !== undefined)
+        await hold.Release()
+        const r = await Send.Request(host, 'DELETE', '/api/hives/h1/console')
+        assert.equal(r.status, 200)
+        assert.equal((JSON.parse(r.body) as HiveRecord).console, undefined)
+        assert.equal(directory.GetHive('h1')?.console, undefined)
+        assert.ok(fx.Kubectl.Deleted.includes(new K8sManifestBuilder().TenantConsoleRemovalManifest('t1', 'h1')))
+    })
+
+    it('DELETE console answers 409 with the redacted kubectl text and keeps the setting when the cluster refuses', async () =>
+    {
+        fx.Kubectl.DeleteManifestError = new KubectlError('the server is unreachable')
+        const r = await Send.Request(host, 'DELETE', '/api/hives/h1/console')
+        assert.equal(r.status, 409)
+        assert.match(JSON.parse(r.body).error as string, /the server is unreachable/)
+        assert.ok(directory.GetHive('h1')?.console !== undefined)
+    })
+
+    it('PUT console refuses while installing', async () =>
+    {
+        hold.Engage()
+        await Send.Request(host, 'POST', '/api/hives/h1/console-install')
+        const r = await Send.Request(host, 'PUT', '/api/hives/h1/console', { baseDomain: 'example.com', tls: { source: 'development' } })
+        assert.equal(r.status, 409)
+        assert.equal(directory.GetHive('h1')?.console?.baseDomain, 'localtest.me')
+        await hold.Release()
+    })
+
+    it('agent install refuses while the console installs', async () =>
+    {
+        hold.Engage()
+        await Send.Request(host, 'POST', '/api/hives/h1/console-install')
+        const r = await Send.Request(host, 'POST', '/api/hives/h1/agent-install')
+        assert.equal(r.status, 409)
+        assert.match(JSON.parse(r.body).error as string, /console install is running/)
+        assert.equal(agentInstaller.StatusFor('h1'), undefined)
+        assert.equal((await Send.Request(host, 'DELETE', '/api/hives/h1')).status, 409)
+        await hold.Release()
+    })
+
+    it('console install refuses while the agent installs', async () =>
+    {
+        assert.equal((await Send.Request(host, 'POST', '/api/hives/h1/agent-install')).status, 202)
+        const r = await Send.Request(host, 'POST', '/api/hives/h1/console-install')
+        assert.equal(r.status, 409)
+        assert.equal(installer.StatusFor('h1'), undefined)
+    })
+
+    it('hive delete removes the console before the agent and forgets its keys', async () =>
+    {
+        await fx.Fingerprints.Ensure('h1')
+        const r = await Send.Request(host, 'DELETE', '/api/hives/h1')
+        assert.equal(r.status, 200)
+        const deletes = fx.Kubectl.Calls.filter(c => c[0] === 'DeleteManifest').map(c => c[1])
+        assert.equal(deletes[0], new K8sManifestBuilder().TenantConsoleRemovalManifest('t1', 'h1'))
+        assert.equal(deletes[1], HiveBootstrapBundle.RemovalManifest('h1'))
+        assert.equal(fx.Events[fx.Events.length - 1], 'Forget')
+        assert.ok(fx.Events.indexOf('DeleteBySelector') < fx.Events.indexOf('Forget'))
+        assert.deepEqual(fx.IdpAdmin.Forgotten, ['t1'])
+        assert.equal(await fx.Fingerprints.Get('h1'), undefined)
+        assert.equal(directory.GetHive('h1'), undefined)
+    })
+
+    it('hive delete removes console-created environment namespaces by hive label and keeps unlabelled pragmatic-env-* namespaces', async () =>
+    {
+        fx.Kubectl.Namespaces.set('pragmatic-env-console-dev', { 'pragmatic/hive': 'h1' })
+        fx.Kubectl.Namespaces.set('pragmatic-env-hand-made', {})
+        fx.Kubectl.Namespaces.set('pragmatic-env-other-hive', { 'pragmatic/hive': 'h2' })
+        const r = await Send.Request(host, 'DELETE', '/api/hives/h1')
+        assert.equal(r.status, 200)
+        assert.deepEqual(fx.Kubectl.Calls.filter(c => c[0] === 'DeleteNamespacesBySelector'), [['DeleteNamespacesBySelector', 'pragmatic/hive=h1', 'pragmatic-env-']])
+        assert.deepEqual([...fx.Kubectl.Namespaces.keys()].sort(), ['pragmatic-env-hand-made', 'pragmatic-env-other-hive'])
+        assert.deepEqual((JSON.parse(r.body) as { failed: string[] }).failed, [])
+    })
+
+    it('hive delete names environment namespaces it could not delete in failed (not retained) and the audit note', async () =>
+    {
+        fx.Kubectl.Namespaces.set('pragmatic-env-stuck', { 'pragmatic/hive': 'h1' })
+        fx.Kubectl.FailNamespaceDelete.add('pragmatic-env-stuck')
+        const r = await Send.Request(host, 'DELETE', '/api/hives/h1')
+        assert.equal(r.status, 200)
+        const body = JSON.parse(r.body) as { retained: string[]; failed: string[]; notice?: string }
+        assert.deepEqual(body.failed, ['pragmatic-env-stuck'])
+        assert.ok(!body.retained.includes('pragmatic-env-stuck'))
+        assert.match(body.notice ?? '', /pragmatic-env-stuck/)
+        assert.match(audit.Recent(10).find(e => e.method === 'DELETE')?.note ?? '', /failed: pragmatic-env-stuck/)
+    })
+
+    it('a forced hive delete skips the console and its namespaces but still forgets its keys', async () =>
+    {
+        fx.Kubectl.Namespaces.set('pragmatic-env-console-dev', { 'pragmatic/hive': 'h1' })
+        const r = await Send.Request(host, 'DELETE', '/api/hives/h1?force=true')
+        assert.equal(r.status, 200)
+        assert.deepEqual(fx.Kubectl.Deleted, [])
+        assert.ok(fx.Kubectl.Namespaces.has('pragmatic-env-console-dev'))
+        assert.match((JSON.parse(r.body) as { notice?: string }).notice ?? '', /console was not removed/)
+        assert.deepEqual(fx.IdpAdmin.Forgotten, ['t1'])
+    })
+
+    it('a console removal failure aborts the hive delete fail-closed and offers delete anyway', async () =>
+    {
+        fx.Kubectl.DeleteManifestError = new KubectlError('connection refused')
+        const r = await Send.Request(host, 'DELETE', '/api/hives/h1')
+        assert.equal(r.status, 409)
+        assert.equal((JSON.parse(r.body) as { code: string }).code, 'agent-uninstall-failed')
+        assert.ok(directory.GetHive('h1') !== undefined)
+        assert.deepEqual(fx.IdpAdmin.Forgotten, [])
     })
 })

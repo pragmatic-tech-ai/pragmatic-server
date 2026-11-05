@@ -19,7 +19,6 @@ import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
 import { AgentUninstallError, HiveAgentUninstaller, HiveClusterDestroyError } from '../hive-agent-uninstaller.js'
 import { KindError } from '../kind.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
-import { TenantAdminBootstrap } from '../tenant-admin-bootstrap.js'
 import { HiveBootstrapBundle } from '../hive-bootstrap-bundle.js'
 import { KubectlError, type IKubectl } from '../kubectl.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
@@ -84,6 +83,13 @@ class FakeKubectl implements IKubectl
     {
         this.events.push('DeleteBySelector')
         this.Calls.push(['DeleteBySelector', namespace, resource, selector])
+    }
+
+    public async DeleteNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
+    {
+        this.events.push('DeleteNamespacesBySelector')
+        this.Calls.push(['DeleteNamespacesBySelector', selector, namePrefix])
+        return []
     }
 
     public async Apply(_m: string): Promise<void> { this.Calls.push(['Apply']) }
@@ -239,11 +245,12 @@ describe('ControlPlaneHost hive delete uninstalls the agent', () =>
     {
         const r = await Harness.Send(host, 'DELETE', '/api/hives/local1')
         assert.equal(r.status, 200)
-        assert.deepEqual(events, ['DeleteManifest', 'DeleteManifest', 'DeleteBySelector', 'DestroyHiveCluster', 'DeregisterHive', 'DeleteHive'])
+        assert.deepEqual(events, ['DeleteManifest', 'DeleteManifest', 'DeleteBySelector', 'DeleteNamespacesBySelector', 'DestroyHiveCluster', 'DeregisterHive', 'DeleteHive'])
         assert.deepEqual(orchestrators.Kubectl.Calls, [
             ['DeleteManifest', HiveBootstrapBundle.RemovalManifest('local1')],
-            ['DeleteManifest', TenantAdminBootstrap.CredentialRemovalManifest('t-local1')],
+            ['DeleteManifest', new K8sManifestBuilder().TenantConsoleRemovalManifest('t-local1', 'local1')],
             ['DeleteBySelector', 'pragmatic-system', 'deployment,service,serviceaccount,secret', 'pragmatic/hive=local1'],
+            ['DeleteNamespacesBySelector', 'pragmatic/hive=local1', 'pragmatic-env-'],
         ])
         assert.equal(directory.GetHive('local1'), undefined)
         await assert.rejects(deployments.VerifyAgentToken('local1', tokens.get('local1')!), HiveNotRegisteredError)
@@ -375,9 +382,9 @@ describe('ControlPlaneHost hive delete uninstalls the agent', () =>
         await directory.CreateHive({ id: 'owner1', tenantId: 't-local1', displayName: 'owner', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
         orchestrators.Kubectl.Objects.set('deployment/' + K8sManifestBuilder.TenantAdminNameOf('t-local1'), JSON.stringify({ metadata: { name: 'x', labels: { 'pragmatic/hive': 'owner1' } } }))
         assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/local1')).status, 200)
-        assert.ok(!orchestrators.Kubectl.Calls.some(c => c[1] === TenantAdminBootstrap.CredentialRemovalManifest('t-local1')))
+        assert.ok(!orchestrators.Kubectl.Calls.some(c => c[1] === new K8sManifestBuilder().TenantConsoleRemovalManifest('t-local1', 'local1')))
         assert.equal((await Harness.Send(host, 'DELETE', '/api/hives/owner1')).status, 200)
-        assert.ok(orchestrators.Kubectl.Calls.some(c => c[1] === TenantAdminBootstrap.CredentialRemovalManifest('t-local1')))
+        assert.ok(orchestrators.Kubectl.Calls.some(c => c[1] === new K8sManifestBuilder().TenantConsoleRemovalManifest('t-local1', 'owner1')))
     })
 
     it('a non-Local hive: no cluster is touched, the token is deregistered and the record deleted', async () =>
