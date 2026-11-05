@@ -1,6 +1,7 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable, type IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { ApiError } from '../../api-client.js'
+import { PortalDates } from '../../portal-dates.js'
 import { ConsoleInstallState, ConsoleInstallStep, IngressTlsSource, type ConsoleInstallStatusDto, type HiveConsoleSpecDto, type HiveDto } from '../../portal-types.js'
 import type { IClipboardSource } from '../../shell/one-time-secret-page-view-model.js'
 import type { OptionViewModel } from '../../shell/option-view-model.js'
@@ -11,7 +12,8 @@ import { HiveOptions } from './hive-options.js'
 
 // Where the console install stands, as the panel shows it. Idle: none has run
 // (or the control plane forgot it on a restart); Starting: the start request
-// is in flight; Deployed: the console runs, its first report is still to come.
+// is in flight; Deployed: the console runs, its first report is still to come;
+// Reported: the running console has reported to the control plane.
 export enum ConsoleInstallPhase
 {
     Idle,
@@ -19,12 +21,14 @@ export enum ConsoleInstallPhase
     Installing,
     Deployed,
     Failed,
+    Reported,
 }
 
 // The tenant console of one hive: where it is served (base domain, optional
 // host, TLS source) and Save / Remove for those settings; Install console
 // (and Retry), which the control plane runs itself while the panel polls its
-// status every 2 seconds; and, once deployed, a fresh Owner password for the
+// status every 2 seconds, then, once deployed, every 15 seconds until the
+// console reports; and, once deployed, a fresh Owner password for the
 // console's identity provider, shown once (with Copy) and cleared when the
 // page is left after it was shown.
 // Polling runs only while the owning page is showing: the page calls Resume
@@ -32,6 +36,8 @@ export enum ConsoleInstallPhase
 export class HiveConsoleViewModel extends Observable
 {
     public static readonly PollIntervalMs = 2000
+    // How often a deployed console's status is read until the console reports.
+    public static readonly ReportPollIntervalMs = 15000
 
     private static readonly StepLabels: ReadonlyArray<readonly [ConsoleInstallStep, string]> = [
         [ConsoleInstallStep.CheckingAgent, 'Check the hive agent'],
@@ -45,6 +51,10 @@ export class HiveConsoleViewModel extends Observable
     private static readonly InstallingText = 'Installing the console. On a fresh cluster the first start can take several minutes while its images load.'
     private static readonly DeployedText = 'Deployed. Waiting for the console to report.'
     private static readonly FailedText = 'The console install stopped.'
+    private static readonly ReportedPrefix = 'Reported by the console at '
+    private static readonly ReportedSuffix = '.'
+    private static readonly StalePrefix = 'Last reported at '
+    private static readonly StaleSuffix = ', more than a day ago.'
     private static readonly NoText = ''
     private static readonly HostPrefix = 'console-'
     private static readonly HostSeparator = '.'
@@ -63,7 +73,7 @@ export class HiveConsoleViewModel extends Observable
     private static readonly BoundProperties: readonly string[] = [
         'BaseDomain', 'Host', 'HostPlaceholder', 'SelectedTls', 'SecretName', 'ClusterIssuer', 'IngressNamespace',
         'IsExistingSecret', 'IsCertManager', 'IsDevelopment', 'IsConfigured', 'IsNotConfigured',
-        'Phase', 'IsIdle', 'IsInstalling', 'IsDeployed', 'IsFailed', 'HasProgress', 'StatusText',
+        'Phase', 'IsIdle', 'IsInstalling', 'IsDeployed', 'IsReported', 'IsFailed', 'HasProgress', 'StatusText',
         'ConsoleUrl', 'HasConsoleUrl', 'DevTrustCommand', 'HasDevTrustCommand', 'TrustCopyStatus',
         'OwnerEmail', HiveConsoleViewModel.OwnerPasswordProperty, 'HasOwnerPassword', 'PasswordCopyStatus',
         'ErrorText', 'IsBusy', 'IsConfirmingRemove', 'RemovalNote',
@@ -287,9 +297,16 @@ export class HiveConsoleViewModel extends Observable
         return this.phase === ConsoleInstallPhase.Starting || this.phase === ConsoleInstallPhase.Installing
     }
 
+    // True once the console runs, whether or not it has reported yet (Reinstall stays offered).
     public get IsDeployed(): boolean
     {
-        return this.phase === ConsoleInstallPhase.Deployed
+        return this.phase === ConsoleInstallPhase.Deployed || this.phase === ConsoleInstallPhase.Reported
+    }
+
+    // True once the running console has reported to the control plane.
+    public get IsReported(): boolean
+    {
+        return this.phase === ConsoleInstallPhase.Reported
     }
 
     public get IsFailed(): boolean
@@ -314,11 +331,21 @@ export class HiveConsoleViewModel extends Observable
                 return C.InstallingText
             case ConsoleInstallPhase.Deployed:
                 return C.DeployedText
+            case ConsoleInstallPhase.Reported:
+                return this.ReportedText()
             case ConsoleInstallPhase.Failed:
                 return C.FailedText
             default:
                 return C.NoText
         }
+    }
+
+    // When the console last reported, and whether that was more than a day ago.
+    private ReportedText(): string
+    {
+        const C = HiveConsoleViewModel
+        const at = PortalDates.DateTimeLabel(this.lastStatus?.reportedAt)
+        return this.lastStatus?.stale === true ? C.StalePrefix + at + C.StaleSuffix : C.ReportedPrefix + at + C.ReportedSuffix
     }
 
     // Where the console is served, once the install says; '' before.
@@ -761,11 +788,8 @@ export class HiveConsoleViewModel extends Observable
             {
                 return
             }
-            // A transient read failure: keep following a running install.
-            if (this.IsInstalling)
-            {
-                this.Schedule(generation)
-            }
+            // A transient read failure: keep following a running install, or waiting for the console's report.
+            this.ScheduleFor(generation, this.phase)
             return
         }
         if (generation !== this.generation)
@@ -811,6 +835,8 @@ export class HiveConsoleViewModel extends Observable
             this.SetPhase(before.phase, before.status)
             this.errorText = HiveConsoleViewModel.MessageOf(e)
         })
+        // The start cancelled the wait for a deployed console's report; it goes on.
+        this.ScheduleFor(generation, before.phase)
     }
 
     private Follow(generation: number, status: ConsoleInstallStatusDto): void
@@ -825,16 +851,26 @@ export class HiveConsoleViewModel extends Observable
             this.SetPhase(phase, status)
             this.errorText = status.error ?? HiveConsoleViewModel.NoText
         })
-        if (phase === ConsoleInstallPhase.Installing)
+        this.ScheduleFor(generation, phase)
+    }
+
+    // The next read for a phase: soon while installing, slower while a deployed console has yet to report, none otherwise.
+    private ScheduleFor(generation: number, phase: ConsoleInstallPhase): void
+    {
+        if (phase === ConsoleInstallPhase.Starting || phase === ConsoleInstallPhase.Installing)
         {
-            this.Schedule(generation)
+            this.Schedule(generation, this.intervalMs)
+        }
+        else if (phase === ConsoleInstallPhase.Deployed)
+        {
+            this.Schedule(generation, HiveConsoleViewModel.ReportPollIntervalMs)
         }
     }
 
-    private Schedule(generation: number): void
+    private Schedule(generation: number, delayMs: number): void
     {
         this.CancelPending()
-        this.pending = this.scheduler.Schedule(this.intervalMs, () =>
+        this.pending = this.scheduler.Schedule(delayMs, () =>
         {
             this.pending = undefined
             if (generation === this.generation)
@@ -872,6 +908,8 @@ export class HiveConsoleViewModel extends Observable
         {
             case ConsoleInstallState.Deployed:
                 return ConsoleInstallPhase.Deployed
+            case ConsoleInstallState.Reported:
+                return ConsoleInstallPhase.Reported
             case ConsoleInstallState.Failed:
                 return ConsoleInstallPhase.Failed
             default:
@@ -895,10 +933,12 @@ export class HiveConsoleViewModel extends Observable
     }
 
     // Steps before the status's step are done; its step is running, failed or
-    // (once deployed) done; later steps are pending.
+    // (once deployed) done; later steps are pending. Once the console reported, every step is done.
     private SetSteps(status: ConsoleInstallStatusDto): void
     {
-        const at = Math.max(0, this.steps.ToArray().findIndex(s => s.Step === status.step))
+        const at = status.state === ConsoleInstallState.Reported
+            ? this.steps.Count - 1
+            : Math.max(0, this.steps.ToArray().findIndex(s => s.Step === status.step))
         for (let i = 0; i < this.steps.Count; i++)
         {
             const row = this.steps.Get(i)
@@ -926,6 +966,7 @@ export class HiveConsoleViewModel extends Observable
         switch (state)
         {
             case ConsoleInstallState.Deployed:
+            case ConsoleInstallState.Reported:
                 return AgentInstallStepState.Done
             case ConsoleInstallState.Failed:
                 return AgentInstallStepState.Failed

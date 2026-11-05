@@ -191,12 +191,13 @@ export type AgentInstallStatusDto =
 }
 
 // Where an in-hive console install stands; values match the server wire strings. Deployed: the console is running,
-// its first report is still to come.
+// its first report is still to come. Reported: the running console has reported to the control plane.
 export enum ConsoleInstallState
 {
     Installing = 'installing',
     Deployed = 'deployed',
     Failed = 'failed',
+    Reported = 'reported',
 }
 
 // The console install's steps, in order; values match the server wire strings.
@@ -211,7 +212,8 @@ export enum ConsoleInstallStep
 }
 
 // A console install's status (the console-install route's reply). Never carries a secret; devCaFile is the
-// development CA certificate's path on the control plane's machine (development TLS only).
+// development CA certificate's path on the control plane's machine (development TLS only). reportedAt and stale
+// (Reported only): when the console last reported, and whether that was more than a day ago.
 export type ConsoleInstallStatusDto =
 {
     state: ConsoleInstallState
@@ -221,6 +223,33 @@ export type ConsoleInstallStatusDto =
     error?: string
     consoleUrl?: string
     devCaFile?: string
+    reportedAt?: string
+    stale?: boolean
+}
+
+// Where a tenant's email domains come from: its platform record (control-plane tenant) or its in-hive console's
+// report; values match the server wire strings.
+export enum EmailDomainSource
+{
+    Tenant = 'tenant',
+    Console = 'console',
+}
+
+// One domain an in-hive console reports: whether an operator approved it, and which other tenants claim it too.
+export type EmailDomainApprovalDto = { domain: string; approved: boolean; sharedWith: string[] }
+
+// A tenant's email domains as the operator sees them (the email-domains route's reply). editable: false for an
+// in-hive tenant, whose Owner sets them in its console. sharedWith: sorted ids of the other tenants claiming any of
+// these domains. approvals: in-hive tenants only, one entry per reported domain, in domains order.
+export type TenantEmailDomainsDto =
+{
+    tenantId: string
+    domains: string[]
+    source: EmailDomainSource
+    editable: boolean
+    reportedAt?: string
+    sharedWith: string[]
+    approvals?: EmailDomainApprovalDto[]
 }
 
 // A fresh Owner password in the hive's in-hive identity provider, shown once.

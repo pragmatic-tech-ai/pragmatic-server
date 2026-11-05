@@ -1,4 +1,4 @@
-import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto, HiveDeleteOutcomeDto, OwnerPasswordResetDto, PasswordChangedDto, HiveConsoleSpecDto, ConsoleInstallStatusDto, ConsoleRemovalDto, InHiveOwnerPasswordDto } from './portal-types.js'
+import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto, HiveDeleteOutcomeDto, OwnerPasswordResetDto, PasswordChangedDto, HiveConsoleSpecDto, ConsoleInstallStatusDto, ConsoleRemovalDto, InHiveOwnerPasswordDto, TenantEmailDomainsDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -80,6 +80,11 @@ export class ControlPlaneClient
     private static readonly ConsoleInstallSegment = 'console-install'
     private static readonly ForceQuery = '?force=true'
     private static readonly OwnerPasswordSegment = 'owner-password'
+    private static readonly EmailDomainsSegment = 'email-domains'
+    private static readonly ApproveSegment = 'approve'
+    private static readonly RevokeSegment = 'revoke'
+    private static readonly DomainsKey = 'domains'
+    private static readonly DomainKey = 'domain'
     private static readonly NoQuery = ''
     private static readonly LimitParam = 'limit'
     private static readonly PoliciesRoute = '/api/policies'
@@ -152,6 +157,43 @@ export class ControlPlaneClient
     {
         const route = this.ItemRoute(ControlPlaneClient.TenantsRoute, tenantId) + ControlPlaneClient.PathSeparator + ControlPlaneClient.OwnerPasswordSegment
         return await this.Send<OwnerPasswordResetDto>(route, { method: ControlPlaneClient.MethodPost })
+    }
+
+    // The tenant's email domains: where they come from, whether they are editable here, who else claims them and, for an
+    // in-hive tenant, each reported domain's approval. A 404 for an unknown tenant (or a control plane without the route).
+    public async GetTenantEmailDomains(tenantId: string): Promise<TenantEmailDomainsDto>
+    {
+        return await this.Send<TenantEmailDomainsDto>(this.TenantEmailDomainsRoute(tenantId), undefined)
+    }
+
+    // Replaces a control-plane tenant's email domains; the reply is the fresh report. A refused domain is a 400 with a
+    // plain sentence; an in-hive tenant (its Owner sets them in its console) is a 409.
+    public async SetTenantEmailDomains(tenantId: string, domains: readonly string[]): Promise<TenantEmailDomainsDto>
+    {
+        const body = JSON.stringify({ [ControlPlaneClient.DomainsKey]: domains })
+        return await this.Send<TenantEmailDomainsDto>(this.TenantEmailDomainsRoute(tenantId), { method: ControlPlaneClient.MethodPut, body })
+    }
+
+    // Approves one domain an in-hive tenant's console reports, so discovery matches it; the reply is the fresh report.
+    public async ApproveTenantEmailDomain(tenantId: string, domain: string): Promise<TenantEmailDomainsDto>
+    {
+        return await this.Send<TenantEmailDomainsDto>(this.TenantEmailDomainActionRoute(tenantId, ControlPlaneClient.ApproveSegment), this.PostBody({ [ControlPlaneClient.DomainKey]: domain }))
+    }
+
+    // Withdraws one domain's approval; the reply is the fresh report.
+    public async RevokeTenantEmailDomain(tenantId: string, domain: string): Promise<TenantEmailDomainsDto>
+    {
+        return await this.Send<TenantEmailDomainsDto>(this.TenantEmailDomainActionRoute(tenantId, ControlPlaneClient.RevokeSegment), this.PostBody({ [ControlPlaneClient.DomainKey]: domain }))
+    }
+
+    private TenantEmailDomainsRoute(tenantId: string): string
+    {
+        return this.ItemRoute(ControlPlaneClient.TenantsRoute, tenantId) + ControlPlaneClient.PathSeparator + ControlPlaneClient.EmailDomainsSegment
+    }
+
+    private TenantEmailDomainActionRoute(tenantId: string, action: string): string
+    {
+        return this.TenantEmailDomainsRoute(tenantId) + ControlPlaneClient.PathSeparator + action
     }
 
     // No server-side parent filter exists; filters the full list by tenantId when given.

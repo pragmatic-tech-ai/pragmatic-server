@@ -207,9 +207,77 @@ describe('Hive tenant console (panel)', () =>
         assert.equal(panel.StatusText, 'Deployed. Waiting for the console to report.')
         assert.equal(panel.ConsoleUrl, 'https://console-acme.localtest.me')
         assert.ok(panel.Steps.ToArray().every(s => s.IsDone))
-        assert.equal(fx.Polls.Pending, 0)
+        // Deployed: the panel keeps waiting for the console's report, at the slower interval.
+        assert.equal(fx.Polls.Pending, 1)
+        assert.deepEqual(fx.Polls.Delays, [2000, 2000, 15000])
         assert.equal(panel.SetOwnerPasswordCommand.CanExecute(), true)
         assert.equal(panel.InstallCommand.CanExecute(), true)
+    })
+
+    it('after deployed it keeps polling every 15 seconds until reported', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        await panel.Install()
+        fx.Api.ConsoleInstallReplies = [FakeControlPlane.ConsoleStatus(ConsoleInstallState.Deployed, ConsoleInstallStep.SeedingOwner, { consoleUrl: 'https://console-acme.localtest.me' })]
+        await fx.Poll()
+        assert.equal(panel.IsDeployed, true)
+        assert.equal(panel.IsReported, false)
+        await fx.Poll()
+        assert.equal(panel.IsReported, false)
+        assert.equal(fx.Polls.Pending, 1)
+        fx.Api.ConsoleInstallReplies = [FakeControlPlane.ConsoleStatus(ConsoleInstallState.Reported, ConsoleInstallStep.SeedingOwner, {
+            consoleUrl: 'https://console-acme.localtest.me', reportedAt: '2026-11-04T10:07:00.000Z', stale: false,
+        })]
+        await fx.Poll()
+        assert.equal(HiveConsoleViewModel.ReportPollIntervalMs, 15000)
+        assert.deepEqual(fx.Polls.Delays, [2000, 15000, 15000])
+        assert.equal(fx.Polls.Pending, 0)
+        assert.equal(panel.IsReported, true)
+        assert.equal(panel.IsDeployed, true)
+        assert.equal(panel.IsInstalling, false)
+        assert.ok(panel.StatusText.startsWith('Reported by the console at'))
+        assert.equal(panel.StatusText, 'Reported by the console at 2026-11-04 10:07.')
+        assert.equal(panel.ConsoleUrl, 'https://console-acme.localtest.me')
+        assert.ok(panel.Steps.ToArray().every(s => s.IsDone))
+        // Reinstall stays offered once the console reported.
+        assert.equal(panel.InstallCommand.CanExecute(), true)
+        assert.equal(panel.SetOwnerPasswordCommand.CanExecute(), true)
+    })
+
+    it('a transient read failure while deployed keeps waiting for the report', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        fx.Api.ConsoleInstallReplies = [FakeControlPlane.ConsoleStatus(ConsoleInstallState.Deployed, ConsoleInstallStep.SeedingOwner)]
+        await panel.Resume()
+        assert.deepEqual(fx.Polls.Delays, [15000])
+        fx.Api.GetConsoleInstall = async () => { throw new ApiError(502, 'Bad gateway') }
+        await fx.Poll()
+        assert.equal(panel.IsDeployed, true)
+        assert.deepEqual(fx.Polls.Delays, [15000, 15000])
+    })
+
+    it('a stale report says so', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        fx.Api.ConsoleInstallReplies = [FakeControlPlane.ConsoleStatus(ConsoleInstallState.Reported, ConsoleInstallStep.SeedingOwner, {
+            reportedAt: '2026-11-02T08:15:00.000Z', stale: true,
+        })]
+        await panel.Resume()
+        assert.equal(panel.IsReported, true)
+        assert.equal(panel.StatusText, 'Last reported at 2026-11-02 08:15, more than a day ago.')
+        assert.equal(fx.Polls.Pending, 0)
+    })
+
+    it('a reported console whose step is not the last still shows every step done', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        fx.Api.ConsoleInstallReplies = [FakeControlPlane.ConsoleStatus(ConsoleInstallState.Reported, ConsoleInstallStep.WaitingForRollout, { reportedAt: '2026-11-04T10:07:00.000Z' })]
+        await panel.Resume()
+        assert.ok(panel.Steps.ToArray().every(s => s.IsDone))
     })
 
     it('the dev trust command quotes the CA path', async () =>
@@ -349,6 +417,9 @@ describe('Hive tenant console (panel)', () =>
         assert.equal(panel.ConsoleUrl, 'https://console-acme.localtest.me')
         assert.ok(panel.Steps.ToArray().every(s => s.IsDone))
         assert.equal(panel.ErrorText, 'Another operation is running for this hive. Wait for it to finish, then try again.')
+        // The wait for the console's report goes on.
+        assert.equal(fx.Polls.Pending, 1)
+        assert.equal(fx.Polls.Delays[fx.Polls.Delays.length - 1], 15000)
     })
 
     it('a 409 from Save (a console install runs) shows its sentence', async () =>
@@ -507,6 +578,17 @@ describe('Hive tenant console (hive page)', () =>
         assert.equal(detail.Console.IsExistingSecret, true)
         assert.equal(detail.Console.IsInstalling, true)
         assert.ok(fx.Polls.Pending >= 1)
+    })
+
+    it('opening the page of an already reported console schedules no poll', async () =>
+    {
+        const fx = new ConsoleFixture()
+        fx.Api.Hives[0]!.console = { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } }
+        fx.Api.ConsoleInstallReplies = [FakeControlPlane.ConsoleStatus(ConsoleInstallState.Reported, ConsoleInstallStep.SeedingOwner, { reportedAt: '2026-11-04T10:07:00.000Z' })]
+        const detail = await fx.Detail()
+        assert.equal(detail.Console.IsReported, true)
+        assert.equal(fx.Polls.Pending, 0)
+        assert.deepEqual(fx.Polls.Delays, [])
     })
 
     it('the Owner password is shown once and cleared when the page is left', async () =>

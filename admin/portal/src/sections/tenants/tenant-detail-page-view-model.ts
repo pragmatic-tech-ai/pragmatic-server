@@ -6,11 +6,13 @@ import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
 import { TenantDetailViewModel, type TenantBinding } from '../../tenant-detail-view-model.js'
 import { FleetHiveRowViewModel } from '../fleet/fleet-page-view-model.js'
+import { TenantEmailDomainsViewModel } from './tenant-email-domains-view-model.js'
 import type { TenantsSectionService } from './tenants-section-service.js'
 
-// A tenant's detail: its client, the hive bound to it (one tenant, one hive)
-// and the environments that hive observes, read-only. Delete is irreversible,
-// so it asks for the tenant id to be typed.
+// A tenant's detail: its client, the hive bound to it (one tenant, one hive),
+// the environments that hive observes, read-only, and its email domains (loaded
+// with the tenant; a failed domain read stays in that block and never fails the
+// page). Delete is irreversible, so it asks for the tenant id to be typed.
 export class TenantDetailPageViewModel extends PortalPageViewModel
 {
     private static readonly NotFoundTemplate = 'Tenant {id} was not found.'
@@ -38,6 +40,7 @@ export class TenantDetailPageViewModel extends PortalPageViewModel
     private readonly deleteCommand: RelayCommand
     private readonly resetOwnerPasswordCommand: RelayCommand
     private readonly openHiveCommand: RelayCommand
+    private readonly emailDomains: TenantEmailDomainsViewModel
 
     public constructor(session: PortalSessionService, private readonly section: TenantsSectionService, public readonly Id: string)
     {
@@ -45,6 +48,13 @@ export class TenantDetailPageViewModel extends PortalPageViewModel
         this.deleteCommand = this.MutatingCommand(() => this.Delete())
         this.resetOwnerPasswordCommand = this.MutatingCommand(() => this.ResetOwnerPassword())
         this.openHiveCommand = new RelayCommand(() => this.OpenHive(), () => this.hiveId !== undefined)
+        this.emailDomains = new TenantEmailDomainsViewModel(session, Id)
+    }
+
+    // The Email domains block: edited here for a control-plane tenant, reported (with approvals) for an in-hive one.
+    public get EmailDomains(): TenantEmailDomainsViewModel
+    {
+        return this.emailDomains
     }
 
     public get DisplayName(): string
@@ -119,7 +129,8 @@ export class TenantDetailPageViewModel extends PortalPageViewModel
     {
         const generation = this.LoadGeneration
         const api = this.Session.Client
-        const [tenants, clients, fleet] = await Promise.all([api.ListTenants(), api.ListClients(), api.ListFleet()])
+        // The email-domain read never throws (its failures stay in its block), so it cannot fail the page.
+        const [tenants, clients, fleet] = await Promise.all([api.ListTenants(), api.ListClients(), api.ListFleet(), this.emailDomains.Load()])
         if (generation !== this.LoadGeneration)
         {
             return false

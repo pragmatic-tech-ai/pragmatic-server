@@ -7,7 +7,8 @@
 // "I've saved it" and continues. NewTenantDialogViewModel renders inside the
 // shell's DialogService surface with its own Cancel / Create buttons. The
 // tenant detail's observed environments render through the shared
-// ObservedEnvironmentsViewModel template (shell resources), read-only.
+// ObservedEnvironmentsViewModel template (shell resources), read-only; its
+// email domains through the TenantEmailDomainsViewModel template here.
 //
 // Table rows use keyed templates set as the ListBox's ItemTemplate: a ListBox
 // resolves implicit-by-type templates only for MuralBase items, and the row
@@ -19,6 +20,8 @@ import TenantRowViewModel from "./tenants-page-view-model.js"
 import TenantDetailPageViewModel from "./tenant-detail-page-view-model.js"
 import OwnerPasswordRevealPageViewModel from "./owner-password-reveal-page-view-model.js"
 import NewTenantDialogViewModel from "./new-tenant-dialog-view-model.js"
+import TenantEmailDomainsViewModel from "./tenant-email-domains-view-model.js"
+import EmailDomainApprovalRowViewModel from "./tenant-email-domains-view-model.js"
 
 resources TenantsResources {
     DataTemplate [ DataType = TenantsPageViewModel ] {
@@ -172,6 +175,82 @@ resources TenantsResources {
 
                     // The environments the hive observes: read-only.
                     ContentControl [ Content = $Observed ]
+
+                    // The tenant's email domains (TenantEmailDomainsViewModel below).
+                    ContentControl [ Content = $EmailDomains, Margin = (0,16,0,0) ]
+                }
+            }
+        }
+    }
+
+    // The tenant detail's Email domains block. A control-plane tenant edits one
+    // comma-separated list (Save). An in-hive tenant shows what its console
+    // reports, read-only, one row per domain with Approved / Pending and, for
+    // operators who may mutate, Approve / Revoke. A failed read shows only here.
+    DataTemplate [ DataType = TenantEmailDomainsViewModel ] {
+        StackPanel [ Orientation = Vertical ] {
+            TextBlock [ Text = "Email domains", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,4) ]
+            TextBlock [ Text = "People whose email address is on one of these domains are sent to this tenant's console when they sign in from Plexus.",
+                        Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,6) ]
+            Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10) ] {
+                StackPanel [ Orientation = Vertical ] {
+                    TextBlock [ Text = $NoticeText, Foreground = @Fg2, TextWrapping = Wrap,
+                                Visibility = $NoticeText << ToVisibility ]
+                    TextBlock [ Text = $SourceText, Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,8),
+                                Visibility = $SourceText << ToVisibility ]
+
+                    // Control-plane tenant, operator who may mutate: the editable list.
+                    StackPanel [ Orientation = Vertical, Visibility = $IsEditable << ToVisibility ] {
+                        TextBox [ UsesNativeInput = true, Text = $DomainsText, Placeholder = "e.g. acme.com, acme.co.uk", Margin = (0,0,0,4) ]
+                        TextBlock [ Text = "Separate domains with commas.", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,8) ]
+                        StackPanel [ Orientation = Horizontal ] {
+                            Button [ Variant = Primary, Command = $SaveCommand, Margin = (0,0,8,0) ] {
+                                TextBlock [ Text = "Save" ]
+                            }
+                            TextBlock [ Text = $SavedText, Style = @UiCaption, Foreground = @Fg2, VerticalAlignment = Center,
+                                        Visibility = $SavedText << ToVisibility ]
+                        }
+                    }
+
+                    // Read-only: the list as one line.
+                    TextBlock [ Text = $DomainsLabel, Foreground = @Fg0, TextWrapping = Wrap,
+                                Visibility = $HasDomainsLabel << ToVisibility ]
+
+                    // In-hive tenant: each reported domain and its approval.
+                    StackPanel [ Orientation = Vertical, Visibility = $HasApprovals << ToVisibility ] {
+                        TextBlock [ Text = "A reported domain sends people to this tenant only once it is approved.",
+                                    Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,6) ]
+                        ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Approvals, ItemTemplate = @EmailDomainApprovalRowTemplate ]
+                    }
+
+                    TextBlock [ Text = $SharedWithText, Style = @UiCaption, Foreground = @StateWarningInk, TextWrapping = Wrap, Margin = (0,8,0,0),
+                                Visibility = $HasSharedWithLine << ToVisibility ]
+                    TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,8,0,0),
+                                Visibility = $ErrorText << ToVisibility ]
+                }
+            }
+        }
+    }
+
+    // One reported domain of an in-hive tenant: its approval and, for operators
+    // who may mutate, Approve or Revoke.
+    DataTemplate x:key="EmailDomainApprovalRowTemplate" [ DataType = EmailDomainApprovalRowViewModel ] {
+        Grid [ Margin = (4,2,4,2) ] {
+            ColumnDefinitions {
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Auto ]
+            }
+            TextBlock [ Grid.Column = 0, Text = $Domain, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
+            TextBlock [ Grid.Column = 1, Text = $StatusLabel, Foreground = @Fg1, VerticalAlignment = Center ]
+            TextBlock [ Grid.Column = 2, Text = $SharedWithText, Style = @UiCaption, Foreground = @StateWarningInk, TextWrapping = Wrap, VerticalAlignment = Center ]
+            StackPanel [ Grid.Column = 3, Orientation = Horizontal, VerticalAlignment = Center ] {
+                Button [ Variant = Primary, Command = $ApproveCommand, Visibility = $CanApprove << ToVisibility ] {
+                    TextBlock [ Text = "Approve" ]
+                }
+                Button [ Variant = Secondary, Command = $RevokeCommand, Visibility = $CanRevoke << ToVisibility ] {
+                    TextBlock [ Text = "Revoke" ]
                 }
             }
         }

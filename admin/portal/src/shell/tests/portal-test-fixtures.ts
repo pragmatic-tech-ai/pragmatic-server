@@ -7,7 +7,7 @@ import { DialogService, type DialogOptions } from '@pragmatic-tech-ai/mural/fram
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import { ApiError, type ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
-import { AgentInstallState, AgentInstallStep, ConsoleInstallState, ConsoleInstallStep, type AgentInstallStatusDto, type ConsoleInstallStatusDto } from '../../portal-types.js'
+import { AgentInstallState, AgentInstallStep, ConsoleInstallState, ConsoleInstallStep, EmailDomainSource, type AgentInstallStatusDto, type ConsoleInstallStatusDto, type TenantEmailDomainsDto } from '../../portal-types.js'
 import type { ConsoleRemovalDto, HiveConsoleSpecDto, HiveDeleteOutcomeDto, InHiveOwnerPasswordDto, OwnerPasswordResetDto, PasswordChangedDto } from '../../portal-types.js'
 import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveBootstrapDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, ProvisionInputDto, ProvisionResultDto, SelectionDto, TenantDto } from '../../portal-types.js'
 import { DownloadService } from '../download-service.js'
@@ -289,6 +289,15 @@ export class FakeControlPlane
     // When set, the reset reports that the Owner's sessions could not be ended, with this warning.
     public OwnerResetWarning: string | undefined
     public readonly OwnerResets: string[] = []
+    // Tenant email domains: the report per tenant (none: an editable control-plane tenant with no domains), the PUTs
+    // as [tenantId, domains], the approvals and revokes as 'Approve|Revoke tenantId domain', and, while set,
+    // EmailDomainsReadFailure fails every read and EmailDomainsFailure every write.
+    public readonly EmailDomainReports = new Map<string, TenantEmailDomainsDto>()
+    public readonly EmailDomainSaves: Array<[string, string[]]> = []
+    public readonly EmailDomainActions: string[] = []
+    public EmailDomainsReadFailure: Error | undefined
+    public EmailDomainsFailure: Error | undefined
+    public EmailDomainReads = 0
     // What a hive delete replies.
     public DeleteOutcome: HiveDeleteOutcomeDto = { ok: true, retained: [] }
     public readonly Published: Array<[string, string, string | undefined, string | undefined]> = []
@@ -713,6 +722,68 @@ export class FakeControlPlane
             reset.warning = this.OwnerResetWarning
         }
         return reset
+    }
+
+    public async GetTenantEmailDomains(tenantId: string): Promise<TenantEmailDomainsDto>
+    {
+        this.EmailDomainReads++
+        if (this.EmailDomainsReadFailure !== undefined)
+        {
+            throw this.EmailDomainsReadFailure
+        }
+        return FakeControlPlane.CopyReport(this.EmailDomainReport(tenantId))
+    }
+
+    public async SetTenantEmailDomains(tenantId: string, domains: readonly string[]): Promise<TenantEmailDomainsDto>
+    {
+        this.ThrowIfEmailDomainsFailing()
+        this.EmailDomainSaves.push([tenantId, [...domains]])
+        const report = { ...this.EmailDomainReport(tenantId), domains: [...domains] }
+        this.EmailDomainReports.set(tenantId, report)
+        return FakeControlPlane.CopyReport(report)
+    }
+
+    public async ApproveTenantEmailDomain(tenantId: string, domain: string): Promise<TenantEmailDomainsDto>
+    {
+        return this.SetApproval(tenantId, domain, true)
+    }
+
+    public async RevokeTenantEmailDomain(tenantId: string, domain: string): Promise<TenantEmailDomainsDto>
+    {
+        return this.SetApproval(tenantId, domain, false)
+    }
+
+    private SetApproval(tenantId: string, domain: string, approved: boolean): TenantEmailDomainsDto
+    {
+        this.ThrowIfEmailDomainsFailing()
+        this.EmailDomainActions.push((approved ? 'Approve ' : 'Revoke ') + tenantId + ' ' + domain)
+        const report = this.EmailDomainReport(tenantId)
+        const next = { ...report, approvals: (report.approvals ?? []).map(a => a.domain === domain ? { ...a, approved } : a) }
+        this.EmailDomainReports.set(tenantId, next)
+        return FakeControlPlane.CopyReport(next)
+    }
+
+    private EmailDomainReport(tenantId: string): TenantEmailDomainsDto
+    {
+        return this.EmailDomainReports.get(tenantId) ?? { tenantId, domains: [], source: EmailDomainSource.Tenant, editable: true, sharedWith: [] }
+    }
+
+    private static CopyReport(report: TenantEmailDomainsDto): TenantEmailDomainsDto
+    {
+        const copy: TenantEmailDomainsDto = { ...report, domains: [...report.domains], sharedWith: [...report.sharedWith] }
+        if (report.approvals !== undefined)
+        {
+            copy.approvals = report.approvals.map(a => ({ ...a, sharedWith: [...a.sharedWith] }))
+        }
+        return copy
+    }
+
+    private ThrowIfEmailDomainsFailing(): void
+    {
+        if (this.EmailDomainsFailure !== undefined)
+        {
+            throw this.EmailDomainsFailure
+        }
     }
 
     public async DeleteHive(id: string, force: boolean = false): Promise<HiveDeleteOutcomeDto>
