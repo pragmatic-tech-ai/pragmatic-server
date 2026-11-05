@@ -84,7 +84,8 @@ export class ConsoleAdvertRegistry extends JsonRecordStore<ConsoleAdvertRecord> 
     /** True when more than StaleAfterMs has passed since the advert was last reported. */
     public static IsStale(record: Readonly<ConsoleAdvertRecord>, now: Date): boolean
     {
-        return now.getTime() - Date.parse(record.reportedAt) > ConsoleAdvertRegistry.StaleAfterMs
+        const age = now.getTime() - Date.parse(record.reportedAt)
+        return Number.isNaN(age) || age > ConsoleAdvertRegistry.StaleAfterMs
     }
 
     private async Forget(tenantIds: readonly string[]): Promise<void>

@@ -67,7 +67,7 @@ export class ConsoleDomainApprovals extends JsonRecordStore<ConsoleDomainApprova
     /** The domains discovery may use for an in-hive tenant: advertised AND approved (sorted, deduped). */
     public static EffectiveDomains(advertised: readonly string[], approved: readonly string[]): string[]
     {
-        const allowed = new Set(approved)
-        return [...new Set(advertised)].filter(d => allowed.has(d)).sort()
+        const allowed = new Set(approved.map(d => EmailDomainPolicy.Normalise(d)))
+        return [...new Set(advertised.map(d => EmailDomainPolicy.Normalise(d)))].filter(d => allowed.has(d)).sort()
     }
 }

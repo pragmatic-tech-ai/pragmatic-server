@@ -163,3 +163,13 @@ test('EffectiveDomains is advertised intersect approved', () =>
     assert.deepEqual(ConsoleDomainApprovals.EffectiveDomains(['a.test'], []), [])
     assert.deepEqual(ConsoleDomainApprovals.EffectiveDomains([], ['a.test']), [])
 })
+
+test('IsStale treats an unparseable reportedAt as stale', () =>
+{
+    assert.equal(ConsoleAdvertRegistry.IsStale({ reportedAt: 'garbage' } as ConsoleAdvertRecord, new Date()), true)
+})
+
+test('EffectiveDomains normalises both sides before intersecting', () =>
+{
+    assert.deepEqual(ConsoleDomainApprovals.EffectiveDomains([' Acme.TEST', 'b.test.'], ['acme.test.', 'B.TEST', 'z.test']), ['acme.test', 'b.test'])
+})

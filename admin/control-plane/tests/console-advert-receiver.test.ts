@@ -18,7 +18,7 @@ class ReceiverFixture
     public registry!: ConsoleAdvertRegistry
     public receiver!: ConsoleAdvertReceiver
 
-    public static async Run(body: (f: ReceiverFixture) => Promise<void>, withConsole = true): Promise<void>
+    public static async Run(body: (f: ReceiverFixture) => Promise<void>, withConsole = true, specOver: Record<string, unknown> = {}): Promise<void>
     {
         const f = new ReceiverFixture()
         f.dir = await mkdtemp(join(tmpdir(), 'advert-receiver-'))
@@ -26,7 +26,7 @@ class ReceiverFixture
         const hive = {
             id: 'h1',
             tenantId: 'acme',
-            ...(withConsole ? { console: { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } } } : {}),
+            ...(withConsole ? { console: { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development }, ...specOver } } : {}),
         } as unknown as HiveRecord
         const directory: IConsoleAdvertDirectory = { GetHive: id => (id === 'h1' ? hive : undefined) }
         f.receiver = new ConsoleAdvertReceiver(directory, f.registry, () => new Date('2026-11-04T12:00:00.000Z'))
@@ -150,4 +150,23 @@ test('error messages never carry submitted values', async () =>
             () => f.receiver.Receive('h1', ReceiverFixture.Body({ fingerprints: ['zz' + Fp] })),
             (err: Error) => !err.message.includes(Fp))
     })
+})
+
+test('an explicit host override is the expected host', async () =>
+{
+    await ReceiverFixture.Run(async f =>
+    {
+        const outcome = await f.receiver.Receive('h1', ReceiverFixture.Body({ consoleUrl: 'https://Tenant.Localtest.me' }))
+        assert.equal(outcome.record.consoleUrl, 'https://tenant.localtest.me')
+        await assert.rejects(() => f.receiver.Receive('h1', ReceiverFixture.Body()), InvalidConsoleAdvertError)
+    }, true, { host: 'tenant.localtest.me' })
+})
+
+test('a spec with an ingressNamespace still expects the derived host', async () =>
+{
+    await ReceiverFixture.Run(async f =>
+    {
+        const outcome = await f.receiver.Receive('h1', ReceiverFixture.Body())
+        assert.equal(outcome.record.consoleUrl, GoodUrl)
+    }, true, { ingressNamespace: 'ingress-nginx' })
 })
