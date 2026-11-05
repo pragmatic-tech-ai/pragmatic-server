@@ -20,6 +20,9 @@ export type TenantProfileDto = {
     idp?: { baseUrl?: string; signingCaConfigured: boolean; adminTokenConfigured: boolean }
 }
 
+// The tenant's email domains as its store reports them; `editable` is whether the store may change them (the Owner check is the server's).
+export type EmailDomainsDto = { domains: string[]; editable: boolean }
+
 export type HiveDto = {
     id: string
     tenantId: string

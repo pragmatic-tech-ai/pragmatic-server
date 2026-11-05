@@ -1,5 +1,5 @@
 import { TenantEventType } from './tenant-types.js'
-import type { AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IReleasesSource, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, PasswordChangedDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from './tenant-types.js'
+import type { AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, EmailDomainsDto, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IReleasesSource, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, PasswordChangedDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from './tenant-types.js'
 
 // Thrown for non-2xx tenant-surface responses; Message carries the server's error text.
 export class TenantApiError extends Error
@@ -65,6 +65,7 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
     private static readonly NewPasswordKey = 'newPassword'
     private static readonly ConfirmPasswordKey = 'confirmPassword'
     private static readonly BeginLoginRoute = '/tenant-auth/oidc/begin'
+    private static readonly EmailDomainsRoute = '/tenant-api/settings/email-domains'
     private static readonly HivesRoute = '/tenant-api/hives'
     private static readonly EnvironmentsRoute = '/tenant-api/environments'
     private static readonly ManifestsRoute = '/tenant-api/manifests'
@@ -127,6 +128,18 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
     public async Profile(): Promise<TenantProfileDto>
     {
         return await this.Send<TenantProfileDto>(TenantApiClient.ProfileRoute, undefined)
+    }
+
+    // The tenant's email domains (a 404 where the plane serves none); Send throws TenantApiError on non-2xx.
+    public async GetEmailDomains(): Promise<EmailDomainsDto>
+    {
+        return await this.Send<EmailDomainsDto>(TenantApiClient.EmailDomainsRoute, undefined)
+    }
+
+    // Replaces the tenant's email domains (Owner only); the reply is the normalised list. A refusal is a 400 with its sentence.
+    public async SetEmailDomains(domains: readonly string[]): Promise<EmailDomainsDto>
+    {
+        return await this.Send<EmailDomainsDto>(TenantApiClient.EmailDomainsRoute, { method: TenantApiClient.MethodPut, body: JSON.stringify({ domains }) })
     }
 
     public BeginLogin(): void

@@ -1,9 +1,11 @@
 import { ObservableCollection } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
+import { TenantApiError } from '../../tenant-api-client.js'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
 import { UtcText } from '../../shell/utc-text.js'
-import type { HiveDto, TenantProfileDto } from '../../tenant-types.js'
+import type { EmailDomainsDto, HiveDto, TenantProfileDto } from '../../tenant-types.js'
+import { EmailDomainsEditorViewModel } from './email-domains-editor-view-model.js'
 
 // The Settings page's tabs, in order.
 export enum SettingsTab
@@ -11,6 +13,7 @@ export enum SettingsTab
     Hive,
     Profile,
     IdentityProvider,
+    EmailDomains,
 }
 
 // One key / value line of a settings tab.
@@ -32,17 +35,21 @@ export class SettingRowViewModel extends Observable
     }
 }
 
-// Settings: how the tenant is set up, read-only. Tabs Hive & domain, Tenant
-// profile and Identity provider (credentials by reference only: Configured /
-// Not configured). Every value is platform-managed: there is no edit, rotate
-// or revoke here because the tenant surface serves none. A 403 is Denied;
-// no profile is Empty.
+// Settings: how the tenant is set up. Tabs Hive & domain, Tenant profile and
+// Identity provider (credentials by reference only: Configured / Not
+// configured) are read-only, platform-managed values: the page itself exposes
+// no command. The fourth tab, Email domains, is the one editor: its
+// EmailDomainsEditorViewModel lets the tenant Owner change the domains (others
+// see them read-only). A failed email-domain read never fails the page: a 404
+// leaves that tab read-only, any other failure shows its sentence in the tab.
+// A 403 is Denied; no profile is Empty.
 export class SettingsPageViewModel extends TenantPageViewModel
 {
     private static readonly SelectedTabProperty = 'SelectedTab'
     private static readonly IsHiveTabProperty = 'IsHiveTab'
     private static readonly IsProfileTabProperty = 'IsProfileTab'
     private static readonly IsIdentityProviderTabProperty = 'IsIdentityProviderTab'
+    private static readonly IsEmailDomainsTabProperty = 'IsEmailDomainsTab'
     private static readonly HiveRowsProperty = 'HiveRows'
     private static readonly ProfileRowsProperty = 'ProfileRows'
     private static readonly IdpRowsProperty = 'IdpRows'
@@ -50,9 +57,11 @@ export class SettingsPageViewModel extends TenantPageViewModel
     private static readonly HasNoHiveProperty = 'HasNoHive'
     private static readonly HasIdpProperty = 'HasIdp'
     private static readonly HasNoIdpProperty = 'HasNoIdp'
-    private static readonly TabHive = 'Hive & domain'
+    private static readonly NotFoundStatus = 404
+    private static readonly TabHive ='Hive & domain'
     private static readonly TabProfile = 'Tenant profile'
     private static readonly TabIdp = 'Identity provider'
+    private static readonly TabEmailDomains = 'Email domains'
     private static readonly KeyHiveName = 'Hive name'
     private static readonly KeyClusterBackend = 'Cluster backend'
     private static readonly KeyClusterMode = 'Cluster mode'
@@ -73,6 +82,7 @@ export class SettingsPageViewModel extends TenantPageViewModel
     private static readonly NoBaseUrl = 'No base URL set.'
 
     private readonly tabLabels = new ObservableCollection<string>()
+    private readonly emailDomains: EmailDomainsEditorViewModel
     private tab = SettingsTab.Hive
     private profile: TenantProfileDto | undefined
     private hive: HiveDto | undefined
@@ -83,6 +93,7 @@ export class SettingsPageViewModel extends TenantPageViewModel
     public constructor(session: TenantSessionService)
     {
         super(session)
+        this.emailDomains = new EmailDomainsEditorViewModel(session)
         for (const label of SettingsPageViewModel.Labels)
         {
             this.tabLabels.Add(label)
@@ -92,7 +103,7 @@ export class SettingsPageViewModel extends TenantPageViewModel
     private static get Labels(): readonly string[]
     {
         const P = SettingsPageViewModel
-        return [P.TabHive, P.TabProfile, P.TabIdp]
+        return [P.TabHive, P.TabProfile, P.TabIdp, P.TabEmailDomains]
     }
 
     // The tab strip's labels, in SettingsTab order.
@@ -114,12 +125,13 @@ export class SettingsPageViewModel extends TenantPageViewModel
             return
         }
         const P = SettingsPageViewModel
-        const was = [this.SelectedTab, this.IsHiveTab, this.IsProfileTab, this.IsIdentityProviderTab] as const
+        const was = [this.SelectedTab, this.IsHiveTab, this.IsProfileTab, this.IsIdentityProviderTab, this.IsEmailDomainsTab] as const
         this.tab = next
         this.RaisePropertyChanged(P.SelectedTabProperty, was[0], this.SelectedTab)
         this.RaisePropertyChanged(P.IsHiveTabProperty, was[1], this.IsHiveTab)
         this.RaisePropertyChanged(P.IsProfileTabProperty, was[2], this.IsProfileTab)
         this.RaisePropertyChanged(P.IsIdentityProviderTabProperty, was[3], this.IsIdentityProviderTab)
+        this.RaisePropertyChanged(P.IsEmailDomainsTabProperty, was[4], this.IsEmailDomainsTab)
     }
 
     // The selected tab's label (two-way with the tab strip).
@@ -152,7 +164,18 @@ export class SettingsPageViewModel extends TenantPageViewModel
         return this.tab === SettingsTab.IdentityProvider
     }
 
-    public get HiveRows(): ObservableCollection<SettingRowViewModel>
+    public get IsEmailDomainsTab(): boolean
+    {
+        return this.tab === SettingsTab.EmailDomains
+    }
+
+    // The Email domains tab's editor.
+    public get EmailDomains(): EmailDomainsEditorViewModel
+    {
+        return this.emailDomains
+    }
+
+    public get HiveRows():ObservableCollection<SettingRowViewModel>
     {
         return this.hiveRows
     }
@@ -188,17 +211,53 @@ export class SettingsPageViewModel extends TenantPageViewModel
         return !this.HasIdp
     }
 
-    // The profile and the tenant's one hive, read together.
+    // The profile, the tenant's one hive and its email domains, read together. The email-domain read never fails
+    // the page: a 404 leaves that tab read-only, a 401 expires the session, any other failure shows in the tab.
     protected override async LoadCore(): Promise<boolean>
     {
         const generation = this.LoadGeneration
-        const [profile, hives] = await Promise.all([this.Session.Client.Profile(), this.Session.Client.ListHives()])
+        const client = this.Session.Client
+        const [profile, hives, domains] = await Promise.all([client.Profile(), client.ListHives(), SettingsPageViewModel.ReadEmailDomains(client.GetEmailDomains())])
         if (generation !== this.LoadGeneration)
         {
             return false
         }
         this.Apply(profile, hives[0])
+        this.ApplyEmailDomains(domains, profile?.capabilities.settings === true)
         return this.profile !== undefined
+    }
+
+    // The email-domain read as a value: the dto, a TenantApiError to show in the tab, or a thrown 401.
+    private static async ReadEmailDomains(read: Promise<EmailDomainsDto>): Promise<EmailDomainsDto | TenantApiError | Error>
+    {
+        try
+        {
+            return await read
+        }
+        catch (e)
+        {
+            if (e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus)
+            {
+                throw e
+            }
+            return e instanceof Error ? e : new Error(String(e))
+        }
+    }
+
+    private ApplyEmailDomains(result: EmailDomainsDto | Error, canChangeSettings: boolean): void
+    {
+        if (!(result instanceof Error))
+        {
+            this.emailDomains.Apply(result, canChangeSettings)
+        }
+        else if (result instanceof TenantApiError && result.Status === SettingsPageViewModel.NotFoundStatus)
+        {
+            this.emailDomains.ApplyUnavailable()
+        }
+        else
+        {
+            this.emailDomains.ApplyFailure(result.message)
+        }
     }
 
     private Apply(profile: TenantProfileDto | undefined, hive: HiveDto | undefined): void

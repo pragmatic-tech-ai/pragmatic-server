@@ -34,10 +34,10 @@ class Fixture
 
 describe('SettingsPageViewModel', () =>
 {
-    it('has the three tabs, Hive & domain first, switched by label', async () =>
+    it('has the four tabs, Hive & domain first, switched by label', async () =>
     {
         const page = await Fixture.Page(Fixture.Api())
-        assert.deepEqual(page.TabLabels.ToArray(), ['Hive & domain', 'Tenant profile', 'Identity provider'])
+        assert.deepEqual(page.TabLabels.ToArray(), ['Hive & domain', 'Tenant profile', 'Identity provider', 'Email domains'])
         assert.equal(page.SelectedTab, 'Hive & domain')
         assert.equal(page.IsHiveTab, true)
         page.SelectedTab = 'Identity provider'
@@ -48,14 +48,59 @@ describe('SettingsPageViewModel', () =>
         assert.equal(page.Tab, SettingsTab.IdentityProvider)
         page.Tab = SettingsTab.Profile
         assert.equal(page.SelectedTab, 'Tenant profile')
+        page.SelectedTab = 'Email domains'
+        assert.equal(page.Tab, SettingsTab.EmailDomains)
+        assert.equal(page.IsEmailDomainsTab, true)
+        assert.equal(page.IsProfileTab, false)
     })
 
-    it('loads the profile, then the hives', async () =>
+    it('loads the profile, the hives and the email domains', async () =>
     {
         const api = Fixture.Api()
         const page = await Fixture.Page(api)
         assert.equal(page.State, PageState.Populated)
-        assert.deepEqual(api.Calls.map(c => c[0]), ['Profile', 'ListHives'])
+        assert.deepEqual(api.Calls.map(c => c[0]), ['Profile', 'ListHives', 'GetEmailDomains'])
+        assert.equal(page.EmailDomains.DomainsText, 'acme.test')
+        assert.equal(page.EmailDomains.IsEditable, true)
+    })
+
+    it('hands the email-domains editor the settings capability of the profile', async () =>
+    {
+        const api = Fixture.Api()
+        api.ProfileDto = TenantTestHost.Profile({ ...TenantTestHost.AllCapabilities, settings: false })
+        const page = await Fixture.Page(api)
+        assert.equal(page.EmailDomains.IsEditable, false)
+        assert.equal(page.EmailDomains.ReadOnlyText, 'Only the tenant Owner can change the email domains.')
+    })
+
+    it('a 404 from the email-domain read leaves the tab read-only and the page populated', async () =>
+    {
+        const api = Fixture.Api()
+        api.FailOn.set('GetEmailDomains', new TenantApiError(404, 'not found'))
+        const page = await Fixture.Page(api)
+        assert.equal(page.State, PageState.Populated)
+        assert.equal(page.EmailDomains.IsEditable, false)
+        assert.equal(page.EmailDomains.ReadOnlyText, 'Email domains are not available here.')
+    })
+
+    it('any other email-domain failure shows its sentence in the tab only', async () =>
+    {
+        const api = Fixture.Api()
+        api.FailOn.set('GetEmailDomains', new TenantApiError(500, 'domains down'))
+        const page = await Fixture.Page(api)
+        assert.equal(page.State, PageState.Populated)
+        assert.equal(page.ErrorText, '')
+        assert.equal(page.EmailDomains.ErrorText, 'domains down')
+        assert.equal(page.EmailDomains.IsEditable, false)
+    })
+
+    it('a 401 from the email-domain read expires the session', async () =>
+    {
+        const api = Fixture.Api()
+        api.FailOn.set('GetEmailDomains', new TenantApiError(401, 'gone'))
+        const host = new TenantTestHost(api)
+        await new SettingsPageViewModel(host.Session).Refresh()
+        assert.equal(host.Reloader.Count, 1)
     })
 
     it('shows the hive and domain fields the server reports', async () =>
@@ -129,7 +174,7 @@ describe('SettingsPageViewModel', () =>
         assert.equal(page.IdpRows.Count, 0)
     })
 
-    it('is read-only: it exposes no command', async () =>
+    it('the page itself exposes no command; only the Email domains editor edits', async () =>
     {
         const page = await Fixture.Page(Fixture.Api())
         assert.equal(Inspect.PropertyValues(page).some(v => typeof v === 'object' && v !== null && 'Execute' in v), false)

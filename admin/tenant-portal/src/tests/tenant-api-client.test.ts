@@ -188,6 +188,19 @@ describe('TenantApiClient fetch', () =>
         assert.deepEqual(JSON.parse(call.init?.body as string), { version: 'v2' })
     })
 
+    it('GetEmailDomains GETs the settings route; SetEmailDomains PUTs the domains body', async () =>
+    {
+        FetchStub.Install({ domains: ['acme.test'], editable: true })
+        const client = new TestClient(new FakeWebSocketFactory())
+        assert.deepEqual(await client.GetEmailDomains(), { domains: ['acme.test'], editable: true })
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/settings/email-domains')
+        await client.SetEmailDomains(['acme.test', 'beta.test'])
+        const call = FetchStub.Calls[1]!
+        assert.equal(call.route, '/tenant-api/settings/email-domains')
+        assert.equal(call.init?.method, 'PUT')
+        assert.deepEqual(JSON.parse(call.init?.body as string), { domains: ['acme.test', 'beta.test'] })
+    })
+
     it('SelectTarget maps a 409 to TenantApiError', async () =>
     {
         FetchStub.Install({ error: 'conflict' }, 409)
