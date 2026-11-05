@@ -60,8 +60,8 @@ export class EmailDomainApprovalRefusedError extends Error
  * operator approved before match again at once, since approvals are kept per tenant). Accepted.
  *
  * Nobody's claim alone redirects an address: a claimed domain matches in discovery only once an operator approved it
- * (ConsoleDomainApprovals, the one store for both kinds of tenant; Approve / Revoke here). The domains an operator saves are
- * approved on save; those the tenant Owner sets (in the console or on the tenant plane) wait for approval. "Claimed" domains,
+ * (ConsoleDomainApprovals, the one store for both kinds of tenant; Approve / Revoke here). The domains an operator's save adds
+ * to the record are approved on save; those the tenant Owner sets (in the console or on the tenant plane) wait for approval. "Claimed" domains,
  * used for `sharedWith` and the approval check, are a tenant's record domains (control-plane tenant) or all its advertised
  * domains (in-hive tenant), approved or not, so an operator sees a conflict before approving.
  */
@@ -131,11 +131,22 @@ export class PlatformEmailDomains implements ITenantEmailDomains
         return this.ViewOf(await this.WriteRecord(tenantId, domains))
     }
 
-    /** The operator's write: the record changes and every saved domain is approved (an operator set it, so nobody else must). */
-    public async SetAsOperator(tenantId: string, domains: unknown): Promise<void>
+    /**
+     * The operator's write: the record changes and each domain this write ADDS to the record is approved (an operator typed it,
+     * so nobody else must). Domains already on the record keep their approval state, so saving the whole list never approves an
+     * Owner's pending domain as a side effect (that takes an explicit Approve). Answers the domains approved on save, sorted.
+     */
+    public async SetAsOperator(tenantId: string, domains: unknown): Promise<string[]>
     {
+        const before = new Set(PlatformEmailDomains.RecordDomainsOf(this.KnownTenant(tenantId)))
         const updated = await this.WriteRecord(tenantId, domains)
-        await this.approvals?.ApproveAll(tenantId, PlatformEmailDomains.RecordDomainsOf(updated))
+        const added = PlatformEmailDomains.RecordDomainsOf(updated).filter(d => !before.has(d)).sort()
+        if (this.approvals === undefined)
+        {
+            return []
+        }
+        await this.approvals.ApproveAll(tenantId, added)
+        return added
     }
 
     /**

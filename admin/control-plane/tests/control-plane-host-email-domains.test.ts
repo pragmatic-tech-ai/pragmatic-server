@@ -156,6 +156,19 @@ describe('ControlPlaneHost tenant email domains', () =>
         assert.deepEqual(approvals.ApprovedFor('beta'), ['beta.test', 'shared.test'])
     })
 
+    it('an operator PUT approves only the domains it adds, and notes them; the Owner\'s pending domain stays pending', async () =>
+    {
+        await domains.Set('beta', ['victim.test'])
+        const r = await Send.Request(host, 'PUT', BetaPath, { domains: ['victim.test', 'beta.test'] })
+        assert.equal(r.status, 200)
+        assert.deepEqual(Send.Report(r).approvals.map(a => [a.domain, a.approved]), [['beta.test', true], ['victim.test', false]])
+        assert.deepEqual(approvals.ApprovedFor('beta'), ['beta.test'])
+        const again = await Send.Request(host, 'PUT', BetaPath, { domains: ['victim.test', 'beta.test'] })
+        assert.equal(again.status, 200)
+        const notes = audit.Recent(10).filter(e => e.method === 'PUT' && e.path === BetaPath).map(e => e.note)
+        assert.deepEqual(notes.sort(), ['approved on save: beta.test', undefined].sort())
+    })
+
     it('a domain the control-plane tenant Owner set is pending until an operator approves it', async () =>
     {
         await domains.Set('beta', ['beta.test'])
@@ -310,7 +323,7 @@ describe('ControlPlaneHost tenant email domains', () =>
             ['op@example.com', 'POST', AcmePath + '/approve', 200, 'domain: acme.test'],
             ['op@example.com', 'POST', AcmePath + '/approve', 409, undefined],
             ['op@example.com', 'POST', AcmePath + '/revoke', 200, 'domain: acme.test'],
-            ['op@example.com', 'PUT', BetaPath, 200, undefined],
+            ['op@example.com', 'PUT', BetaPath, 200, 'approved on save: beta.test'],
         ].sort())
     })
 })

@@ -152,6 +152,17 @@ describe('PlatformEmailDomains', () =>
         await assert.rejects(f.domains.SetAsOperator('nope', ['nope.test']), UnknownTenantError)
     })
 
+    it('SetAsOperator approves only the domains its write adds; the Owner\'s pending domains stay pending', async () =>
+    {
+        await f.domains.Set('beta', ['victim.test'])
+        assert.deepEqual(await f.domains.SetAsOperator('beta', ['victim.test', 'Beta.TEST']), ['beta.test'])
+        assert.deepEqual(f.directory.GetTenant('beta')?.emailDomains, ['beta.test', 'victim.test'])
+        assert.deepEqual(f.approvals.ApprovedFor('beta'), ['beta.test'])
+        assert.deepEqual(f.domains.For('beta').pending, ['victim.test'])
+        assert.deepEqual(await f.domains.SetAsOperator('beta', ['victim.test', 'beta.test']), [])
+        assert.deepEqual(f.approvals.ApprovedFor('beta'), ['beta.test'])
+    })
+
     it('an unknown tenant reads as none and cannot be set', async () =>
     {
         assert.equal(f.domains.Report('nope'), undefined)

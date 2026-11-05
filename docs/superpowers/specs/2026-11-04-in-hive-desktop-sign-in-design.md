@@ -73,7 +73,7 @@ plane itself can test a guess (it must, to answer lookups) - accepted.
 gmail.com, outlook.com are refused). Editable by the operator (platform admin portal tenant detail) and by the tenant
 Owner (tenant console settings; an in-hive console sends its list in the advert as `emailDomains`, and the advert is the
 source of truth for in-hive tenants). A domain counts in discovery only once an operator approved it (decision D5 below):
-domains the operator saves are approved on save, domains the Owner sets in either console wait for approval.
+domains an operator's save adds are approved on save, domains the Owner sets in either console wait for approval.
 
 ### Discovery
 `DesktopDiscoveryEndpoint` resolves an email to tenants in order: fingerprint matches across adverts; else domain
@@ -165,7 +165,9 @@ File and class names, advert interval constants, the advert store shape, how the
   effect in discovery only after an operator approves it once in the platform admin portal (tenant detail page: each
   claimed domain with approved yes/no and the other tenants that claim it; approve and revoke actions, operator Full only,
   audited with the domain). A tenant's claimed domains are its console advert's (in-hive) or its record's (control-plane).
-  Domains the operator saves for a control-plane tenant (`PUT /api/tenants/:id/email-domains`) are approved on save; those
+  Domains an operator's save adds to a control-plane tenant's record (`PUT /api/tenants/:id/email-domains`) are approved
+  on save and named in that write's audit note; domains already on the record keep their state (saving the whole list never
+  approves an Owner's pending domain); those
   the Owner sets (`PUT /tenant-api/settings/email-domains` in either console) wait, and the tenant console names the ones
   still pending. Approvals are stored per tenant in one store on the control plane (`console-domain-approvals.json`), apart
   from the advert store and the record, so they survive re-adverts and Owner edits; discovery's domain tier for every

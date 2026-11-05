@@ -343,6 +343,7 @@ export class ControlPlaneHost
         '(?:/(' + ControlPlaneHost.ApproveSegment + '|' + ControlPlaneHost.RevokeSegment + '))?$')
     private static readonly DomainRequiredMessage = 'domain (an email domain name) is required'
     private static readonly DomainNotePrefix = 'domain: '
+    private static readonly ApprovedOnSaveNotePrefix = 'approved on save: '
     private static readonly DomainsKey = 'domains'
     private static readonly DomainKey = 'domain'
     private static readonly TenantPolicyPathPattern = new RegExp(
@@ -1659,7 +1660,7 @@ export class ControlPlaneHost
 
     /**
      * Serves /api/tenants/ID/email-domains: GET the report (404 for an unknown tenant), PUT `{ domains }` (a control-plane tenant's
-     * record domains, each approved on save since an operator set it; 409 for an in-hive tenant), and POST .../approve or .../revoke
+     * record domains; each domain the save adds is approved and named in the audit note; 409 for an in-hive tenant), and POST .../approve or .../revoke
      * `{ domain }` (one domain of any tenant; approving one the tenant does not claim is 409, revoking a malformed name is 400).
      * Writes are Full-gated by the central gate and audited there; an approval or revoke notes its domain. Every success answers
      * the fresh report. False for any other method.
@@ -1693,7 +1694,12 @@ export class ControlPlaneHost
                     PlaneHttp.WriteJson(res, C.StatusBadRequest, { error: TenantEmailDomainsLimits.DomainsRequiredMessage })
                     return true
                 }
-                await domains.SetAsOperator(id, body[C.DomainsKey])
+                // The save approves only the domains it adds (policy-checked by the parse); the audit names them.
+                const approved = await domains.SetAsOperator(id, body[C.DomainsKey])
+                if (approved.length > 0)
+                {
+                    this.auditNotes.set(res, C.ApprovedOnSaveNotePrefix + approved.join(C.NoteSeparator))
+                }
             }
             else
             {
