@@ -6,22 +6,24 @@ import { EncryptedSecretStore } from '@pragmatic-tech-ai/todl-identity-local'
 export class SealedSecretUnreadableError extends Error
 {
     private static readonly Text = 'A sealed secret could not be read.'
+    private static readonly ErrorName = 'SealedSecretUnreadableError'
 
     public constructor()
     {
         super(SealedSecretUnreadableError.Text)
-        this.name = 'SealedSecretUnreadableError'
+        this.name = SealedSecretUnreadableError.ErrorName
     }
 }
 
 export class SealedSecretFileError extends Error
 {
     private static readonly Text = 'The sealed secret file is invalid.'
+    private static readonly ErrorName = 'SealedSecretFileError'
 
     public constructor()
     {
         super(SealedSecretFileError.Text)
-        this.name = 'SealedSecretFileError'
+        this.name = SealedSecretFileError.ErrorName
     }
 }
 

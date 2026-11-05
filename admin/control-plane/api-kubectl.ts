@@ -8,10 +8,11 @@ export class RolloutTimeoutError extends KubectlError
     private static readonly RolloutPrefix = 'Deployment '
     private static readonly RolloutSuffix = ' did not finish rolling out in time.'
     private static readonly RolloutErrorName = 'RolloutTimeoutError'
+    private static readonly RolloutSlash = '/'
 
     public constructor(namespace: string, deployment: string)
     {
-        super(RolloutTimeoutError.RolloutPrefix + namespace + '/' + deployment + RolloutTimeoutError.RolloutSuffix, '', false)
+        super(RolloutTimeoutError.RolloutPrefix + namespace + RolloutTimeoutError.RolloutSlash + deployment + RolloutTimeoutError.RolloutSuffix, '', false)
         this.name = RolloutTimeoutError.RolloutErrorName
     }
 }
@@ -253,7 +254,7 @@ export class ApiKubectl implements IKubectl
     {
         if (item.metadata.namespace === undefined && KubeResourceCatalog.IsNamespaced(item))
         {
-            throw new KubectlError(ApiKubectl.MissingNamespacePrefix + item.kind + '/' + item.metadata.name, '', false)
+            throw new KubectlError(ApiKubectl.MissingNamespacePrefix + item.kind + ApiKubectl.Slash + item.metadata.name, '', false)
         }
         return KubeResourceCatalog.PathOf(item, item.metadata.namespace, item.metadata.name)
     }

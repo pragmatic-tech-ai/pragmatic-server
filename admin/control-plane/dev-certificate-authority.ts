@@ -17,11 +17,12 @@ export interface IDevCertificateIssuer
 export class DevCaKeyMissingError extends Error
 {
     private static readonly Text = 'The development certificate authority key is missing from the sealed store, so no new certificate can be signed. Remove the stored CA certificate for this domain deliberately to start a new CA.'
+    private static readonly ErrorName = 'DevCaKeyMissingError'
 
     public constructor()
     {
         super(DevCaKeyMissingError.Text)
-        this.name = 'DevCaKeyMissingError'
+        this.name = DevCaKeyMissingError.ErrorName
     }
 }
 
@@ -29,11 +30,12 @@ export class DevCaKeyMissingError extends Error
 export class DevCaHostOutsideDomainError extends Error
 {
     private static readonly Text = 'A certificate host must be the base domain or a name under it (a wildcard may only be the whole first label): '
+    private static readonly ErrorName = 'DevCaHostOutsideDomainError'
 
     public constructor(host: string)
     {
         super(DevCaHostOutsideDomainError.Text + host)
-        this.name = 'DevCaHostOutsideDomainError'
+        this.name = DevCaHostOutsideDomainError.ErrorName
     }
 }
 
@@ -48,6 +50,8 @@ export class DevCaHostOutsideDomainError extends Error
 export class DevCertificateAuthority implements IDevCertificateIssuer
 {
     public static readonly DirName = 'dev-ca'
+    /** The openssl CLI as found on PATH (the default; tests pass another binary). */
+    public static readonly OpensslCommand = 'openssl'
     private static readonly KeyRefPrefix = 'dev-ca-key/'
     private static readonly CaCertFile = 'ca.crt'
     private static readonly CaKeyFile = 'ca.key'
@@ -111,7 +115,7 @@ export class DevCertificateAuthority implements IDevCertificateIssuer
     public constructor(
         private readonly rootDir: string,
         private readonly store: SealedSecretStore,
-        private readonly openssl: string = 'openssl')
+        private readonly openssl: string = DevCertificateAuthority.OpensslCommand)
     {
     }
 
