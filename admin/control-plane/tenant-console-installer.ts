@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { DevCaError } from '../../src/idp/dev-ca.js'
+import { ConsoleAdvertRegistry, type ConsoleAdvertRecord, type IConsoleAdvertLookup } from './console-advert-registry.js'
 import type { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
 import { ConsoleRetention } from './console-retention.js'
 import { DevCaHostOutsideDomainError, DevCaKeyMissingError, type IDevCertificateIssuer, type IssuedCertificate } from './dev-certificate-authority.js'
@@ -29,6 +30,8 @@ export enum ConsoleInstallState
     Installing = 'installing',
     Deployed = 'deployed',
     Failed = 'failed',
+    /** The running console reported itself to the control plane (its advert); derived from the stored advert, so it survives a restart. */
+    Reported = 'reported',
 }
 
 /** The console install's steps, in the order they run. Values are the wire strings. */
@@ -51,6 +54,9 @@ export type ConsoleInstallStatus = {
     error?: string
     consoleUrl?: string
     devCaFile?: string
+    /** Reported only: when the console last reported, and whether that was over a day ago. */
+    reportedAt?: string
+    stale?: boolean
 }
 
 /** What a console removal kept in the cluster; `notice` when that could not be listed (the removal itself succeeded). */
@@ -283,7 +289,8 @@ export class TenantConsoleInstaller
         private readonly images: IConsoleImageApproval,
         private readonly trustRoots: IKeyStore,
         private readonly agentChannelUrl: string | undefined,
-        private readonly clock: IInstallClock = new SystemInstallClock())
+        private readonly clock: IInstallClock = new SystemInstallClock(),
+        private readonly adverts?: IConsoleAdvertLookup)
     {
     }
 
@@ -337,10 +344,49 @@ export class TenantConsoleInstaller
         return run.Snapshot()
     }
 
-    /** The latest install's status for the hive; undefined when none has run since the control plane started. */
+    /**
+     * The latest install's status for the hive; undefined when none has run since the control plane started and no advert answers.
+     * A usable advert of this hive (it still has its console) turns a deployed install (or no install since a restart) into
+     * Reported. With a run in memory the advert counts only when it is not older than the run's finish, so a reinstall stays
+     * deployed until the new console reports. Installing and Failed are never overridden.
+     */
     public StatusFor(hiveId: string): ConsoleInstallStatus | undefined
     {
-        return this.runs.get(hiveId)?.Snapshot()
+        const base = this.runs.get(hiveId)?.Snapshot()
+        if (base?.state === ConsoleInstallState.Installing || base?.state === ConsoleInstallState.Failed)
+        {
+            return base
+        }
+        const advert = this.UsableAdvertOf(hiveId)
+        if (advert === undefined || (base !== undefined && !TenantConsoleInstaller.ReportedSince(advert.reportedAt, base.finishedAt)))
+        {
+            return base
+        }
+        const seed: ConsoleInstallStatus = base ?? { state: ConsoleInstallState.Deployed, step: ConsoleInstallStep.SeedingOwner, startedAt: advert.firstReportedAt, finishedAt: advert.firstReportedAt }
+        return {
+            ...seed,
+            state: ConsoleInstallState.Reported,
+            consoleUrl: advert.consoleUrl,
+            reportedAt: advert.reportedAt,
+            stale: ConsoleAdvertRegistry.IsStale(advert, new Date(this.clock.Now())),
+        }
+    }
+
+    /** The hive's tenant advert when it comes from this hive and the hive still has its console. */
+    private UsableAdvertOf(hiveId: string): ConsoleAdvertRecord | undefined
+    {
+        const hive = this.directory.GetHive(hiveId)
+        if (hive === undefined || this.adverts === undefined)
+        {
+            return undefined
+        }
+        return ConsoleAdvertRegistry.UsableFor(this.adverts, hive.tenantId, [hive])
+    }
+
+    /** Whether an advert reported at `reportedAt` is not older than `finishedAt`; fails closed on an unreadable time. */
+    private static ReportedSince(reportedAt: string, finishedAt: string | undefined): boolean
+    {
+        return finishedAt !== undefined && Date.parse(reportedAt) >= Date.parse(finishedAt)
     }
 
     public IsInstalling(hiveId: string): boolean

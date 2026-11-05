@@ -22,11 +22,12 @@ import { GatingRegistry } from './gating-record.js'
 import { SelectionRegistry } from './selection-record.js'
 import { AgentChannelHost } from './agent-channel-host.js'
 import { HiveObservationRegistry } from './hive-observation-record.js'
-import { HiveAgentInstaller } from './hive-agent-installer.js'
+import { HiveAgentInstaller, SystemInstallClock } from './hive-agent-installer.js'
 import { HiveAgentUninstaller } from './hive-agent-uninstaller.js'
 import { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
 import { ConsoleAdvertRegistry } from './console-advert-registry.js'
 import { ConsoleAdvertReceiver } from './console-advert-receiver.js'
+import { ConsoleDomainApprovals } from './console-domain-approvals.js'
 import { DevCertificateAuthority } from './dev-certificate-authority.js'
 import { InHiveIdpAdmin } from './in-hive-idp-admin.js'
 import { SealedSecretStore } from './sealed-secret-store.js'
@@ -192,6 +193,7 @@ export class ControlPlaneServer
     public static readonly TenantAdminClientsFile = 'tenant-admin-clients.json'
     public static readonly TenantAccountsFile = 'tenant-accounts.json'
     public static readonly ConsoleAdvertsFile = ConsoleAdvertRegistry.FileName
+    public static readonly ConsoleDomainApprovalsFile = ConsoleDomainApprovals.FileName
     public static readonly DesktopTenantPlaneUrlEnvVar = 'PRAGMATIC_DESKTOP_TENANT_PLANE_URL'
     private static readonly LoopbackHttpPrefix = 'http://127.0.0.1:'
     private static readonly TenantAdminOidcDir = 'tenant-admin-oidc'
@@ -242,7 +244,8 @@ export class ControlPlaneServer
         const adminClientRegistry = new TenantAdminClientRegistry(join(dataRoot, ControlPlaneServer.TenantAdminClientsFile))
         const accountIndex = new TenantAccountIndex(join(dataRoot, ControlPlaneServer.TenantAccountsFile))
         const adverts = new ConsoleAdvertRegistry(join(dataRoot, ControlPlaneServer.ConsoleAdvertsFile))
-        await Promise.all([manifests.Load(), audit.Load(), desktopAudit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load(), accountIndex.Load(), adverts.Load()])
+        const approvals = new ConsoleDomainApprovals(join(dataRoot, ControlPlaneServer.ConsoleDomainApprovalsFile))
+        await Promise.all([manifests.Load(), audit.Load(), desktopAudit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load(), accountIndex.Load(), adverts.Load(), approvals.Load()])
         await accountIndex.BackfillFrom(directory)
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(signing.PlatformSigner.KeyRef, dataRoot, signing.ImageSigner), policies, ledger)
         // One tenant session store for the tenant plane and the Owner password reset (which ends the Owner's sessions).
@@ -265,8 +268,8 @@ export class ControlPlaneServer
         const consoleInstaller = new TenantConsoleInstaller(directory, orchestrators, new TenantAdminBootstrap(deployments), new ConsoleFingerprintKeys(sealed),
             new DevCertificateAuthority(join(dataRoot, DevCertificateAuthority.DirName), sealed), new InHiveIdpAdmin(orchestrators, sealed),
             new PlatformConsoleImageApproval(signing.PlatformSigner, HiveOrchestratorFactory.VerifierFor(dataRoot)),
-            new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)), agentChannelUrl)
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery, consoleInstaller)
+            new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)), agentChannelUrl, new SystemInstallClock(), adverts)
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery, consoleInstaller, adverts, approvals)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
             masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]), tenantSessions, principalSessions,

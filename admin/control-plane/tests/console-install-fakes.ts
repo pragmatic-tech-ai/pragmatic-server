@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { ConsoleAdvertRecord, IConsoleAdvertLookup } from '../console-advert-registry.js'
 import { ConsoleFingerprintKeys } from '../console-fingerprint-keys.js'
 import type { IDevCertificateIssuer, IssuedCertificate } from '../dev-certificate-authority.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
@@ -330,6 +331,32 @@ export class CountingRegistrar implements IHiveRegistrar
 }
 
 /** A Local hive h1 of tenant acme with development console settings, its agent installed, and a real sealed store. */
+/** A console advert lookup whose single record a test sets; the record answers for its own tenant only. */
+export class FakeAdvertLookup implements IConsoleAdvertLookup
+{
+    public Record: ConsoleAdvertRecord | undefined
+
+    public ForTenant(tenantId: string): ConsoleAdvertRecord | undefined
+    {
+        return this.Record?.tenantId === tenantId ? this.Record : undefined
+    }
+
+    public All(): readonly Readonly<ConsoleAdvertRecord>[]
+    {
+        return this.Record === undefined ? [] : [this.Record]
+    }
+
+    public HasFingerprint(tenantId: string, fingerprint: string): boolean
+    {
+        return this.ForTenant(tenantId)?.fingerprints.includes(fingerprint) ?? false
+    }
+
+    public static Advert(tenantId: string, hiveId: string, reportedAt: string, firstReportedAt: string = reportedAt): ConsoleAdvertRecord
+    {
+        return { id: tenantId, tenantId, hiveId, consoleUrl: 'https://console-' + tenantId + '.localtest.me', fingerprints: [], emailDomains: [], firstReportedAt, reportedAt }
+    }
+}
+
 export class ConsoleInstallFixture
 {
     public static readonly ChannelUrl = 'http://host.docker.internal:7001'
@@ -347,6 +374,7 @@ export class ConsoleInstallFixture
     public readonly DevCa = new FakeDevCa()
     public readonly Images = new FakeImageApproval()
     public readonly Registrar = new CountingRegistrar()
+    public readonly Adverts = new FakeAdvertLookup()
     public readonly Installer: TenantConsoleInstaller
 
     private constructor(private readonly dir: string, public readonly Fingerprints: ConsoleFingerprintKeys, channelOn: boolean)
@@ -361,7 +389,8 @@ export class ConsoleInstallFixture
             this.Images,
             new FakeTrustRoots(),
             channelOn ? ConsoleInstallFixture.ChannelUrl : undefined,
-            { Now: () => Date.parse('2026-11-05T10:00:00.000Z'), Delay: async () => undefined })
+            { Now: () => Date.parse('2026-11-05T10:00:00.000Z'), Delay: async () => undefined },
+            this.Adverts)
         this.Tenants.set('acme', { id: 'acme', clientId: 'c1', displayName: 'Acme', createdAt: '2026-01-01T00:00:00.000Z', ownerEmail: 'owner@acme.test', ownerPrincipalId: 'owner' })
         this.Hives.set('h1', ConsoleInstallFixture.Hive('h1'))
         this.Kubectl.Put(K8sManifestBuilder.SystemNamespace, 'secret/' + K8sManifestBuilder.AgentTokenSecretNameOf('h1'), { data: { token: 'eA==' } })
@@ -397,10 +426,19 @@ export class ConsoleInstallFixture
     }
 
     /** Another installer over the same fakes and store, reading hives and tenants from `directory` (a host test's PlatformDirectory). */
-    public InstallerOver(directory: IConsoleDirectory): TenantConsoleInstaller
+    public InstallerOver(directory: IConsoleDirectory, adverts?: IConsoleAdvertLookup): TenantConsoleInstaller
     {
         return new TenantConsoleInstaller(directory, this.Orchestrators, new TenantAdminBootstrap(this.Registrar), this.Fingerprints, this.DevCa,
-            this.IdpAdmin, this.Images, new FakeTrustRoots(), ConsoleInstallFixture.ChannelUrl)
+            this.IdpAdmin, this.Images, new FakeTrustRoots(), ConsoleInstallFixture.ChannelUrl, undefined, adverts)
+    }
+
+    /** A new installer over the same hives and tenants with no run in memory, as after a control plane restart. */
+    public RestartedInstaller(): TenantConsoleInstaller
+    {
+        return new TenantConsoleInstaller(
+            { GetHive: (id: string) => this.Hives.get(id), GetTenant: (id: string) => this.Tenants.get(id) },
+            this.Orchestrators, new TenantAdminBootstrap(this.Registrar), this.Fingerprints, this.DevCa, this.IdpAdmin, this.Images, new FakeTrustRoots(),
+            ConsoleInstallFixture.ChannelUrl, { Now: () => Date.parse('2026-11-05T10:00:00.000Z'), Delay: async () => undefined }, this.Adverts)
     }
 
     public Dispose(): void

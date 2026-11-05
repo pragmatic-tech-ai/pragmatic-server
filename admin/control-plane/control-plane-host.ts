@@ -45,6 +45,8 @@ import {
 } from './platform-directory.js'
 import { HivePlacementError } from './hive-placement-error.js'
 import { HiveBootstrapBundle } from './hive-bootstrap-bundle.js'
+import type { ConsoleAdvertRegistry } from './console-advert-registry.js'
+import type { ConsoleDomainApprovals } from './console-domain-approvals.js'
 import { HiveConsoleSpecs, InvalidHiveConsoleError } from './hive-console-spec.js'
 import { InvalidIngressTlsError } from './ingress-tls.js'
 import { AgentInstallInProgressError, AgentInstallUnavailableError, type HiveAgentInstaller, type InstallStatus } from './hive-agent-installer.js'
@@ -286,6 +288,9 @@ export class ControlPlaneHost
     private static readonly ForgetFailedLogPrefix = '[hive-delete] hive '
     private static readonly TenantDeleteLogPrefix = '[tenant-delete] tenant '
     private static readonly ForgetFailedLogInfix = ': forgetting its console keys failed: '
+    private static readonly ForgetAdvertLogInfix = ': forgetting its console advert failed: '
+    private static readonly ForgetApprovalsLogInfix = ': forgetting its approved email domains failed: '
+    private static readonly ConsoleRemoveLogPrefix = '[console-remove] hive '
     private static readonly UnknownErrorName = 'Error'
     private static readonly NamespacesLeftNoticePrefix = 'These environment namespaces could not be deleted and may remain in the cluster: '
     private static readonly NoticeSeparator = ' '
@@ -533,7 +538,11 @@ export class ControlPlaneHost
         /** Public desktop email discovery (POST /api/desktop/discover); undefined leaves the route unmounted. */
         private readonly discovery?: DesktopDiscoveryEndpoint,
         /** Installs (and removes) a Local hive's in-hive tenant console; undefined disables the console routes' actions. */
-        private readonly consoleInstaller?: TenantConsoleInstaller)
+        private readonly consoleInstaller?: TenantConsoleInstaller,
+        /** The console adverts in-hive consoles reported; forgotten with the console, the hive or the tenant. */
+        private readonly adverts?: ConsoleAdvertRegistry,
+        /** Operator-approved email domains per tenant; forgotten with the tenant only (they belong to the tenant, not a hive). */
+        private readonly approvals?: ConsoleDomainApprovals)
     {
         this.allowedHosts = new Set([...ControlPlaneHost.DefaultAllowedHosts, ...allowedHosts.map(h => h.toLowerCase())])
         this.staticRootAbs = resolve(staticRoot)
@@ -1507,9 +1516,51 @@ export class ControlPlaneHost
     }
 
     /** Logs a failed forget of console keys by the error's name only (a raw message may carry store details). */
-    private static LogForgetFailure(prefix: string, hiveId: string, err: unknown): void
+    private static LogForgetFailure(prefix: string, hiveId: string, err: unknown, infix: string = ControlPlaneHost.ForgetFailedLogInfix): void
     {
-        console.error(prefix + hiveId + ControlPlaneHost.ForgetFailedLogInfix + (err instanceof Error ? err.name : ControlPlaneHost.UnknownErrorName))
+        console.error(prefix + hiveId + infix + (err instanceof Error ? err.name : ControlPlaneHost.UnknownErrorName))
+    }
+
+    /**
+     * Drops the console advert a hive's console reported. Best effort: the record or setting is already gone, so a store failure only
+     * leaves a stale advert (never usable: it names a hive without a console) and must not turn the completed change into an error.
+     */
+    private async ForgetHiveAdvert(prefix: string, hiveId: string): Promise<void>
+    {
+        if (this.adverts === undefined)
+        {
+            return
+        }
+        try
+        {
+            await this.adverts.ForgetHive(hiveId)
+        }
+        catch (err)
+        {
+            ControlPlaneHost.LogForgetFailure(prefix, hiveId, err, ControlPlaneHost.ForgetAdvertLogInfix)
+        }
+    }
+
+    /** Drops a deleted tenant's console advert and approved email domains; each best effort like ForgetHiveAdvert. */
+    private async ForgetTenantAdvertAndApprovals(tenantId: string): Promise<void>
+    {
+        const C = ControlPlaneHost
+        try
+        {
+            await this.adverts?.ForgetTenant(tenantId)
+        }
+        catch (err)
+        {
+            C.LogForgetFailure(C.TenantDeleteLogPrefix, tenantId, err, C.ForgetAdvertLogInfix)
+        }
+        try
+        {
+            await this.approvals?.ForgetTenant(tenantId)
+        }
+        catch (err)
+        {
+            C.LogForgetFailure(C.TenantDeleteLogPrefix, tenantId, err, C.ForgetApprovalsLogInfix)
+        }
     }
 
     /** DELETE /api/hives/ID/console under the per-hive operation lock (a delete, reissue or install in flight answers 409). */
@@ -1542,6 +1593,7 @@ export class ControlPlaneHost
             }
             // The sealed IdP credentials stay: the kept IdP and environments still use that CA (forgotten on hive or tenant delete).
             const updated: HiveDto = await this.directory.SetHiveConsole(id, undefined)
+            await this.ForgetHiveAdvert(ControlPlaneHost.ConsoleRemoveLogPrefix, id)
             const note = ControlPlaneHost.ConsoleRemovalNote(outcome)
             if (note !== undefined)
             {
@@ -1990,6 +2042,7 @@ export class ControlPlaneHost
                 await this.directory.DeleteTenant(id)
                 await this.provisioning.ForgetTenant(id)
                 await this.ForgetTenantConsoleCredentials(id)
+                await this.ForgetTenantAdvertAndApprovals(id)
                 break
         }
     }
@@ -2086,6 +2139,7 @@ export class ControlPlaneHost
         }
         await this.deployments.DeregisterHive(id)
         await this.directory.DeleteHive(id)
+        await this.ForgetHiveAdvert(ControlPlaneHost.ForgetFailedLogPrefix, id)
         // The console's fingerprint key and in-hive IdP credentials go with the hive, forced or not. Best effort: the hive is already
         // gone, so a sealed-store failure only leaves unreachable sealed keys behind and must not turn the delete into an error.
         if (hive !== undefined && this.consoleInstaller !== undefined)

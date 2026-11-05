@@ -1,4 +1,5 @@
 import { JsonRecordStore } from './json-record-store.js'
+import type { HiveRecord } from './platform-records.js'
 
 /** The one console advert a tenant's in-hive console last reported; the record id is the tenant id. */
 export type ConsoleAdvertRecord = {
@@ -86,6 +87,21 @@ export class ConsoleAdvertRegistry extends JsonRecordStore<ConsoleAdvertRecord> 
     {
         const age = now.getTime() - Date.parse(record.reportedAt)
         return Number.isNaN(age) || age > ConsoleAdvertRegistry.StaleAfterMs
+    }
+
+    /**
+     * The tenant's advert when it counts: it names one of `hives` (the tenant's hives) and that hive still has its console setting.
+     * The one rule behind the install status, discovery and the operator views; an advert from a hive that is gone or whose console
+     * was removed is not usable.
+     */
+    public static UsableFor(lookup: IConsoleAdvertLookup, tenantId: string, hives: readonly HiveRecord[]): ConsoleAdvertRecord | undefined
+    {
+        const advert = lookup.ForTenant(tenantId)
+        if (advert === undefined)
+        {
+            return undefined
+        }
+        return hives.some(h => h.id === advert.hiveId && h.tenantId === tenantId && h.console !== undefined) ? advert : undefined
     }
 
     private async Forget(tenantIds: readonly string[]): Promise<void>

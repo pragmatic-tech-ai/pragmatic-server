@@ -15,7 +15,8 @@ import {
     ConsoleNotConfiguredError,
     PlatformConsoleImageApproval,
 } from '../tenant-console-installer.js'
-import { ConsoleInstallFixture, FakeDevCa } from './console-install-fakes.js'
+import { ConsoleAdvertRegistry } from '../console-advert-registry.js'
+import { ConsoleInstallFixture, FakeAdvertLookup, FakeDevCa } from './console-install-fakes.js'
 import type { IImageVerifier } from '../image-verifier.js'
 import { DevCaError } from '../../../src/idp/dev-ca.js'
 import type { HiveRecord } from '../platform-records.js'
@@ -642,6 +643,116 @@ describe('TenantConsoleInstaller', () =>
         const status = await fx.Installer.WhenSettled('h1')
         assert.equal(status?.step, ConsoleInstallStep.SeedingOwner)
         assert.equal(status?.error, "Could not seed the tenant's Owner in the in-hive identity provider.")
+    })
+
+    it('a deployed install becomes reported on the first advert', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.Installer.Start('h1')
+        assert.equal((await fx.Installer.WhenSettled('h1'))?.state, ConsoleInstallState.Deployed)
+        fx.Adverts.Record = FakeAdvertLookup.Advert('acme', 'h1', '2026-11-05T10:00:01.000Z')
+        const status = fx.Installer.StatusFor('h1')
+        assert.equal(status?.state, ConsoleInstallState.Reported)
+        assert.equal(status?.consoleUrl, 'https://console-acme.localtest.me')
+        assert.equal(status?.reportedAt, '2026-11-05T10:00:01.000Z')
+        assert.equal(status?.stale, false)
+    })
+
+    it('after a restart the advert alone answers reported', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.Adverts.Record = FakeAdvertLookup.Advert('acme', 'h1', '2026-11-05T09:00:00.000Z', '2026-11-04T09:00:00.000Z')
+        const status = fx.RestartedInstaller().StatusFor('h1')
+        assert.equal(status?.state, ConsoleInstallState.Reported)
+        assert.equal(status?.startedAt, '2026-11-04T09:00:00.000Z')
+        assert.equal(status?.finishedAt, '2026-11-04T09:00:00.000Z')
+        assert.equal(status?.stale, false)
+    })
+
+    it('an advert older than a day is reported stale', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.Adverts.Record = FakeAdvertLookup.Advert('acme', 'h1', '2026-11-03T10:00:00.000Z')
+        const status = fx.RestartedInstaller().StatusFor('h1')
+        assert.equal(status?.state, ConsoleInstallState.Reported)
+        assert.equal(status?.stale, true)
+    })
+
+    it('installing is not overridden by an advert', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.Adverts.Record = FakeAdvertLookup.Advert('acme', 'h1', '2026-11-05T10:00:01.000Z')
+        fx.Installer.Start('h1')
+        assert.equal(fx.Installer.StatusFor('h1')?.state, ConsoleInstallState.Installing)
+        await fx.Installer.WhenSettled('h1')
+    })
+
+    it('a failed reinstall stays failed even with an old advert', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.Adverts.Record = FakeAdvertLookup.Advert('acme', 'h1', '2026-11-05T10:00:01.000Z')
+        const { trustRootRef: _t, ...rest } = ConsoleInstallFixture.Hive('h1')
+        fx.Hives.set('h1', rest)
+        fx.Installer.Start('h1')
+        const status = await fx.Installer.WhenSettled('h1')
+        assert.equal(status?.state, ConsoleInstallState.Failed)
+        assert.equal(fx.Installer.StatusFor('h1')?.state, ConsoleInstallState.Failed)
+    })
+
+    it('an advert from another hive of the tenant does not count', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.Installer.Start('h1')
+        await fx.Installer.WhenSettled('h1')
+        fx.Adverts.Record = FakeAdvertLookup.Advert('acme', 'h2', '2026-11-05T10:00:01.000Z')
+        assert.equal(fx.Installer.StatusFor('h1')?.state, ConsoleInstallState.Deployed)
+        assert.equal(fx.RestartedInstaller().StatusFor('h1'), undefined)
+    })
+
+    it('an advert of a hive whose console setting was removed does not count', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        const { console: _c, ...rest } = ConsoleInstallFixture.Hive('h1')
+        fx.Hives.set('h1', rest)
+        fx.Adverts.Record = FakeAdvertLookup.Advert('acme', 'h1', '2026-11-05T10:00:01.000Z')
+        assert.equal(fx.RestartedInstaller().StatusFor('h1'), undefined)
+    })
+
+    it('a reinstall stays deployed until the new console reports', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        // The previous install's advert predates this run's finish (clock: 10:00:00).
+        fx.Adverts.Record = FakeAdvertLookup.Advert('acme', 'h1', '2026-11-05T09:59:00.000Z')
+        fx.Installer.Start('h1')
+        await fx.Installer.WhenSettled('h1')
+        const status = fx.Installer.StatusFor('h1')
+        assert.equal(status?.state, ConsoleInstallState.Deployed)
+        assert.equal(status?.reportedAt, undefined)
+        fx.Adverts.Record = FakeAdvertLookup.Advert('acme', 'h1', '2026-11-05T10:00:00.000Z')
+        assert.equal(fx.Installer.StatusFor('h1')?.state, ConsoleInstallState.Reported)
+    })
+})
+
+describe('ConsoleAdvertRegistry.UsableFor', () =>
+{
+    const hive = (id: string, withConsole: boolean): HiveRecord =>
+    {
+        const record = ConsoleInstallFixture.Hive(id)
+        if (!withConsole)
+        {
+            delete record.console
+        }
+        return record
+    }
+
+    it('counts an advert only for a hive of the tenant that still has its console', () =>
+    {
+        const lookup = new FakeAdvertLookup()
+        lookup.Record = FakeAdvertLookup.Advert('acme', 'h1', '2026-11-05T10:00:01.000Z')
+        assert.equal(ConsoleAdvertRegistry.UsableFor(lookup, 'acme', [hive('h1', true)])?.hiveId, 'h1')
+        assert.equal(ConsoleAdvertRegistry.UsableFor(lookup, 'acme', [hive('h1', false)]), undefined)
+        assert.equal(ConsoleAdvertRegistry.UsableFor(lookup, 'acme', [hive('h2', true)]), undefined)
+        assert.equal(ConsoleAdvertRegistry.UsableFor(lookup, 'other', [hive('h1', true)]), undefined)
     })
 })
 

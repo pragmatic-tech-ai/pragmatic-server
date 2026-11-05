@@ -24,6 +24,8 @@ import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { KubectlError, PortForwardError } from '../kubectl.js'
 import { InClusterIdpSeedSource } from '../in-cluster-idp-seed.js'
 import type { TenantConsoleInstaller } from '../tenant-console-installer.js'
+import { ConsoleAdvertRegistry } from '../console-advert-registry.js'
+import { ConsoleDomainApprovals } from '../console-domain-approvals.js'
 import { ConsoleInstallFixture, FakeInHiveIdpAdmin } from './console-install-fakes.js'
 
 type Reply = { status: number; body: string }
@@ -252,6 +254,64 @@ class HeldCheckIns
 }
 
 // Keeps a console install in its first step until released.
+// A real advert store whose forgets can be made to fail (a store write failure after the record or setting is already gone).
+class SwitchableAdverts extends ConsoleAdvertRegistry
+{
+    public FailForget = false
+
+    public override async ForgetHive(hiveId: string): Promise<void>
+    {
+        if (this.FailForget)
+        {
+            throw new Error('disk full: secret-detail')
+        }
+        await super.ForgetHive(hiveId)
+    }
+
+    public override async ForgetTenant(tenantId: string): Promise<void>
+    {
+        if (this.FailForget)
+        {
+            throw new Error('disk full: secret-detail')
+        }
+        await super.ForgetTenant(tenantId)
+    }
+}
+
+class SwitchableApprovals extends ConsoleDomainApprovals
+{
+    public FailForget = false
+
+    public override async ForgetTenant(tenantId: string): Promise<void>
+    {
+        if (this.FailForget)
+        {
+            throw new Error('disk full: secret-detail')
+        }
+        await super.ForgetTenant(tenantId)
+    }
+}
+
+// Captures console.error while a test body runs.
+class ErrorLines
+{
+    public static async Capture(body: () => Promise<void>): Promise<string[]>
+    {
+        const lines: string[] = []
+        const original = console.error
+        console.error = (...args: unknown[]) => { lines.push(args.map(String).join(' ')) }
+        try
+        {
+            await body()
+        }
+        finally
+        {
+            console.error = original
+        }
+        return lines
+    }
+}
+
 class InstallHold
 {
     private release: () => void = () => undefined
@@ -284,6 +344,11 @@ describe('ControlPlaneHost in-hive console install', () =>
     let agentInstaller: HiveAgentInstaller
     let checkIns: HeldCheckIns
     let hold: InstallHold
+    let adverts: SwitchableAdverts
+    let approvals: SwitchableApprovals
+
+    const reportFor = (tenantId: string, hiveId: string): Promise<unknown> =>
+        adverts.Report({ tenantId, hiveId, consoleUrl: 'https://console-' + tenantId + '.localtest.me', fingerprints: [], emailDomains: [], reportedAt: new Date().toISOString() })
 
     beforeEach(async () =>
     {
@@ -306,7 +371,9 @@ describe('ControlPlaneHost in-hive console install', () =>
         await audit.Load()
         fx = await ConsoleInstallFixture.Create()
         fx.SeedRunningIdp('t1')
-        installer = fx.InstallerOver(directory)
+        adverts = new SwitchableAdverts(join(parent, 'console-adverts.json'))
+        approvals = new SwitchableApprovals(join(parent, 'console-domain-approvals.json'))
+        installer = fx.InstallerOver(directory, adverts)
         hold = new InstallHold(fx, installer)
         const deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
         await deployments.RegisterHive('h1')
@@ -315,7 +382,7 @@ describe('ControlPlaneHost in-hive console install', () =>
         host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
             new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent),
             undefined, undefined, undefined, undefined, undefined, undefined, new OperatorAuthorization(), audit, undefined, undefined,
-            ConsoleInstallFixture.ChannelUrl, agentInstaller, new HiveAgentUninstaller(fx.Orchestrators), undefined, installer)
+            ConsoleInstallFixture.ChannelUrl, agentInstaller, new HiveAgentUninstaller(fx.Orchestrators), undefined, installer, adverts, approvals)
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -531,6 +598,75 @@ describe('ControlPlaneHost in-hive console install', () =>
         assert.ok(!body.retained.includes('pragmatic-env-stuck'))
         assert.match(body.notice ?? '', /pragmatic-env-stuck/)
         assert.match(audit.Recent(10).find(e => e.method === 'DELETE')?.note ?? '', /failed: pragmatic-env-stuck/)
+    })
+
+    it('GET console-install answers reported from the advert', async () =>
+    {
+        await adverts.Report({ tenantId: 't1', hiveId: 'h1', consoleUrl: 'https://console-t1.localtest.me', fingerprints: [], emailDomains: [], reportedAt: new Date().toISOString() })
+        const r = await Send.Request(host, 'GET', '/api/hives/h1/console-install')
+        assert.equal(r.status, 200)
+        const body = JSON.parse(r.body) as { state: string; consoleUrl: string; stale: boolean }
+        assert.equal(body.state, 'reported')
+        assert.equal(body.consoleUrl, 'https://console-t1.localtest.me')
+        assert.equal(body.stale, false)
+    })
+
+    it('removing the console forgets its advert', async () =>
+    {
+        await reportFor('t1', 'h1')
+        const r = await Send.Request(host, 'DELETE', '/api/hives/h1/console')
+        assert.equal(r.status, 200)
+        assert.equal(adverts.ForTenant('t1'), undefined)
+    })
+
+    it('changing the console host keeps the advert until a reinstall reports the new host', async () =>
+    {
+        await reportFor('t1', 'h1')
+        const r = await Harness.Put(host, '/api/hives/h1/console', { baseDomain: 'other.test', tls: { source: 'development' } })
+        assert.equal(r.status, 200)
+        assert.equal(adverts.ForTenant('t1')?.hiveId, 'h1')
+    })
+
+    it('hive delete forgets its advert', async () =>
+    {
+        await reportFor('t1', 'h1')
+        const r = await Send.Request(host, 'DELETE', '/api/hives/h1')
+        assert.equal(r.status, 200)
+        assert.equal(adverts.ForTenant('t1'), undefined)
+    })
+
+    it('tenant delete forgets any advert and the approved domains, and keeps approvals when only the console or hive goes', async () =>
+    {
+        await approvals.Approve('t1', 'acme.example')
+        await reportFor('t1', 'h1')
+        assert.equal((await Send.Request(host, 'DELETE', '/api/hives/h1/console')).status, 200)
+        assert.deepEqual(approvals.ApprovedFor('t1'), ['acme.example'])
+        assert.equal((await Send.Request(host, 'DELETE', '/api/hives/h1')).status, 200)
+        assert.deepEqual(approvals.ApprovedFor('t1'), ['acme.example'])
+        await directory.CreateProvisionedTenant({ id: 't2', clientId: 'acme', displayName: 'T2', ownerEmail: 'owner@t2.test', ownerPrincipalId: 'owner', idpBaseUrl: 'https://idp.test' })
+        await adverts.Report({ tenantId: 't2', hiveId: 'gone', consoleUrl: 'https://console-t2.localtest.me', fingerprints: [], emailDomains: [], reportedAt: new Date().toISOString() })
+        await approvals.Approve('t2', 'two.example')
+        assert.equal((await Send.Request(host, 'DELETE', '/api/tenants/t2')).status, 200)
+        assert.equal(adverts.ForTenant('t2'), undefined)
+        assert.deepEqual(approvals.ApprovedFor('t2'), [])
+    })
+
+    it('a failing advert store does not fail a completed console removal, hive delete or tenant delete, and logs the error name only', async () =>
+    {
+        adverts.FailForget = true
+        approvals.FailForget = true
+        await directory.CreateProvisionedTenant({ id: 't2', clientId: 'acme', displayName: 'T2', ownerEmail: 'owner@t2.test', ownerPrincipalId: 'owner', idpBaseUrl: 'https://idp.test' })
+        const lines = await ErrorLines.Capture(async () =>
+        {
+            assert.equal((await Send.Request(host, 'DELETE', '/api/hives/h1/console')).status, 200)
+            assert.equal((await Send.Request(host, 'DELETE', '/api/hives/h1')).status, 200)
+            assert.equal((await Send.Request(host, 'DELETE', '/api/tenants/t2')).status, 200)
+        })
+        assert.equal(directory.GetHive('h1'), undefined)
+        assert.equal(directory.GetTenant('t2'), undefined)
+        assert.equal(lines.filter(l => l.includes('advert failed: Error')).length, 3)
+        assert.equal(lines.filter(l => l.includes('approved email domains failed: Error')).length, 1)
+        assert.ok(lines.every(l => !l.includes('secret-detail')))
     })
 
     it('a forced hive delete skips the console and its namespaces but still forgets its keys', async () =>
