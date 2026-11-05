@@ -738,10 +738,14 @@ export class FakeControlPlane
     {
         this.ThrowIfEmailDomainsFailing()
         this.EmailDomainSaves.push([tenantId, [...domains]])
-        // Like the server: what an operator saves is approved on save.
+        // Like the server: the domains this save adds are approved; those already listed keep their state.
+        const previous = this.EmailDomainReport(tenantId)
         const report = {
-            ...this.EmailDomainReport(tenantId), domains: [...domains],
-            approvals: domains.map(domain => ({ domain, approved: true, claimed: true, sharedWith: [] })),
+            ...previous, domains: [...domains],
+            approvals: domains.map(domain => ({
+                domain, approved: previous.domains.includes(domain) ? previous.approvals.some(a => a.domain === domain && a.approved) : true,
+                claimed: true, sharedWith: [],
+            })),
         }
         this.EmailDomainReports.set(tenantId, report)
         return FakeControlPlane.CopyReport(report)

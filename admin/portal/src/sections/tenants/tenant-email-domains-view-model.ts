@@ -99,7 +99,7 @@ export class EmailDomainApprovalRowViewModel extends Observable
 }
 
 // The tenant detail's Email domains block. A control-plane tenant's domains are edited here (one comma-separated
-// list, Save; the server approves what an operator saves). An in-hive tenant's domains are the ones its console
+// list, Save; the server approves the domains a save adds). An in-hive tenant's domains are the ones its console
 // reports, read-only here (the tenant Owner sets them in the console). Either way a domain takes effect in sign-in
 // discovery only once an operator approved it (a tenant Owner can set domains in either console), so each is listed
 // with Approved / Pending and Approve / Revoke. Read-only operators get no write action. A failed read never fails
@@ -109,7 +109,9 @@ export class TenantEmailDomainsViewModel extends Observable
 {
     private static readonly ReportedCaption = 'A reported domain sends people to this tenant only once it is approved.'
     private static readonly ControlPlaneCaption =
-        'A domain sends people to this tenant only once it is approved. Domains saved here are approved on save; those the tenant Owner sets wait here for approval.'
+        'A domain sends people to this tenant only once it is approved. Domains you add here are approved on save; those the tenant Owner sets wait here for approval.'
+    private static readonly ApprovedOnSavePrefix = ' Approved on save: '
+    private static readonly SentenceEnd = '.'
     private static readonly NoneDeclaredLabel = 'None declared.'
     private static readonly DomainSeparator = ', '
     private static readonly DomainSplitter = /[\s,;]+/
@@ -265,7 +267,7 @@ export class TenantEmailDomainsViewModel extends Observable
         return this.errorText
     }
 
-    // 'Saved.' after a save, until the operator types again.
+    // 'Saved.' after a save (naming the domains it approved), until the operator types again.
     public get SavedText(): string
     {
         return this.savedText
@@ -341,6 +343,7 @@ export class TenantEmailDomainsViewModel extends Observable
             return
         }
         const domains = this.Parsed()
+        const before = new Set(this.report?.domains ?? [])
         await this.Request(async () =>
         {
             const report = await this.session.Client.SetTenantEmailDomains(this.TenantId, domains)
@@ -348,9 +351,18 @@ export class TenantEmailDomainsViewModel extends Observable
             {
                 this.dirty = false
                 this.Show(report)
-                this.savedText = TenantEmailDomainsViewModel.SavedLabel
+                this.savedText = TenantEmailDomainsViewModel.SavedTextOf(report, before)
             })
         })
+    }
+
+    // 'Saved.', plus ' Approved on save: a, b.' naming the domains this save added and the server approved (only those:
+    // an Owner's pending domain already on the list stays pending until an explicit Approve).
+    private static SavedTextOf(report: TenantEmailDomainsDto, before: ReadonlySet<string>): string
+    {
+        const T = TenantEmailDomainsViewModel
+        const approved = report.approvals.filter(a => a.approved && a.claimed && !before.has(a.domain)).map(a => a.domain)
+        return approved.length === 0 ? T.SavedLabel : T.SavedLabel + T.ApprovedOnSavePrefix + approved.join(T.DomainSeparator) + T.SentenceEnd
     }
 
     // Approves one domain the tenant claims. Never throws.

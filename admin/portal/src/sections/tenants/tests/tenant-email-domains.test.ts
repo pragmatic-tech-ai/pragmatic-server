@@ -95,7 +95,7 @@ describe('Tenant email domains', () =>
         block.SaveCommand.Execute()
         await Tick.Settle()
         assert.deepEqual(fx.Api.EmailDomainSaves, [['t1', ['acme.test', 'beta.test']]])
-        assert.equal(block.SavedText, 'Saved.')
+        assert.equal(block.SavedText, 'Saved. Approved on save: beta.test.')
         assert.equal(block.ErrorText, '')
         assert.equal(block.DomainsText, 'acme.test, beta.test')
         assert.equal(block.SaveCommand.CanExecute(), false)
@@ -206,7 +206,7 @@ describe('Tenant email domains', () =>
         assert.equal(block.HasApprovals, true)
         assert.equal(block.HasDomainsLabel, false)
         assert.equal(block.ApprovalsCaption,
-            'A domain sends people to this tenant only once it is approved. Domains saved here are approved on save; those the tenant Owner sets wait here for approval.')
+            'A domain sends people to this tenant only once it is approved. Domains you add here are approved on save; those the tenant Owner sets wait here for approval.')
         assert.deepEqual(block.Approvals.ToArray().map(r => [r.Domain, r.StatusLabel, r.CanApprove, r.CanRevoke]), [
             ['acme.test', 'Approved', false, true],
             ['owner.test', 'Pending', true, false],
@@ -214,6 +214,21 @@ describe('Tenant email domains', () =>
         await block.Approvals.Get(1)!.Approve()
         assert.deepEqual(fx.Api.EmailDomainActions, ['Approve t1 owner.test'])
         assert.deepEqual(block.Approvals.ToArray().map(r => r.StatusLabel), ['Approved', 'Approved'])
+    })
+
+    it('a save approves only the domains it adds and names them; the Owner\'s pending domain stays pending', async () =>
+    {
+        const fx = new DomainsFixture().ControlPlane()
+        const block = await fx.Loaded()
+        block.DomainsText = 'acme.test, owner.test, new.test'
+        await block.Save()
+        assert.equal(block.SavedText, 'Saved. Approved on save: new.test.')
+        assert.deepEqual(block.Approvals.ToArray().map(r => [r.Domain, r.StatusLabel]), [
+            ['acme.test', 'Approved'], ['owner.test', 'Pending'], ['new.test', 'Approved'],
+        ])
+        block.DomainsText = 'acme.test, owner.test'
+        await block.Save()
+        assert.equal(block.SavedText, 'Saved.')
     })
 
     it('an in-hive tenant gets the reported-domain caption', async () =>
