@@ -592,6 +592,29 @@ describe('TenantConsoleInstaller', () =>
         assert.deepEqual(fx.IdpAdmin.Forgotten, [])
     })
 
+    it('an install records its hive as the owner of the tenant IdP credentials', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.Installer.Start('h1')
+        assert.equal((await fx.Installer.WhenSettled('h1'))?.state, ConsoleInstallState.Deployed)
+        assert.equal(await fx.IdpAdmin.OwnerOf('acme'), 'h1')
+    })
+
+    it('Forget of the owning hive drops the IdP credentials even after its console was removed (setting cleared)', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        await fx.IdpAdmin.RememberOwner('acme', 'h1')
+        await fx.Installer.Forget({ ...ConsoleInstallFixture.Hive('h1'), console: undefined })
+        assert.deepEqual(fx.IdpAdmin.Forgotten, ['acme'])
+    })
+
+    it('ForgetTenant drops the tenant IdP credentials (tenant delete)', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        await fx.Installer.ForgetTenant('acme')
+        assert.deepEqual(fx.IdpAdmin.Forgotten, ['acme'])
+    })
+
     it('an Owner seeding failure fails the install at seeding-owner', async () =>
     {
         fx = await ConsoleInstallFixture.Create()

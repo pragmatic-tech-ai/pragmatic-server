@@ -284,7 +284,7 @@ export class ControlPlaneHost
     private static readonly ConsoleRemoveFailedPrefix = "Could not remove the hive's console from its cluster: "
     private static readonly ConsoleLeftNotice = 'The console was not removed: its objects (including its cluster-wide grants) and the environment namespaces it created may remain in the cluster until someone removes them.'
     private static readonly ForgetFailedLogPrefix = '[hive-delete] hive '
-    private static readonly ConsoleRemovalLogPrefix = '[console-remove] hive '
+    private static readonly TenantDeleteLogPrefix = '[tenant-delete] tenant '
     private static readonly ForgetFailedLogInfix = ': forgetting its console keys failed: '
     private static readonly UnknownErrorName = 'Error'
     private static readonly NamespacesLeftNoticePrefix = 'These environment namespaces could not be deleted and may remain in the cluster: '
@@ -1486,10 +1486,10 @@ export class ControlPlaneHost
     }
 
     /**
-     * Drops the tenant's in-hive IdP credentials once its console is gone. Best effort: the console is already removed, so a sealed-store
-     * failure only leaves an unreachable sealed copy behind and must not turn the removal into an error.
+     * Drops a deleted tenant's in-hive IdP credentials. Best effort: the tenant is already gone, so a sealed-store failure only leaves
+     * an unreachable sealed copy behind and must not turn the delete into an error.
      */
-    private async ForgetConsoleCredentials(hive: HiveRecord, logPrefix: string): Promise<void>
+    private async ForgetTenantConsoleCredentials(tenantId: string): Promise<void>
     {
         if (this.consoleInstaller === undefined)
         {
@@ -1497,11 +1497,11 @@ export class ControlPlaneHost
         }
         try
         {
-            await this.consoleInstaller.ForgetConsoleCredentials(hive)
+            await this.consoleInstaller.ForgetTenant(tenantId)
         }
         catch (err)
         {
-            ControlPlaneHost.LogForgetFailure(logPrefix, hive.id, err)
+            ControlPlaneHost.LogForgetFailure(ControlPlaneHost.TenantDeleteLogPrefix, tenantId, err)
         }
     }
 
@@ -1539,11 +1539,8 @@ export class ControlPlaneHost
                     return
                 }
             }
+            // The sealed IdP credentials stay: the kept IdP and environments still use that CA (forgotten on hive or tenant delete).
             const updated: HiveDto = await this.directory.SetHiveConsole(id, undefined)
-            if (hive !== undefined)
-            {
-                await this.ForgetConsoleCredentials(hive, ControlPlaneHost.ConsoleRemovalLogPrefix)
-            }
             if (retained.length > 0)
             {
                 this.auditNotes.set(res, ControlPlaneHost.RetainedNotePrefix + retained.join(ControlPlaneHost.NoteSeparator))
@@ -1990,6 +1987,7 @@ export class ControlPlaneHost
                 await this.idp?.TeardownForTenant(id)
                 await this.directory.DeleteTenant(id)
                 await this.provisioning.ForgetTenant(id)
+                await this.ForgetTenantConsoleCredentials(id)
                 break
         }
     }

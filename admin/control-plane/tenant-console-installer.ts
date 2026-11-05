@@ -380,22 +380,24 @@ export class TenantConsoleInstaller
     }
 
     /**
-     * On hive delete: drops the hive's fingerprint key and, when it is the tenant's console hive, the in-hive IdP credentials. Those
-     * are keyed by tenant: deleting another hive of the same tenant must not strand the console hive's IdP.
+     * On hive delete: drops the hive's fingerprint key and, when it is the tenant's console hive (it has the console, or its install
+     * sealed the credentials and the console was removed since), the in-hive IdP credentials. Those are keyed by tenant: deleting
+     * another hive of the same tenant must not strand the console hive's IdP. A console removal keeps them: the kept IdP Secrets and
+     * environments still use that CA, and the half-pair check on a reinstall relies on them.
      */
     public async Forget(hive: HiveRecord): Promise<void>
     {
         await this.fingerprints.Remove(hive.id)
-        await this.ForgetConsoleCredentials(hive)
-    }
-
-    /** On console removal (and console-hive delete): drops the tenant's in-hive IdP credentials; a hive without a console has none. */
-    public async ForgetConsoleCredentials(hive: HiveRecord): Promise<void>
-    {
-        if (hive.console !== undefined)
+        if (hive.console !== undefined || await this.idpAdmin.OwnerOf(hive.tenantId) === hive.id)
         {
             await this.idpAdmin.Forget(hive.tenantId)
         }
+    }
+
+    /** On tenant delete: drops the tenant's in-hive IdP credentials. */
+    public async ForgetTenant(tenantId: string): Promise<void>
+    {
+        await this.idpAdmin.Forget(tenantId)
     }
 
     /** Sets a fresh in-hive Owner password and returns it once. Refused while an install runs or before the console is configured. */
@@ -521,6 +523,7 @@ export class TenantConsoleInstaller
                 await kubectl.DeleteManifest(C.SecretIdentities(idpName, legacyCopies))
             }
             await this.idpAdmin.Remember(t, idp.ca, idp.adminToken)
+            await this.idpAdmin.RememberOwner(t, hive.id)
             // A reinstall must pick up the new Secrets: both Deployments restart.
             await kubectl.RolloutRestart(idpName, idpName)
             await kubectl.RolloutRestart(system, K8sManifestBuilder.TenantAdminNameOf(t))

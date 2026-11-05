@@ -243,6 +243,20 @@ export class FakeInHiveIdpAdmin implements IInHiveIdpAdmin
     {
         this.events.push('Forget')
         this.Forgotten.push(tenantId)
+        this.Owners.delete(tenantId)
+    }
+
+    /** The hive recorded as the installer of each tenant's IdP credentials. */
+    public readonly Owners = new Map<string, string>()
+
+    public async RememberOwner(tenantId: string, hiveId: string): Promise<void>
+    {
+        this.Owners.set(tenantId, hiveId)
+    }
+
+    public async OwnerOf(tenantId: string): Promise<string | undefined>
+    {
+        return this.Owners.get(tenantId)
     }
 }
 

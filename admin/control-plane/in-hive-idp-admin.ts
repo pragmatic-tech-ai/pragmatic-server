@@ -35,7 +35,11 @@ export interface IInHiveIdpAdmin
     ResetOwnerPassword(hive: HiveRecord, tenant: TenantRecord): Promise<InHiveOwnerPassword>
     /** Whether both credentials are sealed for the tenant (an earlier install completed its storing step). */
     Holds(tenantId: string): Promise<boolean>
-    /** Drops the sealed credentials (hive delete). */
+    /** Records the hive whose console install sealed the credentials (they outlive a console removal; that hive's delete drops them). */
+    RememberOwner(tenantId: string, hiveId: string): Promise<void>
+    /** The hive recorded by RememberOwner; undefined when none is. */
+    OwnerOf(tenantId: string): Promise<string | undefined>
+    /** Drops the sealed credentials and their owner record (owning hive's delete, tenant delete). */
     Forget(tenantId: string): Promise<void>
 }
 
@@ -48,6 +52,7 @@ export class InHiveIdpAdmin implements IInHiveIdpAdmin
 {
     private static readonly CaRefPrefix = 'in-hive-idp-ca/'
     private static readonly TokenRefPrefix = 'in-hive-idp-admin-token/'
+    private static readonly OwnerRefPrefix = 'in-hive-idp-owner-hive/'
     private static readonly IdpPort = 9443
     private static readonly ServicePrefix = 'svc/'
     private static readonly LoopbackPrefix = 'https://127.0.0.1:'
@@ -136,10 +141,26 @@ export class InHiveIdpAdmin implements IInHiveIdpAdmin
             && await this.store.Get(InHiveIdpAdmin.TokenRefOf(tenantId)) !== undefined
     }
 
+    public async RememberOwner(tenantId: string, hiveId: string): Promise<void>
+    {
+        await this.store.Put(InHiveIdpAdmin.OwnerRefOf(tenantId), Buffer.from(hiveId, InHiveIdpAdmin.Utf8))
+    }
+
+    public async OwnerOf(tenantId: string): Promise<string | undefined>
+    {
+        return (await this.store.Get(InHiveIdpAdmin.OwnerRefOf(tenantId)))?.toString(InHiveIdpAdmin.Utf8)
+    }
+
     public async Forget(tenantId: string): Promise<void>
     {
         await this.store.Delete(InHiveIdpAdmin.CaRefOf(tenantId))
         await this.store.Delete(InHiveIdpAdmin.TokenRefOf(tenantId))
+        await this.store.Delete(InHiveIdpAdmin.OwnerRefOf(tenantId))
+    }
+
+    private static OwnerRefOf(tenantId: string): string
+    {
+        return `${InHiveIdpAdmin.OwnerRefPrefix}${tenantId}`
     }
 
     /** Opens the loopback tunnel to the tenant's IdP Service, runs `op` with an admin client over it, and always closes the tunnel. */

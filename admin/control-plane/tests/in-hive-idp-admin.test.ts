@@ -211,4 +211,16 @@ describe('InHiveIdpAdmin', () =>
         await fx.Admin.ResetOwnerPassword(ConsoleInstallFixture.Hive('h1'), legacy)
         assert.equal(fx.Client.Calls[0]?.[2], 'owner')
     })
+
+    it('records which hive installed the IdP, and Forget drops that record with the credentials', async () =>
+    {
+        fx = await Fixture.Create()
+        assert.equal(await fx.Admin.OwnerOf('acme'), undefined)
+        await fx.Admin.Remember('acme', Buffer.from('CA PEM'), 'admin.token.Zq')
+        await fx.Admin.RememberOwner('acme', 'h1')
+        assert.equal(await fx.Admin.OwnerOf('acme'), 'h1')
+        await fx.Admin.Forget('acme')
+        assert.equal(await fx.Admin.OwnerOf('acme'), undefined)
+        assert.equal(await fx.Admin.Holds('acme'), false)
+    })
 })

@@ -478,11 +478,22 @@ describe('ControlPlaneHost in-hive console install', () =>
         assert.deepEqual(body.retained, [InClusterIdpSeedSource.TlsSecretNameOf('t1'), InClusterIdpSeedSource.AdminSecretNameOf('t1')])
     })
 
-    it('DELETE console forgets the tenant IdP credentials the control plane held for it', async () =>
+    it('DELETE console keeps the stored IdP credentials (the half-pair check keeps protecting kept environments); deleting the hive then forgets them', async () =>
     {
+        await fx.IdpAdmin.RememberOwner('t1', 'h1')
         const r = await Send.Request(host, 'DELETE', '/api/hives/h1/console')
         assert.equal(r.status, 200)
+        assert.deepEqual(fx.IdpAdmin.Forgotten, [])
+        assert.equal((await Send.Request(host, 'DELETE', '/api/hives/h1')).status, 200)
         assert.deepEqual(fx.IdpAdmin.Forgotten, ['t1'])
+    })
+
+    it('a tenant delete forgets its in-hive IdP credentials', async () =>
+    {
+        await directory.CreateProvisionedTenant({ id: 't2', clientId: 'acme', displayName: 'T2', ownerEmail: 'owner@t2.test', ownerPrincipalId: 'owner', idpBaseUrl: 'https://idp.test' })
+        const r = await Send.Request(host, 'DELETE', '/api/tenants/t2')
+        assert.equal(r.status, 200)
+        assert.deepEqual(fx.IdpAdmin.Forgotten, ['t2'])
     })
 
     it('hive delete removes console-created environment namespaces by hive label and keeps unlabelled pragmatic-env-* namespaces', async () =>
