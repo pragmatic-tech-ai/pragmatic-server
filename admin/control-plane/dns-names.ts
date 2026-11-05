@@ -26,10 +26,21 @@ export class DnsNames
      */
     public static IsValidDomain(domain: string): boolean
     {
+        return DnsNames.HasValidSyntax(domain) && !DnsNames.IsPublicSuffix(domain)
+    }
+
+    /** Lowercase DNS labels, at least two of them, at most 253 characters (public suffixes are syntactically fine). */
+    public static HasValidSyntax(domain: string): boolean
+    {
         const labels = domain.split(DnsNames.Dot)
         return domain.length <= DnsNames.MaxNameLength
             && labels.length >= DnsNames.MinLabels
             && labels.every(l => DnsNames.IsLabel(l))
-            && !DnsNames.PublicSuffixes.has(domain)
+    }
+
+    /** True for a well-known multi-label public suffix such as co.uk. */
+    public static IsPublicSuffix(domain: string): boolean
+    {
+        return DnsNames.PublicSuffixes.has(domain)
     }
 }

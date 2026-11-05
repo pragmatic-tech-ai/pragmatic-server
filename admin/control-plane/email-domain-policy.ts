@@ -22,7 +22,10 @@ export class EmailDomainPolicy
     private static readonly AllDigitsPattern = /^[0-9]+$/
     private static readonly MaxBrandSuffixLabels = 2
     private static readonly MaxBrandSuffixLabelLength = 3
-    private static readonly NotValidSuffix = ' is not a valid domain name.'
+    private static readonly NonAsciiPattern = /[^\x00-\x7f]/
+    private static readonly NotAsciiSuffix = ' is not an ASCII domain name: enter its internationalised form, which starts with xn--.'
+    private static readonly PublicSuffixSuffix = ' is a public domain suffix shared by many organisations, so it cannot point to one tenant.'
+    private static readonly NotValidSuffix =' is not a valid domain name.'
     private static readonly PublicMailSuffix = ' is a public mail domain: anyone can have an address there, so it cannot point to one tenant.'
     private static readonly TooMany = 'List at most 20 email domains.'
     private static readonly NotAList = 'Email domains must be a list of domain names.'
@@ -46,9 +49,17 @@ export class EmailDomainPolicy
     /** undefined when acceptable, else the refusal sentence naming the (normalised) domain. */
     public static Check(domain: string): string | undefined
     {
+        if (EmailDomainPolicy.NonAsciiPattern.test(domain))
+        {
+            return domain + EmailDomainPolicy.NotAsciiSuffix
+        }
         if (!EmailDomainPolicy.IsValidName(domain))
         {
             return domain + EmailDomainPolicy.NotValidSuffix
+        }
+        if (DnsNames.IsPublicSuffix(domain))
+        {
+            return domain + EmailDomainPolicy.PublicSuffixSuffix
         }
         if (EmailDomainPolicy.IsPublicMail(domain))
         {
@@ -119,7 +130,7 @@ export class EmailDomainPolicy
 
     private static IsValidName(domain: string): boolean
     {
-        if (!EmailDomainPolicy.CharsetPattern.test(domain) || !DnsNames.IsValidDomain(domain))
+        if (!EmailDomainPolicy.CharsetPattern.test(domain) || !DnsNames.HasValidSyntax(domain))
         {
             return false
         }

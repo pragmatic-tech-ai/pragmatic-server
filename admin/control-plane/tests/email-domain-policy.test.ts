@@ -17,11 +17,26 @@ test('accepts ordinary company domains', () =>
 
 test('refuses malformed names', () =>
 {
-    for (const d of ['acme', 'acme..com', '-acme.com', 'acme-.com', '*.acme.com', 'acme.com/x', '10.0.0.1', 'a'.repeat(64) + '.com', 'bücher.example'])
+    for (const d of ['acme', 'acme..com', '-acme.com', 'acme-.com', '*.acme.com', 'acme.com/x', '10.0.0.1', 'a'.repeat(64) + '.com'])
     {
         const sentence = EmailDomainPolicy.Check(d)
         assert.ok(sentence !== undefined && sentence.endsWith('is not a valid domain name.'), d)
     }
+})
+
+test('a public domain suffix gets its own sentence', () =>
+{
+    for (const d of ['co.uk', 'com.au'])
+    {
+        assert.equal(EmailDomainPolicy.Check(d), `${d} is a public domain suffix shared by many organisations, so it cannot point to one tenant.`)
+    }
+    assert.equal(EmailDomainPolicy.Check('acme.co.uk'), undefined)
+})
+
+test('a non-ASCII domain is told to use its xn-- form', () =>
+{
+    const sentence = EmailDomainPolicy.Check('bücher.example')
+    assert.equal(sentence, 'bücher.example is not an ASCII domain name: enter its internationalised form, which starts with xn--.')
 })
 
 test('refuses public mail domains', () =>

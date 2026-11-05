@@ -126,13 +126,13 @@ export class HiveConsoleSpecs
         }
     }
 
-    /** The browser host of the tenant's console: the explicit host, else console-<tenant>.<baseDomain>. */
     /** The hive (of one tenant's hives) that runs the in-hive console, if any (Plan 1 allows at most one). */
     public static ConsoleHiveOf(hives: readonly HiveRecord[]): HiveRecord | undefined
     {
         return hives.find(h => h.console !== undefined)
     }
 
+    /** The browser host of the tenant's console: the explicit host, else console-<tenant>.<baseDomain>. */
     public static HostOf(spec: HiveConsoleSpec, tenantId: string): string
     {
         return spec.host ?? K8sManifestBuilder.ConsoleHostOf(tenantId, spec.baseDomain)
