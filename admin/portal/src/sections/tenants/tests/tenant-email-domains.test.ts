@@ -26,7 +26,7 @@ class DomainsFixture
 
     public Report(report: Partial<TenantEmailDomainsDto>): this
     {
-        this.Api.EmailDomainReports.set('t1', { tenantId: 't1', domains: [], source: EmailDomainSource.Tenant, editable: true, sharedWith: [], ...report })
+        this.Api.EmailDomainReports.set('t1', { tenantId: 't1', domains: [], source: EmailDomainSource.Tenant, editable: true, sharedWith: [], approvals: [], ...report })
         return this
     }
 
@@ -36,8 +36,20 @@ class DomainsFixture
         return this.Report({
             domains: ['acme.test', 'beta.test'], source: EmailDomainSource.Console, editable: false, reportedAt: '2026-11-04T10:30:00.000Z', sharedWith: ['t2'],
             approvals: [
-                { domain: 'acme.test', approved: true, sharedWith: [] },
-                { domain: 'beta.test', approved: false, sharedWith: ['t2'] },
+                { domain: 'acme.test', approved: true, claimed: true, sharedWith: [] },
+                { domain: 'beta.test', approved: false, claimed: true, sharedWith: ['t2'] },
+            ],
+        })
+    }
+
+    // A control-plane tenant: acme.test (saved by an operator, so approved) and owner.test (set by the tenant Owner, pending).
+    public ControlPlane(): this
+    {
+        return this.Report({
+            domains: ['acme.test', 'owner.test'],
+            approvals: [
+                { domain: 'acme.test', approved: true, claimed: true, sharedWith: [] },
+                { domain: 'owner.test', approved: false, claimed: true, sharedWith: [] },
             ],
         })
     }
@@ -160,7 +172,7 @@ describe('Tenant email domains', () =>
         // The console has since stopped reporting beta.test.
         fx.Api.EmailDomainReports.set('t1', {
             ...fx.Api.EmailDomainReports.get('t1')!, domains: ['acme.test'], sharedWith: [],
-            approvals: [{ domain: 'acme.test', approved: true, sharedWith: [] }],
+            approvals: [{ domain: 'acme.test', approved: true, claimed: true, sharedWith: [] }],
         })
         fx.Api.EmailDomainsFailure = new ApiError(409, "beta.test is not among the email domains this tenant's console reports, so there is nothing to approve.")
         const reads = fx.Api.EmailDomainReads
@@ -185,11 +197,52 @@ describe('Tenant email domains', () =>
         assert.equal(fx.Host.Reloader.Count, 1)
     })
 
-    it('a control-plane tenant has no approval rows', async () =>
+    it('a control-plane tenant edits its list and lists each domain with its approval', async () =>
     {
-        const fx = new DomainsFixture().Report({ domains: ['acme.test'] })
+        const fx = new DomainsFixture().ControlPlane()
         const block = await fx.Loaded()
         assert.equal(block.IsInHive, false)
+        assert.equal(block.IsEditable, true)
+        assert.equal(block.HasApprovals, true)
+        assert.equal(block.HasDomainsLabel, false)
+        assert.equal(block.ApprovalsCaption,
+            'A domain sends people to this tenant only once it is approved. Domains saved here are approved on save; those the tenant Owner sets wait here for approval.')
+        assert.deepEqual(block.Approvals.ToArray().map(r => [r.Domain, r.StatusLabel, r.CanApprove, r.CanRevoke]), [
+            ['acme.test', 'Approved', false, true],
+            ['owner.test', 'Pending', true, false],
+        ])
+        await block.Approvals.Get(1)!.Approve()
+        assert.deepEqual(fx.Api.EmailDomainActions, ['Approve t1 owner.test'])
+        assert.deepEqual(block.Approvals.ToArray().map(r => r.StatusLabel), ['Approved', 'Approved'])
+    })
+
+    it('an in-hive tenant gets the reported-domain caption', async () =>
+    {
+        const block = await new DomainsFixture().InHive().Loaded()
+        assert.equal(block.ApprovalsCaption, 'A reported domain sends people to this tenant only once it is approved.')
+    })
+
+    it('an approved domain the tenant no longer claims is marked so and offers Revoke only', async () =>
+    {
+        const fx = new DomainsFixture().InHive()
+        fx.Api.EmailDomainReports.set('t1', {
+            ...fx.Api.EmailDomainReports.get('t1')!,
+            approvals: [...fx.Api.EmailDomainReports.get('t1')!.approvals, { domain: 'gone.test', approved: true, claimed: false, sharedWith: [] }],
+        })
+        const block = await fx.Loaded()
+        const gone = block.Approvals.Get(2)!
+        assert.equal(gone.Domain, 'gone.test')
+        assert.equal(gone.StatusLabel, 'Approved, no longer claimed')
+        assert.equal(gone.CanApprove, false)
+        assert.equal(gone.CanRevoke, true)
+        await gone.Revoke()
+        assert.deepEqual(fx.Api.EmailDomainActions, ['Revoke t1 gone.test'])
+    })
+
+    it('a control-plane tenant with no domains has no approval rows', async () =>
+    {
+        const fx = new DomainsFixture().Report({ domains: [] })
+        const block = await fx.Loaded()
         assert.equal(block.HasApprovals, false)
         assert.equal(block.Approvals.Count, 0)
     })

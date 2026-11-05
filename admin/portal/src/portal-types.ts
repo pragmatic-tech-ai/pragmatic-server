@@ -235,12 +235,15 @@ export enum EmailDomainSource
     Console = 'console',
 }
 
-// One domain an in-hive console reports: whether an operator approved it, and which other tenants claim it too.
-export type EmailDomainApprovalDto = { domain: string; approved: boolean; sharedWith: string[] }
+// One domain of a tenant as the operator reviews it: whether an operator approved it, whether the tenant still claims it
+// (false: an approved domain its console or record no longer lists, kept so it can be revoked), and which other tenants
+// claim it too.
+export type EmailDomainApprovalDto = { domain: string; approved: boolean; claimed: boolean; sharedWith: string[] }
 
 // A tenant's email domains as the operator sees them (the email-domains route's reply). editable: false for an
 // in-hive tenant, whose Owner sets them in its console. sharedWith: sorted ids of the other tenants claiming any of
-// these domains. approvals: in-hive tenants only, one entry per reported domain, in domains order.
+// these domains. approvals: every tenant, one entry per claimed domain in domains order, then each approved domain no
+// longer claimed; a domain matches in sign-in discovery only while it is both claimed and approved.
 export type TenantEmailDomainsDto =
 {
     tenantId: string
@@ -249,7 +252,7 @@ export type TenantEmailDomainsDto =
     editable: boolean
     reportedAt?: string
     sharedWith: string[]
-    approvals?: EmailDomainApprovalDto[]
+    approvals: EmailDomainApprovalDto[]
 }
 
 // A fresh Owner password in the hive's in-hive identity provider, shown once.

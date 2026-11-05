@@ -185,8 +185,9 @@ resources TenantsResources {
 
     // The tenant detail's Email domains block. A control-plane tenant edits one
     // comma-separated list (Save). An in-hive tenant shows what its console
-    // reports, read-only, one row per domain with Approved / Pending and, for
-    // operators who may mutate, Approve / Revoke. A failed read shows only here.
+    // reports, read-only. Either way one row per domain shows Approved / Pending
+    // (or approved but no longer claimed) and, for operators who may mutate,
+    // Approve / Revoke. A failed read shows only here.
     DataTemplate [ DataType = TenantEmailDomainsViewModel ] {
         StackPanel [ Orientation = Vertical ] {
             TextBlock [ Text = "Email domains", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,4) ]
@@ -216,9 +217,9 @@ resources TenantsResources {
                     TextBlock [ Text = $DomainsLabel, Foreground = @Fg0, TextWrapping = Wrap,
                                 Visibility = $HasDomainsLabel << ToVisibility ]
 
-                    // In-hive tenant: each reported domain and its approval.
-                    StackPanel [ Orientation = Vertical, Visibility = $HasApprovals << ToVisibility ] {
-                        TextBlock [ Text = "A reported domain sends people to this tenant only once it is approved.",
+                    // Each domain and its approval (in-hive and control-plane tenants).
+                    StackPanel [ Orientation = Vertical, Margin = (0,8,0,0), Visibility = $HasApprovals << ToVisibility ] {
+                        TextBlock [ Text = $ApprovalsCaption,
                                     Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,6) ]
                         ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Approvals, ItemTemplate = @EmailDomainApprovalRowTemplate ]
                     }
@@ -232,8 +233,8 @@ resources TenantsResources {
         }
     }
 
-    // One reported domain of an in-hive tenant: its approval and, for operators
-    // who may mutate, Approve or Revoke.
+    // One domain of a tenant: its approval and, for operators who may mutate,
+    // Approve or Revoke.
     DataTemplate x:key="EmailDomainApprovalRowTemplate" [ DataType = EmailDomainApprovalRowViewModel ] {
         Grid [ Margin = (4,2,4,2) ] {
             ColumnDefinitions {

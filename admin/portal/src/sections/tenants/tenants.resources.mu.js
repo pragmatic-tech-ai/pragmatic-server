@@ -512,9 +512,10 @@ export class TenantsResources extends ResourceDictionary {
             _stackPanel97.AddChild(_textBlock107);
             const _stackPanel108 = new StackPanel();
             _stackPanel108.set_property_value(StackPanel.OrientationKey, Orientation.Vertical);
+            _stackPanel108.set_property_value(StackPanel.MarginKey, new Thickness(0, 8, 0, 0));
             _stackPanel108.set_property_value(StackPanel.VisibilityKey, DataContextBinding(_stackPanel108, "HasApprovals", ToVisibility));
             const _textBlock109 = new TextBlock();
-            _textBlock109.set_property_value(TextBlock.TextKey, "A reported domain sends people to this tenant only once it is approved.");
+            _textBlock109.set_property_value(TextBlock.TextKey, DataContextBinding(_textBlock109, "ApprovalsCaption"));
             _textBlock109.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock109, "UiCaption"));
             _textBlock109.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock109, "Fg2"));
             _textBlock109.set_property_value(TextBlock.TextWrappingKey, TextWrapping.Wrap);

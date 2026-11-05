@@ -5,12 +5,14 @@ import { PortalDates } from '../../portal-dates.js'
 import { EmailDomainSource, type EmailDomainApprovalDto, type TenantEmailDomainsDto } from '../../portal-types.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
 
-// One domain an in-hive tenant's console reports: Approved or Pending, who else claims it, and Approve / Revoke
-// (offered to operators who may mutate; an approved domain is matched in sign-in discovery).
+// One domain of a tenant: Approved, Pending, or Approved but no longer claimed (its console or record dropped it; an
+// operator revokes it so a later claim does not re-arm it), who else claims it, and Approve / Revoke (offered to
+// operators who may mutate; a domain both claimed and approved is matched in sign-in discovery).
 export class EmailDomainApprovalRowViewModel extends Observable
 {
     private static readonly ApprovedLabel = 'Approved'
     private static readonly PendingLabel = 'Pending'
+    private static readonly NoLongerClaimedLabel = 'Approved, no longer claimed'
 
     private readonly approveCommand: RelayCommand
     private readonly revokeCommand: RelayCommand
@@ -35,7 +37,11 @@ export class EmailDomainApprovalRowViewModel extends Observable
     public get StatusLabel(): string
     {
         const R = EmailDomainApprovalRowViewModel
-        return this.approval.approved ? R.ApprovedLabel : R.PendingLabel
+        if (!this.approval.approved)
+        {
+            return R.PendingLabel
+        }
+        return this.approval.claimed ? R.ApprovedLabel : R.NoLongerClaimedLabel
     }
 
     // 'Also claimed by: a, b', or '' when no other tenant claims the domain.
@@ -44,10 +50,10 @@ export class EmailDomainApprovalRowViewModel extends Observable
         return TenantEmailDomainsViewModel.ClaimedByText(this.approval.sharedWith)
     }
 
-    // Whether Approve is offered: a pending domain, for an operator who may mutate.
+    // Whether Approve is offered: a pending domain the tenant claims, for an operator who may mutate.
     public get CanApprove(): boolean
     {
-        return this.owner.CanWrite && !this.approval.approved
+        return this.owner.CanWrite && !this.approval.approved && this.approval.claimed
     }
 
     // Whether Revoke is offered: an approved domain, for an operator who may mutate.
@@ -93,13 +99,17 @@ export class EmailDomainApprovalRowViewModel extends Observable
 }
 
 // The tenant detail's Email domains block. A control-plane tenant's domains are edited here (one comma-separated
-// list, Save). An in-hive tenant's domains are the ones its console reports, read-only here (the tenant Owner sets
-// them in the console); each takes effect in sign-in discovery only once an operator approved it, so each is listed
+// list, Save; the server approves what an operator saves). An in-hive tenant's domains are the ones its console
+// reports, read-only here (the tenant Owner sets them in the console). Either way a domain takes effect in sign-in
+// discovery only once an operator approved it (a tenant Owner can set domains in either console), so each is listed
 // with Approved / Pending and Approve / Revoke. Read-only operators get no write action. A failed read never fails
 // the page: a 404 (a control plane without the route) says the block is not available, any other failure shows its
 // sentence here.
 export class TenantEmailDomainsViewModel extends Observable
 {
+    private static readonly ReportedCaption = 'A reported domain sends people to this tenant only once it is approved.'
+    private static readonly ControlPlaneCaption =
+        'A domain sends people to this tenant only once it is approved. Domains saved here are approved on save; those the tenant Owner sets wait here for approval.'
     private static readonly NoneDeclaredLabel = 'None declared.'
     private static readonly DomainSeparator = ', '
     private static readonly DomainSplitter = /[\s,;]+/
@@ -113,7 +123,7 @@ export class TenantEmailDomainsViewModel extends Observable
     // Every bound value a change can move, raised when it did.
     private static readonly BoundProperties: readonly string[] = [
         'DomainsText', 'DomainsLabel', 'IsEditable', 'IsReadOnly', 'IsInHive', 'IsAvailable', 'HasDomainsLabel', 'HasApprovals',
-        'SourceText', 'SharedWithText', 'HasSharedWithLine', 'NoticeText', 'ErrorText', 'SavedText', 'IsBusy',
+        'ApprovalsCaption', 'SourceText', 'SharedWithText', 'HasSharedWithLine', 'NoticeText', 'ErrorText', 'SavedText', 'IsBusy',
     ]
 
     private readonly approvals = new ObservableCollection<EmailDomainApprovalRowViewModel>()
@@ -198,7 +208,7 @@ export class TenantEmailDomainsViewModel extends Observable
         return this.report !== undefined && this.IsReadOnly && !this.HasApprovals
     }
 
-    // The in-hive console's reported domains with their approvals (none for a control-plane tenant).
+    // The tenant's domains with their approvals (claimed ones, then approved ones no longer claimed).
     public get Approvals(): ObservableCollection<EmailDomainApprovalRowViewModel>
     {
         return this.approvals
@@ -207,6 +217,13 @@ export class TenantEmailDomainsViewModel extends Observable
     public get HasApprovals(): boolean
     {
         return this.approvals.Count > 0
+    }
+
+    // The sentence above the approval rows: what approval means for this kind of tenant.
+    public get ApprovalsCaption(): string
+    {
+        const T = TenantEmailDomainsViewModel
+        return this.IsInHive ? T.ReportedCaption : T.ControlPlaneCaption
     }
 
     // Where an in-hive tenant's domains come from and who changes them; '' for a control-plane tenant.
@@ -336,7 +353,7 @@ export class TenantEmailDomainsViewModel extends Observable
         })
     }
 
-    // Approves one domain the in-hive console reports. Never throws.
+    // Approves one domain the tenant claims. Never throws.
     public async ApproveDomain(domain: string): Promise<void>
     {
         await this.Act(() => this.session.Client.ApproveTenantEmailDomain(this.TenantId, domain))

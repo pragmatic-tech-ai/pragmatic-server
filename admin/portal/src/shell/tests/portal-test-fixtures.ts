@@ -738,7 +738,11 @@ export class FakeControlPlane
     {
         this.ThrowIfEmailDomainsFailing()
         this.EmailDomainSaves.push([tenantId, [...domains]])
-        const report = { ...this.EmailDomainReport(tenantId), domains: [...domains] }
+        // Like the server: what an operator saves is approved on save.
+        const report = {
+            ...this.EmailDomainReport(tenantId), domains: [...domains],
+            approvals: domains.map(domain => ({ domain, approved: true, claimed: true, sharedWith: [] })),
+        }
         this.EmailDomainReports.set(tenantId, report)
         return FakeControlPlane.CopyReport(report)
     }
@@ -758,24 +762,22 @@ export class FakeControlPlane
         this.ThrowIfEmailDomainsFailing()
         this.EmailDomainActions.push((approved ? 'Approve ' : 'Revoke ') + tenantId + ' ' + domain)
         const report = this.EmailDomainReport(tenantId)
-        const next = { ...report, approvals: (report.approvals ?? []).map(a => a.domain === domain ? { ...a, approved } : a) }
+        const next = { ...report, approvals: report.approvals.map(a => a.domain === domain ? { ...a, approved } : a) }
         this.EmailDomainReports.set(tenantId, next)
         return FakeControlPlane.CopyReport(next)
     }
 
     private EmailDomainReport(tenantId: string): TenantEmailDomainsDto
     {
-        return this.EmailDomainReports.get(tenantId) ?? { tenantId, domains: [], source: EmailDomainSource.Tenant, editable: true, sharedWith: [] }
+        return this.EmailDomainReports.get(tenantId) ?? { tenantId, domains: [], source: EmailDomainSource.Tenant, editable: true, sharedWith: [], approvals: [] }
     }
 
     private static CopyReport(report: TenantEmailDomainsDto): TenantEmailDomainsDto
     {
-        const copy: TenantEmailDomainsDto = { ...report, domains: [...report.domains], sharedWith: [...report.sharedWith] }
-        if (report.approvals !== undefined)
-        {
-            copy.approvals = report.approvals.map(a => ({ ...a, sharedWith: [...a.sharedWith] }))
+        return {
+            ...report, domains: [...report.domains], sharedWith: [...report.sharedWith],
+            approvals: report.approvals.map(a => ({ ...a, sharedWith: [...a.sharedWith] })),
         }
-        return copy
     }
 
     private ThrowIfEmailDomainsFailing(): void
