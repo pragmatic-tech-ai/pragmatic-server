@@ -35,6 +35,32 @@ export interface IKubectl
     DeleteNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
     /** The names of the Namespaces that match the label selector AND start with `namePrefix`. Refuses an empty prefix. */
     ListNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
+    /**
+     * Whether the API server serves `resource` (a plural, e.g. `validatingadmissionpolicies`) in `groupVersion` (`v1` or
+     * `<group>/<version>`). A group version the server does not serve is false; any other failure throws.
+     */
+    ServesResource(groupVersion: string, resource: string): Promise<boolean>
+}
+
+/** API discovery as ServesResource reads it, shared by every IKubectl: the group version's path and its resource list. */
+export class ApiDiscovery
+{
+    private static readonly CoreVersion = 'v1'
+    private static readonly CoreRoot = '/api/'
+    private static readonly GroupRoot = '/apis/'
+
+    /** `/api/v1` for the core group, `/apis/<group>/<version>` otherwise. */
+    public static PathOf(groupVersion: string): string
+    {
+        return (groupVersion === ApiDiscovery.CoreVersion ? ApiDiscovery.CoreRoot : ApiDiscovery.GroupRoot) + groupVersion
+    }
+
+    /** Whether an APIResourceList names `resource`. */
+    public static Lists(list: unknown, resource: string): boolean
+    {
+        const resources = (list as { resources?: Array<{ name?: unknown }> } | undefined)?.resources ?? []
+        return Array.isArray(resources) && resources.some(r => r.name === resource)
+    }
 }
 
 /** The client-side name fence of DeleteNamespacesBySelector, shared by every IKubectl. */
@@ -265,6 +291,9 @@ export class KubectlCli implements IPortForwardingKubectl
     private static readonly Namespace = 'namespace'
     private static readonly NamespacesResource = 'namespaces'
     private static readonly BadNamespaceListMessage = 'kubectl returned a namespace list that is not valid JSON'
+    private static readonly BadDiscoveryMessage = 'kubectl returned an API resource list that is not valid JSON'
+    private static readonly RawFlag = '--raw'
+    private static readonly NotFoundMarker = '(NotFound)'
     private static readonly IgnoreNotFound = '--ignore-not-found'
     private static readonly NamespaceFlag = '-n'
     private static readonly DeploymentPrefix = 'deployment/'
@@ -376,6 +405,34 @@ export class KubectlCli implements IPortForwardingKubectl
             throw new KubectlError(KubectlCli.BadNamespaceListMessage, '', false)
         }
         return NamespaceSweep.Select(names, namePrefix)
+    }
+
+    public async ServesResource(groupVersion: string, resource: string): Promise<boolean>
+    {
+        const K = KubectlCli
+        let stdout: string
+        try
+        {
+            stdout = await this.Invoke([K.GetVerb, K.RawFlag, ApiDiscovery.PathOf(groupVersion)])
+        }
+        catch (err)
+        {
+            if (err instanceof KubectlError && err.message.includes(K.NotFoundMarker))
+            {
+                return false
+            }
+            throw err
+        }
+        let parsed: unknown
+        try
+        {
+            parsed = JSON.parse(stdout) as unknown
+        }
+        catch
+        {
+            throw new KubectlError(K.BadDiscoveryMessage, '', false)
+        }
+        return ApiDiscovery.Lists(parsed, resource)
     }
 
     /** Whether a kubectl can open port-forwards (it carries a context the platform can tunnel through). */

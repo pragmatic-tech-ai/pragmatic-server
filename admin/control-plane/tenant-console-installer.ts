@@ -19,6 +19,7 @@ import { UnknownTenantError } from './platform-directory.js'
 import { HiveBackend, type HiveRecord, type TenantRecord } from './platform-records.js'
 import { UnknownHiveError } from './rollout-errors.js'
 import { TenantAdminBootstrap } from './tenant-admin-bootstrap.js'
+import { TenantConsoleAdmission } from './tenant-console-admission.js'
 import { OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, IdpUnreachableError } from './tenant-provisioning-service.js'
 
 /** Where a console install stands. Values are the wire strings. */
@@ -196,6 +197,7 @@ export class TenantConsoleInstaller
     private static readonly ChannelOffMessage = 'The console cannot be installed: the agent channel is not configured (start the control plane with PRAGMATIC_AGENT_CHANNEL_PORT).'
     private static readonly UnsafeIdMessage = "The console cannot be installed in this hive: its id is not a valid Kubernetes label value. Recreate the hive with a lowercase id (a-z, 0-9, '-')."
     private static readonly AgentMissingMessage = 'Install the agent first: the console uses the hive agent token.'
+    private static readonly AdmissionUnservedMessage = "This cluster does not serve ValidatingAdmissionPolicy (admissionregistration.k8s.io/v1), so the console's admission fence cannot be applied. The console needs Kubernetes 1.30 or newer."
     private static readonly NoTrustRootMessage = 'This hive has no trust root, so the console image cannot be verified. Give the hive a trust root first.'
     private static readonly TlsSecretPrefix = 'The TLS Secret '
     private static readonly TlsSecretSuffix = ' was not found in pragmatic-system, or is not a kubernetes.io/tls Secret.'
@@ -369,7 +371,7 @@ export class TenantConsoleInstaller
         {
             return []
         }
-        await kubectl.DeleteManifest(this.manifests.TenantConsoleRemovalManifest(hive.tenantId, hive.id))
+        await kubectl.DeleteManifest(this.manifests.TenantConsoleRemovalManifest(hive.tenantId, hive.id, await TenantConsoleAdmission.ServedBy(kubectl)))
         // The IdP Ingress is gone, so the private-key copies it served are swept too.
         await kubectl.DeleteBySelector(K8sManifestBuilder.IdpNameOf(hive.tenantId), C.SecretResource, C.TlsCopySelectorOf(hive.id))
         const kept = await ConsoleRetention.ExistingOf(kubectl, hive.tenantId)
@@ -437,6 +439,11 @@ export class TenantConsoleInstaller
             if (await kubectl.Find(system, C.SecretPrefix + K8sManifestBuilder.AgentTokenSecretNameOf(hive.id)) === undefined)
             {
                 throw new ConsoleInstallStepError(C.AgentMissingMessage)
+            }
+            // Without the admission fence the console's cluster-wide grants would be unfenced: refuse the cluster before any apply.
+            if (!await TenantConsoleAdmission.ServedBy(kubectl))
+            {
+                throw new ConsoleInstallStepError(C.AdmissionUnservedMessage)
             }
             this.Enter(run, ConsoleInstallStep.PreparingCertificates)
             const trustRootRef = hive.trustRootRef

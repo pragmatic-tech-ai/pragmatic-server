@@ -118,6 +118,18 @@ export class ConsoleFakeKubectl implements IKubectl
         return failed
     }
 
+    /** 'groupVersion|resource' pairs the API server serves (a Kubernetes 1.30+ cluster by default). */
+    public readonly ServedResources = new Set<string>([
+        'admissionregistration.k8s.io/v1|validatingadmissionpolicies',
+        'admissionregistration.k8s.io/v1|validatingadmissionpolicybindings',
+    ])
+
+    public async ServesResource(groupVersion: string, resource: string): Promise<boolean>
+    {
+        this.Calls.push(['ServesResource', groupVersion, resource])
+        return this.ServedResources.has(groupVersion + '|' + resource)
+    }
+
     public async ListNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
     {
         this.Calls.push(['ListNamespacesBySelector', selector, namePrefix])
@@ -144,10 +156,10 @@ export class ConsoleFakeKubectl implements IKubectl
     public async Get(_n: string, _r: string): Promise<string> { return '{}' }
     public async DeleteNamespace(n: string): Promise<void> { this.Calls.push(['DeleteNamespace', n]) }
 
-    /** The calls that change the cluster or the run (Find excluded), as their verbs. */
+    /** The calls that change the cluster or the run (the reads Find and ServesResource excluded), as their verbs. */
     public Verbs(): string[]
     {
-        return this.Calls.filter(c => c[0] !== 'Find').map(c => c[0] as string)
+        return this.Calls.filter(c => c[0] !== 'Find' && c[0] !== 'ServesResource').map(c => c[0] as string)
     }
 
     private static ItemsOf(manifestJson: string): ManifestItem[]

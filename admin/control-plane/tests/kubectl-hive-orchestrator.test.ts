@@ -36,6 +36,7 @@ class FakeKubectl implements IKubectl
     public DeleteBySelector(n: string, r: string, s: string) { return this.Record('DeleteBySelector', [n, r, s]) }
     public async DeleteNamespacesBySelector(s: string, p: string): Promise<string[]> { await this.Record('DeleteNamespacesBySelector', [s, p]); return [] }
     public async ListNamespacesBySelector(s: string, p: string): Promise<string[]> { await this.Record('ListNamespacesBySelector', [s, p]); return [] }
+    public async ServesResource(_g: string, _r: string): Promise<boolean> { return true }
     public async Get(n: string, r: string)
     {
         await this.Record('Get', [n, r])

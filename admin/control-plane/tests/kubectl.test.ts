@@ -168,6 +168,28 @@ test('ListNamespacesBySelector lists by label and returns only names inside the 
     assert.deepEqual(f.Fake.Calls.map(c => c.args), [['--context', 'kind-hive', 'get', 'namespaces', '-l', 'pragmatic/hive=h1', '-o', 'json']])
 })
 
+test('ServesResource reads the group version raw and finds the resource; a group version the server lacks is false', async () =>
+{
+    const f = new KubectlFixture()
+    f.Fake.Stdout = JSON.stringify({ kind: 'APIResourceList', resources: [{ name: 'validatingwebhookconfigurations' }, { name: 'validatingadmissionpolicies' }] })
+    assert.equal(await f.Cli.ServesResource('admissionregistration.k8s.io/v1', 'validatingadmissionpolicies'), true)
+    assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'get', '--raw', '/apis/admissionregistration.k8s.io/v1'])
+    assert.equal(await f.Cli.ServesResource('admissionregistration.k8s.io/v1', 'mutatingadmissionpolicies'), false)
+    await f.Cli.ServesResource('v1', 'namespaces')
+    assert.deepEqual(f.Last.args, ['--context', 'kind-hive', 'get', '--raw', '/api/v1'])
+    f.Fake.Stdout = 'not json'
+    await assert.rejects(f.Cli.ServesResource('admissionregistration.k8s.io/v1', 'validatingadmissionpolicies'), KubectlError)
+})
+
+test('ServesResource answers false for a group version the server does not serve (NotFound), and throws for other failures', async () =>
+{
+    const f = new KubectlFixture()
+    f.Fake.FailStderr = 'Error from server (NotFound): the server could not find the requested resource'
+    assert.equal(await f.Cli.ServesResource('example.test/v9', 'things'), false)
+    f.Fake.FailStderr = 'Unable to connect to the server: dial tcp 127.0.0.1:6443: connect: connection refused'
+    await assert.rejects(f.Cli.ServesResource('example.test/v9', 'things'), KubectlError)
+})
+
 test('DeleteNamespace args', async () =>
 {
     const f = new KubectlFixture()

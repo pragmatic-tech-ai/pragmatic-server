@@ -146,6 +146,12 @@ export class EnvNamespaceGuard implements IKubectl
         return this.inner.DeleteNamespacesBySelector(selector, namePrefix)
     }
 
+    /** API discovery names no namespace and reads nothing of one: passed through. */
+    public ServesResource(groupVersion: string, resource: string): Promise<boolean>
+    {
+        return this.inner.ServesResource(groupVersion, resource)
+    }
+
     public async ListNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
     {
         if (!namePrefix.startsWith(K8sManifestBuilder.EnvNamespacePrefix))

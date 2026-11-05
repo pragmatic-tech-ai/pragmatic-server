@@ -90,6 +90,7 @@ class PlainKubectl implements IKubectl
     public async DeleteBySelector(): Promise<void> { }
     public async DeleteNamespacesBySelector(): Promise<string[]> { return [] }
     public async ListNamespacesBySelector(): Promise<string[]> { return [] }
+    public async ServesResource(): Promise<boolean> { return true }
 }
 
 class FakeKubectl extends PlainKubectl implements IPortForwardingKubectl

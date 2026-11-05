@@ -192,6 +192,8 @@ describe('TenantConsoleInstaller', () =>
         const idp = K8sManifestBuilder.IdpNameOf('acme')
         const admin = K8sManifestBuilder.TenantAdminNameOf('acme')
         assert.deepEqual(fx.Kubectl.Calls.filter(c => c[0] !== 'Find'), [
+            ['ServesResource', 'admissionregistration.k8s.io/v1', 'validatingadmissionpolicies'],
+            ['ServesResource', 'admissionregistration.k8s.io/v1', 'validatingadmissionpolicybindings'],
             ['Apply'],
             ['ApplyServerSide'],
             ['ApplyServerSide'],
@@ -472,6 +474,28 @@ describe('TenantConsoleInstaller', () =>
         // The environments keep running: removal never deletes a namespace.
         assert.ok(!fx.Kubectl.Calls.some(c => c[0] === 'DeleteNamespacesBySelector' || c[0] === 'DeleteNamespace'))
         assert.deepEqual([...fx.Kubectl.Namespaces.keys()], ['pragmatic-env-dev', 'pragmatic-env-elsewhere'])
+    })
+
+    it('refuses a cluster below Kubernetes 1.30 (no ValidatingAdmissionPolicy) at checking-agent, before anything is applied', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.Kubectl.ServedResources.delete('admissionregistration.k8s.io/v1|validatingadmissionpolicies')
+        fx.Installer.Start('h1')
+        const status = await fx.Installer.WhenSettled('h1')
+        assert.equal(status?.state, ConsoleInstallState.Failed)
+        assert.equal(status?.step, ConsoleInstallStep.CheckingAgent)
+        assert.match(status?.error ?? '', /^This cluster does not serve ValidatingAdmissionPolicy .*Kubernetes 1\.30 or newer\.$/)
+        assert.deepEqual(fx.Kubectl.Applied, [])
+        assert.deepEqual(fx.Kubectl.ServerApplied, [])
+    })
+
+    it('Uninstall on a cluster that does not serve the admission policy kind leaves its identities out of the removal', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.Kubectl.ServedResources.clear()
+        await fx.Installer.Uninstall(fx.Hives.get('h1') as HiveRecord)
+        assert.deepEqual(fx.Kubectl.Deleted, [new K8sManifestBuilder().TenantConsoleRemovalManifest('acme', 'h1', false)])
+        assert.ok(!fx.Kubectl.Deleted[0]!.includes('ValidatingAdmissionPolicy'))
     })
 
     it('removal does not need the agent channel: a Local hive with a safe id can always be uninstalled', async () =>

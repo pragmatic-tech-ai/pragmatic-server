@@ -57,6 +57,14 @@ class FakeKubectl implements IKubectl
 
     public async ListNamespacesBySelector(_selector: string, _namePrefix: string): Promise<string[]> { return [] }
 
+    public ServesAdmission = true
+
+    public async ServesResource(groupVersion: string, resource: string): Promise<boolean>
+    {
+        this.Calls.push(['ServesResource', groupVersion, resource])
+        return this.ServesAdmission
+    }
+
     public async Apply(_m: string): Promise<void> { this.Calls.push(['Apply']) }
     public async ApplyServerSide(_m: string): Promise<void> { this.Calls.push(['ApplyServerSide']) }
     public async RolloutStatus(_n: string, _d: string): Promise<void> { }
@@ -132,6 +140,8 @@ describe('HiveAgentUninstaller', () =>
         assert.deepEqual(fx.Orchestrators.Kubectl.Calls, [
             ['DeleteManifest', HiveBootstrapBundle.RemovalManifest('h1')],
             ['Find', 'pragmatic-system', 'deployment/' + K8sManifestBuilder.TenantAdminNameOf('t1')],
+            ['ServesResource', 'admissionregistration.k8s.io/v1', 'validatingadmissionpolicies'],
+            ['ServesResource', 'admissionregistration.k8s.io/v1', 'validatingadmissionpolicybindings'],
             ['DeleteManifest', new K8sManifestBuilder().TenantConsoleRemovalManifest('t1', 'h1')],
             ['DeleteBySelector', 'pragmatic-system', 'deployment,service,serviceaccount,secret', 'pragmatic/hive=h1'],
             ['Find', 'pragmatic-system', 'persistentvolumeclaim/' + K8sManifestBuilder.TenantAdminClaimNameOf('t1')],
@@ -208,6 +218,16 @@ describe('HiveAgentUninstaller', () =>
             K8sManifestBuilder.TenantAdminClaimNameOf('t1'),
             K8sManifestBuilder.TenantAdminSeedSecretNameOf('t1'),
         ])
+    })
+
+    it('on a cluster below Kubernetes 1.30 the console removal leaves out the admission policy kinds (kubectl would refuse the whole delete)', async () =>
+    {
+        const fx = new Fixture()
+        fx.Orchestrators.Kubectl.ServesAdmission = false
+        await fx.Uninstaller.Uninstall(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach))
+        const deletes = fx.Orchestrators.Kubectl.Calls.filter(c => c[0] === 'DeleteManifest').map(c => c[1])
+        assert.deepEqual(deletes, [HiveBootstrapBundle.RemovalManifest('h1'), new K8sManifestBuilder().TenantConsoleRemovalManifest('t1', 'h1', false)])
+        assert.ok(fx.Orchestrators.Kubectl.Calls.some(c => c[0] === 'ServesResource' && c[1] === 'admissionregistration.k8s.io/v1' && c[2] === 'validatingadmissionpolicies'))
     })
 
     it('reports the in-hive IdP data volume and Secrets it keeps (its Deployment, Service and Ingress are removed with the console)', async () =>

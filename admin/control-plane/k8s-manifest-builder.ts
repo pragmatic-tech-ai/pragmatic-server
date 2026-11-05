@@ -1064,9 +1064,11 @@ export class K8sManifestBuilder
      * in-hive IdP's serving objects (Deployment, Service, Ingress; never its namespace, data PVC or Secrets).
      * Optional objects (TLS Role + RoleBinding, Ingress, dev TLS copy) are always named so a removal after a TLS-source change
      * leaves nothing behind; the delete tolerates absent objects. Never the seed Secret (retained with the PVC: its master key
-     * decrypts that data) and never the cluster-shared pragmatic-dev-tls. Refuses an invalid hive id.
+     * decrypts that data) and never the cluster-shared pragmatic-dev-tls. With `servesAdmission` false (a cluster below Kubernetes
+     * 1.30, TenantConsoleAdmission.ServedBy) the admission policy and its binding are left out: kubectl refuses a whole delete that
+     * names an unserved kind. Refuses an invalid hive id.
      */
-    public TenantConsoleRemovalManifest(tenantId: string, hiveId: string): string
+    public TenantConsoleRemovalManifest(tenantId: string, hiveId: string, servesAdmission: boolean = true): string
     {
         K8sManifestBuilder.AssertValidHiveId(hiveId)
         const B = K8sManifestBuilder
@@ -1077,8 +1079,10 @@ export class K8sManifestBuilder
         const items: K8sObject[] = [
             this.Identity(B.ApiVersionCore, B.ServiceAccountKind, name, system),
             this.Identity(B.ApiVersionRbac, B.ClusterRoleKind, name),
-            this.Identity(TenantConsoleAdmission.ApiVersion, TenantConsoleAdmission.PolicyKind, name),
-            this.Identity(TenantConsoleAdmission.ApiVersion, TenantConsoleAdmission.BindingKind, name),
+            ...(servesAdmission ? [
+                this.Identity(TenantConsoleAdmission.ApiVersion, TenantConsoleAdmission.PolicyKind, name),
+                this.Identity(TenantConsoleAdmission.ApiVersion, TenantConsoleAdmission.BindingKind, name),
+            ] : []),
             this.Identity(B.ApiVersionRbac, B.ClusterRoleBindingKind, name),
             this.Identity(B.ApiVersionRbac, B.ClusterRoleKind, B.TenantConsoleEnvRoleNameOf(tenantId)),
             this.Identity(B.ApiVersionRbac, B.RoleKind, tlsRole, system),

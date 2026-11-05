@@ -5,6 +5,7 @@ import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KindError } from './kind.js'
 import { KubectlError, type IKubectl } from './kubectl.js'
 import { HiveBackend, InfraMode, type HiveRecord } from './platform-records.js'
+import { TenantConsoleAdmission } from './tenant-console-admission.js'
 
 /**
  * The hive's agent could not be removed from its cluster. Carries kubectl's (already redacted) text, or the fixed reason an
@@ -152,7 +153,7 @@ export class HiveAgentUninstaller
             if (owns)
             {
                 // The whole console, cluster-scoped grants and admission fence included (also for bootstrap / smoke installs).
-                await kubectl.DeleteManifest(this.manifests.TenantConsoleRemovalManifest(hive.tenantId, hive.id))
+                await kubectl.DeleteManifest(this.manifests.TenantConsoleRemovalManifest(hive.tenantId, hive.id, await TenantConsoleAdmission.ServedBy(kubectl)))
             }
             await kubectl.DeleteBySelector(ns, HiveAgentUninstaller.SelectedResources, K8sManifestBuilder.HiveLabelSelectorOf(hive.id))
             return owns ? await ConsoleRetention.ExistingOf(kubectl, hive.tenantId) : []

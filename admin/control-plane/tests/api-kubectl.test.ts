@@ -217,6 +217,19 @@ test('ListNamespacesBySelector lists by label and keeps only names inside the pr
     assert.deepEqual(fake.Calls.map(c => [c[0], c[1]]), [[KubeMethod.Get, '/api/v1/namespaces?labelSelector=' + encodeURIComponent('pragmatic/hive=h1')]])
 })
 
+test('ServesResource reads the group version and finds the resource; an absent group version is false', async () =>
+{
+    const { fake, kubectl } = Fixture.Make([Fixture.Ok({ resources: [{ name: 'validatingadmissionpolicies' }] }), Fixture.Ok({ resources: [] }), Fixture.Gone])
+    assert.equal(await kubectl.ServesResource('admissionregistration.k8s.io/v1', 'validatingadmissionpolicies'), true)
+    assert.equal(await kubectl.ServesResource('v1', 'namespaces'), false)
+    assert.equal(await kubectl.ServesResource('example.test/v9', 'things'), false)
+    assert.deepEqual(fake.Calls.map(c => [c[0], c[1]]), [
+        [KubeMethod.Get, '/apis/admissionregistration.k8s.io/v1'],
+        [KubeMethod.Get, '/api/v1'],
+        [KubeMethod.Get, '/apis/example.test/v9'],
+    ])
+})
+
 test('DeleteNamespacesBySelector reports a namespace whose delete failed and goes on', async () =>
 {
     const { kubectl } = Fixture.Make([

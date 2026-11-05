@@ -1,4 +1,4 @@
-import { KubectlError, NamespaceSweep, type IKubectl } from './kubectl.js'
+import { ApiDiscovery, KubectlError, NamespaceSweep, type IKubectl } from './kubectl.js'
 import { KubeApiClient, KubeApiError, KubeContentType, KubeMethod, KubeResourceCatalog, type KubeTypeRef } from './kube-api-client.js'
 import { SystemInstallClock, type IInstallClock } from './hive-agent-installer.js'
 import type { OrchestratorPolling } from './kubectl-hive-orchestrator.js'
@@ -210,6 +210,11 @@ export class ApiKubectl implements IKubectl
     public async DeleteNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
     {
         return NamespaceSweep.DeleteEach(await this.ListNamespacesBySelector(selector, namePrefix), name => this.DeleteNamespace(name))
+    }
+
+    public async ServesResource(groupVersion: string, resource: string): Promise<boolean>
+    {
+        return ApiDiscovery.Lists(await this.client.Get(ApiDiscovery.PathOf(groupVersion)), resource)
     }
 
     public async ListNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>

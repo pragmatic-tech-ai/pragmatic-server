@@ -25,6 +25,7 @@ class RecordingKubectl implements IKubectl
     public DeleteBySelector(n: string, r: string, s: string) { return this.Record('DeleteBySelector', [n, r, s]) }
     public async DeleteNamespacesBySelector(s: string, p: string): Promise<string[]> { await this.Record('DeleteNamespacesBySelector', [s, p]); return [] }
     public async ListNamespacesBySelector(s: string, p: string): Promise<string[]> { await this.Record('ListNamespacesBySelector', [s, p]); return [] }
+    public async ServesResource(g: string, r: string): Promise<boolean> { await this.Record('ServesResource', [g, r]); return true }
     public DeleteNamespace(n: string) { return this.Record('DeleteNamespace', [n]) }
     public async Find(n: string, r: string): Promise<string | undefined> { await this.Record('Find', [n, r]); return undefined }
     public async Get(n: string, r: string): Promise<string> { await this.Record('Get', [n, r]); return '{}' }
@@ -176,6 +177,13 @@ test('a namespace listing passes only an env prefix through', async () =>
     assert.deepEqual(inner.Calls, [])
     await guard.ListNamespacesBySelector('pragmatic/hive=h1', 'pragmatic-env-')
     assert.deepEqual(inner.Calls, [['ListNamespacesBySelector', 'pragmatic/hive=h1', 'pragmatic-env-']])
+})
+
+test('a discovery read (ServesResource) passes through: it names no namespace', async () =>
+{
+    const { inner, guard } = GuardFixture.Make()
+    await guard.ServesResource('admissionregistration.k8s.io/v1', 'validatingadmissionpolicies')
+    assert.deepEqual(inner.Calls, [['ServesResource', 'admissionregistration.k8s.io/v1', 'validatingadmissionpolicies']])
 })
 
 test('a malformed manifest fails without echoing its content', async () =>

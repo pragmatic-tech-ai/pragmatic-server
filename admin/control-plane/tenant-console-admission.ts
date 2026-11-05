@@ -1,3 +1,5 @@
+import type { IKubectl } from './kubectl.js'
+
 /** The names the console's admission fence is rendered from (all supplied by K8sManifestBuilder). */
 export interface TenantConsoleAdmissionSpec
 {
@@ -31,6 +33,8 @@ export class TenantConsoleAdmission
     public static readonly ApiVersion = 'admissionregistration.k8s.io/v1'
     public static readonly PolicyKind = 'ValidatingAdmissionPolicy'
     public static readonly BindingKind = 'ValidatingAdmissionPolicyBinding'
+    private static readonly PolicyResource = 'validatingadmissionpolicies'
+    private static readonly BindingResource = 'validatingadmissionpolicybindings'
     private static readonly FailurePolicy = 'Fail'
     private static readonly DenyAction = 'Deny'
     private static readonly CoreGroup = ''
@@ -58,6 +62,17 @@ export class TenantConsoleAdmission
     private static readonly BindingNameMessage = 'The console may only create its own environment role binding.'
     private static readonly BindingRoleMessage = 'The console may only bind its own environment ClusterRole.'
     private static readonly BindingSubjectsMessage = 'The console may only bind its environment role to its own ServiceAccount.'
+
+    /**
+     * Whether the cluster serves both admission kinds at admissionregistration.k8s.io/v1 (Kubernetes >= 1.30). Without them the fence
+     * cannot be applied (the console must not be installed) and their identities must be left out of a removal (kubectl refuses a
+     * whole delete that names an unserved kind).
+     */
+    public static async ServedBy(kubectl: Pick<IKubectl, 'ServesResource'>): Promise<boolean>
+    {
+        const C = TenantConsoleAdmission
+        return await kubectl.ServesResource(C.ApiVersion, C.PolicyResource) && await kubectl.ServesResource(C.ApiVersion, C.BindingResource)
+    }
 
     public static Policy(spec: TenantConsoleAdmissionSpec): Record<string, unknown>
     {

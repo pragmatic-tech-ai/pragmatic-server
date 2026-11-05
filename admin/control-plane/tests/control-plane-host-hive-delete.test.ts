@@ -93,6 +93,7 @@ class FakeKubectl implements IKubectl
     }
 
     public async ListNamespacesBySelector(_selector: string, _namePrefix: string): Promise<string[]> { return [] }
+    public async ServesResource(_groupVersion: string, _resource: string): Promise<boolean> { return true }
 
     public async Apply(_m: string): Promise<void> { this.Calls.push(['Apply']) }
     public async ApplyServerSide(_m: string): Promise<void> { this.Calls.push(['ApplyServerSide']) }

@@ -430,6 +430,14 @@ describe('K8sManifestBuilder.RenderTenantAdmin console exposure and RBAC', () =>
         assert.ok(!text.includes(K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme')))
     })
 
+    it('removal manifest for a cluster that does not serve the admission policy kind names everything else, the same way', () =>
+    {
+        const full = ConsoleFixture.Removal().map(ConsoleFixture.IdOf)
+        const old = JSON.parse(new K8sManifestBuilder().TenantConsoleRemovalManifest('acme', 'hive-a', false)).items.map(ConsoleFixture.IdOf)
+        assert.deepEqual(old, full.filter((id: string) => !id.startsWith('ValidatingAdmissionPolicy')))
+        assert.equal(full.length - old.length, 2)
+    })
+
     it('removal manifest stops the in-hive IdP (Deployment, Service, Ingress) and keeps its namespace, data volume and Secrets', () =>
     {
         const removal = ConsoleFixture.Removal()

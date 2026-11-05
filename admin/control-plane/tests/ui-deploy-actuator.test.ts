@@ -96,6 +96,11 @@ class FakeKubectl implements IKubectl
         return []
     }
 
+    public async ServesResource(_groupVersion: string, _resource: string): Promise<boolean>
+    {
+        return true
+    }
+
     public StatusFails = false
     public Statuses: Array<[string, string]> = []
 
