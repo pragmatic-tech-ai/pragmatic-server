@@ -3,13 +3,18 @@ import type { IAuditSink } from '@pragmatic-tech-ai/todl-identity'
 import { AuditSurface } from './access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
 import { NullLogger } from '../observability/logger.js'
+import { DrainController } from '../observability/drain-controller.js'
 import type { ILogger } from '../observability/logger.js'
 
 /** Bridges a server AccessAuditEvent onto the cloud identity SqlAuditStore (IAuditSink). Present only in cloud
  *  mode; a store failure logs and is swallowed so it never alters a decision. */
 export class SqlAuditAccessSink implements IAccessAuditSink
 {
+    /** How long a shutdown waits for the inserts in flight before it gives up on them. */
+    public static readonly DrainTimeoutMs = 5000
     private static readonly WriteFailed = 'access audit sql write failed'
+    private static readonly DrainGaveUp = 'access audit drain gave up with sql writes still in flight'
+    private static readonly RemainingField = 'remaining'
     private static readonly SurfaceKey = 'surface'
     private static readonly MethodKey = 'method'
     private static readonly ActionKey = 'action'
@@ -23,11 +28,13 @@ export class SqlAuditAccessSink implements IAccessAuditSink
     private readonly store: IAuditSink
     private readonly logger: ILogger
     private readonly pending = new Set<Promise<void>>()
+    private readonly drain: DrainController
 
-    public constructor(store: IAuditSink, logger: ILogger = new NullLogger())
+    public constructor(store: IAuditSink, logger: ILogger = new NullLogger(), drain: DrainController = new DrainController(SqlAuditAccessSink.DrainTimeoutMs))
     {
         this.store = store
         this.logger = logger
+        this.drain = drain
     }
 
     /** Callers fire Record and forget it; each write is tracked here until it settles, so Drain can await the ones in flight. */
@@ -39,11 +46,24 @@ export class SqlAuditAccessSink implements IAccessAuditSink
         return write
     }
 
+    /**
+     * Waits for the inserts in flight, bounded (a stalled database must not hang shutdown): past the bound it gives up and logs only
+     * how many writes were still in flight.
+     */
     public async Drain(): Promise<void>
     {
-        while (this.pending.size > 0)
+        const outcome = await this.drain.WaitForDrain({ InFlight: () => this.pending.size })
+        if (outcome.Drained)
         {
-            await Promise.all([...this.pending])
+            return
+        }
+        try
+        {
+            this.logger.Error(SqlAuditAccessSink.DrainGaveUp, { [SqlAuditAccessSink.RemainingField]: outcome.Remaining })
+        }
+        catch
+        {
+            // a broken logger must not block shutdown
         }
     }
 

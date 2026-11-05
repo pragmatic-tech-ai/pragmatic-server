@@ -5,6 +5,7 @@ import type { IAuditSink } from '@pragmatic-tech-ai/todl-identity'
 import { AuditSurface, AuditOutcome } from '../access-audit.js'
 import { SqlAuditAccessSink } from '../sql-access-audit-sink.js'
 import type { ILogger, LogFields } from '../../observability/logger.js'
+import { DrainController } from '../../observability/drain-controller.js'
 
 class CapturingStore implements IAuditSink
 {
@@ -169,4 +170,27 @@ test('Drain with nothing in flight resolves at once, and a failed insert does no
     const sink = new SqlAuditAccessSink(new RejectingStore(), new CapturingLogger())
     void sink.Record({ Timestamp: new Date(), TenantId: 't1', Surface: AuditSurface.Rpc, MethodOrPath: 'x', Outcome: AuditOutcome.Allow })
     await sink.Drain()
+})
+
+// An insert that never settles (a stalled database).
+class StalledStore implements IAuditSink
+{
+    public Record(): Promise<void> { return new Promise<void>(() => undefined) }
+}
+
+test('Drain gives up on an insert that never settles after its bound, logging only the remaining count', async () =>
+{
+    const logger = new CapturingLogger()
+    const sink = new SqlAuditAccessSink(new StalledStore(), logger, new DrainController(30, undefined, undefined, 5))
+    void sink.Record({ Timestamp: new Date(), TenantId: 't1', PrincipalId: 'principal-secret-id', Surface: AuditSurface.Rpc, MethodOrPath: 'x', Outcome: AuditOutcome.Allow })
+    await sink.Drain()
+    assert.equal(logger.Errors.length, 1)
+    assert.equal(logger.Errors[0]!.message, 'access audit drain gave up with sql writes still in flight')
+    assert.deepEqual(logger.Errors[0]!.fields, { remaining: 1 })
+    assert.ok(!JSON.stringify(logger.Errors).includes('principal-secret-id'))
+})
+
+test('the default drain bound is a fixed constant', () =>
+{
+    assert.equal(SqlAuditAccessSink.DrainTimeoutMs, 5000)
 })
