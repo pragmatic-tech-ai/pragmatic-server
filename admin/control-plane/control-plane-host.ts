@@ -49,7 +49,7 @@ import { HiveConsoleSpecs, InvalidHiveConsoleError } from './hive-console-spec.j
 import { InvalidIngressTlsError } from './ingress-tls.js'
 import { AgentInstallInProgressError, AgentInstallUnavailableError, type HiveAgentInstaller, type InstallStatus } from './hive-agent-installer.js'
 import { AgentUninstallError, ConsoleUninstallError, HiveClusterDestroyError, type HiveAgentUninstaller } from './hive-agent-uninstaller.js'
-import { ConsoleInstallInProgressError, ConsoleInstallUnavailableError, ConsoleNotConfiguredError, type ConsoleInstallStatus, type TenantConsoleInstaller } from './tenant-console-installer.js'
+import { ConsoleInstallInProgressError, ConsoleInstallUnavailableError, ConsoleNotConfiguredError, type ConsoleInstallStatus, type ConsoleRemovalOutcome, type TenantConsoleInstaller } from './tenant-console-installer.js'
 import { InHiveIdpUnavailableError, type InHiveOwnerPassword } from './in-hive-idp-admin.js'
 import { HiveBackend, InfraMode, InvalidRecordIdError } from './platform-records.js'
 import { PlaneHttp } from './plane-http.js'
@@ -296,6 +296,7 @@ export class ControlPlaneHost
     private static readonly AgentLeftNotice = 'The agent was not removed: the agent may remain in the cluster, locked out (its token is revoked), until someone removes it.'
     private static readonly KindClusterLeftNotice = "The hive's kind cluster was not destroyed: the kind cluster may be left behind on this machine."
     private static readonly RetainedNotePrefix = 'retained: '
+    private static readonly KeptNotListedNote = 'kept objects not listed'
     private static readonly NoteSeparator = ', '
     private static readonly AutoInstallOffMessage = 'Automatic install is not available on this control plane. Install the agent manually.'
     private static readonly ReissueDuringInstallMessage = 'An agent install is running for this hive and issues its own token. Wait for it to finish (or fail) before reissuing the token.'
@@ -1522,12 +1523,12 @@ export class ControlPlaneHost
         try
         {
             const hive = this.directory.GetHive(id)
-            let retained: string[] = []
+            let outcome: ConsoleRemovalOutcome = { retained: [] }
             if (hive?.console !== undefined && this.consoleInstaller?.CanUninstall(hive) === true)
             {
                 try
                 {
-                    retained = await this.consoleInstaller.Uninstall(hive)
+                    outcome = await this.consoleInstaller.Uninstall(hive)
                 }
                 catch (err)
                 {
@@ -1541,11 +1542,12 @@ export class ControlPlaneHost
             }
             // The sealed IdP credentials stay: the kept IdP and environments still use that CA (forgotten on hive or tenant delete).
             const updated: HiveDto = await this.directory.SetHiveConsole(id, undefined)
-            if (retained.length > 0)
+            const note = ControlPlaneHost.ConsoleRemovalNote(outcome)
+            if (note !== undefined)
             {
-                this.auditNotes.set(res, ControlPlaneHost.RetainedNotePrefix + retained.join(ControlPlaneHost.NoteSeparator))
+                this.auditNotes.set(res, note)
             }
-            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { hive: updated, retained })
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { hive: updated, ...outcome })
         }
         finally
         {
@@ -1990,6 +1992,17 @@ export class ControlPlaneHost
                 await this.ForgetTenantConsoleCredentials(id)
                 break
         }
+    }
+
+    /** The audit note of a console removal: what it kept (`retained: ...`), or that the kept objects could not be listed. */
+    private static ConsoleRemovalNote(outcome: ConsoleRemovalOutcome): string | undefined
+    {
+        const C = ControlPlaneHost
+        if (outcome.notice !== undefined)
+        {
+            return C.KeptNotListedNote
+        }
+        return outcome.retained.length === 0 ? undefined : C.RetainedNotePrefix + outcome.retained.join(C.NoteSeparator)
     }
 
     /** The audit note of a hive delete: what it kept (`retained: ...`) and which environment namespaces it could not delete (`failed: ...`). */

@@ -248,6 +248,8 @@ export class FakeControlPlane
     public readonly ConsoleRemovals: string[] = []
     // What a console removal reports as kept in the cluster.
     public ConsoleRemovalRetained: string[] = []
+    // A console removal's notice (the kept objects could not be listed), when set.
+    public ConsoleRemovalNotice: string | undefined
     public ConsoleFailure: Error | undefined
     public ConsoleStartReply: ConsoleInstallStatusDto = FakeControlPlane.ConsoleStatus(ConsoleInstallState.Installing, ConsoleInstallStep.CheckingAgent)
     public ConsoleInstallReplies: Array<ConsoleInstallStatusDto | null> = []
@@ -827,7 +829,9 @@ export class FakeControlPlane
             delete copy.console
             return copy
         })
-        return { hive, retained: this.ConsoleRemovalRetained }
+        return this.ConsoleRemovalNotice === undefined
+            ? { hive, retained: this.ConsoleRemovalRetained }
+            : { hive, retained: this.ConsoleRemovalRetained, notice: this.ConsoleRemovalNotice }
     }
 
     public async StartConsoleInstall(hiveId: string): Promise<ConsoleInstallStatusDto>

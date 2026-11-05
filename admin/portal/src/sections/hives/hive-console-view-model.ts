@@ -499,7 +499,7 @@ export class HiveConsoleViewModel extends Observable
             {
                 this.ShowSettings(removal.hive.console)
                 this.SetPhase(ConsoleInstallPhase.Idle, undefined)
-                this.removalNote = HiveConsoleViewModel.RemovalNoteOf(removal.retained)
+                this.removalNote = removal.notice ?? HiveConsoleViewModel.RemovalNoteOf(removal.retained)
             })
         })
     }

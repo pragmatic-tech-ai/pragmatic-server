@@ -507,8 +507,9 @@ describe('TenantConsoleInstaller', () =>
         fx.Kubectl.Put(K8sManifestBuilder.IdpNameOf('acme'), 'persistentvolumeclaim/' + K8sManifestBuilder.IdpClaimNameOf('acme'), {})
         fx.Kubectl.Namespaces.set('pragmatic-env-dev', { 'pragmatic/hive': 'h1' })
         fx.Kubectl.Namespaces.set('pragmatic-env-elsewhere', { 'pragmatic/hive': 'h2' })
-        const retained = await fx.Installer.Uninstall(fx.Hives.get('h1') as HiveRecord)
-        assert.deepEqual(retained, [
+        const outcome = await fx.Installer.Uninstall(fx.Hives.get('h1') as HiveRecord)
+        assert.equal(outcome.notice, undefined)
+        assert.deepEqual(outcome.retained, [
             K8sManifestBuilder.TenantAdminClaimNameOf('acme'),
             K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme'),
             K8sManifestBuilder.IdpClaimNameOf('acme'),
@@ -555,6 +556,24 @@ describe('TenantConsoleInstaller', () =>
         await fx.Installer.Uninstall(fx.Hives.get('h1') as HiveRecord)
         assert.deepEqual(fx.Kubectl.Deleted, [new K8sManifestBuilder().TenantConsoleRemovalManifest('acme', 'h1', false)])
         assert.ok(!fx.Kubectl.Deleted[0]!.includes('ValidatingAdmissionPolicy'))
+    })
+
+    it('a failed listing of the kept objects after the removal succeeded does not fail it: no retained list, a notice instead', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.Kubectl.ListNamespacesError = new KubectlError('the server is unreachable token: abcdefghijabcdefghijabcdefghij0123456789')
+        const outcome = await fx.Installer.Uninstall(fx.Hives.get('h1') as HiveRecord)
+        assert.deepEqual(outcome.retained, [])
+        assert.match(outcome.notice ?? '', /^The console was removed, but the objects it kept could not be listed: kubectl failed: the server is unreachable/)
+        assert.ok(!(outcome.notice ?? '').includes('abcdefghijabcdefghij'))
+        assert.deepEqual(fx.Kubectl.Deleted, [new K8sManifestBuilder().TenantConsoleRemovalManifest('acme', 'h1')])
+    })
+
+    it('a listing failure that is not a kubectl failure still propagates (a real bug, not a cluster answer)', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.Kubectl.ListNamespacesError = new TypeError('bug')
+        await assert.rejects(fx.Installer.Uninstall(fx.Hives.get('h1') as HiveRecord), TypeError)
     })
 
     it('removal does not need the agent channel: a Local hive with a safe id can always be uninstalled', async () =>

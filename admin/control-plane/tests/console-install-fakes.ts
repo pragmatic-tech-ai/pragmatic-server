@@ -130,9 +130,15 @@ export class ConsoleFakeKubectl implements IKubectl
         return this.ServedResources.has(groupVersion + '|' + resource)
     }
 
+    public ListNamespacesError: Error | undefined
+
     public async ListNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
     {
         this.Calls.push(['ListNamespacesBySelector', selector, namePrefix])
+        if (this.ListNamespacesError !== undefined)
+        {
+            throw this.ListNamespacesError
+        }
         const [key, value] = selector.split('=')
         return [...this.Namespaces].filter(([name, labels]) => labels[key as string] === value && name.startsWith(namePrefix)).map(([name]) => name)
     }

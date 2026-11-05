@@ -302,6 +302,17 @@ describe('Hive tenant console (panel)', () =>
         assert.equal(panel.RemovalNote, '')
     })
 
+    it('a removal whose kept objects could not be listed shows the control plane notice', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        fx.Api.ConsoleRemovalNotice = 'The console was removed, but the objects it kept could not be listed: connection refused.'
+        panel.RemoveCommand.Execute()
+        await panel.ConfirmRemove()
+        assert.equal(panel.RemovalNote, 'The console was removed, but the objects it kept could not be listed: connection refused.')
+        assert.equal(panel.IsConfigured, false)
+    })
+
     it('a removal that kept nothing says only that the console was removed', async () =>
     {
         const fx = new ConsoleFixture()

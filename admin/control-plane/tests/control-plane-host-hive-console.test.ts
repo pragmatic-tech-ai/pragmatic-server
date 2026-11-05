@@ -467,6 +467,18 @@ describe('ControlPlaneHost in-hive console install', () =>
         assert.match(note, /^retained: .*pragmatic-env-console-dev$/)
     })
 
+    it('DELETE console still succeeds when the kept objects cannot be listed afterwards, and says so', async () =>
+    {
+        fx.Kubectl.ListNamespacesError = new KubectlError('the server is unreachable')
+        const r = await Send.Request(host, 'DELETE', '/api/hives/h1/console')
+        assert.equal(r.status, 200)
+        const body = JSON.parse(r.body) as { hive: HiveRecord; retained: string[]; notice?: string }
+        assert.deepEqual(body.retained, [])
+        assert.match(body.notice ?? '', /could not be listed/)
+        assert.equal(directory.GetHive('h1')?.console, undefined)
+        assert.match(audit.Recent(10).find(e => e.method === 'DELETE' && e.path === '/api/hives/h1/console')?.note ?? '', /kept objects not listed/)
+    })
+
     it('hive delete stops the in-hive IdP and reports its kept data volume and Secrets in retained', async () =>
     {
         const r = await Send.Request(host, 'DELETE', '/api/hives/h1')

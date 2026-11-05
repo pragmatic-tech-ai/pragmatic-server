@@ -53,6 +53,9 @@ export type ConsoleInstallStatus = {
     devCaFile?: string
 }
 
+/** What a console removal kept in the cluster; `notice` when that could not be listed (the removal itself succeeded). */
+export type ConsoleRemovalOutcome = { retained: string[]; notice?: string }
+
 /** The hive has no console settings yet. Maps to 409. */
 export class ConsoleNotConfiguredError extends Error
 {
@@ -204,6 +207,8 @@ export class TenantConsoleInstaller
     private static readonly NoTrustRootMessage = 'This hive has no trust root, so the console image cannot be verified. Give the hive a trust root first.'
     private static readonly TlsSecretPrefix = 'The TLS Secret '
     private static readonly TlsSecretSuffix = ' was not found in pragmatic-system, or is not a kubernetes.io/tls Secret.'
+    private static readonly KeptUnlistedPrefix = 'The console was removed, but the objects it kept could not be listed: '
+    private static readonly TrailingStop = /\.+$/
     private static readonly HiveGoneMessage = 'The install stopped: the hive was deleted while it ran.'
     private static readonly StepFailureMessages: Readonly<Record<ConsoleInstallStep, string>> = {
         [ConsoleInstallStep.CheckingAgent]: 'Could not check the hive agent.',
@@ -360,23 +365,35 @@ export class TenantConsoleInstaller
      * key copies in the IdP namespace, then returns what it kept that exists: the console's and the IdP's data and Secrets
      * (ConsoleRetention) and the environment namespaces the console created, which keep running unmanaged until a reinstall adopts
      * them (or the hive delete removes them). Leaves a console another hive owns (its Deployment carries another hive's label)
-     * untouched and returns nothing. A KubectlError propagates.
+     * untouched and returns nothing. A KubectlError from the removal itself propagates; once it is done, a KubectlError while
+     * listing what was kept does not undo it: the outcome then has no retained list and a notice saying so.
      */
-    public async Uninstall(hive: HiveRecord): Promise<string[]>
+    public async Uninstall(hive: HiveRecord): Promise<ConsoleRemovalOutcome>
     {
         const C = TenantConsoleInstaller
         const kubectl = this.orchestrators.For(hive).Kubectl
         const deployment = await kubectl.Find(K8sManifestBuilder.SystemNamespace, C.DeploymentPrefix + K8sManifestBuilder.TenantAdminNameOf(hive.tenantId))
         if (deployment !== undefined && K8sManifestBuilder.HiveOf(JSON.parse(deployment)) !== hive.id)
         {
-            return []
+            return { retained: [] }
         }
         await kubectl.DeleteManifest(this.manifests.TenantConsoleRemovalManifest(hive.tenantId, hive.id, await TenantConsoleAdmission.ServedBy(kubectl)))
         // The IdP Ingress is gone, so the private-key copies it served are swept too.
         await kubectl.DeleteBySelector(K8sManifestBuilder.IdpNameOf(hive.tenantId), C.SecretResource, C.TlsCopySelectorOf(hive.id))
-        const kept = await ConsoleRetention.ExistingOf(kubectl, hive.tenantId)
-        const environments = await kubectl.ListNamespacesBySelector(K8sManifestBuilder.HiveLabelSelectorOf(hive.id), K8sManifestBuilder.EnvNamespacePrefix)
-        return [...kept, ...environments]
+        try
+        {
+            const kept = await ConsoleRetention.ExistingOf(kubectl, hive.tenantId)
+            const environments = await kubectl.ListNamespacesBySelector(K8sManifestBuilder.HiveLabelSelectorOf(hive.id), K8sManifestBuilder.EnvNamespacePrefix)
+            return { retained: [...kept, ...environments] }
+        }
+        catch (err)
+        {
+            if (!(err instanceof KubectlError))
+            {
+                throw err
+            }
+            return { retained: [], notice: C.KeptUnlistedPrefix + err.message.trim().replace(C.TrailingStop, '') + C.Dot }
+        }
     }
 
     /**
