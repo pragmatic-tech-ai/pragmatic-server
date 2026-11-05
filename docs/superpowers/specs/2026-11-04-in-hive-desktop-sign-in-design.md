@@ -157,3 +157,21 @@ File and class names, advert interval constants, the advert store shape, how the
   (cluster-scoped grants and admission policy included, also for bootstrap installs) and every Namespace that carries the
   hive's label and is named `pragmatic-env-*`; an unlabelled `pragmatic-env-*` namespace is never touched. Namespaces that
   cannot be deleted are reported to the operator as failed. A delete anyway skips the cluster entirely.
+- **An operator approves each email domain an in-hive console reports (user, Plan 2 pre-flight D5).** Nothing proves that a
+  tenant owns the domains its console advertises: its Owner, or anyone holding the hive agent token the console reuses, could
+  claim another company's domain and have discovery send those people to its console. So an advertised domain takes effect in
+  discovery only after an operator approves it once in the platform admin portal (tenant detail page: each advertised domain
+  with approved yes/no and the other tenants that claim it; approve and revoke actions, operator Full only, audited with the
+  domain). Approvals are stored per tenant on the control plane (`console-domain-approvals.json`), apart from the advert
+  store, so they survive re-adverts; discovery's domain tier for an in-hive tenant is the advertised domains that are also
+  approved, so a domain dropped from the advert stops matching even if it stays approved. Approving a domain the console
+  does not report is refused. Approvals are forgotten with the tenant. Control-plane tenants' domains are set by the
+  operator and need no approval. Routes: `GET /api/tenants/:id/email-domains`, `POST .../email-domains/approve` and
+  `POST .../email-domains/revoke` with `{ domain }`.
+- **Residual: account fingerprints stay unverified.** Fingerprints in an advert take effect without approval, so a console
+  can claim fingerprints of any email address it computes with its hive's key. This only matches someone who types exactly
+  that email address in Plexus, and discovery shows that tenant by name before anything else happens. Accepted.
+- **A former in-hive tenant's record domains return after console removal.** While a hive runs the console, the tenant's
+  record domains are ignored and the advert's domains are never copied back into the record (a hive must not write platform
+  records). Once the console is removed and its advert forgotten, the record's old domains (the ones seeded into the
+  console at install) count again, and the Owner's in-hive edits are lost. Accepted.

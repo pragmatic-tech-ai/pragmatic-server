@@ -205,6 +205,26 @@ describe('ControlPlaneServer.ComposeTenantPlane', () =>
         }
     })
 
+    it('hands the email-domain store to the tenant API only when one is supplied', () =>
+    {
+        const env = { PRAGMATIC_TENANT_ADMIN_PORT: Port, PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: BaseDomain } as NodeJS.ProcessEnv
+        const storeOf = (plane: ReturnType<typeof ControlPlaneServer.ComposeTenantPlane>): unknown => (plane?.api as unknown as { emailDomains: unknown }).emailDomains
+        assert.equal(storeOf(compose(env)), undefined)
+        const dir = mkdtempSync(join(tmpdir(), 'tenant-plane-compose-'))
+        try
+        {
+            const registry = new TenantAdminClientRegistry(join(dir, 'tenant-admin-clients.json'))
+            const store = { For: () => ({ domains: [], editable: false }), Set: async () => ({ domains: [], editable: false }) }
+            const wired = ControlPlaneServer.ComposeTenantPlane(env, dir, stub, stub, false, stub, stub, stub, stub, randomBytes(32), registry, 168,
+                undefined, undefined, undefined, store)
+            assert.equal(storeOf(wired), store)
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    })
+
     it('returns undefined (fail-closed) when the tenant port env is unset', () =>
     {
         assert.equal(compose({ PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: BaseDomain } as NodeJS.ProcessEnv), undefined)

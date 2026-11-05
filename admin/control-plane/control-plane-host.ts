@@ -47,6 +47,9 @@ import { HivePlacementError } from './hive-placement-error.js'
 import { HiveBootstrapBundle } from './hive-bootstrap-bundle.js'
 import type { ConsoleAdvertRegistry } from './console-advert-registry.js'
 import type { ConsoleDomainApprovals } from './console-domain-approvals.js'
+import { EmailDomainPolicy, InvalidEmailDomainError } from './email-domain-policy.js'
+import { EmailDomainApprovalRefusedError, type PlatformEmailDomains } from './platform-email-domains.js'
+import { EmailDomainsNotEditableError } from './tenant-api/tenant-email-domains.js'
 import { HiveConsoleSpecs, InvalidHiveConsoleError } from './hive-console-spec.js'
 import { InvalidIngressTlsError } from './ingress-tls.js'
 import { AgentInstallInProgressError, AgentInstallUnavailableError, type HiveAgentInstaller, type InstallStatus } from './hive-agent-installer.js'
@@ -331,6 +334,20 @@ export class ControlPlaneHost
     /** POST /api/hives/ID/console/owner-password: a fresh Owner password in the hive's in-hive IdP. */
     private static readonly HiveConsoleOwnerPasswordPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.ConsoleSegment + '/' + ControlPlaneHost.OwnerPasswordSegment + '$')
+    private static readonly EmailDomainsSegment = 'email-domains'
+    private static readonly ApproveSegment = 'approve'
+    private static readonly RevokeSegment = 'revoke'
+    /** /api/tenants/ID/email-domains (GET report, PUT record domains) and .../email-domains/(approve|revoke) (POST, in-hive tenants). */
+    private static readonly TenantEmailDomainsPathPattern = new RegExp(
+        '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.TenantsSegment + '/([^/]+)/' + ControlPlaneHost.EmailDomainsSegment +
+        '(?:/(' + ControlPlaneHost.ApproveSegment + '|' + ControlPlaneHost.RevokeSegment + '))?$')
+    /** 20 domains of up to 253 characters each do not fit MaxBodyBytes; matches the tenant route's cap. */
+    private static readonly EmailDomainsMaxBodyBytes = 16384
+    private static readonly DomainsRequiredMessage = 'domains (array of domain names) is required'
+    private static readonly DomainRequiredMessage = 'domain (an email domain name) is required'
+    private static readonly DomainNotePrefix = 'domain: '
+    private static readonly DomainsKey = 'domains'
+    private static readonly DomainKey = 'domain'
     private static readonly TenantPolicyPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.TenantsSegment + '/([^/]+)/' + ControlPlaneHost.PolicySegment + '/(' +
         [ControlPlaneHost.ChannelsSegment, ControlPlaneHost.MinVersionSegment, ControlPlaneHost.HoldSegment].join('|') + ')$')
@@ -484,6 +501,11 @@ export class ControlPlaneHost
         [OwnerIdpRefusedError, ControlPlaneHost.StatusConflict],
         [IdpUnreachableError, ControlPlaneHost.StatusUnavailable],
         [OwnerResetInProgressError, ControlPlaneHost.StatusConflict],
+        // Email domains: a refused domain or list -> 400; an in-hive tenant's domains (set in its console) or an approval that
+        // cannot apply -> 409. Each message is one plain sentence (it may name the domain the operator typed).
+        [InvalidEmailDomainError, ControlPlaneHost.StatusBadRequest],
+        [EmailDomainsNotEditableError, ControlPlaneHost.StatusConflict],
+        [EmailDomainApprovalRefusedError, ControlPlaneHost.StatusConflict],
     ])
 
     private httpServer: HttpServer | undefined
@@ -542,7 +564,9 @@ export class ControlPlaneHost
         /** The console adverts in-hive consoles reported; forgotten with the console, the hive or the tenant. */
         private readonly adverts?: ConsoleAdvertRegistry,
         /** Operator-approved email domains per tenant; forgotten with the tenant only (they belong to the tenant, not a hive). */
-        private readonly approvals?: ConsoleDomainApprovals)
+        private readonly approvals?: ConsoleDomainApprovals,
+        /** Tenant email domains and their operator approvals (/api/tenants/ID/email-domains); undefined leaves those routes unmounted. */
+        private readonly emailDomains?: PlatformEmailDomains)
     {
         this.allowedHosts = new Set([...ControlPlaneHost.DefaultAllowedHosts, ...allowedHosts.map(h => h.toLowerCase())])
         this.staticRootAbs = resolve(staticRoot)
@@ -1054,6 +1078,11 @@ export class ControlPlaneHost
         if (opm !== null)
         {
             return await this.RouteOwnerPasswordReset(res, method, opm)
+        }
+        const edm = ControlPlaneHost.TenantEmailDomainsPathPattern.exec(path)
+        if (edm !== null && this.emailDomains !== undefined)
+        {
+            return await this.RouteTenantEmailDomains(req, res, method, edm, this.emailDomains)
         }
         const tpm = ControlPlaneHost.TenantPolicyPathPattern.exec(path)
         if (tpm !== null)
@@ -1626,6 +1655,72 @@ export class ControlPlaneHost
         const reset: OwnerPasswordReset = await this.provisioning.ResetOwnerPassword(id)
         res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
         PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, reset)
+        return true
+    }
+
+    /**
+     * Serves /api/tenants/ID/email-domains: GET the report (404 for an unknown tenant), PUT `{ domains }` (a control-plane tenant's
+     * record domains; 409 for an in-hive tenant), and POST .../approve or .../revoke `{ domain }` (one advertised domain of an
+     * in-hive tenant; approving one its console does not report is 409). Writes are Full-gated by the central gate and audited
+     * there; an approval or revoke notes its domain. Every success answers the fresh report. False for any other method.
+     */
+    private async RouteTenantEmailDomains(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray, domains: PlatformEmailDomains): Promise<boolean>
+    {
+        const C = ControlPlaneHost
+        const action = m[2]
+        const allowed = action === undefined ? method === PlaneHttp.MethodGet || method === PlaneHttp.MethodPut : method === PlaneHttp.MethodPost
+        if (!allowed)
+        {
+            return false
+        }
+        const id = C.Decode(m[1] as string)
+        if (id === undefined)
+        {
+            PlaneHttp.WriteJson(res, C.StatusBadRequest, { error: C.BadNameMessage })
+            return true
+        }
+        if (method !== PlaneHttp.MethodGet)
+        {
+            const body = await this.ReadJsonObject(req, res, C.EmailDomainsMaxBodyBytes)
+            if (body === undefined)
+            {
+                return true
+            }
+            if (action === undefined)
+            {
+                if (!(C.DomainsKey in body))
+                {
+                    PlaneHttp.WriteJson(res, C.StatusBadRequest, { error: C.DomainsRequiredMessage })
+                    return true
+                }
+                await domains.Set(id, body[C.DomainsKey])
+            }
+            else
+            {
+                const domain = body[C.DomainKey]
+                if (!C.NonEmpty(domain))
+                {
+                    PlaneHttp.WriteJson(res, C.StatusBadRequest, { error: C.DomainRequiredMessage })
+                    return true
+                }
+                if (action === C.ApproveSegment)
+                {
+                    await domains.Approve(id, domain as string)
+                }
+                else
+                {
+                    await domains.Revoke(id, domain as string)
+                }
+                this.auditNotes.set(res, C.DomainNotePrefix + EmailDomainPolicy.Normalise(domain as string))
+            }
+        }
+        const report = domains.Report(id)
+        if (report === undefined)
+        {
+            PlaneHttp.WriteNotFound(res)
+            return true
+        }
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, report)
         return true
     }
 
@@ -2501,10 +2596,10 @@ export class ControlPlaneHost
         PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, rec)
     }
 
-    /** Reads and parses a JSON object body; writes the 400 and returns undefined when it is not one. */
-    private async ReadJsonObject(req: IncomingMessage, res: ServerResponse): Promise<Record<string, unknown> | undefined>
+    /** Reads and parses a JSON object body (capped at `maxBytes`, else 413); writes the 400 and returns undefined when it is not one. */
+    private async ReadJsonObject(req: IncomingMessage, res: ServerResponse, maxBytes: number = ControlPlaneHost.MaxBodyBytes): Promise<Record<string, unknown> | undefined>
     {
-        const raw = await this.ReadBody(req)
+        const raw = await this.ReadBody(req, maxBytes)
         let body: unknown
         try
         {
@@ -2792,7 +2887,8 @@ export class ControlPlaneHost
         return token === undefined || token.length === 0 ? null : await this.operator.ValidateToken(token)
     }
 
-    private ReadBody(req: IncomingMessage): Promise<string>
+    /** Collects the request body; one larger than `maxBytes` rejects with BodyTooLargeError (answered as 413). */
+    private ReadBody(req: IncomingMessage, maxBytes: number = ControlPlaneHost.MaxBodyBytes): Promise<string>
     {
         return new Promise((resolveBody, reject) =>
         {
@@ -2802,7 +2898,7 @@ export class ControlPlaneHost
             req.on('data', (c: Buffer) =>
             {
                 size += c.length
-                if (size > ControlPlaneHost.MaxBodyBytes)
+                if (size > maxBytes)
                 {
                     tooLarge = true
                     return

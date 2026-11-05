@@ -9,6 +9,8 @@ import type { EnvironmentPlacement } from '../environment-placement.js'
 import type { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { RolloutAdoptionRefusedError, RolloutUnavailableError, type IRolloutClient } from './rollout-client.js'
 import type { ITenantDirectory } from './tenant-directory.js'
+import { EmailDomainsNotEditableError, type ITenantEmailDomains, type TenantEmailDomainsView } from './tenant-email-domains.js'
+import { InvalidEmailDomainError } from '../email-domain-policy.js'
 import type { EnvironmentRecord } from '../environment-record.js'
 import { ChannelNotSubscribedError, ManifestNotGatedError, ManifestWithdrawnError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from '../rollout-errors.js'
 import type { ITenantApiEndpoint } from '../tenant-auth/tenant-plane.js'
@@ -67,6 +69,14 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly EnvsCapability = 'envs'
     private static readonly AccessCapability = 'access'
     private static readonly SettingsCapability = 'settings'
+    private static readonly SettingsSegment = 'settings'
+    private static readonly EmailDomainsSegment = 'email-domains'
+    /** GET reads, PUT (Owner only) replaces the tenant's email domains; a route only when the endpoint has an email-domain store. */
+    private static readonly EmailDomainsPath = TenantApiEndpoint.Prefix + TenantApiEndpoint.SettingsSegment + '/' + TenantApiEndpoint.EmailDomainsSegment
+    private static readonly DomainsKey = 'domains'
+    private static readonly DomainsRequiredMessage = 'domains (array of domain names) is required'
+    /** 20 domains of up to 253 characters each do not fit the default cap. */
+    private static readonly EmailDomainsMaxBodyBytes = 16384
     private static readonly SnapshotLeaf = 'snapshot'
     private static readonly AccountsLeaf = 'accounts'
     private static readonly GrantsLeaf = 'grants'
@@ -153,7 +163,9 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         private readonly directory: ITenantDirectory,
         private readonly rolloutClient: IRolloutClient,
         orchestrators: HiveOrchestratorFactory,
-        placement: EnvironmentPlacement)
+        placement: EnvironmentPlacement,
+        /** The tenant's email domains (GET/PUT /tenant-api/settings/email-domains); undefined leaves those paths unrouted (404). */
+        private readonly emailDomains?: ITenantEmailDomains)
     {
         this.health = new HiveHealthProducer(service, orchestrators, placement)
     }
@@ -174,6 +186,10 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     public async Handle(req: IncomingMessage, res: ServerResponse, path: string, session: TenantSession): Promise<boolean>
     {
         const method = req.method ?? TenantApiEndpoint.MethodNone
+        if (path === TenantApiEndpoint.EmailDomainsPath && this.emailDomains !== undefined)
+        {
+            return await this.RouteEmailDomains(req, res, method, session, this.emailDomains)
+        }
         if (method === TenantApiEndpoint.MethodGet)
         {
             if (path === TenantApiEndpoint.ProfilePath)
@@ -553,6 +569,74 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         return false
     }
 
+    /**
+     * GET / PUT /tenant-api/settings/email-domains for the session's own tenant (never an id from the request). GET reports
+     * `editable` only when the store may change them AND the caller holds the settings capability (the Owner); PUT needs that
+     * capability (403), a `{ domains }` body within the 16 KiB cap (400), and answers the store's refusals as 400 / 409 sentences.
+     */
+    private async RouteEmailDomains(req: IncomingMessage, res: ServerResponse, method: string, session: TenantSession, store: ITenantEmailDomains): Promise<boolean>
+    {
+        const M = TenantApiEndpoint
+        if (method === M.MethodGet)
+        {
+            this.WriteEmailDomains(res, session, store.For(session.tenantId))
+            return true
+        }
+        if (method !== M.MethodPut)
+        {
+            this.WriteNotFound(res)
+            return true
+        }
+        if (!this.RequireCapability(res, session, M.SettingsCapability))
+        {
+            return true
+        }
+        const raw = await M.ReadBody(req, M.EmailDomainsMaxBodyBytes)
+        let body: unknown
+        try
+        {
+            body = JSON.parse(raw)
+        }
+        catch
+        {
+            this.WriteJson(res, M.StatusBadRequest, { [M.ErrorKey]: M.BadJsonMessage })
+            return true
+        }
+        if (body === null || typeof body !== 'object' || Array.isArray(body) || !(M.DomainsKey in body))
+        {
+            this.WriteJson(res, M.StatusBadRequest, { [M.ErrorKey]: M.DomainsRequiredMessage })
+            return true
+        }
+        let view: TenantEmailDomainsView
+        try
+        {
+            view = await store.Set(session.tenantId, (body as Record<string, unknown>)[M.DomainsKey])
+        }
+        catch (err)
+        {
+            if (err instanceof InvalidEmailDomainError)
+            {
+                this.WriteJson(res, M.StatusBadRequest, { [M.ErrorKey]: err.message })
+                return true
+            }
+            if (err instanceof EmailDomainsNotEditableError)
+            {
+                this.WriteJson(res, M.StatusConflict, { [M.ErrorKey]: err.message })
+                return true
+            }
+            throw err
+        }
+        this.WriteEmailDomains(res, session, view)
+        return true
+    }
+
+    /** The view as the caller may use it: editable only when the store allows it and the caller holds the settings capability. */
+    private WriteEmailDomains(res: ServerResponse, session: TenantSession, view: TenantEmailDomainsView): void
+    {
+        const caps = TenantAdminCapabilities.For(session, this.directory.GetTenant(session.tenantId)).capabilities
+        this.WriteJson(res, TenantApiEndpoint.StatusOk, { domains: view.domains, editable: view.editable && caps[TenantApiEndpoint.SettingsCapability] })
+    }
+
     /** Runs one admin (leaf, method, tail) combination; false when the combination is not a route. */
     private async DispatchAdmin(req: IncomingMessage, res: ServerResponse, method: string, name: string, leaf: string, tail: string | undefined): Promise<boolean>
     {
@@ -893,8 +977,8 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         return version
     }
 
-    /** Collects the request body (capped); an over-large body resolves empty so it fails JSON parsing and is answered as a 400. */
-    private static ReadBody(req: IncomingMessage): Promise<string>
+    /** Collects the request body (capped at `maxBytes`); an over-large body resolves empty so it fails JSON parsing and is answered as a 400. */
+    private static ReadBody(req: IncomingMessage, maxBytes: number = TenantApiEndpoint.MaxBodyBytes): Promise<string>
     {
         return new Promise((resolveBody, reject) =>
         {
@@ -904,7 +988,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             req.on(TenantApiEndpoint.DataEvent, (c: Buffer) =>
             {
                 size += c.length
-                if (size > TenantApiEndpoint.MaxBodyBytes)
+                if (size > maxBytes)
                 {
                     tooLarge = true
                     return

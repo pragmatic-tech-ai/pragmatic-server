@@ -28,6 +28,8 @@ import { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
 import { ConsoleAdvertRegistry } from './console-advert-registry.js'
 import { ConsoleAdvertReceiver } from './console-advert-receiver.js'
 import { ConsoleDomainApprovals } from './console-domain-approvals.js'
+import { PlatformEmailDomains } from './platform-email-domains.js'
+import type { ITenantEmailDomains } from './tenant-api/tenant-email-domains.js'
 import { DevCertificateAuthority } from './dev-certificate-authority.js'
 import { InHiveIdpAdmin } from './in-hive-idp-admin.js'
 import { SealedSecretStore } from './sealed-secret-store.js'
@@ -272,11 +274,13 @@ export class ControlPlaneServer
             new DevCertificateAuthority(join(dataRoot, DevCertificateAuthority.DirName), sealed), new InHiveIdpAdmin(orchestrators, sealed),
             new PlatformConsoleImageApproval(signing.PlatformSigner, HiveOrchestratorFactory.VerifierFor(dataRoot)),
             new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)), agentChannelUrl, new SystemInstallClock(), adverts)
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery, consoleInstaller, adverts, approvals)
+        // One email-domain service for the operator routes and the control-plane tenant plane, over the shared adverts and approvals.
+        const emailDomains = new PlatformEmailDomains(directory, adverts, approvals)
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery, consoleInstaller, adverts, approvals, emailDomains)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
             masterKey, adminClientRegistry, ControlPlaneServer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]), tenantSessions, principalSessions,
-            { endpoints, audit: desktopAudit })
+            { endpoints, audit: desktopAudit }, emailDomains)
         // Resolve (and validate) the tenant port + bind BEFORE binding the operator listener, so a misconfigured
         // tenant port fails fast at startup rather than after the operator socket is already live.
         let tenantStart: { host: TenantPlaneHost; port: number; bind: string; scheme: string; baseDomain: string } | undefined
@@ -373,7 +377,8 @@ export class ControlPlaneServer
         secretTtlHours: number,
         sessions?: TenantSessionStore,
         principals?: TenantPrincipalSessions,
-        relay?: DesktopRelayWiring): TenantPlane | undefined
+        relay?: DesktopRelayWiring,
+        emailDomains?: ITenantEmailDomains): TenantPlane | undefined
     {
         const port = env[ControlPlaneServer.TenantPortEnvVar]
         const baseDomain = env[ControlPlaneServer.TenantBaseDomainEnvVar]
@@ -383,14 +388,15 @@ export class ControlPlaneServer
         }
         // The control plane's tenant plane is the one Plexus talks to, so it carries the desktop surface.
         return ControlPlaneServer.BuildTenantPlane(dataRoot, idpService, directory, secureCookie, service, rollout, orchestrators, placement,
-            masterKey, adminClientRegistry, secretTtlHours, sessions, principals, ControlPlaneServer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]), true, relay)
+            masterKey, adminClientRegistry, secretTtlHours, sessions, principals, ControlPlaneServer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]), true, relay, emailDomains)
     }
 
     /**
      * Gate-free composition of the tenant plane; callers decide whether the plane is active (ComposeTenantPlane gates on env,
      * the standalone server always builds it). `withDesktop` mounts the Plexus `/desktop/*` surface; it is off by default,
      * so the in-hive tenant console does not serve it (that is a later follow-up). The desktop relay is mounted with it when
-     * `relay` supplies how environments are reached and where relays are audited.
+     * `relay` supplies how environments are reached and where relays are audited. `emailDomains` mounts
+     * `/tenant-api/settings/email-domains` (unrouted without it).
      */
     public static BuildTenantPlane(
         dataRoot: string,
@@ -408,7 +414,8 @@ export class ControlPlaneServer
         principals: TenantPrincipalSessions = new TenantPrincipalSessions(sessions),
         trustedProxy: boolean = false,
         withDesktop: boolean = false,
-        relay?: DesktopRelayWiring): TenantPlane
+        relay?: DesktopRelayWiring,
+        emailDomains?: ITenantEmailDomains): TenantPlane
     {
         const durability: TenantAdminDurability = {
             storeRoot: join(dataRoot, ControlPlaneServer.TenantAdminOidcDir),
@@ -420,7 +427,7 @@ export class ControlPlaneServer
         const passwordChange = new TenantPasswordChange(idpService, new IdpPasswordClient(), principals, secureCookie, trustedProxy)
         const endpoint = new TenantAuthEndpoint(rp, sessions, secureCookie, passwordChange)
         const gate = new TenantAuthGate(sessions)
-        const api = new TenantApiEndpoint(service, directory, rollout, orchestrators, placement)
+        const api = new TenantApiEndpoint(service, directory, rollout, orchestrators, placement, emailDomains)
         const events = new TenantEventBus()
         const plane: TenantPlane = { endpoint, gate, api, events, isDurable: rp.IsDurable, principals }
         if (withDesktop)
