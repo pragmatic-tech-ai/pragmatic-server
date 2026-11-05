@@ -58,10 +58,15 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
         return this.domains
     }
 
-    /** Own tenant -> its domains, editable; any other id -> nothing, not editable. */
+    /**
+     * Own tenant -> its domains, editable; any other id -> nothing, not editable. `pending` is always empty: the operator's approvals
+     * live on the control plane and are not visible here, so the view says only `inHive` (each domain needs that approval).
+     */
     public For(tenantId: string): TenantEmailDomainsView
     {
-        return tenantId === this.tenantId ? { domains: [...this.domains], editable: true, inHive: true } : { domains: [], editable: false, inHive: true }
+        return tenantId === this.tenantId
+            ? { domains: [...this.domains], editable: true, inHive: true, pending: [] }
+            : { domains: [], editable: false, inHive: true, pending: [] }
     }
 
     /** Throws EmailDomainsNotEditableError (another tenant) or InvalidEmailDomainError (before anything is written). */
@@ -75,7 +80,7 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
         const run = this.writes.then(() => this.Apply(parsed))
         this.writes = run.catch(() => undefined)
         await run
-        return { domains: [...parsed], editable: true, inHive: true }
+        return { domains: [...parsed], editable: true, inHive: true, pending: [] }
     }
 
     private static DomainsIn(text: string, filePath: string): string[]

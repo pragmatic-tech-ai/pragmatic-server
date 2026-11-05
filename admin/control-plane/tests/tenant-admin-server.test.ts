@@ -478,7 +478,7 @@ describe('TenantAdminServer console advert', () =>
         writeConsoleSeed()
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
         const composition = await server.Compose({}, undefined, () => undefined)
-        assert.deepEqual(await handle(composition, Names.Get), { status: Names.Ok, body: { domains: [Names.EmailDomain], editable: true, inHive: true } })
+        assert.deepEqual(await handle(composition, Names.Get), { status: Names.Ok, body: { domains: [Names.EmailDomain], editable: true, inHive: true, pending: [] } })
     })
 
     it('a PUT on the console route writes the console store and its file, never the seeded record', async () =>
@@ -487,7 +487,7 @@ describe('TenantAdminServer console advert', () =>
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
         const composition = await server.Compose({}, undefined, () => undefined)
         const answer = await handle(composition, Names.Put, { domains: [Names.NewEmailDomain] })
-        assert.deepEqual(answer, { status: Names.Ok, body: { domains: [Names.NewEmailDomain], editable: true, inHive: true } })
+        assert.deepEqual(answer, { status: Names.Ok, body: { domains: [Names.NewEmailDomain], editable: true, inHive: true, pending: [] } })
         assert.deepEqual(composition.emailDomains.Domains, [Names.NewEmailDomain])
         assert.deepEqual(JSON.parse(readFileSync(join(root, ConsoleEmailDomainStore.FileName), Names.Utf8)), { domains: [Names.NewEmailDomain] })
         assert.deepEqual(composition.directory.Tenant.emailDomains, [Names.EmailDomain], 'the seeded record is untouched')

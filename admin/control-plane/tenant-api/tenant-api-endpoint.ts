@@ -627,11 +627,16 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         return true
     }
 
-    /** The view as the caller may use it: editable only when the store allows it and the caller holds the settings capability. */
+    /**
+     * The view as the caller may use it: editable only when the store allows it and the caller holds the settings capability;
+     * `pending` lists the domains still waiting for the platform operator's approval.
+     */
     private WriteEmailDomains(res: ServerResponse, session: TenantSession, view: TenantEmailDomainsView): void
     {
         const caps = TenantAdminCapabilities.For(session, this.directory.GetTenant(session.tenantId)).capabilities
-        this.WriteJson(res, TenantApiEndpoint.StatusOk, { domains: view.domains, editable: view.editable && caps[TenantApiEndpoint.SettingsCapability], inHive: view.inHive })
+        this.WriteJson(res, TenantApiEndpoint.StatusOk, {
+            domains: view.domains, editable: view.editable && caps[TenantApiEndpoint.SettingsCapability], inHive: view.inHive, pending: view.pending,
+        })
     }
 
     /** Runs one admin (leaf, method, tail) combination; false when the combination is not a route. */

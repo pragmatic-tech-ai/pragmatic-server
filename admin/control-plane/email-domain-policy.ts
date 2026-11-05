@@ -49,13 +49,10 @@ export class EmailDomainPolicy
     /** undefined when acceptable, else the refusal sentence naming the (normalised) domain. */
     public static Check(domain: string): string | undefined
     {
-        if (EmailDomainPolicy.NonAsciiPattern.test(domain))
+        const syntax = EmailDomainPolicy.CheckSyntax(domain)
+        if (syntax !== undefined)
         {
-            return domain + EmailDomainPolicy.NotAsciiSuffix
-        }
-        if (!EmailDomainPolicy.IsValidName(domain))
-        {
-            return domain + EmailDomainPolicy.NotValidSuffix
+            return syntax
         }
         if (DnsNames.IsPublicSuffix(domain))
         {
@@ -64,6 +61,24 @@ export class EmailDomainPolicy
         if (EmailDomainPolicy.IsPublicMail(domain))
         {
             return domain + EmailDomainPolicy.PublicMailSuffix
+        }
+        return undefined
+    }
+
+    /**
+     * The shape rules only (ASCII, DNS syntax, at most 253 characters), without the public-suffix and public-mail refusals: undefined
+     * when the (normalised) value is a well-formed domain name, else the refusal sentence. For clearing an approval the policy has
+     * since come to refuse, while still keeping arbitrary text out.
+     */
+    public static CheckSyntax(domain: string): string | undefined
+    {
+        if (EmailDomainPolicy.NonAsciiPattern.test(domain))
+        {
+            return domain + EmailDomainPolicy.NotAsciiSuffix
+        }
+        if (!EmailDomainPolicy.IsValidName(domain))
+        {
+            return domain + EmailDomainPolicy.NotValidSuffix
         }
         return undefined
     }

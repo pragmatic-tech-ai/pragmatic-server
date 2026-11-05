@@ -1,8 +1,10 @@
 /**
  * A tenant's email domains as its console shows them; `editable` = whether the store may change them (the role is checked by the endpoint);
- * `inHive` = whether the tenant's console runs in its own hive, where a domain takes effect only after the platform operator approves it.
+ * `inHive` = whether the tenant's console runs in its own hive. Every domain takes effect only after the platform operator approves it:
+ * `pending` = the domains still waiting for that approval, sorted. The in-hive console cannot see the operator's approvals, so it
+ * answers `pending: []` with `inHive: true` (approval state unknown there); the control plane knows them and lists each one.
  */
-export type TenantEmailDomainsView = { domains: string[]; editable: boolean; inHive: boolean }
+export type TenantEmailDomainsView = { domains: string[]; editable: boolean; inHive: boolean; pending: string[] }
 
 /** What both email-domain write routes (tenant plane and operator) promise: one home so the two cannot drift. */
 export class TenantEmailDomainsLimits

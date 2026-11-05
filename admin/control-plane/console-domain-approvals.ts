@@ -1,12 +1,14 @@
-import { EmailDomainPolicy, InvalidEmailDomainError } from './email-domain-policy.js'
+import { EmailDomainPolicy } from './email-domain-policy.js'
 import { JsonRecordStore } from './json-record-store.js'
 
 /** The email domains an operator has approved for one tenant; the record id is the tenant id. */
 export type ConsoleDomainApprovalRecord = { id: string; tenantId: string; domains: string[] }
 
 /**
- * Operator-approved email domains per tenant. Kept apart from the advert store (which is replaced on every
- * advert) so an approval survives re-adverts; a domain only takes effect while it is also in the advert.
+ * Operator-approved email domains per tenant, for in-hive and control-plane tenants alike: the one approval store. Kept apart from
+ * the advert store (replaced on every advert) and from the tenant record (which the tenant Owner may edit), so an approval
+ * survives re-adverts and Owner edits; a domain only takes effect while the tenant also claims it (EffectiveDomains).
+ * The store judges nothing: PlatformEmailDomains checks the policy before it approves.
  */
 export class ConsoleDomainApprovals extends JsonRecordStore<ConsoleDomainApprovalRecord>
 {
@@ -24,21 +26,22 @@ export class ConsoleDomainApprovals extends JsonRecordStore<ConsoleDomainApprova
         return [...(this.Get(tenantId)?.domains ?? [])]
     }
 
-    /** Approves one domain (normalised); throws InvalidEmailDomainError when the policy refuses it. Idempotent. */
+    /** Approves one domain (normalised). Idempotent. */
     public async Approve(tenantId: string, domain: string): Promise<void>
     {
-        const normalised = EmailDomainPolicy.Normalise(domain)
-        const refusal = EmailDomainPolicy.Check(normalised)
-        if (refusal !== undefined)
-        {
-            throw new InvalidEmailDomainError(refusal)
-        }
+        await this.ApproveAll(tenantId, [domain])
+    }
+
+    /** Approves several domains (normalised) in one write; a no-op when all are approved already. */
+    public async ApproveAll(tenantId: string, domains: readonly string[]): Promise<void>
+    {
         const current = this.ApprovedFor(tenantId)
-        if (current.includes(normalised))
+        const merged = [...new Set([...current, ...domains.map(d => EmailDomainPolicy.Normalise(d))])].sort()
+        if (merged.length === current.length)
         {
             return
         }
-        await this.Put({ id: tenantId, tenantId, domains: [...current, normalised].sort() })
+        await this.Put({ id: tenantId, tenantId, domains: merged })
     }
 
     /** Withdraws one domain's approval; a no-op when it was not approved. */
@@ -64,10 +67,13 @@ export class ConsoleDomainApprovals extends JsonRecordStore<ConsoleDomainApprova
         await this.Remove(tenantId)
     }
 
-    /** The domains discovery may use for an in-hive tenant: advertised AND approved (sorted, deduped). */
-    public static EffectiveDomains(advertised: readonly string[], approved: readonly string[]): string[]
+    /**
+     * The one rule for which domains discovery may use for a tenant: those it claims (its usable advert's for an in-hive tenant,
+     * its record's for a control-plane tenant) that are also approved. Sorted, deduped, normalised.
+     */
+    public static EffectiveDomains(claimed: readonly string[], approved: readonly string[]): string[]
     {
         const allowed = new Set(approved.map(d => EmailDomainPolicy.Normalise(d)))
-        return [...new Set(advertised.map(d => EmailDomainPolicy.Normalise(d)))].filter(d => allowed.has(d)).sort()
+        return [...new Set(claimed.map(d => EmailDomainPolicy.Normalise(d)))].filter(d => allowed.has(d)).sort()
     }
 }

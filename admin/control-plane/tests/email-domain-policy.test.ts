@@ -41,6 +41,18 @@ test('a non-ASCII domain is told to use its xn-- form', () =>
     assert.equal(sentence, domain + ' is not an ASCII domain name: enter its internationalised form, which starts with xn--.')
 })
 
+test('CheckSyntax keeps only the shape rules: public mail and public suffixes pass, malformed or over-long names do not', () =>
+{
+    for (const d of ['gmail.com', 'co.uk', 'acme.test'])
+    {
+        assert.equal(EmailDomainPolicy.CheckSyntax(d), undefined, d)
+    }
+    for (const d of ['not a domain', 'acme', 'a'.repeat(250) + '.test', 'b' + String.fromCodePoint(0xfc) + 'cher.example', 'acme.123'])
+    {
+        assert.equal(typeof EmailDomainPolicy.CheckSyntax(d), 'string', d)
+    }
+})
+
 test('refuses public mail domains', () =>
 {
     for (const d of ['gmail.com', 'Outlook.com', 'hotmail.co.uk', 'yahoo.fr', 'proton.me'])

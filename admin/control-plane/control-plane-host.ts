@@ -47,7 +47,7 @@ import { HivePlacementError } from './hive-placement-error.js'
 import { HiveBootstrapBundle } from './hive-bootstrap-bundle.js'
 import type { ConsoleAdvertRegistry } from './console-advert-registry.js'
 import type { ConsoleDomainApprovals } from './console-domain-approvals.js'
-import { EmailDomainPolicy, InvalidEmailDomainError } from './email-domain-policy.js'
+import { InvalidEmailDomainError } from './email-domain-policy.js'
 import { EmailDomainApprovalRefusedError, type PlatformEmailDomains } from './platform-email-domains.js'
 import { EmailDomainsNotEditableError, TenantEmailDomainsLimits } from './tenant-api/tenant-email-domains.js'
 import { HiveConsoleSpecs, InvalidHiveConsoleError } from './hive-console-spec.js'
@@ -337,7 +337,7 @@ export class ControlPlaneHost
     private static readonly EmailDomainsSegment = 'email-domains'
     private static readonly ApproveSegment = 'approve'
     private static readonly RevokeSegment = 'revoke'
-    /** /api/tenants/ID/email-domains (GET report, PUT record domains) and .../email-domains/(approve|revoke) (POST, in-hive tenants). */
+    /** /api/tenants/ID/email-domains (GET report, PUT record domains) and .../email-domains/(approve|revoke) (POST, any tenant). */
     private static readonly TenantEmailDomainsPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.TenantsSegment + '/([^/]+)/' + ControlPlaneHost.EmailDomainsSegment +
         '(?:/(' + ControlPlaneHost.ApproveSegment + '|' + ControlPlaneHost.RevokeSegment + '))?$')
@@ -1659,9 +1659,10 @@ export class ControlPlaneHost
 
     /**
      * Serves /api/tenants/ID/email-domains: GET the report (404 for an unknown tenant), PUT `{ domains }` (a control-plane tenant's
-     * record domains; 409 for an in-hive tenant), and POST .../approve or .../revoke `{ domain }` (one advertised domain of an
-     * in-hive tenant; approving one its console does not report is 409). Writes are Full-gated by the central gate and audited
-     * there; an approval or revoke notes its domain. Every success answers the fresh report. False for any other method.
+     * record domains, each approved on save since an operator set it; 409 for an in-hive tenant), and POST .../approve or .../revoke
+     * `{ domain }` (one domain of any tenant; approving one the tenant does not claim is 409, revoking a malformed name is 400).
+     * Writes are Full-gated by the central gate and audited there; an approval or revoke notes its domain. Every success answers
+     * the fresh report. False for any other method.
      */
     private async RouteTenantEmailDomains(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray, domains: PlatformEmailDomains): Promise<boolean>
     {
@@ -1692,7 +1693,7 @@ export class ControlPlaneHost
                     PlaneHttp.WriteJson(res, C.StatusBadRequest, { error: TenantEmailDomainsLimits.DomainsRequiredMessage })
                     return true
                 }
-                await domains.Set(id, body[C.DomainsKey])
+                await domains.SetAsOperator(id, body[C.DomainsKey])
             }
             else
             {
@@ -1702,15 +1703,10 @@ export class ControlPlaneHost
                     PlaneHttp.WriteJson(res, C.StatusBadRequest, { error: C.DomainRequiredMessage })
                     return true
                 }
-                if (action === C.ApproveSegment)
-                {
-                    await domains.Approve(id, domain as string)
-                }
-                else
-                {
-                    await domains.Revoke(id, domain as string)
-                }
-                this.auditNotes.set(res, C.DomainNotePrefix + EmailDomainPolicy.Normalise(domain as string))
+                // Both answer the domain normalised and only once it passed the policy (approve) or the shape check (revoke), so
+                // the audit note carries a well-formed name of at most 253 characters.
+                const noted = action === C.ApproveSegment ? await domains.Approve(id, domain as string) : await domains.Revoke(id, domain as string)
+                this.auditNotes.set(res, C.DomainNotePrefix + noted)
             }
         }
         const report = domains.Report(id)

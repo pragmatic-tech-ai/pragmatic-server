@@ -158,13 +158,26 @@ test('operator approvals are separate from adverts, survive re-adverts and reloa
     })
 })
 
-test('approving a refused domain throws', async () =>
+test('the approval store records what its caller checked (the policy check lives only in PlatformEmailDomains)', async () =>
 {
     await RegistryFixture.Run(async f =>
     {
         const approvals = new ConsoleDomainApprovals(join(f.dir, ConsoleDomainApprovals.FileName))
-        await assert.rejects(() => approvals.Approve('acme', 'gmail.com'), /public mail domain/)
-        assert.deepEqual(approvals.ApprovedFor('acme'), [])
+        await approvals.Approve('acme', 'Gmail.COM')
+        assert.deepEqual(approvals.ApprovedFor('acme'), ['gmail.com'])
+    })
+})
+
+test('ApproveAll adds several domains in one write, normalised, deduped and sorted', async () =>
+{
+    await RegistryFixture.Run(async f =>
+    {
+        const approvals = new ConsoleDomainApprovals(join(f.dir, ConsoleDomainApprovals.FileName))
+        await approvals.Approve('acme', 'z.test')
+        await approvals.ApproveAll('acme', ['B.test', 'a.test', 'z.test', 'b.test'])
+        assert.deepEqual(approvals.ApprovedFor('acme'), ['a.test', 'b.test', 'z.test'])
+        await approvals.ApproveAll('beta', [])
+        assert.equal(approvals.Get('beta'), undefined)
     })
 })
 

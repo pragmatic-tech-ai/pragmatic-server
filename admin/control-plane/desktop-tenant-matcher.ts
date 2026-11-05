@@ -42,7 +42,8 @@ type TenantPlacement = { inHive: boolean; advert: ConsoleAdvertRecord | undefine
  * (an account match wins over a domain match):
  * - an in-hive console's usable advert: its fingerprints (account) and its advertised domains that an operator approved (domain);
  * - the platform's TenantAccountIndex (account); an in-hive tenant is skipped until its console has advertised;
- * - a control-plane tenant record's emailDomains (domain); an in-hive tenant's record domains are ignored.
+ * - a control-plane tenant record's emailDomains that an operator approved (domain); an in-hive tenant's record domains are ignored.
+ * Both domain tiers are claimed INTERSECT approved (ConsoleDomainApprovals.EffectiveDomains), so nobody's claim alone redirects an address.
  * An in-hive tenant points at its advertised console; every other tenant points at the tenant plane. Domains match
  * exactly (no parent-domain matching). Stale adverts are used as they are.
  */
@@ -103,7 +104,7 @@ export class DesktopTenantMatcher
                 DesktopTenantMatcher.Add(found, { tenant, consoleUrl: advert.consoleUrl, match: DiscoveryMatch.Account })
                 continue
             }
-            if (domain !== undefined && this.EffectiveDomainsOf(advert).includes(domain))
+            if (domain !== undefined && this.EffectiveDomainsOf(advert.tenantId, advert.emailDomains).includes(domain))
             {
                 DesktopTenantMatcher.Add(found, { tenant, consoleUrl: advert.consoleUrl, match: DiscoveryMatch.Domain })
             }
@@ -132,8 +133,7 @@ export class DesktopTenantMatcher
     {
         for (const tenant of this.directory.ListTenants())
         {
-            const domains = tenant.emailDomains ?? []
-            if (!domains.some(d => EmailDomainPolicy.Normalise(d) === domain))
+            if (!this.EffectiveDomainsOf(tenant.id, tenant.emailDomains ?? []).includes(domain))
             {
                 continue
             }
@@ -162,14 +162,17 @@ export class DesktopTenantMatcher
         return placement
     }
 
-    /** The advert's domains an operator approved; with no approval source no advertised domain counts. */
-    private EffectiveDomainsOf(advert: Readonly<ConsoleAdvertRecord>): readonly string[]
+    /**
+     * The claimed domains (an advert's or a control-plane record's) an operator approved for the tenant; with no approval source
+     * no domain counts.
+     */
+    private EffectiveDomainsOf(tenantId: string, claimed: readonly string[]): readonly string[]
     {
         if (this.approvals === undefined)
         {
             return []
         }
-        return ConsoleDomainApprovals.EffectiveDomains(advert.emailDomains, this.approvals.ApprovedFor(advert.tenantId))
+        return ConsoleDomainApprovals.EffectiveDomains(claimed, this.approvals.ApprovedFor(tenantId))
     }
 
     /**

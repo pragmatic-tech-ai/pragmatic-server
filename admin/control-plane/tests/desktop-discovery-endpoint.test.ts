@@ -132,9 +132,11 @@ describe('DesktopDiscoveryEndpoint', () =>
     let index: TenantAccountIndex
     let server: Server
 
-    async function Start(url: string | undefined, tenants: readonly TenantRecord[], hives: readonly HiveRecord[] = [], adverts: readonly ConsoleAdvertRecord[] = []): Promise<void>
+    async function Start(url: string | undefined, tenants: readonly TenantRecord[], hives: readonly HiveRecord[] = [], adverts: readonly ConsoleAdvertRecord[] = [],
+        approved: ReadonlyMap<string, readonly string[]> = new Map()): Promise<void>
     {
-        const endpoint = new DesktopDiscoveryEndpoint(index, new FakeDirectory(tenants, hives), url, DesktopDiscoveryEndpoint.NewThrottle(), new FakeAdverts(adverts))
+        const endpoint = new DesktopDiscoveryEndpoint(index, new FakeDirectory(tenants, hives), url, DesktopDiscoveryEndpoint.NewThrottle(), new FakeAdverts(adverts),
+            undefined, { ApprovedFor: tenantId => approved.get(tenantId) ?? [] })
         server = createServer((req, res) =>
         {
             void endpoint.Handle(req, res)
@@ -183,9 +185,16 @@ describe('DesktopDiscoveryEndpoint', () =>
             DiscoveryFixture.Tenant('aard', 'Aardvark', ['acme.test']),
             DiscoveryFixture.Tenant('zed', 'Zebra'),
             DiscoveryFixture.Tenant('acme', 'Acme')
-        ])
+        ], [], [], new Map([['aard', ['acme.test']]]))
         const reply = await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))
         assert.deepEqual((reply.body as { tenants: { id: string }[] }).tenants.map(t => t.id), ['acme', 'zed', 'aard'])
+    })
+
+    it('leaves out a control-plane tenant whose record domain is not approved', async () =>
+    {
+        await Start(DiscoveryFixture.Url, [DiscoveryFixture.Tenant('evil', 'Evil', ['victim.test'])])
+        const reply = await DiscoveryFixture.Post(server, DiscoveryFixture.Email('someone@victim.test'))
+        assert.equal(reply.status, 404)
     })
 
     it('returns the in-hive console url for an advertised tenant', async () =>

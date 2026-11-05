@@ -72,7 +72,8 @@ plane itself can test a guess (it must, to answer lookups) - accepted.
 `TenantRecord.emailDomains?: string[]` (lowercase, validated host names; public mail domains on a fixed deny list such as
 gmail.com, outlook.com are refused). Editable by the operator (platform admin portal tenant detail) and by the tenant
 Owner (tenant console settings; an in-hive console sends its list in the advert as `emailDomains`, and the advert is the
-source of truth for in-hive tenants).
+source of truth for in-hive tenants). A domain counts in discovery only once an operator approved it (decision D5 below):
+domains the operator saves are approved on save, domains the Owner sets in either console wait for approval.
 
 ### Discovery
 `DesktopDiscoveryEndpoint` resolves an email to tenants in order: fingerprint matches across adverts; else domain
@@ -157,16 +158,22 @@ File and class names, advert interval constants, the advert store shape, how the
   (cluster-scoped grants and admission policy included, also for bootstrap installs) and every Namespace that carries the
   hive's label and is named `pragmatic-env-*`; an unlabelled `pragmatic-env-*` namespace is never touched. Namespaces that
   cannot be deleted are reported to the operator as failed. A delete anyway skips the cluster entirely.
-- **An operator approves each email domain an in-hive console reports (user, Plan 2 pre-flight D5).** Nothing proves that a
-  tenant owns the domains its console advertises: its Owner, or anyone holding the hive agent token the console reuses, could
-  claim another company's domain and have discovery send those people to its console. So an advertised domain takes effect in
-  discovery only after an operator approves it once in the platform admin portal (tenant detail page: each advertised domain
-  with approved yes/no and the other tenants that claim it; approve and revoke actions, operator Full only, audited with the
-  domain). Approvals are stored per tenant on the control plane (`console-domain-approvals.json`), apart from the advert
-  store, so they survive re-adverts; discovery's domain tier for an in-hive tenant is the advertised domains that are also
-  approved, so a domain dropped from the advert stops matching even if it stays approved. Approving a domain the console
-  does not report is refused. Approvals are forgotten with the tenant. Control-plane tenants' domains are set by the
-  operator and need no approval. Routes: `GET /api/tenants/:id/email-domains`, `POST .../email-domains/approve` and
+- **An operator approves each email domain a tenant Owner sets (user, Plan 2 pre-flight D5; extended to control-plane
+  tenants at the final review).** Nothing proves that a tenant owns the domains it claims: an in-hive tenant's Owner (or
+  anyone holding the hive agent token the console reuses), and equally a control-plane tenant's Owner on the tenant plane,
+  could claim another company's domain and have discovery send those people to their console. So a claimed domain takes
+  effect in discovery only after an operator approves it once in the platform admin portal (tenant detail page: each
+  claimed domain with approved yes/no and the other tenants that claim it; approve and revoke actions, operator Full only,
+  audited with the domain). A tenant's claimed domains are its console advert's (in-hive) or its record's (control-plane).
+  Domains the operator saves for a control-plane tenant (`PUT /api/tenants/:id/email-domains`) are approved on save; those
+  the Owner sets (`PUT /tenant-api/settings/email-domains` in either console) wait, and the tenant console names the ones
+  still pending. Approvals are stored per tenant in one store on the control plane (`console-domain-approvals.json`), apart
+  from the advert store and the record, so they survive re-adverts and Owner edits; discovery's domain tier for every
+  tenant is its claimed domains that are also approved, so a domain dropped from the advert or record stops matching even
+  if it stays approved. Such an approved but no longer claimed domain stays listed (marked no longer claimed) so the
+  operator can revoke it before a later claim re-arms it. Approving a domain the tenant does not claim is refused; revoke
+  accepts any well-formed domain name (so an approval the policy has since come to refuse can be cleared). Approvals are
+  forgotten with the tenant. Routes: `GET /api/tenants/:id/email-domains`, `POST .../email-domains/approve` and
   `POST .../email-domains/revoke` with `{ domain }`.
 - **Residual: account fingerprints stay unverified.** Fingerprints in an advert take effect without approval, so a console
   can claim fingerprints of any email address it computes with its hive's key. This only matches someone who types exactly

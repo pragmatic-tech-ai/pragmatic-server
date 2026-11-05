@@ -92,6 +92,7 @@ describe('ControlPlaneHost tenant email domains', () =>
     let adverts: ConsoleAdvertRegistry
     let approvals: ConsoleDomainApprovals
     let audit: AuditRegistry
+    let domains: PlatformEmailDomains
 
     beforeEach(async () =>
     {
@@ -117,11 +118,12 @@ describe('ControlPlaneHost tenant email domains', () =>
         await adverts.Report({ tenantId: 'acme', hiveId: 'acme-hive', consoleUrl: 'https://console-acme.localtest.me', fingerprints: [], emailDomains: ['acme.test', 'shared.test'], reportedAt: '2026-11-04T10:00:00.000Z' })
         audit = new AuditRegistry(join(parent, 'audit.json'))
         await audit.Load()
+        domains = new PlatformEmailDomains(directory, adverts, approvals)
         const deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
         host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
             new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent),
             undefined, undefined, undefined, undefined, undefined, undefined, new OperatorAuthorization(), audit,
-            undefined, undefined, undefined, undefined, undefined, undefined, undefined, adverts, approvals, new PlatformEmailDomains(directory, adverts, approvals))
+            undefined, undefined, undefined, undefined, undefined, undefined, undefined, adverts, approvals, domains)
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -136,15 +138,45 @@ describe('ControlPlaneHost tenant email domains', () =>
         await directory.SetTenantEmailDomains('beta', ['beta.test'])
         const r = await Send.Request(host, 'GET', BetaPath)
         assert.equal(r.status, 200)
-        assert.deepEqual(Send.Report(r), { tenantId: 'beta', domains: ['beta.test'], source: EmailDomainSource.Tenant, editable: true, sharedWith: [] })
+        assert.deepEqual(Send.Report(r), {
+            tenantId: 'beta', domains: ['beta.test'], source: EmailDomainSource.Tenant, editable: true, sharedWith: [],
+            approvals: [{ domain: 'beta.test', approved: false, claimed: true, sharedWith: [] }],
+        })
     })
 
-    it('PUT stores domains and answers the report', async () =>
+    it('PUT stores domains, approves them (an operator set them) and answers the report', async () =>
     {
         const r = await Send.Request(host, 'PUT', BetaPath, { domains: ['Beta.test', 'shared.test'] })
         assert.equal(r.status, 200)
-        assert.deepEqual(Send.Report(r), { tenantId: 'beta', domains: ['beta.test', 'shared.test'], source: EmailDomainSource.Tenant, editable: true, sharedWith: ['acme'] })
+        assert.deepEqual(Send.Report(r), {
+            tenantId: 'beta', domains: ['beta.test', 'shared.test'], source: EmailDomainSource.Tenant, editable: true, sharedWith: ['acme'],
+            approvals: [{ domain: 'beta.test', approved: true, claimed: true, sharedWith: [] }, { domain: 'shared.test', approved: true, claimed: true, sharedWith: ['acme'] }],
+        })
         assert.deepEqual(directory.GetTenant('beta')?.emailDomains, ['beta.test', 'shared.test'])
+        assert.deepEqual(approvals.ApprovedFor('beta'), ['beta.test', 'shared.test'])
+    })
+
+    it('a domain the control-plane tenant Owner set is pending until an operator approves it', async () =>
+    {
+        await domains.Set('beta', ['beta.test'])
+        const before = await Send.Request(host, 'GET', BetaPath)
+        assert.deepEqual(Send.Report(before).approvals, [{ domain: 'beta.test', approved: false, claimed: true, sharedWith: [] }])
+        const approved = await Send.Request(host, 'POST', BetaPath + '/approve', { domain: 'Beta.TEST' })
+        assert.equal(approved.status, 200)
+        assert.deepEqual(Send.Report(approved).approvals, [{ domain: 'beta.test', approved: true, claimed: true, sharedWith: [] }])
+        assert.deepEqual(approvals.ApprovedFor('beta'), ['beta.test'])
+    })
+
+    it('revoke refuses a malformed or over-long domain with 400 and audits no note', async () =>
+    {
+        for (const domain of ['not a domain', 'x'.repeat(15000)])
+        {
+            const r = await Send.Request(host, 'POST', AcmePath + '/revoke', { domain })
+            assert.equal(r.status, 400)
+        }
+        const entries = audit.Recent(10).filter(e => e.path.endsWith('/revoke'))
+        assert.equal(entries.length, 2)
+        assert.ok(entries.every(e => e.status === 400 && e.note === undefined))
     })
 
     it('PUT takes a list of 20 long domains (16 KiB cap)', async () =>
@@ -207,7 +239,7 @@ describe('ControlPlaneHost tenant email domains', () =>
         assert.deepEqual(Send.Report(r), {
             tenantId: 'acme', domains: ['acme.test', 'shared.test'], source: EmailDomainSource.Console, editable: false, reportedAt: '2026-11-04T10:00:00.000Z',
             sharedWith: ['beta'],
-            approvals: [{ domain: 'acme.test', approved: true, sharedWith: [] }, { domain: 'shared.test', approved: false, sharedWith: ['beta'] }],
+            approvals: [{ domain: 'acme.test', approved: true, claimed: true, sharedWith: [] }, { domain: 'shared.test', approved: false, claimed: true, sharedWith: ['beta'] }],
         })
     })
 
@@ -251,11 +283,12 @@ describe('ControlPlaneHost tenant email domains', () =>
         assert.deepEqual(approvals.ApprovedFor('acme'), [])
     })
 
-    it('approving for a control-plane tenant is 409, and a bad approval body is 400', async () =>
+    it('approving a domain a control-plane record does not hold is 409, and a bad approval body is 400', async () =>
     {
-        const cp = await Send.Request(host, 'POST', BetaPath + '/approve', { domain: 'beta.test' })
+        await domains.Set('beta', ['beta.test'])
+        const cp = await Send.Request(host, 'POST', BetaPath + '/approve', { domain: 'other.test' })
         assert.equal(cp.status, 409)
-        assert.equal(Send.Error(cp), "This tenant's console runs on the control plane; its email domains take effect without approval.")
+        assert.equal(Send.Error(cp), "other.test is not among this tenant's email domains, so there is nothing to approve.")
         for (const body of [{}, { domain: 7 }, { domain: '' }])
         {
             const r = await Send.Request(host, 'POST', AcmePath + '/approve', body)
