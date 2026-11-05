@@ -34,6 +34,6 @@ export class TenantAdminEnv
     public static readonly IngressTlsIssuer = 'PRAGMATIC_TENANT_ADMIN_INGRESS_TLS_ISSUER'
     /** Browser host the console is served on through its Ingress (console-<tenant>.<baseDomain>). */
     public static readonly ConsoleHost = 'PRAGMATIC_TENANT_ADMIN_CONSOLE_HOST'
-    /** Path of the Secret-mounted session-fingerprint key file (never an inline value). */
+    /** Path of the Secret-mounted account-email fingerprint key file (never an inline value). */
     public static readonly FingerprintKeyFile = 'PRAGMATIC_TENANT_ADMIN_FINGERPRINT_KEY_FILE'
 }

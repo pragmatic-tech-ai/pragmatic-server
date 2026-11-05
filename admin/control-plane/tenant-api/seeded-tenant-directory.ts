@@ -24,6 +24,12 @@ export class SeededTenantDirectory implements ITenantDirectory
         this.organisation = seed.organisation
     }
 
+    /** The one seeded tenant (the console's own). */
+    public get Tenant(): TenantRecord
+    {
+        return this.tenant
+    }
+
     public GetTenant(id: string): TenantRecord | undefined
     {
         return id === this.tenant.id ? this.tenant : undefined

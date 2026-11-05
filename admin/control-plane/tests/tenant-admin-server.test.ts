@@ -2,7 +2,8 @@ import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
-import type { IncomingMessage, ServerResponse } from 'node:http'
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -21,6 +22,9 @@ import { EnvironmentPlacement } from '../environment-placement.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import { TenantAdminEnv } from '../tenant-admin-env.js'
+import { ConsoleAdvertSender } from '../console-advert-sender.js'
+import { ConsoleEmailDomainStore } from '../console-email-domain-store.js'
 
 class FakeRolloutClient implements IRolloutClient
 {
@@ -74,6 +78,20 @@ class Names
     public static readonly Get = 'GET'
     public static readonly KeyBytes = 32
     public static readonly Unavailable = 503
+    public static readonly OwnerEmail = 'owner@acme.test'
+    public static readonly PrincipalId = 'p'
+    public static readonly EmailDomain = 'acme.test'
+    public static readonly NewEmailDomain = 'acme-corp.test'
+    public static readonly ConsoleHost = 'console-acme.localtest.me'
+    public static readonly ConsoleUrl = 'https://console-acme.localtest.me'
+    public static readonly FingerprintKeyName = 'fingerprint.key'
+    public static readonly MountedKeyFile = '/fingerprint/fingerprint.key'
+    public static readonly RolloutUrl = 'http://channel.example:7000'
+    public static readonly RolloutToken = 'tok-secret'
+    public static readonly ProbeVar = 'PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_MS'
+    public static readonly AdvertPath = '/agent/hives/h1/console'
+    public static readonly EmailDomainsPath = '/tenant-api/settings/email-domains'
+    public static readonly SettleMs = 100
 }
 
 describe('TenantAdminServer', () =>
@@ -259,6 +277,202 @@ describe('TenantAdminServer', () =>
         assert.ok(composition.plane.isDurable)
         assert.ok(composition.host)
         assert.ok(composition.monitor)
+    })
+})
+
+class Waits
+{
+    private static readonly PollMs = 10
+    private static readonly TimeoutMs = 5000
+    private static readonly TimeoutMessage = 'the condition did not hold in time'
+
+    public static async Until(condition: () => boolean): Promise<void>
+    {
+        const deadline = Date.now() + Waits.TimeoutMs
+        while (!condition())
+        {
+            if (Date.now() > deadline)
+            {
+                throw new Error(Waits.TimeoutMessage)
+            }
+            await new Promise<void>(res => setTimeout(res, Waits.PollMs))
+        }
+    }
+}
+
+describe('TenantAdminServer console advert', () =>
+{
+    const tenant: TenantRecord = {
+        id: Names.TenantId, clientId: 'c1', displayName: Names.TenantName, createdAt: Names.Created,
+        ownerEmail: Names.OwnerEmail, ownerPrincipalId: Names.PrincipalId, emailDomains: [Names.EmailDomain],
+    }
+    const hive: HiveRecord = {
+        id: Names.HiveId, tenantId: Names.TenantId, displayName: 'Hive', createdAt: Names.Created,
+        cluster: { kind: 'kind' } as unknown as HiveRecord['cluster'],
+        registry: { kind: 'local' } as unknown as HiveRecord['registry'],
+    }
+    let root = ''
+    let keyFile = ''
+    let channel: Server | undefined
+    let posts: Array<{ url: string | undefined; body: unknown }> = []
+
+    const baseEnv = (): NodeJS.ProcessEnv => ({ [Names.DataRootVar]: root, [Names.PortVar]: Names.Port, [Names.DomainVar]: Names.Domain })
+    const advertEnv = (rolloutUrl: string = Names.RolloutUrl): NodeJS.ProcessEnv => ({
+        ...baseEnv(),
+        [TenantAdminEnv.ConsoleHost]: Names.ConsoleHost,
+        [TenantAdminEnv.FingerprintKeyFile]: keyFile,
+        [TenantAdminEnv.RolloutUrl]: rolloutUrl,
+        [TenantAdminEnv.RolloutToken]: Names.RolloutToken,
+        [TenantAdminEnv.RolloutHiveId]: Names.HiveId,
+    })
+    const store = (): Promise<ConsoleEmailDomainStore> => ConsoleEmailDomainStore.Open(join(root, ConsoleEmailDomainStore.FileName), Names.TenantId, tenant.emailDomains)
+
+    beforeEach(() =>
+    {
+        root = mkdtempSync(join(tmpdir(), Names.TempPrefix))
+        keyFile = join(root, Names.FingerprintKeyName)
+        writeFileSync(keyFile, randomBytes(Names.KeyBytes))
+        posts = []
+    })
+
+    afterEach(async () =>
+    {
+        const s = channel
+        channel = undefined
+        if (s !== undefined)
+        {
+            s.closeAllConnections()
+            await new Promise<void>(res => s.close(() => res()))
+        }
+        rmSync(root, { recursive: true, force: true })
+    })
+
+    const listenChannel = async (): Promise<string> =>
+    {
+        channel = createServer((req, res) =>
+        {
+            const chunks: Buffer[] = []
+            req.on('data', (c: Buffer) => chunks.push(c))
+            req.on('end', () =>
+            {
+                posts.push({ url: req.url, body: JSON.parse(Buffer.concat(chunks).toString()) })
+                res.writeHead(200, { 'Content-Type': 'application/json' })
+                res.end('{"refusedEmailDomains":[]}')
+            })
+        })
+        await new Promise<void>(res => channel!.listen(0, Names.DefaultBind, () => res()))
+        return `http://${Names.DefaultBind}:${(channel!.address() as AddressInfo).port}`
+    }
+
+    const freePort = async (): Promise<number> =>
+    {
+        const probe = createServer()
+        await new Promise<void>(res => probe.listen(0, Names.DefaultBind, () => res()))
+        const port = (probe.address() as AddressInfo).port
+        await new Promise<void>(res => probe.close(() => res()))
+        return port
+    }
+
+    it('ReadConfig reads the fingerprint key file', () =>
+    {
+        assert.equal(TenantAdminServer.ReadConfig(baseEnv()).fingerprintKeyFile, undefined)
+        assert.equal(TenantAdminServer.ReadConfig({ ...baseEnv(), [TenantAdminEnv.FingerprintKeyFile]: Names.MountedKeyFile }).fingerprintKeyFile, Names.MountedKeyFile)
+    })
+
+    it('AdvertSenderOf builds the sender when every setting is present', async () =>
+    {
+        const lines: string[] = []
+        const env = advertEnv()
+        const sender = TenantAdminServer.AdvertSenderOf(env, TenantAdminServer.ReadConfig(env), tenant, await store(), line => lines.push(line))
+        assert.ok(sender instanceof ConsoleAdvertSender)
+        assert.equal(sender.Body().consoleUrl, Names.ConsoleUrl)
+        assert.equal(sender.Body().fingerprints.length, 1)
+        assert.deepEqual(lines, [])
+    })
+
+    for (const missing of [TenantAdminEnv.ConsoleHost, TenantAdminEnv.FingerprintKeyFile, TenantAdminEnv.RolloutUrl, TenantAdminEnv.RolloutToken, TenantAdminEnv.RolloutHiveId])
+    {
+        it(`AdvertSenderOf needs the console host, the fingerprint key and the agent channel (${missing})`, async () =>
+        {
+            const lines: string[] = []
+            const env = advertEnv()
+            const values = [Names.ConsoleHost, keyFile, Names.RolloutUrl, Names.RolloutToken, Names.HiveId]
+            delete env[missing]
+            assert.equal(TenantAdminServer.AdvertSenderOf(env, TenantAdminServer.ReadConfig(env), tenant, await store(), line => lines.push(line)), undefined)
+            assert.equal(lines.length, 1)
+            assert.ok(lines[0].includes(missing), lines[0])
+            for (const value of values)
+            {
+                assert.ok(!lines[0].includes(value), 'the line carries no setting value')
+            }
+        })
+    }
+
+    it('a key file of the wrong length turns the advert off', async () =>
+    {
+        writeFileSync(keyFile, randomBytes(Names.KeyBytes - 1))
+        const lines: string[] = []
+        const env = advertEnv()
+        assert.equal(TenantAdminServer.AdvertSenderOf(env, TenantAdminServer.ReadConfig(env), tenant, await store(), line => lines.push(line)), undefined)
+        assert.equal(lines.length, 1)
+        assert.ok(lines[0].includes(TenantAdminEnv.FingerprintKeyFile))
+        assert.ok(!lines[0].includes(keyFile))
+    })
+
+    it('Compose opens the email domains from the seed when no file exists', async () =>
+    {
+        writeFileSync(join(root, Names.SeedFile), JSON.stringify({ tenant, hives: [hive] }))
+        writeFileSync(join(root, Names.MasterKeyFile), randomBytes(Names.KeyBytes))
+        const lines: string[] = []
+        const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
+        const composition = await server.Compose({}, undefined, line => lines.push(line))
+        assert.deepEqual(composition.emailDomains.Domains, [Names.EmailDomain])
+        assert.equal(existsSync(join(root, ConsoleEmailDomainStore.FileName)), false)
+        assert.equal(composition.advert, undefined, 'no advert outside a configured console')
+        assert.equal(lines.length, 1)
+    })
+
+    it('Compose mounts the email-domain route on the console plane', async () =>
+    {
+        writeFileSync(join(root, Names.SeedFile), JSON.stringify({ tenant, hives: [hive] }))
+        writeFileSync(join(root, Names.MasterKeyFile), randomBytes(Names.KeyBytes))
+        const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
+        const composition = await server.Compose({}, undefined, () => undefined)
+        const session: TenantSession = { id: 's', tenantId: Names.TenantId, principalId: Names.PrincipalId, expiresAt: Names.Expires }
+        let status = 0
+        let body = ''
+        const res = { writeHead: (s: number) => { status = s }, end: (b: string) => { body = b } }
+        await composition.plane.api.Handle({ method: Names.Get } as unknown as IncomingMessage, res as unknown as ServerResponse, Names.EmailDomainsPath, session)
+        assert.equal(status, 200)
+        assert.deepEqual(JSON.parse(body), { domains: [Names.EmailDomain], editable: true })
+    })
+
+    it('Run sends the advert after listening and Close stops it', async () =>
+    {
+        writeFileSync(join(root, Names.SeedFile), JSON.stringify({ tenant, hives: [hive] }))
+        writeFileSync(join(root, Names.MasterKeyFile), randomBytes(Names.KeyBytes))
+        const url = await listenChannel()
+        const env = { ...advertEnv(url), [Names.PortVar]: String(await freePort()), [Names.ProbeVar]: '0' }
+        const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient())
+        const composition = await server.Run(env)
+        try
+        {
+            assert.ok(composition.advert instanceof ConsoleAdvertSender)
+            assert.equal(posts.length, 1)
+            assert.equal(posts[0].url, Names.AdvertPath)
+            assert.deepEqual((posts[0].body as { emailDomains: string[] }).emailDomains, [Names.EmailDomain])
+            await composition.emailDomains.Set(Names.TenantId, [Names.NewEmailDomain])
+            await Waits.Until(() => posts.length === 2)
+            assert.deepEqual((posts[1].body as { emailDomains: string[] }).emailDomains, [Names.NewEmailDomain], 'a domain change is sent at once')
+        }
+        finally
+        {
+            await server.Close()
+        }
+        await composition.emailDomains.Set(Names.TenantId, [Names.EmailDomain])
+        await new Promise<void>(res => setTimeout(res, Names.SettleMs))
+        assert.equal(posts.length, 2, 'nothing more after Close')
+        assert.equal(composition.emailDomains.Changed.subscriberCount, 0)
     })
 })
 

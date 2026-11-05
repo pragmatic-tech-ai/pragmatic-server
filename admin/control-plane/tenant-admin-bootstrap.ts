@@ -54,7 +54,7 @@ export interface TenantBootstrapInput
      * the console creates. Requires `fingerprintKey`.
      */
     console?: TenantConsoleExposure
-    /** The 32-byte session-fingerprint key; carried in its own hive-labelled Secret and mounted by the console (required with `console`). */
+    /** The 32-byte account-email fingerprint key; carried in its own hive-labelled Secret and mounted by the console (required with `console`). */
     fingerprintKey?: Buffer
     /** The platform-pinned image refs the console may run; written into the seed Secret as verified-images.json. */
     verifiedImages?: readonly VerifiedImage[]
@@ -220,7 +220,7 @@ export class TenantAdminBootstrap
     private static readonly MasterKeyBytes = 32
     private static readonly BadMasterKey = 'TenantAdminBootstrap: the console master key must be exactly 32 bytes'
     private static readonly BadFingerprintKey = 'TenantAdminBootstrap: the console fingerprint key must be exactly 32 bytes'
-    private static readonly ConsoleNeedsFingerprintKey = 'TenantAdminBootstrap: a console exposure needs its session fingerprint key'
+    private static readonly ConsoleNeedsFingerprintKey = 'TenantAdminBootstrap: a console exposure needs its account-email fingerprint key'
     private static readonly ApiVersionKey = 'apiVersion'
     private static readonly KindKey = 'kind'
     private static readonly ItemsKey = 'items'
@@ -248,7 +248,7 @@ export class TenantAdminBootstrap
         return K8sManifestBuilder.TenantConsoleIdpTokenSecretNameOf(tenantId)
     }
 
-    /** Name of the console's session-fingerprint key Secret in pragmatic-system (pragmatic-tenant-admin-<tenant>-fingerprint). */
+    /** Name of the console's account-email fingerprint key Secret in pragmatic-system (pragmatic-tenant-admin-<tenant>-fingerprint). */
     public static FingerprintKeySecretNameOf(tenantId: string): string
     {
         return K8sManifestBuilder.TenantConsoleFingerprintSecretNameOf(tenantId)

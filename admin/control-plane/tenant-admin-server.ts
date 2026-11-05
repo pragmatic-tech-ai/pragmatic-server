@@ -29,7 +29,11 @@ import { InjectedIdpService } from './injected-idp-service.js'
 import { MasterKeyFile } from './master-key-file.js'
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
 import { ControlPlaneServer } from './server.js'
-import type { HiveRecord } from './platform-records.js'
+import type { HiveRecord, TenantRecord } from './platform-records.js'
+import { ConsoleFingerprint } from './console-advert-contract.js'
+import { ConsoleAdvertSender, HttpConsoleAdvertTransport, IntervalAdvertTimer, SeededConsoleAccounts } from './console-advert-sender.js'
+import { ConsoleEmailDomainStore } from './console-email-domain-store.js'
+import { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
 import { SeededTenantDirectory, type TenantDirectorySeed } from './tenant-api/seeded-tenant-directory.js'
 import type { IRolloutClient } from './tenant-api/rollout-client.js'
 import { UnconfiguredRolloutClient } from './tenant-api/unconfigured-rollout-client.js'
@@ -57,6 +61,8 @@ export type TenantAdminConfig = {
     readonly probeTimeoutMs: number
     /** The console's own host (PRAGMATIC_TENANT_ADMIN_CONSOLE_HOST); it answers for the seeded tenant. */
     readonly consoleHost: string | undefined
+    /** Path of the mounted account-email fingerprint key (PRAGMATIC_TENANT_ADMIN_FINGERPRINT_KEY_FILE); undefined outside a console pod. */
+    readonly fingerprintKeyFile: string | undefined
     /** How environment Ingresses get TLS; undefined = none configured. */
     readonly ingressTls: IngressTls | undefined
 }
@@ -70,6 +76,10 @@ export type TenantAdminComposition = {
     readonly config: TenantAdminConfig
     /** How this console reaches environments in its own hive; undefined outside a pod. */
     readonly reach: IEnvironmentReach | undefined
+    /** The console's own email domains (`<dataRoot>/email-domains.json`, seeded from the tenant record). */
+    readonly emailDomains: ConsoleEmailDomainStore
+    /** Tells the control plane about this console; undefined unless every advert setting is present (a real console pod). */
+    readonly advert: ConsoleAdvertSender | undefined
 }
 
 /**
@@ -96,6 +106,13 @@ export class TenantAdminServer
     private static readonly Utf8 = 'utf8'
     private static readonly EmptyString = ''
     private static readonly NoIdentityMessage = 'The seed names no hive for the in-cluster console.'
+    private static readonly ConsoleUrlScheme = 'https://'
+    private static readonly AdvertOffPrefix = '[console-advert] off: '
+    private static readonly NotSetSuffix = ' is not set'
+    private static readonly BadKeyInfix = ' does not name a readable key file of '
+    private static readonly BytesSuffix = ' bytes'
+
+    private running: TenantAdminComposition | undefined
 
     public constructor(
         private readonly config: TenantAdminConfig,
@@ -150,8 +167,49 @@ export class TenantAdminServer
             probeMs: ControlPlaneServer.ParseHealthProbeMs(env[TenantAdminEnv.HealthProbeMs]),
             probeTimeoutMs: ControlPlaneServer.ParseHealthProbeTimeoutMs(env[TenantAdminEnv.HealthProbeTimeoutMs]),
             consoleHost: TenantAdminServer.OptionalOf(env, TenantAdminEnv.ConsoleHost),
+            fingerprintKeyFile: TenantAdminServer.OptionalOf(env, TenantAdminEnv.FingerprintKeyFile),
             ingressTls: IngressTlsPolicy.FromEnv(env),
         }
+    }
+
+    /**
+     * The console's advert sender: undefined (and one log line naming the missing setting's env var, never a value) unless
+     * consoleHost, a ConsoleFingerprintKeys.KeyBytes key file and RolloutUrl / RolloutToken / RolloutHiveId are all present.
+     * It dials home over the same agent channel, bearer and hive as the HTTP rollout client. consoleUrl = 'https://' + consoleHost.
+     */
+    public static AdvertSenderOf(env: NodeJS.ProcessEnv, cfg: TenantAdminConfig, tenant: TenantRecord, domains: ConsoleEmailDomainStore, log: (line: string) => void = TenantAdminServer.LogLine): ConsoleAdvertSender | undefined
+    {
+        const S = TenantAdminServer
+        const url = S.OptionalOf(env, TenantAdminEnv.RolloutUrl)
+        const token = S.OptionalOf(env, TenantAdminEnv.RolloutToken)
+        const hiveId = S.OptionalOf(env, TenantAdminEnv.RolloutHiveId)
+        if (cfg.consoleHost === undefined)
+        {
+            return S.AdvertOff(log, TenantAdminEnv.ConsoleHost + S.NotSetSuffix)
+        }
+        if (cfg.fingerprintKeyFile === undefined)
+        {
+            return S.AdvertOff(log, TenantAdminEnv.FingerprintKeyFile + S.NotSetSuffix)
+        }
+        if (url === undefined)
+        {
+            return S.AdvertOff(log, TenantAdminEnv.RolloutUrl + S.NotSetSuffix)
+        }
+        if (token === undefined)
+        {
+            return S.AdvertOff(log, TenantAdminEnv.RolloutToken + S.NotSetSuffix)
+        }
+        if (hiveId === undefined)
+        {
+            return S.AdvertOff(log, TenantAdminEnv.RolloutHiveId + S.NotSetSuffix)
+        }
+        const key = ConsoleFingerprint.ReadKeyFile(cfg.fingerprintKeyFile)
+        if (key === undefined)
+        {
+            return S.AdvertOff(log, TenantAdminEnv.FingerprintKeyFile + S.BadKeyInfix + ConsoleFingerprintKeys.KeyBytes + S.BytesSuffix)
+        }
+        return new ConsoleAdvertSender(new HttpConsoleAdvertTransport(url, token, hiveId), new SeededConsoleAccounts(tenant), domains, key,
+            S.ConsoleUrlScheme + cfg.consoleHost, new IntervalAdvertTimer(), log)
     }
 
     /**
@@ -201,9 +259,9 @@ export class TenantAdminServer
 
     /**
      * Builds the whole tenant plane over this process's own data root without binding anything: seeded directory,
-     * stores, services, plane, host and health monitor.
+     * stores, services, plane, host, health monitor, the console's email domains and (in a configured console) its advert sender.
      */
-    public async Compose(env: NodeJS.ProcessEnv = process.env, serviceAccountRoot?: string): Promise<TenantAdminComposition>
+    public async Compose(env: NodeJS.ProcessEnv = process.env, serviceAccountRoot?: string, log: (line: string) => void = TenantAdminServer.LogLine): Promise<TenantAdminComposition>
     {
         const cfg = this.config
         const dataRoot = cfg.dataRoot
@@ -228,25 +286,55 @@ export class TenantAdminServer
         // No PlatformImageSigner here, deliberately: the platform signing key's private half never ships into a hive, so
         // the in-hive tenant admin cannot sign. It runs only images the platform signed (its hive's verification decides).
         const service = new EnvironmentService(registry, new PortAllocator(ControlPlaneServer.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()), dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn), undefined, reach)
+        const tenant = directory.Tenant
+        const emailDomains = await ConsoleEmailDomainStore.Open(join(dataRoot, ConsoleEmailDomainStore.FileName), tenant.id, tenant.emailDomains)
         const plane = ControlPlaneServer.BuildTenantPlane(
             dataRoot, idpService, directory, cfg.secureCookie, service, this.rollout, orchestrators, placement,
-            masterKey, adminClients, cfg.secretTtlHours, undefined, undefined, cfg.trustedProxy)
+            masterKey, adminClients, cfg.secretTtlHours, undefined, undefined, cfg.trustedProxy, false, undefined, emailDomains)
         const resolver = new TenantHostResolver(cfg.baseDomain, cfg.scheme, directory, cfg.externalPort, TenantAdminServer.ConsoleAliasOf(cfg, directory))
         const staticRoot = join(dirname(fileURLToPath(import.meta.url)), ControlPlaneServer.ParentSegment, ControlPlaneServer.TenantPortalSegment, ControlPlaneServer.DistSegment)
         const monitor = cfg.probeMs > 0
             ? new TenantHealthMonitor(directory, new HiveHealthProducer(service, orchestrators, placement), plane.events, cfg.probeMs, cfg.probeTimeoutMs, service)
             : undefined
         const host = new TenantPlaneHost(plane, resolver, staticRoot, service, monitor)
-        return { directory, rollout: this.rollout, plane, host, monitor, config: cfg, reach }
+        const advert = TenantAdminServer.AdvertSenderOf(env, cfg, tenant, emailDomains, log)
+        return { directory, rollout: this.rollout, plane, host, monitor, config: cfg, reach, emailDomains, advert }
     }
 
-    /** Composes then binds the tenant listener. */
-    public async Run(): Promise<void>
+    /** Composes, binds the tenant listener, then starts the advert (its first send awaited; a failure is logged, never thrown). */
+    public async Run(env: NodeJS.ProcessEnv = process.env): Promise<TenantAdminComposition>
     {
-        const composition = await this.Compose()
+        const composition = await this.Compose(env)
         const cfg = composition.config
+        this.running = composition
         await composition.host.Listen(cfg.port, cfg.bind)
         console.log(TenantAdminServer.ListeningLine(cfg))
+        await composition.advert?.Start()
+        return composition
+    }
+
+    /** Stops the advert and closes the tenant listener started by Run; a no-op when nothing runs. */
+    public async Close(): Promise<void>
+    {
+        const composition = this.running
+        this.running = undefined
+        if (composition === undefined)
+        {
+            return
+        }
+        composition.advert?.Stop()
+        await composition.host.Close()
+    }
+
+    private static AdvertOff(log: (line: string) => void, reason: string): undefined
+    {
+        log(TenantAdminServer.AdvertOffPrefix + reason)
+        return undefined
+    }
+
+    private static LogLine(line: string): void
+    {
+        console.error(line)
     }
 
     private static ListeningLine(cfg: TenantAdminConfig): string

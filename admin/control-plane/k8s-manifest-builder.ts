@@ -961,7 +961,7 @@ export class K8sManifestBuilder
         return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${K8sManifestBuilder.TenantConsoleTlsRoleSuffix}`
     }
 
-    /** Secret holding the console's session-fingerprint key (key `fingerprint.key`). */
+    /** Secret holding the console's account-email fingerprint key (key `fingerprint.key`). */
     public static TenantConsoleFingerprintSecretNameOf(tenantId: string): string
     {
         return `${K8sManifestBuilder.TenantAdminNameOf(tenantId)}${K8sManifestBuilder.TenantConsoleFingerprintSuffix}`
@@ -1500,7 +1500,7 @@ export class K8sManifestBuilder
         ]
     }
 
-    /** The session-fingerprint key Secret, projecting ONLY `fingerprint.key`; empty when none is named. */
+    /** The account-email fingerprint key Secret, projecting ONLY `fingerprint.key`; empty when none is named. */
     private TenantConsoleFingerprintVolumes(spec: TenantAdminWorkloadSpec): K8sObject[]
     {
         if (spec.fingerprintKeySecretName === undefined)

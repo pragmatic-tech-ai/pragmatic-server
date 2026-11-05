@@ -1,0 +1,384 @@
+import assert from 'node:assert/strict'
+import { afterEach, beforeEach, describe, it } from 'node:test'
+import { randomBytes } from 'node:crypto'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { createServer, type IncomingMessage, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Disposable, Signal, type IDisposable } from '@pragmatic-tech-ai/todl-runtime'
+import {
+    ConsoleAdvertSender, ConsoleAdvertUnavailableError, HttpConsoleAdvertTransport, SeededConsoleAccounts,
+    type IAdvertTimer, type IConsoleAccountSource, type IConsoleAdvertTransport,
+} from '../console-advert-sender.js'
+import { ConsoleFingerprint, type ConsoleAdvertBody } from '../console-advert-contract.js'
+import { ConsoleEmailDomainStore } from '../console-email-domain-store.js'
+import type { TenantRecord } from '../platform-records.js'
+
+class Names
+{
+    public static readonly TempPrefix = 'console-advert-sender-'
+    public static readonly TenantId = 'acme'
+    public static readonly ConsoleUrl = 'https://console-acme.localtest.me'
+    public static readonly OwnerEmail = 'owner@acme.test'
+    public static readonly MessyOwnerEmail = ' Owner@Acme.Test '
+    public static readonly SecondEmail = 'ann@acme.test'
+    public static readonly Domain = 'acme.test'
+    public static readonly NewDomain = 'acme-corp.test'
+    public static readonly OtherDomain = 'other.test'
+    public static readonly ThirdDomain = 'third.test'
+    public static readonly Token = 'tok'
+    public static readonly SecretToken = 'tok-123'
+    public static readonly HiveId = 'acme-hive'
+    public static readonly Path = '/agent/hives/acme-hive/console'
+    public static readonly Post = 'POST'
+    public static readonly Bearer = 'Bearer tok'
+    public static readonly SendFailed = 'send failed'
+    public static readonly Loopback = '127.0.0.1'
+    public static readonly UnreachableMessage = 'The platform agent channel is unreachable'
+    public static readonly ConflictMessage = 'The platform agent channel answered HTTP 409'
+    public static readonly ConflictBody = '{"error":"leak tok"}'
+    public static readonly OkBody = '{"refusedEmailDomains":[]}'
+    public static readonly KeyBytes = 32
+    public static readonly Conflict = 409
+}
+
+class RecordingTransport implements IConsoleAdvertTransport
+{
+    public readonly bodies: ConsoleAdvertBody[] = []
+    public failWith: Error | undefined
+    private gate: Promise<void> | undefined
+    private open: (() => void) | undefined
+
+    public Hold(): void
+    {
+        this.gate = new Promise<void>(res => { this.open = res })
+    }
+
+    public Release(): void
+    {
+        this.gate = undefined
+        this.open?.()
+    }
+
+    public async Send(body: ConsoleAdvertBody): Promise<void>
+    {
+        this.bodies.push(body)
+        if (this.gate !== undefined)
+        {
+            await this.gate
+        }
+        if (this.failWith !== undefined)
+        {
+            throw this.failWith
+        }
+    }
+}
+
+class FakeTimer implements IAdvertTimer
+{
+    public intervalMs = 0
+    public disposed = false
+    private tick: (() => void) | undefined
+
+    public Every(intervalMs: number, tick: () => void): IDisposable
+    {
+        this.intervalMs = intervalMs
+        this.tick = tick
+        return new Disposable(() => { this.disposed = true })
+    }
+
+    public Tick(): void
+    {
+        this.tick?.()
+    }
+}
+
+class FakeAccounts implements IConsoleAccountSource
+{
+    public readonly Changed = new Signal<void>()
+
+    public constructor(public emails: string[])
+    {
+    }
+
+    public Emails(): readonly string[]
+    {
+        return this.emails
+    }
+}
+
+class Waits
+{
+    /** Lets queued promise continuations (a send's settle and the next loop turn) run. */
+    public static async Settle(): Promise<void>
+    {
+        for (let i = 0; i < 10; i++)
+        {
+            await new Promise<void>(res => setImmediate(res))
+        }
+    }
+}
+
+describe('ConsoleAdvertSender', () =>
+{
+    const key = randomBytes(Names.KeyBytes)
+    let root = ''
+    let store: ConsoleEmailDomainStore
+    let transport: RecordingTransport
+    let timer: FakeTimer
+    let accounts: FakeAccounts
+    let lines: string[]
+
+    const sender = (): ConsoleAdvertSender => new ConsoleAdvertSender(transport, accounts, store, key, Names.ConsoleUrl, timer, line => lines.push(line))
+
+    beforeEach(async () =>
+    {
+        root = mkdtempSync(join(tmpdir(), Names.TempPrefix))
+        store = await ConsoleEmailDomainStore.Open(join(root, ConsoleEmailDomainStore.FileName), Names.TenantId, [Names.Domain])
+        transport = new RecordingTransport()
+        timer = new FakeTimer()
+        accounts = new FakeAccounts([Names.OwnerEmail])
+        lines = []
+    })
+
+    afterEach(() =>
+    {
+        rmSync(root, { recursive: true, force: true })
+    })
+
+    it('Start sends at once, then every five minutes', async () =>
+    {
+        const s = sender()
+        await s.Start()
+        assert.equal(transport.bodies.length, 1)
+        assert.equal(timer.intervalMs, 300000)
+        assert.equal(ConsoleAdvertSender.IntervalMs, 300000)
+        timer.Tick()
+        await Waits.Settle()
+        assert.equal(transport.bodies.length, 2)
+        s.Stop()
+    })
+
+    it('the body carries the console URL, the Owner fingerprint and the domains', async () =>
+    {
+        const s = sender()
+        await s.Start()
+        assert.deepEqual(transport.bodies[0], {
+            consoleUrl: Names.ConsoleUrl,
+            fingerprints: [ConsoleFingerprint.Of(key, Names.OwnerEmail)],
+            emailDomains: [Names.Domain],
+        })
+        s.Stop()
+    })
+
+    it('fingerprints are sorted and unique', () =>
+    {
+        accounts.emails = [Names.SecondEmail, Names.OwnerEmail, Names.OwnerEmail.toUpperCase()]
+        const expected = [ConsoleFingerprint.Of(key, Names.SecondEmail), ConsoleFingerprint.Of(key, Names.OwnerEmail)].sort()
+        assert.deepEqual(sender().Body().fingerprints, expected)
+    })
+
+    it('the Owner fingerprint is of the trimmed, lower-cased email', () =>
+    {
+        const tenant: TenantRecord = { id: Names.TenantId, clientId: 'c1', displayName: 'Acme', createdAt: '2026-01-01T00:00:00Z', ownerEmail: Names.MessyOwnerEmail }
+        const s = new ConsoleAdvertSender(transport, new SeededConsoleAccounts(tenant), store, key, Names.ConsoleUrl, timer, line => lines.push(line))
+        assert.deepEqual(s.Body().fingerprints, [ConsoleFingerprint.Of(key, Names.OwnerEmail)])
+    })
+
+    it('a seed without an Owner email advertises no fingerprints', () =>
+    {
+        const tenant: TenantRecord = { id: Names.TenantId, clientId: 'c1', displayName: 'Acme', createdAt: '2026-01-01T00:00:00Z' }
+        assert.deepEqual(new SeededConsoleAccounts(tenant).Emails(), [])
+    })
+
+    it('a domain change is sent immediately', async () =>
+    {
+        const s = sender()
+        await s.Start()
+        await store.Set(Names.TenantId, [Names.NewDomain])
+        await Waits.Settle()
+        assert.equal(transport.bodies.length, 2)
+        assert.deepEqual(transport.bodies[1].emailDomains, [Names.NewDomain])
+        s.Stop()
+    })
+
+    it('an account change is sent immediately', async () =>
+    {
+        const s = sender()
+        await s.Start()
+        accounts.emails = [Names.OwnerEmail, Names.SecondEmail]
+        accounts.Changed.emit()
+        await Waits.Settle()
+        assert.equal(transport.bodies.length, 2)
+        assert.equal(transport.bodies[1].fingerprints.length, 2)
+        s.Stop()
+    })
+
+    it('changes during a send are coalesced into one more send', async () =>
+    {
+        const s = sender()
+        await s.Start()
+        transport.Hold()
+        timer.Tick()
+        await Waits.Settle()
+        assert.equal(transport.bodies.length, 2, 'the held send is in flight')
+        await store.Set(Names.TenantId, [Names.NewDomain])
+        await store.Set(Names.TenantId, [Names.OtherDomain])
+        accounts.Changed.emit()
+        await Waits.Settle()
+        assert.equal(transport.bodies.length, 2, 'nothing more while a send is in flight')
+        transport.Release()
+        await Waits.Settle()
+        assert.equal(transport.bodies.length, 3, 'exactly one more send after the held one')
+        assert.deepEqual(transport.bodies[2].emailDomains, [Names.OtherDomain], 'the queued send carries the latest state')
+        s.Stop()
+    })
+
+    it('SendNow during a send resolves after the queued send', async () =>
+    {
+        const s = sender()
+        transport.Hold()
+        const first = s.SendNow()
+        const second = s.SendNow()
+        transport.Release()
+        await Promise.all([first, second])
+        assert.equal(transport.bodies.length, 2)
+    })
+
+    it('a failed send is logged by name only and retried on the next tick', async () =>
+    {
+        const s = sender()
+        transport.failWith = new Error('token ' + Names.SecretToken + ' ' + Names.OwnerEmail)
+        await s.Start()
+        await store.Set(Names.TenantId, [Names.NewDomain])
+        await Waits.Settle()
+        assert.equal(transport.bodies.length, 2)
+        assert.ok(lines.length >= 2)
+        for (const line of lines)
+        {
+            assert.ok(line.includes(Names.SendFailed), line)
+            assert.ok(!line.includes(Names.SecretToken), 'never the token')
+            assert.ok(!line.includes(Names.OwnerEmail), 'never an email')
+        }
+        transport.failWith = undefined
+        timer.Tick()
+        await Waits.Settle()
+        assert.equal(transport.bodies.length, 3)
+        s.Stop()
+    })
+
+    it('an unavailable channel logs its fixed sentence with the status', async () =>
+    {
+        const s = sender()
+        transport.failWith = new ConsoleAdvertUnavailableError(Names.ConflictMessage)
+        await s.Start()
+        assert.deepEqual(lines, ['[console-advert] send failed: ' + Names.ConflictMessage])
+        s.Stop()
+    })
+
+    it('Stop ends the timer and the subscriptions', async () =>
+    {
+        const s = sender()
+        await s.Start()
+        s.Stop()
+        assert.equal(timer.disposed, true)
+        await store.Set(Names.TenantId, [Names.NewDomain])
+        accounts.Changed.emit()
+        await Waits.Settle()
+        assert.equal(transport.bodies.length, 1)
+        assert.equal(store.Changed.subscriberCount, 0)
+        assert.equal(accounts.Changed.subscriberCount, 0)
+    })
+
+    it('Stop during a send drops the queued send', async () =>
+    {
+        const s = sender()
+        await s.Start()
+        transport.Hold()
+        timer.Tick()
+        await Waits.Settle()
+        await store.Set(Names.TenantId, [Names.NewDomain])
+        s.Stop()
+        transport.Release()
+        await Waits.Settle()
+        assert.equal(transport.bodies.length, 2)
+    })
+})
+
+describe('HttpConsoleAdvertTransport', () =>
+{
+    let server: Server | undefined
+
+    afterEach(async () =>
+    {
+        const s = server
+        server = undefined
+        if (s !== undefined)
+        {
+            s.closeAllConnections()
+            await new Promise<void>(res => s.close(() => res()))
+        }
+    })
+
+    const listen = async (handler: (req: IncomingMessage, body: string) => { status: number; body: string }): Promise<string> =>
+    {
+        server = createServer((req, res) =>
+        {
+            const chunks: Buffer[] = []
+            req.on('data', (c: Buffer) => chunks.push(c))
+            req.on('end', () =>
+            {
+                const answer = handler(req, Buffer.concat(chunks).toString())
+                res.writeHead(answer.status, { 'Content-Type': 'application/json' })
+                res.end(answer.body)
+            })
+        })
+        await new Promise<void>(res => server!.listen(0, Names.Loopback, () => res()))
+        return `http://${Names.Loopback}:${(server!.address() as AddressInfo).port}`
+    }
+
+    const body: ConsoleAdvertBody = { consoleUrl: Names.ConsoleUrl, fingerprints: [], emailDomains: [Names.Domain] }
+
+    it('posts the advert with the bearer', async () =>
+    {
+        let seen: { method?: string; url?: string; authorization?: string; contentType?: string; body?: unknown } = {}
+        const url = await listen((req, text) =>
+        {
+            seen = { method: req.method, url: req.url, authorization: req.headers.authorization, contentType: req.headers['content-type'], body: JSON.parse(text) }
+            return { status: 200, body: Names.OkBody }
+        })
+        await new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId).Send(body)
+        assert.equal(seen.method, Names.Post)
+        assert.equal(seen.url, Names.Path)
+        assert.equal(seen.authorization, Names.Bearer)
+        assert.equal(seen.contentType, 'application/json')
+        assert.deepEqual(seen.body, body)
+    })
+
+    it('a 409 is ConsoleAdvertUnavailableError without the token', async () =>
+    {
+        const url = await listen(() => ({ status: Names.Conflict, body: Names.ConflictBody }))
+        await assert.rejects(() => new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId).Send(body), (err: unknown) =>
+        {
+            assert.ok(err instanceof ConsoleAdvertUnavailableError)
+            assert.equal(err.message, Names.ConflictMessage)
+            assert.ok(!err.message.includes(Names.Token))
+            return true
+        })
+    })
+
+    it('an unreachable channel is the fixed sentence', async () =>
+    {
+        const url = await listen(() => ({ status: 200, body: Names.OkBody }))
+        const s = server!
+        server = undefined
+        await new Promise<void>(res => s.close(() => res()))
+        await assert.rejects(() => new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId).Send(body), (err: unknown) =>
+        {
+            assert.ok(err instanceof ConsoleAdvertUnavailableError)
+            assert.equal(err.message, Names.UnreachableMessage)
+            return true
+        })
+    })
+})

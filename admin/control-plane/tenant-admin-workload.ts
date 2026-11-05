@@ -22,7 +22,7 @@ export interface TenantAdminWorkloadSpec
     idp?: TenantAdminIdpInjection
     /** Browser exposure of the console; the Ingress (and, for a copied TLS Secret, its get-only read Role) is rendered only when set. */
     console?: TenantConsoleExposure
-    /** Secret holding the session-fingerprint key under key `fingerprint.key`; mounted read-only at /fingerprint. */
+    /** Secret holding the account-email fingerprint key under key `fingerprint.key`; mounted read-only at /fingerprint. */
     fingerprintKeySecretName?: string
 }
 
