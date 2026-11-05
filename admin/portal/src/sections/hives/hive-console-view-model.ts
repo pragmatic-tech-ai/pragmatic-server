@@ -51,6 +51,10 @@ export class HiveConsoleViewModel extends Observable
     private static readonly BaseDomainHint = '<base domain>'
     private static readonly TrustCommandPrefix = 'powershell -NoProfile -ExecutionPolicy Bypass -File admin\\control-plane\\dev\\dev-ca-trust.ps1 -Install -CaFile "'
     private static readonly TrustCommandSuffix = '"'
+    private static readonly RemovedText = 'The console was removed.'
+    private static readonly KeptPrefix = ' Kept in the cluster: '
+    private static readonly KeptSeparator = ', '
+    private static readonly KeptSuffix = '. Kept environments keep running unmanaged until the console is reinstalled; they are removed with the hive.'
     private static readonly CopiedText = 'Copied.'
     private static readonly CopyFailedText = 'Could not copy. Select the value and copy it by hand.'
     private static readonly OwnerPasswordProperty = 'OwnerPassword'
@@ -61,7 +65,7 @@ export class HiveConsoleViewModel extends Observable
         'Phase', 'IsIdle', 'IsInstalling', 'IsDeployed', 'IsFailed', 'HasProgress', 'StatusText',
         'ConsoleUrl', 'HasConsoleUrl', 'DevTrustCommand', 'HasDevTrustCommand', 'TrustCopyStatus',
         'OwnerEmail', HiveConsoleViewModel.OwnerPasswordProperty, 'HasOwnerPassword', 'PasswordCopyStatus',
-        'ErrorText', 'IsBusy', 'IsConfirmingRemove',
+        'ErrorText', 'IsBusy', 'IsConfirmingRemove', 'RemovalNote',
     ]
     // Bound values whose change notification never carries the old value (it would be the password).
     private static readonly SecretProperties: ReadonlySet<string> = new Set([HiveConsoleViewModel.OwnerPasswordProperty])
@@ -106,6 +110,7 @@ export class HiveConsoleViewModel extends Observable
     // A settings write, removal or password reset in flight.
     private busy = false
     private confirmingRemove = false
+    private removalNote = ''
     // Bumped by Stop (and by each Install / Resume): an install status for an
     // older generation is dropped, so a left page never resumes polling.
     private generation = 0
@@ -371,6 +376,12 @@ export class HiveConsoleViewModel extends Observable
         return this.busy
     }
 
+    // After a removal: what stayed in the cluster ('' otherwise).
+    public get RemovalNote(): string
+    {
+        return this.removalNote
+    }
+
     // True while Remove console waits for its confirmation.
     public get IsConfirmingRemove(): boolean
     {
@@ -463,13 +474,14 @@ export class HiveConsoleViewModel extends Observable
         this.CancelRemove()
         await this.Request(async () =>
         {
-            const hive = await this.session.Client.RemoveHiveConsole(this.HiveId)
+            const removal = await this.session.Client.RemoveHiveConsole(this.HiveId)
             // No install to follow any more (the page still shows: not a Stop).
             this.Restart()
             this.Change(() =>
             {
-                this.ShowSettings(hive.console)
+                this.ShowSettings(removal.hive.console)
                 this.SetPhase(ConsoleInstallPhase.Idle, undefined)
+                this.removalNote = HiveConsoleViewModel.RemovalNoteOf(removal.retained)
             })
         })
     }
@@ -557,7 +569,19 @@ export class HiveConsoleViewModel extends Observable
             this.passwordCopyStatus = HiveConsoleViewModel.NoText
             this.trustCopyStatus = HiveConsoleViewModel.NoText
             this.confirmingRemove = false
+            this.removalNote = HiveConsoleViewModel.NoText
         })
+    }
+
+    // What a removal tells the operator: that it happened and, when it kept anything, what and why.
+    private static RemovalNoteOf(retained: readonly string[]): string
+    {
+        const C = HiveConsoleViewModel
+        if (retained.length === 0)
+        {
+            return C.RemovedText
+        }
+        return C.RemovedText + C.KeptPrefix + retained.join(C.KeptSeparator) + C.KeptSuffix
     }
 
     private async CopyPassword(): Promise<void>
@@ -674,6 +698,7 @@ export class HiveConsoleViewModel extends Observable
         {
             this.busy = true
             this.errorText = HiveConsoleViewModel.NoText
+            this.removalNote = HiveConsoleViewModel.NoText
         })
         try
         {

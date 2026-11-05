@@ -229,5 +229,9 @@ export type InHiveOwnerPasswordDto = { ownerEmail: string; ownerPassword: string
 // Secret), and what a delete anyway may have left behind.
 export type HiveDeleteOutcomeDto = { ok: boolean; retained: string[]; notice?: string }
 
+// A console removal's reply: the updated hive and what stays in the cluster (the console's and its identity provider's
+// data and Secrets, and the environment namespaces the console created, which keep running).
+export type ConsoleRemovalDto = { hive: HiveDto; retained: string[] }
+
 // A freshly minted one-time agent token (the rollout-registration route's reply).
 export type RolloutRegistrationDto = { token: string }

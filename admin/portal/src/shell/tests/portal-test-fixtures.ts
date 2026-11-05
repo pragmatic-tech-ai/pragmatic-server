@@ -8,7 +8,7 @@ import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/serv
 import { ApiError, type ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
 import { AgentInstallState, AgentInstallStep, ConsoleInstallState, ConsoleInstallStep, type AgentInstallStatusDto, type ConsoleInstallStatusDto } from '../../portal-types.js'
-import type { HiveConsoleSpecDto, HiveDeleteOutcomeDto, InHiveOwnerPasswordDto, OwnerPasswordResetDto, PasswordChangedDto } from '../../portal-types.js'
+import type { ConsoleRemovalDto, HiveConsoleSpecDto, HiveDeleteOutcomeDto, InHiveOwnerPasswordDto, OwnerPasswordResetDto, PasswordChangedDto } from '../../portal-types.js'
 import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveBootstrapDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, ProvisionInputDto, ProvisionResultDto, SelectionDto, TenantDto } from '../../portal-types.js'
 import { DownloadService } from '../download-service.js'
 import type { IPageReloader } from '../page-reloader.js'
@@ -246,6 +246,8 @@ export class FakeControlPlane
     // ConsoleFailure is set, every console write fails with it.
     public readonly ConsoleSaves: Array<[string, HiveConsoleSpecDto]> = []
     public readonly ConsoleRemovals: string[] = []
+    // What a console removal reports as kept in the cluster.
+    public ConsoleRemovalRetained: string[] = []
     public ConsoleFailure: Error | undefined
     public ConsoleStartReply: ConsoleInstallStatusDto = FakeControlPlane.ConsoleStatus(ConsoleInstallState.Installing, ConsoleInstallStep.CheckingAgent)
     public ConsoleInstallReplies: Array<ConsoleInstallStatusDto | null> = []
@@ -812,19 +814,20 @@ export class FakeControlPlane
         return this.UpdateHive(hiveId, h => ({ ...h, console: spec }))
     }
 
-    public async RemoveHiveConsole(hiveId: string): Promise<HiveDto>
+    public async RemoveHiveConsole(hiveId: string): Promise<ConsoleRemovalDto>
     {
         if (this.ConsoleFailure !== undefined)
         {
             throw this.ConsoleFailure
         }
         this.ConsoleRemovals.push(hiveId)
-        return this.UpdateHive(hiveId, h =>
+        const hive = this.UpdateHive(hiveId, h =>
         {
             const copy = { ...h }
             delete copy.console
             return copy
         })
+        return { hive, retained: this.ConsoleRemovalRetained }
     }
 
     public async StartConsoleInstall(hiveId: string): Promise<ConsoleInstallStatusDto>

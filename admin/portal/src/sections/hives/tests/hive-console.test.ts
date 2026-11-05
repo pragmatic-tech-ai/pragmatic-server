@@ -273,6 +273,28 @@ describe('Hive tenant console (panel)', () =>
         assert.equal(panel.RemoveCommand.CanExecute(), false)
     })
 
+    it('a removal names what stays in the cluster: the kept data and the environments that keep running', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        assert.equal(panel.RemovalNote, '')
+        fx.Api.ConsoleRemovalRetained = ['pragmatic-tenant-admin-acme-data', 'pragmatic-env-dev']
+        panel.RemoveCommand.Execute()
+        await panel.ConfirmRemove()
+        assert.equal(panel.RemovalNote, 'The console was removed. Kept in the cluster: pragmatic-tenant-admin-acme-data, pragmatic-env-dev. Kept environments keep running unmanaged until the console is reinstalled; they are removed with the hive.')
+        panel.Stop()
+        assert.equal(panel.RemovalNote, '')
+    })
+
+    it('a removal that kept nothing says only that the console was removed', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        panel.RemoveCommand.Execute()
+        await panel.ConfirmRemove()
+        assert.equal(panel.RemovalNote, 'The console was removed.')
+    })
+
     it('a refused start (another hive operation runs) stays Idle and shows only the sentence', async () =>
     {
         const fx = new ConsoleFixture()

@@ -804,9 +804,12 @@ resources HivesResources {
                             TextBlock [ Text = "Remove console" ]
                         }
                     }
-                    TextBlock [ Text = "Remove the console from this hive? Its objects, its cluster-wide grants and the environment namespaces it created are deleted from the cluster. Its data volume is kept.",
+                    TextBlock [ Text = "Remove the console from this hive? Its objects, its cluster-wide grants and its identity provider's workload are deleted from the cluster. Its data volume, its identity provider's data and Secrets, and the environments it created are kept: those environments keep running unmanaged until the console is reinstalled, and are removed with the hive.",
                                 Foreground = @StateWarningInk, TextWrapping = Wrap ]
                 }
+            }
+            Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,8), Visibility = $RemovalNote << ToVisibility ] {
+                TextBlock [ Text = $RemovalNote, Foreground = @Fg1, TextWrapping = Wrap ]
             }
             TextBlock [ Text = "Save the settings first, then install the console.", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,8),
                         Visibility = $IsNotConfigured << ToVisibility ]

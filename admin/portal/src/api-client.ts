@@ -1,4 +1,4 @@
-import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto, HiveDeleteOutcomeDto, OwnerPasswordResetDto, PasswordChangedDto, HiveConsoleSpecDto, ConsoleInstallStatusDto, InHiveOwnerPasswordDto } from './portal-types.js'
+import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto, HiveDeleteOutcomeDto, OwnerPasswordResetDto, PasswordChangedDto, HiveConsoleSpecDto, ConsoleInstallStatusDto, ConsoleRemovalDto, InHiveOwnerPasswordDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -356,10 +356,10 @@ export class ControlPlaneClient
     }
 
     // Removes the console from a cluster the control plane drives, then clears its settings; the reply is the updated
-    // hive. A cluster that refuses the removal is a 409 and the settings stay.
-    public async RemoveHiveConsole(hiveId: string): Promise<HiveDto>
+    // hive and what stayed in the cluster. A cluster that refuses the removal is a 409 and the settings stay.
+    public async RemoveHiveConsole(hiveId: string): Promise<ConsoleRemovalDto>
     {
-        return await this.Send<HiveDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.ConsoleSegment), { method: ControlPlaneClient.MethodDelete })
+        return await this.Send<ConsoleRemovalDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.ConsoleSegment), { method: ControlPlaneClient.MethodDelete })
     }
 
     // Starts the control plane's console install for the hive; the reply is its first status (never a secret).
