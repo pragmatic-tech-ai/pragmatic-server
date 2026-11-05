@@ -66,6 +66,7 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
     private static readonly ConfirmPasswordKey = 'confirmPassword'
     private static readonly BeginLoginRoute = '/tenant-auth/oidc/begin'
     private static readonly EmailDomainsRoute = '/tenant-api/settings/email-domains'
+    private static readonly DomainsKey = 'domains'
     private static readonly HivesRoute = '/tenant-api/hives'
     private static readonly EnvironmentsRoute = '/tenant-api/environments'
     private static readonly ManifestsRoute = '/tenant-api/manifests'
@@ -139,7 +140,7 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
     // Replaces the tenant's email domains (Owner only); the reply is the normalised list. A refusal is a 400 with its sentence.
     public async SetEmailDomains(domains: readonly string[]): Promise<EmailDomainsDto>
     {
-        return await this.Send<EmailDomainsDto>(TenantApiClient.EmailDomainsRoute, { method: TenantApiClient.MethodPut, body: JSON.stringify({ domains }) })
+        return await this.Send<EmailDomainsDto>(TenantApiClient.EmailDomainsRoute, { method: TenantApiClient.MethodPut, body: JSON.stringify({ [TenantApiClient.DomainsKey]: domains }) })
     }
 
     public BeginLogin(): void
