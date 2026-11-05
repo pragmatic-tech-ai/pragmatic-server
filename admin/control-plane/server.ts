@@ -25,6 +25,8 @@ import { HiveObservationRegistry } from './hive-observation-record.js'
 import { HiveAgentInstaller } from './hive-agent-installer.js'
 import { HiveAgentUninstaller } from './hive-agent-uninstaller.js'
 import { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
+import { ConsoleAdvertRegistry } from './console-advert-registry.js'
+import { ConsoleAdvertReceiver } from './console-advert-receiver.js'
 import { DevCertificateAuthority } from './dev-certificate-authority.js'
 import { InHiveIdpAdmin } from './in-hive-idp-admin.js'
 import { SealedSecretStore } from './sealed-secret-store.js'
@@ -189,6 +191,7 @@ export class ControlPlaneServer
     private static readonly DefaultHealthProbeTimeoutMs = 60000
     public static readonly TenantAdminClientsFile = 'tenant-admin-clients.json'
     public static readonly TenantAccountsFile = 'tenant-accounts.json'
+    public static readonly ConsoleAdvertsFile = ConsoleAdvertRegistry.FileName
     public static readonly DesktopTenantPlaneUrlEnvVar = 'PRAGMATIC_DESKTOP_TENANT_PLANE_URL'
     private static readonly LoopbackHttpPrefix = 'http://127.0.0.1:'
     private static readonly TenantAdminOidcDir = 'tenant-admin-oidc'
@@ -238,7 +241,8 @@ export class ControlPlaneServer
         const ledger = new AdoptionLedgerRegistry(join(dataRoot, ControlPlaneServer.AdoptionLedgerFile))
         const adminClientRegistry = new TenantAdminClientRegistry(join(dataRoot, ControlPlaneServer.TenantAdminClientsFile))
         const accountIndex = new TenantAccountIndex(join(dataRoot, ControlPlaneServer.TenantAccountsFile))
-        await Promise.all([manifests.Load(), audit.Load(), desktopAudit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load(), accountIndex.Load()])
+        const adverts = new ConsoleAdvertRegistry(join(dataRoot, ControlPlaneServer.ConsoleAdvertsFile))
+        await Promise.all([manifests.Load(), audit.Load(), desktopAudit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load(), accountIndex.Load(), adverts.Load()])
         await accountIndex.BackfillFrom(directory)
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(signing.PlatformSigner.KeyRef, dataRoot, signing.ImageSigner), policies, ledger)
         // One tenant session store for the tenant plane and the Owner password reset (which ends the Owner's sessions).
@@ -303,7 +307,7 @@ export class ControlPlaneServer
         if (agentChannelPort !== ControlPlaneServer.AgentChannelDisabled)
         {
             const agentBind = ControlPlaneServer.ParseAgentChannelBind(process.env[ControlPlaneServer.AgentChannelBindEnvVar])
-            await new AgentChannelHost(deployments).Listen(agentChannelPort, agentBind)
+            await new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts)).Listen(agentChannelPort, agentBind)
             console.log(ControlPlaneServer.AgentChannelListeningPrefix + agentBind + ControlPlaneServer.HostPortSeparator + String(agentChannelPort))
         }
         if (tenantStart !== undefined)

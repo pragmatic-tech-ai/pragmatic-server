@@ -14,6 +14,9 @@ import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { RolloutFixture } from './rollout-fixture.js'
+import { ConsoleAdvertRegistry } from '../console-advert-registry.js'
+import { ConsoleAdvertReceiver } from '../console-advert-receiver.js'
+import { IngressTlsSource } from '../ingress-tls.js'
 
 type Reply = { status: number; body: string }
 
@@ -67,6 +70,10 @@ describe('AgentChannelHost', () =>
     const StatusPath = '/agent/hives/' + Harness.HiveId + '/status'
     const AdoptPath = '/agent/hives/' + Harness.HiveId + '/adopt'
     const LedgerPath = '/agent/hives/' + Harness.HiveId + '/ledger'
+    const ConsolePath = '/agent/hives/' + Harness.HiveId + '/console'
+    const ConsoleUrl = 'https://console-t1.localtest.me'
+    const Fingerprint = 'a'.repeat(64)
+    const Advert = { consoleUrl: ConsoleUrl, fingerprints: [Fingerprint], emailDomains: ['acme.com', 'gmail.com'] }
     const OtherPath = '/agent/hives/' + Harness.HiveId + '/other'
     const LegacyPath = '/api/hives/' + Harness.HiveId + '/agent/target'
     const UnregisteredPath = '/agent/hives/ghost/snapshot'
@@ -76,11 +83,13 @@ describe('AgentChannelHost', () =>
     let deployments: PlatformDeploymentRegistry
     let parent: string
     let token: string
+    let directory: PlatformDirectory
+    let adverts: ConsoleAdvertRegistry
 
     beforeEach(async () =>
     {
         parent = mkdtempSync(join(tmpdir(), 'agent-channel-'))
-        const directory = new PlatformDirectory(
+        directory = new PlatformDirectory(
             new ClientRegistry(join(parent, 'clients.json')),
             new TenantRegistry(join(parent, 'tenants.json')),
             new HiveRegistry(join(parent, 'hives.json')),
@@ -91,7 +100,10 @@ describe('AgentChannelHost', () =>
         await directory.CreateHive({ id: Harness.HiveId, tenantId: 't1', displayName: 'L', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
         deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
         token = await deployments.RegisterHive(Harness.HiveId)
-        host = new AgentChannelHost(deployments)
+        adverts = new ConsoleAdvertRegistry(join(parent, 'console-adverts.json'))
+        await adverts.Load()
+        await directory.SetHiveConsole(Harness.HiveId, { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } })
+        host = new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts))
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -339,5 +351,71 @@ describe('AgentChannelHost', () =>
     it('answers 401 for the ledger of an unregistered hive', async () =>
     {
         assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, '/agent/hives/ghost/ledger', Harness.BearerPrefix + token)).status, 401)
+    })
+
+    it('accepts a console advert from the hive bearer and answers the refused domains', async () =>
+    {
+        const reply = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)
+        assert.equal(reply.status, 200)
+        assert.deepEqual(JSON.parse(reply.body), { refusedEmailDomains: ['gmail.com'] })
+        assert.equal(adverts.ForTenant(TenantId)?.consoleUrl, ConsoleUrl)
+    })
+
+    it('rejects a console advert with a missing or wrong bearer: 401, nothing stored', async () =>
+    {
+        const replies = [
+            await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, undefined, Advert),
+            await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + WrongToken, Advert)
+        ]
+        for (const r of replies)
+        {
+            assert.equal(r.status, 401)
+            assert.ok(!r.body.includes(token))
+            assert.ok(!r.body.includes(WrongToken))
+        }
+        assert.equal(adverts.ForTenant(TenantId), undefined)
+    })
+
+    it('answers 409 for a hive without the console', async () =>
+    {
+        await directory.SetHiveConsole(Harness.HiveId, undefined)
+        const reply = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)
+        assert.equal(reply.status, 409)
+        assert.equal(typeof JSON.parse(reply.body).error, 'string')
+        assert.ok(!reply.body.includes(token))
+        assert.equal(adverts.ForTenant(TenantId), undefined)
+    })
+
+    it('answers 400 with the fixed sentence for an invalid advert and for a malformed JSON body', async () =>
+    {
+        const badHost = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, { ...Advert, consoleUrl: 'https://evil.example.com' })
+        assert.equal(badHost.status, 400)
+        assert.ok(!badHost.body.includes('evil.example.com'))
+        const malformed = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, MalformedJson)
+        assert.equal(malformed.status, 400)
+        assert.deepEqual(JSON.parse(malformed.body), { error: ConsoleAdvertReceiver.BadShape })
+        assert.ok(!malformed.body.includes('not json'))
+        assert.equal(adverts.ForTenant(TenantId), undefined)
+    })
+
+    it('answers 404 for GET on the console route', async () =>
+    {
+        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, ConsolePath, Harness.BearerPrefix + token)).status, 404)
+    })
+
+    it('answers 404 when no advert receiver is configured, even with a valid bearer', async () =>
+    {
+        const bare = new AgentChannelHost(deployments)
+        await bare.Listen(0, '127.0.0.1')
+        try
+        {
+            assert.equal((await Harness.Send(bare, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)).status, 404)
+            assert.equal((await Harness.Send(bare, PlaneHttp.MethodPost, ConsolePath, undefined, Advert)).status, 404)
+        }
+        finally
+        {
+            await bare.Close()
+        }
+        assert.equal(adverts.ForTenant(TenantId), undefined)
     })
 })

@@ -2,16 +2,18 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import type { AddressInfo } from 'node:net'
 import { PlaneHttp } from './plane-http.js'
 import type { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
+import { ConsoleAdvertReceiver, ConsoleNotEnabledError, InvalidConsoleAdvertError } from './console-advert-receiver.js'
 import { AdoptionLedgerDtoMapper } from './tenant-api/rollout-client.js'
 import type { HiveHealthDto } from './hive-health-producer.js'
 import { AgentUnauthorizedError, BodyTooLargeError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestNotGatedError, ManifestWithdrawnError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from './rollout-errors.js'
 
-/** The dedicated public listener for the hive agent channel: five bearer-authenticated routes (target, snapshot, adoptable, status, adopt), nothing else. */
+/** The dedicated public listener for the hive agent channel: seven bearer-authenticated routes (target, snapshot, adoptable, status, adopt, ledger, console), nothing else. The console route is mounted only when an advert receiver is given. */
 export class AgentChannelHost
 {
     private static readonly AuthorizationHeader = 'authorization'
     private static readonly BearerPattern = /^Bearer (\S+)$/
-    private static readonly RoutePattern = /^\/agent\/hives\/([^/]+)\/(target|snapshot|adoptable|status|adopt|ledger)$/
+    private static readonly RoutePattern = /^\/agent\/hives\/([^/]+)\/(target|snapshot|adoptable|status|adopt|ledger|console)$/
+    private static readonly ConsoleSegment = 'console'
     private static readonly TargetSegment = 'target'
     private static readonly SnapshotSegment = 'snapshot'
     private static readonly AdoptableSegment = 'adoptable'
@@ -28,11 +30,13 @@ export class AgentChannelHost
         [AgentChannelHost.AdoptableSegment, PlaneHttp.MethodGet],
         [AgentChannelHost.StatusSegment, PlaneHttp.MethodGet],
         [AgentChannelHost.AdoptSegment, PlaneHttp.MethodPost],
-        [AgentChannelHost.LedgerSegment, PlaneHttp.MethodGet]
+        [AgentChannelHost.LedgerSegment, PlaneHttp.MethodGet],
+        [AgentChannelHost.ConsoleSegment, PlaneHttp.MethodPost]
     ])
     private static readonly StatusNoContent = 204
     private static readonly StatusBadRequest = 400
     private static readonly StatusUnauthorized = 401
+    private static readonly StatusConflict = 409
     private static readonly StatusForbidden = 403
     private static readonly StatusTooLarge = 413
     private static readonly StatusInternal = 500
@@ -54,7 +58,7 @@ export class AgentChannelHost
 
     private httpServer: HttpServer | undefined
 
-    public constructor(private readonly deployments: PlatformDeploymentRegistry)
+    public constructor(private readonly deployments: PlatformDeploymentRegistry, private readonly adverts?: ConsoleAdvertReceiver)
     {
     }
 
@@ -113,7 +117,7 @@ export class AgentChannelHost
     {
         const path = (req.url ?? '').split('?')[0] as string
         const m = AgentChannelHost.RoutePattern.exec(path)
-        if (m === null || AgentChannelHost.SegmentMethods.get(m[2] as string) !== req.method)
+        if (m === null || AgentChannelHost.SegmentMethods.get(m[2] as string) !== req.method || (m[2] === AgentChannelHost.ConsoleSegment && this.adverts === undefined))
         {
             req.resume()
             PlaneHttp.WriteNotFound(res)
@@ -150,6 +154,9 @@ export class AgentChannelHost
                 return
             case AgentChannelHost.AdoptSegment:
                 await this.ReceiveAdoption(req, res, id)
+                return
+            case AgentChannelHost.ConsoleSegment:
+                await this.ReceiveConsoleAdvert(req, res, id)
                 return
             default:
                 await this.ReceiveSnapshot(req, res, id)
@@ -199,6 +206,23 @@ export class AgentChannelHost
         await this.deployments.RecordAdoption(id, version)
         res.writeHead(AgentChannelHost.StatusNoContent)
         res.end()
+    }
+
+    /** Stores the advert the hive's console reports and answers the email domains the control plane refused; a body that is not JSON is reported with the receiver's shape sentence, never echoed. */
+    private async ReceiveConsoleAdvert(req: IncomingMessage, res: ServerResponse, id: string): Promise<void>
+    {
+        const raw = await this.ReadBody(req)
+        let body: unknown
+        try
+        {
+            body = JSON.parse(raw)
+        }
+        catch
+        {
+            throw new InvalidConsoleAdvertError(ConsoleAdvertReceiver.BadShape)
+        }
+        const outcome = await (this.adverts as ConsoleAdvertReceiver).Receive(id, body)
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { refusedEmailDomains: outcome.refusedEmailDomains })
     }
 
     /** The version of a { version: non-empty string } body, or undefined when it is anything else. */
@@ -331,6 +355,16 @@ export class AgentChannelHost
         if (err instanceof AgentUnauthorizedError || err instanceof HiveNotRegisteredError || err instanceof UnknownHiveError)
         {
             PlaneHttp.WriteJson(res, AgentChannelHost.StatusUnauthorized, { error: AgentChannelHost.UnauthorizedMessage })
+            return
+        }
+        if (err instanceof InvalidConsoleAdvertError)
+        {
+            PlaneHttp.WriteJson(res, AgentChannelHost.StatusBadRequest, { error: err.message })
+            return
+        }
+        if (err instanceof ConsoleNotEnabledError)
+        {
+            PlaneHttp.WriteJson(res, AgentChannelHost.StatusConflict, { error: err.message })
             return
         }
         // Intentionally route-agnostic: only the adopt route can raise a gating refusal or a release-policy refusal; the agent never learns which rule failed.

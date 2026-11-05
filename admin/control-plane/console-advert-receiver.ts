@@ -39,7 +39,7 @@ export interface IConsoleAdvertDirectory
 /** Validates what an in-hive console reports about itself and stores it as the tenant's advert. */
 export class ConsoleAdvertReceiver
 {
-    private static readonly BadShape = 'The console advert must be a JSON object with consoleUrl, fingerprints and emailDomains.'
+    public static readonly BadShape = 'The console advert must be a JSON object with consoleUrl, fingerprints and emailDomains.'
     private static readonly BadUrl = 'consoleUrl must be the https address of this hive console, with no path, query or port.'
     private static readonly BadFingerprints = 'fingerprints must be a list of at most 10000 SHA-256 hex digests.'
     private static readonly BadDomains = 'emailDomains must be a list of at most 20 domain names.'
