@@ -61,7 +61,7 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
     /** Own tenant -> its domains, editable; any other id -> nothing, not editable. */
     public For(tenantId: string): TenantEmailDomainsView
     {
-        return tenantId === this.tenantId ? { domains: [...this.domains], editable: true } : { domains: [], editable: false }
+        return tenantId === this.tenantId ? { domains: [...this.domains], editable: true, inHive: true } : { domains: [], editable: false, inHive: true }
     }
 
     /** Throws EmailDomainsNotEditableError (another tenant) or InvalidEmailDomainError (before anything is written). */
@@ -75,7 +75,7 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
         const run = this.writes.then(() => this.Apply(parsed))
         this.writes = run.catch(() => undefined)
         await run
-        return { domains: [...parsed], editable: true }
+        return { domains: [...parsed], editable: true, inHive: true }
     }
 
     private static DomainsIn(text: string, filePath: string): string[]

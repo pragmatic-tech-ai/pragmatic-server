@@ -33,14 +33,14 @@ class FakeEmailDomains implements ITenantEmailDomains
     public domains: string[] = ['acme.test']
     public readonly Asked: string[] = []
 
-    public constructor(private readonly editable: boolean = true)
+    public constructor(private readonly editable: boolean = true, private readonly inHive: boolean = false)
     {
     }
 
     public For(tenantId: string): TenantEmailDomainsView
     {
         this.Asked.push(tenantId)
-        return { domains: [...this.domains], editable: this.editable }
+        return { domains: [...this.domains], editable: this.editable, inHive: this.inHive }
     }
 
     public async Set(tenantId: string, domains: unknown): Promise<TenantEmailDomainsView>
@@ -102,16 +102,23 @@ describe('TenantApiEndpoint email domains', () =>
     {
         const store = new FakeEmailDomains()
         const endpoint = Fixtures.Build(store)
-        assert.deepEqual(await Fixtures.Send(endpoint, Fixtures.OwnerId, 'GET'), { status: 200, json: { domains: ['acme.test'], editable: true } })
-        assert.deepEqual(await Fixtures.Send(endpoint, Fixtures.OwnerId, 'PUT', { domains: ['Acme.test'] }), { status: 200, json: { domains: ['acme.test'], editable: true } })
+        assert.deepEqual(await Fixtures.Send(endpoint, Fixtures.OwnerId, 'GET'), { status: 200, json: { domains: ['acme.test'], editable: true, inHive: false } })
+        assert.deepEqual(await Fixtures.Send(endpoint, Fixtures.OwnerId, 'PUT', { domains: ['Acme.test'] }), { status: 200, json: { domains: ['acme.test'], editable: true, inHive: false } })
         assert.ok(store.Asked.every(id => id === Fixtures.TenantId))
+    })
+
+    it('passes the store\'s inHive flag through on GET and PUT', async () =>
+    {
+        const endpoint = Fixtures.Build(new FakeEmailDomains(true, true))
+        assert.deepEqual(await Fixtures.Send(endpoint, Fixtures.OwnerId, 'GET'), { status: 200, json: { domains: ['acme.test'], editable: true, inHive: true } })
+        assert.deepEqual(await Fixtures.Send(endpoint, Fixtures.OwnerId, 'PUT', { domains: ['acme.test'] }), { status: 200, json: { domains: ['acme.test'], editable: true, inHive: true } })
     })
 
     it('a non-Owner reads them as not editable and gets 403 on PUT', async () =>
     {
         const store = new FakeEmailDomains()
         const endpoint = Fixtures.Build(store)
-        assert.deepEqual(await Fixtures.Send(endpoint, 'someone-else', 'GET'), { status: 200, json: { domains: ['acme.test'], editable: false } })
+        assert.deepEqual(await Fixtures.Send(endpoint, 'someone-else', 'GET'), { status: 200, json: { domains: ['acme.test'], editable: false, inHive: false } })
         assert.deepEqual(await Fixtures.Send(endpoint, 'someone-else', 'PUT', { domains: ['other.test'] }), { status: 403, json: { error: 'forbidden' } })
         assert.deepEqual(store.domains, ['acme.test'])
     })
@@ -132,7 +139,7 @@ describe('TenantApiEndpoint email domains', () =>
 
     it('a not-editable store reads as not editable even for the Owner', async () =>
     {
-        assert.deepEqual(await Fixtures.Send(Fixtures.Build(new FakeEmailDomains(false)), Fixtures.OwnerId, 'GET'), { status: 200, json: { domains: ['acme.test'], editable: false } })
+        assert.deepEqual(await Fixtures.Send(Fixtures.Build(new FakeEmailDomains(false)), Fixtures.OwnerId, 'GET'), { status: 200, json: { domains: ['acme.test'], editable: false, inHive: false } })
     })
 
     it('a body without domains is 400', async () =>

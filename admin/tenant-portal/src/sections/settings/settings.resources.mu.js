@@ -223,12 +223,12 @@ export class SettingsResources extends ResourceDictionary {
             _textBlock43.set_property_value(TextBlock.VisibilityKey, DataContextBinding(_textBlock43, "IsEditable", ToVisibility));
             _stackPanel41.AddChild(_textBlock43);
             const _textBlock44 = new TextBlock();
-            _textBlock44.set_property_value(TextBlock.TextKey, "If this tenant's console runs in its own hive, a domain only takes effect after the platform operator approves it.");
+            _textBlock44.set_property_value(TextBlock.TextKey, DataContextBinding(_textBlock44, "ApprovalText"));
             _textBlock44.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock44, "UiCaption"));
             _textBlock44.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock44, "Fg2"));
             _textBlock44.set_property_value(TextBlock.TextWrappingKey, TextWrapping.Wrap);
             _textBlock44.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 0, 8));
-            _textBlock44.set_property_value(TextBlock.VisibilityKey, DataContextBinding(_textBlock44, "IsEditable", ToVisibility));
+            _textBlock44.set_property_value(TextBlock.VisibilityKey, DataContextBinding(_textBlock44, "ApprovalText", ToVisibility));
             _stackPanel41.AddChild(_textBlock44);
             const _textBlock45 = new TextBlock();
             _textBlock45.set_property_value(TextBlock.TextKey, DataContextBinding(_textBlock45, "ReadOnlyText"));

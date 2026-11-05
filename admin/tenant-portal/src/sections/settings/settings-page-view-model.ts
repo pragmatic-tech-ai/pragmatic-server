@@ -58,7 +58,7 @@ export class SettingsPageViewModel extends TenantPageViewModel
     private static readonly HasIdpProperty = 'HasIdp'
     private static readonly HasNoIdpProperty = 'HasNoIdp'
     private static readonly NotFoundStatus = 404
-    private static readonly TabHive ='Hive & domain'
+    private static readonly TabHive = 'Hive & domain'
     private static readonly TabProfile = 'Tenant profile'
     private static readonly TabIdp = 'Identity provider'
     private static readonly TabEmailDomains = 'Email domains'
@@ -175,7 +175,7 @@ export class SettingsPageViewModel extends TenantPageViewModel
         return this.emailDomains
     }
 
-    public get HiveRows():ObservableCollection<SettingRowViewModel>
+    public get HiveRows(): ObservableCollection<SettingRowViewModel>
     {
         return this.hiveRows
     }

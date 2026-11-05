@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { ToVisibility, Visibility } from '@pragmatic-tech-ai/mural/runtime'
 import { TenantApiError } from '../../../tenant-api-client.js'
 import { FakeTenantApi, TenantTestHost } from '../../../shell/tests/tenant-test-fixtures.js'
 import { EmailDomainsEditorViewModel } from '../email-domains-editor-view-model.js'
@@ -78,7 +79,7 @@ describe('EmailDomainsEditorViewModel', () =>
     it('a not-editable store shows the in-hive sentence', async () =>
     {
         const api = new FakeTenantApi()
-        api.EmailDomains = { domains: ['acme.test'], editable: false }
+        api.EmailDomains = { domains: ['acme.test'], editable: false, inHive: false }
         const editor = await Fixture.Loaded(api)
         assert.equal(editor.IsEditable, false)
         assert.equal(editor.ReadOnlyText, "This tenant's email domains are set in its in-hive console.")
@@ -94,6 +95,24 @@ describe('EmailDomainsEditorViewModel', () =>
         assert.equal(editor.SaveCommand.CanExecute(undefined), true)
         editor.DomainsText = 'acme.test'
         assert.equal(editor.SaveCommand.CanExecute(undefined), false)
+    })
+
+    it('the approval sentence is for an in-hive tenant only', async () =>
+    {
+        const api = new FakeTenantApi()
+        assert.equal((await Fixture.Loaded(api)).IsInHive, false)
+        api.EmailDomains = { domains: ['acme.test'], editable: true, inHive: true }
+        const editor = await Fixture.Loaded(api)
+        assert.equal(editor.IsInHive, true)
+        assert.equal(editor.ApprovalText, 'A domain only takes effect after the platform operator approves it.')
+        editor.ApplyUnavailable()
+        assert.equal(editor.IsInHive, false)
+    })
+
+    it('ToVisibility collapses an empty string and shows a sentence', () =>
+    {
+        assert.equal(ToVisibility.convert(''), Visibility.Collapsed)
+        assert.equal(ToVisibility.convert('Saved.'), Visibility.Visible)
     })
 
     it('an unavailable route leaves it read-only with its sentence, and a failure shows its sentence alone', () =>

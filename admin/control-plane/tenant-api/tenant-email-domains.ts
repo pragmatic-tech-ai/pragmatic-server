@@ -1,5 +1,8 @@
-/** A tenant's email domains as its console shows them; `editable` = whether the store may change them (the role is checked by the endpoint). */
-export type TenantEmailDomainsView = { domains: string[]; editable: boolean }
+/**
+ * A tenant's email domains as its console shows them; `editable` = whether the store may change them (the role is checked by the endpoint);
+ * `inHive` = whether the tenant's console runs in its own hive, where a domain takes effect only after the platform operator approves it.
+ */
+export type TenantEmailDomainsView = { domains: string[]; editable: boolean; inHive: boolean }
 
 /** What both email-domain write routes (tenant plane and operator) promise: one home so the two cannot drift. */
 export class TenantEmailDomainsLimits

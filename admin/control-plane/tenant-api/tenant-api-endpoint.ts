@@ -631,7 +631,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private WriteEmailDomains(res: ServerResponse, session: TenantSession, view: TenantEmailDomainsView): void
     {
         const caps = TenantAdminCapabilities.For(session, this.directory.GetTenant(session.tenantId)).capabilities
-        this.WriteJson(res, TenantApiEndpoint.StatusOk, { domains: view.domains, editable: view.editable && caps[TenantApiEndpoint.SettingsCapability] })
+        this.WriteJson(res, TenantApiEndpoint.StatusOk, { domains: view.domains, editable: view.editable && caps[TenantApiEndpoint.SettingsCapability], inHive: view.inHive })
     }
 
     /** Runs one admin (leaf, method, tail) combination; false when the combination is not a route. */

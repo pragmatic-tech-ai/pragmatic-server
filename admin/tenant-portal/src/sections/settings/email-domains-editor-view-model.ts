@@ -16,16 +16,18 @@ export class EmailDomainsEditorViewModel extends Observable
     private static readonly OwnerOnlyText = 'Only the tenant Owner can change the email domains.'
     private static readonly InHiveText = "This tenant's email domains are set in its in-hive console."
     private static readonly UnavailableText = 'Email domains are not available here.'
+    private static readonly ApprovalSentence = 'A domain only takes effect after the platform operator approves it.'
     private static readonly NoText = ''
-    // Every bound value a change can move, raised when it did.
-    private static readonly BoundProperties: readonly string[] = [
-        'DomainsText', 'IsEditable', 'ReadOnlyText', 'ErrorText', 'SavedText', 'IsSaving',
+    // Every bound value a change can move, raised when it did; typed so a renamed member fails typecheck.
+    private static readonly BoundProperties: ReadonlyArray<keyof EmailDomainsEditorViewModel> = [
+        'DomainsText', 'IsEditable', 'IsInHive', 'ApprovalText', 'ReadOnlyText', 'ErrorText', 'SavedText', 'IsSaving',
     ]
 
     private readonly saveCommand: RelayCommand
     private domains: readonly string[] = []
     private text = ''
     private editable = false
+    private inHive = false
     private readOnlyText = ''
     private errorText = ''
     private savedText = ''
@@ -60,6 +62,18 @@ export class EmailDomainsEditorViewModel extends Observable
     public get IsEditable(): boolean
     {
         return this.editable
+    }
+
+    // Whether the tenant's console runs in its own hive (the server's `inHive`).
+    public get IsInHive(): boolean
+    {
+        return this.inHive
+    }
+
+    // The operator-approval sentence for an in-hive tenant; '' otherwise.
+    public get ApprovalText(): string
+    {
+        return this.inHive ? EmailDomainsEditorViewModel.ApprovalSentence : EmailDomainsEditorViewModel.NoText
     }
 
     // Why the list is read-only; '' while it is editable.
@@ -102,6 +116,7 @@ export class EmailDomainsEditorViewModel extends Observable
         this.Change(() =>
         {
             this.Show(dto)
+            this.inHive = dto.inHive
             this.editable = dto.editable && canChangeSettings
             this.readOnlyText = this.editable ? E.NoText : canChangeSettings ? E.InHiveText : E.OwnerOnlyText
             this.errorText = E.NoText
@@ -114,7 +129,8 @@ export class EmailDomainsEditorViewModel extends Observable
         const E = EmailDomainsEditorViewModel
         this.Change(() =>
         {
-            this.Show({ domains: [], editable: false })
+            this.Show({ domains: [], editable: false, inHive: false })
+            this.inHive = false
             this.editable = false
             this.readOnlyText = E.UnavailableText
             this.errorText = E.NoText
@@ -126,7 +142,8 @@ export class EmailDomainsEditorViewModel extends Observable
     {
         this.Change(() =>
         {
-            this.Show({ domains: [], editable: false })
+            this.Show({ domains: [], editable: false, inHive: false })
+            this.inHive = false
             this.editable = false
             this.readOnlyText = EmailDomainsEditorViewModel.NoText
             this.errorText = message
@@ -153,6 +170,7 @@ export class EmailDomainsEditorViewModel extends Observable
             this.Change(() =>
             {
                 this.Show(reply)
+                this.inHive = reply.inHive
                 this.savedText = EmailDomainsEditorViewModel.SavedLabel
             })
         }
@@ -208,6 +226,6 @@ export class EmailDomainsEditorViewModel extends Observable
 
     private BoundValues(): unknown[]
     {
-        return EmailDomainsEditorViewModel.BoundProperties.map(name => Reflect.get(this, name) as unknown)
+        return EmailDomainsEditorViewModel.BoundProperties.map(name => this[name])
     }
 }

@@ -81,7 +81,7 @@ describe('PlatformEmailDomains', () =>
         await f.directory.SetTenantEmailDomains('beta', ['beta.test'])
         assert.equal(f.domains.IsInHive('beta'), false)
         assert.deepEqual(f.domains.Report('beta'), { tenantId: 'beta', domains: ['beta.test'], source: EmailDomainSource.Tenant, editable: true, sharedWith: [] })
-        assert.deepEqual(f.domains.For('beta'), { domains: ['beta.test'], editable: true })
+        assert.deepEqual(f.domains.For('beta'), { domains: ['beta.test'], editable: true, inHive: false })
     })
 
     it('an in-hive tenant reports its advert domains read-only with the report time', async () =>
@@ -93,7 +93,7 @@ describe('PlatformEmailDomains', () =>
             tenantId: 'acme', domains: ['acme.test'], source: EmailDomainSource.Console, editable: false, reportedAt: DomainsFixture.ReportedAt, sharedWith: [],
             approvals: [{ domain: 'acme.test', approved: false, sharedWith: [] }],
         })
-        assert.deepEqual(f.domains.For('acme'), { domains: ['acme.test'], editable: false })
+        assert.deepEqual(f.domains.For('acme'), { domains: ['acme.test'], editable: false, inHive: true })
     })
 
     it('an in-hive tenant without an advert reports none', async () =>
@@ -117,7 +117,7 @@ describe('PlatformEmailDomains', () =>
 
     it('Set stores a control-plane tenant\'s domains normalised', async () =>
     {
-        assert.deepEqual(await f.domains.Set('beta', ['Beta.TEST', 'beta.test']), { domains: ['beta.test'], editable: true })
+        assert.deepEqual(await f.domains.Set('beta', ['Beta.TEST', 'beta.test']), { domains: ['beta.test'], editable: true, inHive: false })
         assert.deepEqual(f.directory.GetTenant('beta')?.emailDomains, ['beta.test'])
         await assert.rejects(f.domains.Set('beta', ['gmail.com']), InvalidEmailDomainError)
     })
@@ -125,7 +125,7 @@ describe('PlatformEmailDomains', () =>
     it('an unknown tenant reads as none and cannot be set', async () =>
     {
         assert.equal(f.domains.Report('nope'), undefined)
-        assert.deepEqual(f.domains.For('nope'), { domains: [], editable: false })
+        assert.deepEqual(f.domains.For('nope'), { domains: [], editable: false, inHive: false })
         await assert.rejects(f.domains.Set('nope', []), UnknownTenantError)
     })
 

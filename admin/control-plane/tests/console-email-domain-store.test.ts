@@ -39,7 +39,7 @@ describe('ConsoleEmailDomainStore', () =>
     {
         const store = await ConsoleEmailDomainStore.Open(file, Names.TenantId, [' ACME.test. ', Names.PublicMail])
         assert.deepEqual(store.Domains, [Names.SeedDomain], 'normalised, the refused seed entry dropped')
-        assert.deepEqual(store.For(Names.TenantId), { domains: [Names.SeedDomain], editable: true })
+        assert.deepEqual(store.For(Names.TenantId), { domains: [Names.SeedDomain], editable: true, inHive: true })
         assert.equal(existsSync(file), false)
         assert.deepEqual(readdirSync(root), [])
     })
@@ -54,7 +54,7 @@ describe('ConsoleEmailDomainStore', () =>
     {
         const store = await ConsoleEmailDomainStore.Open(file, Names.TenantId, [Names.SeedDomain])
         const view = await store.Set(Names.TenantId, [Names.NewDomain])
-        assert.deepEqual(view, { domains: [Names.NewDomain], editable: true })
+        assert.deepEqual(view, { domains: [Names.NewDomain], editable: true, inHive: true })
         assert.deepEqual(JSON.parse(readFileSync(file, Names.Utf8)), { domains: [Names.NewDomain] })
         const reopened = await ConsoleEmailDomainStore.Open(file, Names.TenantId, [Names.SeedDomain])
         assert.deepEqual(reopened.Domains, [Names.NewDomain])
@@ -97,7 +97,7 @@ describe('ConsoleEmailDomainStore', () =>
     {
         const store = await ConsoleEmailDomainStore.Open(file, Names.TenantId, [Names.SeedDomain])
         await assert.rejects(() => store.Set(Names.OtherTenantId, [Names.NewDomain]), EmailDomainsNotEditableError)
-        assert.deepEqual(store.For(Names.OtherTenantId), { domains: [], editable: false })
+        assert.deepEqual(store.For(Names.OtherTenantId), { domains: [], editable: false, inHive: true })
         assert.deepEqual(store.Domains, [Names.SeedDomain])
         assert.equal(existsSync(file), false)
     })

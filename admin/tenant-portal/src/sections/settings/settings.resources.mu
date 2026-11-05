@@ -98,9 +98,8 @@ resources SettingsResources {
                                           Placeholder = "e.g. acme.com, acme.co.uk", Margin = (0,0,0,4) ]
                                 TextBlock [ Text = "Separate domains with commas.", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,8),
                                             Visibility = $IsEditable << ToVisibility ]
-                                TextBlock [ Text = "If this tenant's console runs in its own hive, a domain only takes effect after the platform operator approves it.",
-                                            Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,8),
-                                            Visibility = $IsEditable << ToVisibility ]
+                                TextBlock [ Text = $ApprovalText, Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,8),
+                                            Visibility = $ApprovalText << ToVisibility ]
                                 TextBlock [ Text = $ReadOnlyText, Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,8),
                                             Visibility = $ReadOnlyText << ToVisibility ]
                                 StackPanel [ Orientation = Horizontal, Visibility = $IsEditable << ToVisibility ] {

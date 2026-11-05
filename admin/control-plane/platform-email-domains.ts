@@ -109,13 +109,13 @@ export class PlatformEmailDomains implements ITenantEmailDomains
         const tenant = this.directory.GetTenant(tenantId)
         if (tenant === undefined)
         {
-            return { domains: [], editable: false }
+            return { domains: [], editable: false, inHive: false }
         }
         if (this.IsInHive(tenantId))
         {
-            return { domains: [...(this.AdvertOf(tenantId)?.emailDomains ?? [])].sort(), editable: false }
+            return { domains: [...(this.AdvertOf(tenantId)?.emailDomains ?? [])].sort(), editable: false, inHive: true }
         }
-        return { domains: PlatformEmailDomains.RecordDomainsOf(tenant), editable: true }
+        return { domains: PlatformEmailDomains.RecordDomainsOf(tenant), editable: true, inHive: false }
     }
 
     public async Set(tenantId: string, domains: unknown): Promise<TenantEmailDomainsView>
@@ -129,7 +129,7 @@ export class PlatformEmailDomains implements ITenantEmailDomains
             throw new EmailDomainsNotEditableError(PlatformEmailDomains.NotEditableMessage)
         }
         const updated = await this.directory.SetTenantEmailDomains(tenantId, domains)
-        return { domains: PlatformEmailDomains.RecordDomainsOf(updated), editable: true }
+        return { domains: PlatformEmailDomains.RecordDomainsOf(updated), editable: true, inHive: false }
     }
 
     /**

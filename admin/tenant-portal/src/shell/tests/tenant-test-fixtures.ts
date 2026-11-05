@@ -147,8 +147,8 @@ export class FakeTenantApi
     public Tokens = new Map<string, ServiceTokenSummaryDto[]>()
     public SecurityModels = new Map<string, SecurityModelDto | null>()
     public ProfileDto: TenantProfileDto | undefined
-    public EmailDomains: EmailDomainsDto = { domains: ['acme.test'], editable: true }
-    public IssuedTokenValue ='fixture-issued-token'
+    public EmailDomains: EmailDomainsDto = { domains: ['acme.test'], editable: true, inHive: false }
+    public IssuedTokenValue = 'fixture-issued-token'
     public Failure: Error | undefined
     public readonly FailOn = new Map<string, Error>()
     public readonly Calls: Array<[string, ...unknown[]]> = []
@@ -232,15 +232,15 @@ export class FakeTenantApi
     public async GetEmailDomains(): Promise<EmailDomainsDto>
     {
         await this.Enter('GetEmailDomains')
-        return { domains: [...this.EmailDomains.domains], editable: this.EmailDomains.editable }
+        return { domains: [...this.EmailDomains.domains], editable: this.EmailDomains.editable, inHive: this.EmailDomains.inHive }
     }
 
     // Recorded as ['SetEmailDomains', domains]; stores the list as given (lower-cased, like the server) and answers it.
     public async SetEmailDomains(domains: readonly string[]): Promise<EmailDomainsDto>
     {
         await this.Enter('SetEmailDomains', [...domains])
-        this.EmailDomains = { domains: domains.map(d => d.toLowerCase()), editable: this.EmailDomains.editable }
-        return { domains: [...this.EmailDomains.domains], editable: this.EmailDomains.editable }
+        this.EmailDomains = { domains: domains.map(d => d.toLowerCase()), editable: this.EmailDomains.editable, inHive: this.EmailDomains.inHive }
+        return { domains: [...this.EmailDomains.domains], editable: this.EmailDomains.editable, inHive: this.EmailDomains.inHive }
     }
 
     public BeginLogin(): void
