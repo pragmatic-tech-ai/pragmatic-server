@@ -687,6 +687,30 @@ describe('TenantConsoleInstaller', () =>
         await fx.Installer.WhenSettled('h1')
     })
 
+    it('an advert that arrives mid-run (during the rollout wait) makes the finished install Reported at once', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.Installer.Start('h1')
+        // The new console's first advert lands after the run started and before it finishes (clock: started 10:00:00, finished 10:01:00).
+        fx.Adverts.Record = FakeAdvertLookup.Advert('acme', 'h1', '2026-11-05T10:00:30.000Z')
+        fx.ClockMs = Date.parse('2026-11-05T10:01:00.000Z')
+        assert.equal((await fx.Installer.WhenSettled('h1'))?.state, ConsoleInstallState.Deployed)
+        const status = fx.Installer.StatusFor('h1')
+        assert.equal(status?.state, ConsoleInstallState.Reported)
+        assert.equal(status?.reportedAt, '2026-11-05T10:00:30.000Z')
+        assert.equal(status?.stale, false)
+    })
+
+    it('a stale advert from before a reinstall started does not count', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.Adverts.Record = FakeAdvertLookup.Advert('acme', 'h1', '2026-11-05T09:59:59.000Z')
+        fx.Installer.Start('h1')
+        fx.ClockMs = Date.parse('2026-11-05T10:01:00.000Z')
+        await fx.Installer.WhenSettled('h1')
+        assert.equal(fx.Installer.StatusFor('h1')?.state, ConsoleInstallState.Deployed)
+    })
+
     it('a failed reinstall stays failed even with an old advert', async () =>
     {
         fx = await ConsoleInstallFixture.Create()

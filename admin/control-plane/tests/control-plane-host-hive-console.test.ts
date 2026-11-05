@@ -253,7 +253,6 @@ class HeldCheckIns
     }
 }
 
-// Keeps a console install in its first step until released.
 // A real advert store whose forgets can be made to fail (a store write failure after the record or setting is already gone).
 class SwitchableAdverts extends ConsoleAdvertRegistry
 {
@@ -312,6 +311,7 @@ class ErrorLines
     }
 }
 
+// Keeps a console install in its first step until released.
 class InstallHold
 {
     private release: () => void = () => undefined
@@ -602,7 +602,7 @@ describe('ControlPlaneHost in-hive console install', () =>
 
     it('GET console-install answers reported from the advert', async () =>
     {
-        await adverts.Report({ tenantId: 't1', hiveId: 'h1', consoleUrl: 'https://console-t1.localtest.me', fingerprints: [], emailDomains: [], reportedAt: new Date().toISOString() })
+        await reportFor('t1', 'h1')
         const r = await Send.Request(host, 'GET', '/api/hives/h1/console-install')
         assert.equal(r.status, 200)
         const body = JSON.parse(r.body) as { state: string; consoleUrl: string; stale: boolean }

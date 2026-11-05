@@ -330,7 +330,6 @@ export class CountingRegistrar implements IHiveRegistrar
     }
 }
 
-/** A Local hive h1 of tenant acme with development console settings, its agent installed, and a real sealed store. */
 /** A console advert lookup whose single record a test sets; the record answers for its own tenant only. */
 export class FakeAdvertLookup implements IConsoleAdvertLookup
 {
@@ -357,8 +356,12 @@ export class FakeAdvertLookup implements IConsoleAdvertLookup
     }
 }
 
+/** A Local hive h1 of tenant acme with development console settings, its agent installed, and a real sealed store. */
 export class ConsoleInstallFixture
 {
+    /** The installer clock (epoch ms); a test advances it to make a run finish later than it started. */
+    public ClockMs = Date.parse('2026-11-05T10:00:00.000Z')
+
     public static readonly ChannelUrl = 'http://host.docker.internal:7001'
     public static readonly BaseDomain = 'localtest.me'
     /** The admin token of the IdP that already runs in the cluster (reused, never re-minted). */
@@ -389,7 +392,7 @@ export class ConsoleInstallFixture
             this.Images,
             new FakeTrustRoots(),
             channelOn ? ConsoleInstallFixture.ChannelUrl : undefined,
-            { Now: () => Date.parse('2026-11-05T10:00:00.000Z'), Delay: async () => undefined },
+            { Now: () => this.ClockMs, Delay: async () => undefined },
             this.Adverts)
         this.Tenants.set('acme', { id: 'acme', clientId: 'c1', displayName: 'Acme', createdAt: '2026-01-01T00:00:00.000Z', ownerEmail: 'owner@acme.test', ownerPrincipalId: 'owner' })
         this.Hives.set('h1', ConsoleInstallFixture.Hive('h1'))
@@ -438,7 +441,7 @@ export class ConsoleInstallFixture
         return new TenantConsoleInstaller(
             { GetHive: (id: string) => this.Hives.get(id), GetTenant: (id: string) => this.Tenants.get(id) },
             this.Orchestrators, new TenantAdminBootstrap(this.Registrar), this.Fingerprints, this.DevCa, this.IdpAdmin, this.Images, new FakeTrustRoots(),
-            ConsoleInstallFixture.ChannelUrl, { Now: () => Date.parse('2026-11-05T10:00:00.000Z'), Delay: async () => undefined }, this.Adverts)
+            ConsoleInstallFixture.ChannelUrl, { Now: () => this.ClockMs, Delay: async () => undefined }, this.Adverts)
     }
 
     public Dispose(): void

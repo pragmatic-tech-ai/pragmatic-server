@@ -347,8 +347,9 @@ export class TenantConsoleInstaller
     /**
      * The latest install's status for the hive; undefined when none has run since the control plane started and no advert answers.
      * A usable advert of this hive (it still has its console) turns a deployed install (or no install since a restart) into
-     * Reported. With a run in memory the advert counts only when it is not older than the run's finish, so a reinstall stays
-     * deployed until the new console reports. Installing and Failed are never overridden.
+     * Reported. With a run in memory the advert counts only when it is not older than the run's start: the new console's first advert
+     * arrives during the rollout wait, before the run finishes, while an advert from before the reinstall began is the old
+     * console's and leaves the install deployed. Installing and Failed are never overridden.
      */
     public StatusFor(hiveId: string): ConsoleInstallStatus | undefined
     {
@@ -358,7 +359,7 @@ export class TenantConsoleInstaller
             return base
         }
         const advert = this.UsableAdvertOf(hiveId)
-        if (advert === undefined || (base !== undefined && !TenantConsoleInstaller.ReportedSince(advert.reportedAt, base.finishedAt)))
+        if (advert === undefined || (base !== undefined && !TenantConsoleInstaller.ReportedSince(advert.reportedAt, base.startedAt)))
         {
             return base
         }
@@ -383,10 +384,10 @@ export class TenantConsoleInstaller
         return ConsoleAdvertRegistry.UsableFor(this.adverts, hive.tenantId, [hive])
     }
 
-    /** Whether an advert reported at `reportedAt` is not older than `finishedAt`; fails closed on an unreadable time. */
-    private static ReportedSince(reportedAt: string, finishedAt: string | undefined): boolean
+    /** Whether an advert reported at `reportedAt` is not older than the run's `startedAt`; fails closed on an unreadable time. */
+    private static ReportedSince(reportedAt: string, startedAt: string): boolean
     {
-        return finishedAt !== undefined && Date.parse(reportedAt) >= Date.parse(finishedAt)
+        return Date.parse(reportedAt) >= Date.parse(startedAt)
     }
 
     public IsInstalling(hiveId: string): boolean
