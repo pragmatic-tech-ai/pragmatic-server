@@ -54,8 +54,10 @@ export class EmailDomainApprovalRefusedError extends Error
  * from its usable console advert (ConsoleAdvertRegistry.UsableFor), read-only here: the tenant Owner sets them in the console.
  * Its record's domains are ignored while the console is set, and advert domains are never copied back into the record (that
  * would let a hive write platform records). So after the console is removed (its advert forgotten), the tenant reads as a
- * control-plane tenant again and its OLD record domains (those seeded into the console at install) become effective again; the
- * Owner's in-hive edits are lost. Accepted.
+ * control-plane tenant again and its OLD record domains (those seeded into the console at install) are claimed again (effective
+ * where approved). The Owner's in-hive edits are ignored by the control plane until the console is reinstalled: they stay in
+ * `email-domains.json` on the console's retained data volume, so a reinstall brings them back in its first advert (and those an
+ * operator approved before match again at once, since approvals are kept per tenant). Accepted.
  *
  * Nobody's claim alone redirects an address: a claimed domain matches in discovery only once an operator approved it
  * (ConsoleDomainApprovals, the one store for both kinds of tenant; Approve / Revoke here). The domains an operator saves are

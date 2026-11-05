@@ -181,4 +181,7 @@ File and class names, advert interval constants, the advert store shape, how the
 - **A former in-hive tenant's record domains return after console removal.** While a hive runs the console, the tenant's
   record domains are ignored and the advert's domains are never copied back into the record (a hive must not write platform
   records). Once the console is removed and its advert forgotten, the record's old domains (the ones seeded into the
-  console at install) count again, and the Owner's in-hive edits are lost. Accepted.
+  console at install) are claimed again (and count where approved). The Owner's in-hive edits are not lost: the control
+  plane ignores them until the console is reinstalled, but they stay in `email-domains.json` on the console's retained data
+  volume, so a reinstall brings them back in its first advert (domains an operator approved before match again at once,
+  since approvals are kept per tenant). Accepted.
