@@ -147,7 +147,7 @@ export class FakeTenantApi
     public Tokens = new Map<string, ServiceTokenSummaryDto[]>()
     public SecurityModels = new Map<string, SecurityModelDto | null>()
     public ProfileDto: TenantProfileDto | undefined
-    public EmailDomains: EmailDomainsDto = { domains: ['acme.test'], editable: true, inHive: false }
+    public EmailDomains: EmailDomainsDto = { domains: ['acme.test'], editable: true, inHive: false, pending: [] }
     public IssuedTokenValue = 'fixture-issued-token'
     public Failure: Error | undefined
     public readonly FailOn = new Map<string, Error>()
@@ -232,15 +232,26 @@ export class FakeTenantApi
     public async GetEmailDomains(): Promise<EmailDomainsDto>
     {
         await this.Enter('GetEmailDomains')
-        return { domains: [...this.EmailDomains.domains], editable: this.EmailDomains.editable, inHive: this.EmailDomains.inHive }
+        return this.CopyEmailDomains()
     }
 
-    // Recorded as ['SetEmailDomains', domains]; stores the list as given (lower-cased, like the server) and answers it.
+    // Recorded as ['SetEmailDomains', domains]; stores the list as given (lower-cased, like the server) and answers it. Like the
+    // control plane, a domain that was not approved before is pending (an in-hive console reports none pending).
     public async SetEmailDomains(domains: readonly string[]): Promise<EmailDomainsDto>
     {
         await this.Enter('SetEmailDomains', [...domains])
-        this.EmailDomains = { domains: domains.map(d => d.toLowerCase()), editable: this.EmailDomains.editable, inHive: this.EmailDomains.inHive }
-        return { domains: [...this.EmailDomains.domains], editable: this.EmailDomains.editable, inHive: this.EmailDomains.inHive }
+        const previous = this.EmailDomains
+        const approved = new Set(previous.domains.filter(d => !previous.pending.includes(d)))
+        const next = domains.map(d => d.toLowerCase())
+        const pending = previous.inHive ? [] : next.filter(d => !approved.has(d)).sort()
+        this.EmailDomains = { domains: next, editable: previous.editable, inHive: previous.inHive, pending }
+        return this.CopyEmailDomains()
+    }
+
+    private CopyEmailDomains(): EmailDomainsDto
+    {
+        const e = this.EmailDomains
+        return { domains: [...e.domains], editable: e.editable, inHive: e.inHive, pending: [...e.pending] }
     }
 
     public BeginLogin(): void

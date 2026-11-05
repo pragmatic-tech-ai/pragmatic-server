@@ -17,7 +17,11 @@ export class EmailDomainsEditorViewModel extends Observable
     private static readonly InHiveText = "This tenant's email domains are set in its in-hive console."
     private static readonly UnavailableText = 'Email domains are not available here.'
     private static readonly ApprovalSentence = 'A domain only takes effect after the platform operator approves it.'
+    private static readonly PendingPrefix = 'Waiting for the platform operator to approve: '
+    private static readonly PendingSuffix = '. '
     private static readonly NoText = ''
+    // What the tab shows when no list could be read.
+    private static readonly Nothing: EmailDomainsDto = { domains: [], editable: false, inHive: false, pending: [] }
     // Every bound value a change can move, raised when it did; typed so a renamed member fails typecheck.
     private static readonly BoundProperties: ReadonlyArray<keyof EmailDomainsEditorViewModel> = [
         'DomainsText', 'IsEditable', 'IsInHive', 'ApprovalText', 'ReadOnlyText', 'ErrorText', 'SavedText', 'IsSaving',
@@ -28,6 +32,7 @@ export class EmailDomainsEditorViewModel extends Observable
     private text = ''
     private editable = false
     private inHive = false
+    private pending: readonly string[] = []
     private readOnlyText = ''
     private errorText = ''
     private savedText = ''
@@ -70,10 +75,16 @@ export class EmailDomainsEditorViewModel extends Observable
         return this.inHive
     }
 
-    // The operator-approval sentence for an in-hive tenant; '' otherwise.
+    // The operator-approval sentence: naming the domains still pending (the control plane knows them), or the general
+    // sentence in an in-hive console (which cannot see the operator's approvals); '' when every domain is approved.
     public get ApprovalText(): string
     {
-        return this.inHive ? EmailDomainsEditorViewModel.ApprovalSentence : EmailDomainsEditorViewModel.NoText
+        const E = EmailDomainsEditorViewModel
+        if (this.pending.length > 0)
+        {
+            return E.PendingPrefix + this.pending.join(E.DomainSeparator) + E.PendingSuffix + E.ApprovalSentence
+        }
+        return this.inHive ? E.ApprovalSentence : E.NoText
     }
 
     // Why the list is read-only; '' while it is editable.
@@ -116,7 +127,6 @@ export class EmailDomainsEditorViewModel extends Observable
         this.Change(() =>
         {
             this.Show(dto)
-            this.inHive = dto.inHive
             this.editable = dto.editable && canChangeSettings
             this.readOnlyText = this.editable ? E.NoText : canChangeSettings ? E.InHiveText : E.OwnerOnlyText
             this.errorText = E.NoText
@@ -129,8 +139,7 @@ export class EmailDomainsEditorViewModel extends Observable
         const E = EmailDomainsEditorViewModel
         this.Change(() =>
         {
-            this.Show({ domains: [], editable: false, inHive: false })
-            this.inHive = false
+            this.Show(E.Nothing)
             this.editable = false
             this.readOnlyText = E.UnavailableText
             this.errorText = E.NoText
@@ -142,8 +151,7 @@ export class EmailDomainsEditorViewModel extends Observable
     {
         this.Change(() =>
         {
-            this.Show({ domains: [], editable: false, inHive: false })
-            this.inHive = false
+            this.Show(EmailDomainsEditorViewModel.Nothing)
             this.editable = false
             this.readOnlyText = EmailDomainsEditorViewModel.NoText
             this.errorText = message
@@ -170,7 +178,6 @@ export class EmailDomainsEditorViewModel extends Observable
             this.Change(() =>
             {
                 this.Show(reply)
-                this.inHive = reply.inHive
                 this.savedText = EmailDomainsEditorViewModel.SavedLabel
             })
         }
@@ -191,10 +198,13 @@ export class EmailDomainsEditorViewModel extends Observable
         }
     }
 
+    // Shows a reply: the list, where the console runs, and the domains still waiting for approval.
     private Show(dto: EmailDomainsDto): void
     {
         this.domains = [...dto.domains]
         this.text = dto.domains.join(EmailDomainsEditorViewModel.DomainSeparator)
+        this.inHive = dto.inHive
+        this.pending = [...dto.pending]
     }
 
     // The typed text as a list; the server normalises and validates each domain.
