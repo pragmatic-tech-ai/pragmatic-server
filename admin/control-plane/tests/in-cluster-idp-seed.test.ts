@@ -30,6 +30,7 @@ class FakeKubectl implements IKubectl
     public async Find(): Promise<string | undefined> { return undefined }
     public async DeleteBySelector(): Promise<void> { }
     public async DeleteNamespacesBySelector(): Promise<string[]> { return [] }
+    public async ListNamespacesBySelector(): Promise<string[]> { return [] }
     public async Get(): Promise<string> { return '' }
     public async DeleteNamespace(): Promise<void> { }
 }

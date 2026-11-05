@@ -1,3 +1,4 @@
+import { ConsoleRetention } from './console-retention.js'
 import { HiveBootstrapBundle } from './hive-bootstrap-bundle.js'
 import type { IInstallOrchestratorSource } from './hive-agent-installer.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
@@ -80,8 +81,9 @@ export class HiveClusterDestroyError extends Error
  * - by the hive label: every Deployment, Service, ServiceAccount and Secret in pragmatic-system (the agent, and the
  *   tenant-admin pod with its Service, ServiceAccount and labelled credentials such as a pull secret).
  * Deletes tolerate objects already gone, so a half-installed or hand-removed agent uninstalls cleanly. The tenant-admin data
- * PVC and its seed Secret (the master key that decrypts it) are kept together (Retained); neither is hive-labelled-and-
- * selected: the PVC's kind is not in the selector and the seed Secret is never labelled.
+ * PVC and its seed Secret (the master key that decrypts it) are kept together, and so are the in-hive IdP's data PVC and Secrets
+ * (its Deployment, Service and Ingress go with the console); ConsoleRetention reports them. Neither console object is
+ * hive-labelled-and-selected: the PVC's kind is not in the selector and the seed Secret is never labelled.
  * Covers attached Local hives only: a provisioned (kind) hive's whole cluster is destroyed on delete, agent included, and the
  * platform never touches other backends' clusters.
  */
@@ -89,8 +91,6 @@ export class HiveAgentUninstaller
 {
     private static readonly SelectedResources = 'deployment,service,serviceaccount,secret'
     private static readonly DeploymentPrefix = 'deployment/'
-    private static readonly ClaimPrefix = 'persistentvolumeclaim/'
-    private static readonly SecretPrefix = 'secret/'
     private static readonly UnsafeIdReason = "the hive id is not a valid Kubernetes label value, so its objects cannot be selected safely (a selector could match another hive's)"
 
     private readonly manifests = new K8sManifestBuilder()
@@ -132,7 +132,7 @@ export class HiveAgentUninstaller
 
     /**
      * Removes the agent's objects and returns the names of what it deliberately kept and that exists: the tenant-admin data
-     * PVC and its seed Secret. The tenant's console objects are deleted by name, and the kept objects reported, only when
+     * PVC and its seed Secret, and the in-hive IdP's data PVC and Secrets. The tenant's console objects are deleted by name, and the kept objects reported, only when
      * this hive owns the tenant's tenant-admin (its Deployment carries this hive's label) or none is installed: another hive
      * of the same tenant on the same cluster keeps them. Throws AgentUninstallError when kubectl fails or the id cannot be
      * selected safely; any other failure is not an uninstall failure and propagates as is.
@@ -155,7 +155,7 @@ export class HiveAgentUninstaller
                 await kubectl.DeleteManifest(this.manifests.TenantConsoleRemovalManifest(hive.tenantId, hive.id))
             }
             await kubectl.DeleteBySelector(ns, HiveAgentUninstaller.SelectedResources, K8sManifestBuilder.HiveLabelSelectorOf(hive.id))
-            return owns ? await this.ExistingRetained(kubectl, hive) : []
+            return owns ? await ConsoleRetention.ExistingOf(kubectl, hive.tenantId) : []
         }
         catch (err)
         {
@@ -172,24 +172,5 @@ export class HiveAgentUninstaller
     {
         const doc = await kubectl.Find(K8sManifestBuilder.SystemNamespace, HiveAgentUninstaller.DeploymentPrefix + K8sManifestBuilder.TenantAdminNameOf(hive.tenantId))
         return doc === undefined || K8sManifestBuilder.HiveOf(JSON.parse(doc)) === hive.id
-    }
-
-    /** The kept tenant-admin data PVC and seed Secret that actually exist. */
-    private async ExistingRetained(kubectl: IKubectl, hive: HiveRecord): Promise<string[]>
-    {
-        const C = HiveAgentUninstaller
-        const candidates: Array<[string, string]> = [
-            [C.ClaimPrefix, K8sManifestBuilder.TenantAdminClaimNameOf(hive.tenantId)],
-            [C.SecretPrefix, K8sManifestBuilder.TenantAdminSeedSecretNameOf(hive.tenantId)],
-        ]
-        const kept: string[] = []
-        for (const [prefix, name] of candidates)
-        {
-            if (await kubectl.Find(K8sManifestBuilder.SystemNamespace, prefix + name) !== undefined)
-            {
-                kept.push(name)
-            }
-        }
-        return kept
     }
 }

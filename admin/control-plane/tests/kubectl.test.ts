@@ -160,6 +160,14 @@ test('DeleteNamespacesBySelector refuses an empty prefix and a list that is not 
     assert.ok(!f.Fake.Calls.some(c => c.args.includes('delete')))
 })
 
+test('ListNamespacesBySelector lists by label and returns only names inside the prefix, deleting nothing', async () =>
+{
+    const f = new KubectlFixture()
+    f.Fake.Stdout = JSON.stringify({ items: [{ metadata: { name: 'pragmatic-env-a' } }, { metadata: { name: 'kube-system' } }] })
+    assert.deepEqual(await f.Cli.ListNamespacesBySelector('pragmatic/hive=h1', 'pragmatic-env-'), ['pragmatic-env-a'])
+    assert.deepEqual(f.Fake.Calls.map(c => c.args), [['--context', 'kind-hive', 'get', 'namespaces', '-l', 'pragmatic/hive=h1', '-o', 'json']])
+})
+
 test('DeleteNamespace args', async () =>
 {
     const f = new KubectlFixture()

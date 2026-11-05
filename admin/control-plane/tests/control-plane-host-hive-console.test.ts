@@ -373,7 +373,7 @@ describe('ControlPlaneHost in-hive console install', () =>
         await hold.Release()
         const r = await Send.Request(host, 'DELETE', '/api/hives/h1/console')
         assert.equal(r.status, 200)
-        assert.equal((JSON.parse(r.body) as HiveRecord).console, undefined)
+        assert.equal((JSON.parse(r.body) as { hive: HiveRecord }).hive.console, undefined)
         assert.equal(directory.GetHive('h1')?.console, undefined)
         assert.ok(fx.Kubectl.Deleted.includes(new K8sManifestBuilder().TenantConsoleRemovalManifest('t1', 'h1')))
     })
@@ -440,6 +440,31 @@ describe('ControlPlaneHost in-hive console install', () =>
         assert.equal(r.status, 200)
         assert.equal(directory.GetHive('h2'), undefined)
         assert.deepEqual(fx.IdpAdmin.Forgotten, [])
+    })
+
+    it('DELETE console keeps the environment namespaces it created and names them, the console data and the IdP data in retained and the audit note', async () =>
+    {
+        fx.Kubectl.Namespaces.set('pragmatic-env-console-dev', { 'pragmatic/hive': 'h1' })
+        const r = await Send.Request(host, 'DELETE', '/api/hives/h1/console')
+        assert.equal(r.status, 200)
+        const body = JSON.parse(r.body) as { hive: HiveRecord; retained: string[] }
+        assert.equal(body.hive.id, 'h1')
+        assert.deepEqual(body.retained, [InClusterIdpSeedSource.TlsSecretNameOf('t1'), InClusterIdpSeedSource.AdminSecretNameOf('t1'), 'pragmatic-env-console-dev'])
+        assert.ok(fx.Kubectl.Namespaces.has('pragmatic-env-console-dev'))
+        assert.ok(!fx.Kubectl.Calls.some(c => c[0] === 'DeleteNamespacesBySelector'))
+        const note = audit.Recent(10).find(e => e.method === 'DELETE' && e.path === '/api/hives/h1/console')?.note ?? ''
+        assert.match(note, /^retained: .*pragmatic-env-console-dev$/)
+    })
+
+    it('hive delete stops the in-hive IdP and reports its kept data volume and Secrets in retained', async () =>
+    {
+        const r = await Send.Request(host, 'DELETE', '/api/hives/h1')
+        assert.equal(r.status, 200)
+        const removal = JSON.parse(new K8sManifestBuilder().TenantConsoleRemovalManifest('t1', 'h1')) as { items: Array<{ kind: string; metadata: { namespace?: string } }> }
+        assert.ok(removal.items.some(i => i.kind === 'Deployment' && i.metadata.namespace === K8sManifestBuilder.IdpNameOf('t1')))
+        assert.ok(fx.Kubectl.Deleted.includes(new K8sManifestBuilder().TenantConsoleRemovalManifest('t1', 'h1')))
+        const body = JSON.parse(r.body) as { retained: string[] }
+        assert.deepEqual(body.retained, [InClusterIdpSeedSource.TlsSecretNameOf('t1'), InClusterIdpSeedSource.AdminSecretNameOf('t1')])
     })
 
     it('DELETE console forgets the tenant IdP credentials the control plane held for it', async () =>

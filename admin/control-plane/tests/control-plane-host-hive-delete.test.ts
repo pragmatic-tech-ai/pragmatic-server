@@ -92,6 +92,8 @@ class FakeKubectl implements IKubectl
         return []
     }
 
+    public async ListNamespacesBySelector(_selector: string, _namePrefix: string): Promise<string[]> { return [] }
+
     public async Apply(_m: string): Promise<void> { this.Calls.push(['Apply']) }
     public async ApplyServerSide(_m: string): Promise<void> { this.Calls.push(['ApplyServerSide']) }
     public async RolloutStatus(_n: string, _d: string): Promise<void> { }

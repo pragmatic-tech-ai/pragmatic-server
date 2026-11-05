@@ -2,6 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { AgentUninstallError, ConsoleUninstallError, HiveAgentUninstaller } from '../hive-agent-uninstaller.js'
 import { HiveBootstrapBundle } from '../hive-bootstrap-bundle.js'
+import { InClusterIdpSeedSource } from '../in-cluster-idp-seed.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { TenantAdminBootstrap } from '../tenant-admin-bootstrap.js'
 import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
@@ -53,6 +54,8 @@ class FakeKubectl implements IKubectl
         }
         return this.FailedNamespaces
     }
+
+    public async ListNamespacesBySelector(_selector: string, _namePrefix: string): Promise<string[]> { return [] }
 
     public async Apply(_m: string): Promise<void> { this.Calls.push(['Apply']) }
     public async ApplyServerSide(_m: string): Promise<void> { this.Calls.push(['ApplyServerSide']) }
@@ -133,6 +136,9 @@ describe('HiveAgentUninstaller', () =>
             ['DeleteBySelector', 'pragmatic-system', 'deployment,service,serviceaccount,secret', 'pragmatic/hive=h1'],
             ['Find', 'pragmatic-system', 'persistentvolumeclaim/' + K8sManifestBuilder.TenantAdminClaimNameOf('t1')],
             ['Find', 'pragmatic-system', 'secret/' + K8sManifestBuilder.TenantAdminSeedSecretNameOf('t1')],
+            ['Find', K8sManifestBuilder.IdpNameOf('t1'), 'persistentvolumeclaim/' + K8sManifestBuilder.IdpClaimNameOf('t1')],
+            ['Find', K8sManifestBuilder.IdpNameOf('t1'), 'secret/' + InClusterIdpSeedSource.TlsSecretNameOf('t1')],
+            ['Find', K8sManifestBuilder.IdpNameOf('t1'), 'secret/' + InClusterIdpSeedSource.AdminSecretNameOf('t1')],
         ])
         // Nothing retained exists here, so nothing is reported.
         assert.deepEqual(retained, [])
@@ -202,6 +208,18 @@ describe('HiveAgentUninstaller', () =>
             K8sManifestBuilder.TenantAdminClaimNameOf('t1'),
             K8sManifestBuilder.TenantAdminSeedSecretNameOf('t1'),
         ])
+    })
+
+    it('reports the in-hive IdP data volume and Secrets it keeps (its Deployment, Service and Ingress are removed with the console)', async () =>
+    {
+        const fx = new Fixture()
+        const k = fx.Orchestrators.Kubectl
+        k.Objects.set('persistentvolumeclaim/' + K8sManifestBuilder.IdpClaimNameOf('t1'), '{}')
+        k.Objects.set('secret/' + InClusterIdpSeedSource.TlsSecretNameOf('t1'), '{}')
+        k.Objects.set('secret/' + InClusterIdpSeedSource.AdminSecretNameOf('t1'), '{}')
+        const retained = await fx.Uninstaller.Uninstall(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach))
+        assert.deepEqual(retained, [K8sManifestBuilder.IdpClaimNameOf('t1'), InClusterIdpSeedSource.TlsSecretNameOf('t1'), InClusterIdpSeedSource.AdminSecretNameOf('t1')])
+        assert.ok(k.Calls.some(c => c[0] === 'Find' && c[1] === K8sManifestBuilder.IdpNameOf('t1') && c[2] === 'persistentvolumeclaim/' + K8sManifestBuilder.IdpClaimNameOf('t1')))
     })
 
     it('two hives of one tenant on one context: deleting the hive that does not own the tenant-admin leaves its credential copies and retains nothing', async () =>

@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import type { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
+import { ConsoleRetention } from './console-retention.js'
 import { DevCaHostOutsideDomainError, DevCaKeyMissingError, type IDevCertificateIssuer, type IssuedCertificate } from './dev-certificate-authority.js'
 import { EffectiveRegistry } from './effective-registry.js'
 import { SystemInstallClock, type IInstallClock, type IInstallOrchestratorSource } from './hive-agent-installer.js'
@@ -353,18 +354,27 @@ export class TenantConsoleInstaller
     }
 
     /**
-     * Deletes TenantConsoleRemovalManifest objects; keeps the data PVC, seed Secret and IdP namespace. Leaves a console another hive
-     * owns (its Deployment carries another hive's label) untouched. A KubectlError propagates.
+     * Deletes TenantConsoleRemovalManifest objects (the console, its grants and the in-hive IdP's serving objects) and this hive's TLS
+     * key copies in the IdP namespace, then returns what it kept that exists: the console's and the IdP's data and Secrets
+     * (ConsoleRetention) and the environment namespaces the console created, which keep running unmanaged until a reinstall adopts
+     * them (or the hive delete removes them). Leaves a console another hive owns (its Deployment carries another hive's label)
+     * untouched and returns nothing. A KubectlError propagates.
      */
-    public async Uninstall(hive: HiveRecord): Promise<void>
+    public async Uninstall(hive: HiveRecord): Promise<string[]>
     {
+        const C = TenantConsoleInstaller
         const kubectl = this.orchestrators.For(hive).Kubectl
-        const deployment = await kubectl.Find(K8sManifestBuilder.SystemNamespace, TenantConsoleInstaller.DeploymentPrefix + K8sManifestBuilder.TenantAdminNameOf(hive.tenantId))
+        const deployment = await kubectl.Find(K8sManifestBuilder.SystemNamespace, C.DeploymentPrefix + K8sManifestBuilder.TenantAdminNameOf(hive.tenantId))
         if (deployment !== undefined && K8sManifestBuilder.HiveOf(JSON.parse(deployment)) !== hive.id)
         {
-            return
+            return []
         }
         await kubectl.DeleteManifest(this.manifests.TenantConsoleRemovalManifest(hive.tenantId, hive.id))
+        // The IdP Ingress is gone, so the private-key copies it served are swept too.
+        await kubectl.DeleteBySelector(K8sManifestBuilder.IdpNameOf(hive.tenantId), C.SecretResource, C.TlsCopySelectorOf(hive.id))
+        const kept = await ConsoleRetention.ExistingOf(kubectl, hive.tenantId)
+        const environments = await kubectl.ListNamespacesBySelector(K8sManifestBuilder.HiveLabelSelectorOf(hive.id), K8sManifestBuilder.EnvNamespacePrefix)
+        return [...kept, ...environments]
     }
 
     /**

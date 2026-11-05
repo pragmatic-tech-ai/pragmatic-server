@@ -209,9 +209,13 @@ export class ApiKubectl implements IKubectl
 
     public async DeleteNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
     {
+        return NamespaceSweep.DeleteEach(await this.ListNamespacesBySelector(selector, namePrefix), name => this.DeleteNamespace(name))
+    }
+
+    public async ListNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
+    {
         const items = await this.client.List(KubeResourceCatalog.PathOf(KubeResourceCatalog.NamespaceType, undefined), selector)
-        const names = NamespaceSweep.Select(items.map(i => ApiKubectl.NameOf(i)), namePrefix)
-        return NamespaceSweep.DeleteEach(names, name => this.DeleteNamespace(name))
+        return NamespaceSweep.Select(items.map(i => ApiKubectl.NameOf(i)), namePrefix)
     }
 
     private static IsRolledOut(state: DeploymentState): boolean

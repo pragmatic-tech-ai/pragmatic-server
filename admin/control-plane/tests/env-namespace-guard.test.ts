@@ -24,6 +24,7 @@ class RecordingKubectl implements IKubectl
     public DeleteManifest(m: string) { return this.Record('DeleteManifest', [m]) }
     public DeleteBySelector(n: string, r: string, s: string) { return this.Record('DeleteBySelector', [n, r, s]) }
     public async DeleteNamespacesBySelector(s: string, p: string): Promise<string[]> { await this.Record('DeleteNamespacesBySelector', [s, p]); return [] }
+    public async ListNamespacesBySelector(s: string, p: string): Promise<string[]> { await this.Record('ListNamespacesBySelector', [s, p]); return [] }
     public DeleteNamespace(n: string) { return this.Record('DeleteNamespace', [n]) }
     public async Find(n: string, r: string): Promise<string | undefined> { await this.Record('Find', [n, r]); return undefined }
     public async Get(n: string, r: string): Promise<string> { await this.Record('Get', [n, r]); return '{}' }
@@ -166,6 +167,15 @@ test('a namespace sweep passes only an env prefix through', async () =>
     assert.deepEqual(inner.Calls, [])
     await guard.DeleteNamespacesBySelector('pragmatic/hive=h1', 'pragmatic-env-')
     assert.deepEqual(inner.Calls, [['DeleteNamespacesBySelector', 'pragmatic/hive=h1', 'pragmatic-env-']])
+})
+
+test('a namespace listing passes only an env prefix through', async () =>
+{
+    const { inner, guard } = GuardFixture.Make()
+    await assert.rejects(guard.ListNamespacesBySelector('pragmatic/hive=h1', 'kube-'), GuardFixture.IsRefusal)
+    assert.deepEqual(inner.Calls, [])
+    await guard.ListNamespacesBySelector('pragmatic/hive=h1', 'pragmatic-env-')
+    assert.deepEqual(inner.Calls, [['ListNamespacesBySelector', 'pragmatic/hive=h1', 'pragmatic-env-']])
 })
 
 test('a malformed manifest fails without echoing its content', async () =>

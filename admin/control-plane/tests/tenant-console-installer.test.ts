@@ -450,6 +450,30 @@ describe('TenantConsoleInstaller', () =>
         assert.deepEqual(fx.Kubectl.Deleted, [new K8sManifestBuilder().TenantConsoleRemovalManifest('acme', 'h1')])
     })
 
+    it('Uninstall stops the in-hive IdP, sweeps its key copies, and returns what it kept: data, IdP Secrets and the environment namespaces', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        const system = K8sManifestBuilder.SystemNamespace
+        fx.Kubectl.Put(system, 'persistentvolumeclaim/' + K8sManifestBuilder.TenantAdminClaimNameOf('acme'), {})
+        fx.Kubectl.Put(system, 'secret/' + K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme'), {})
+        fx.Kubectl.Put(K8sManifestBuilder.IdpNameOf('acme'), 'persistentvolumeclaim/' + K8sManifestBuilder.IdpClaimNameOf('acme'), {})
+        fx.Kubectl.Namespaces.set('pragmatic-env-dev', { 'pragmatic/hive': 'h1' })
+        fx.Kubectl.Namespaces.set('pragmatic-env-elsewhere', { 'pragmatic/hive': 'h2' })
+        const retained = await fx.Installer.Uninstall(fx.Hives.get('h1') as HiveRecord)
+        assert.deepEqual(retained, [
+            K8sManifestBuilder.TenantAdminClaimNameOf('acme'),
+            K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme'),
+            K8sManifestBuilder.IdpClaimNameOf('acme'),
+            InClusterIdpSeedSource.TlsSecretNameOf('acme'),
+            InClusterIdpSeedSource.AdminSecretNameOf('acme'),
+            'pragmatic-env-dev',
+        ])
+        assert.deepEqual(fx.Kubectl.Calls.filter(c => c[0] === 'DeleteBySelector'), [['DeleteBySelector', K8sManifestBuilder.IdpNameOf('acme'), 'secret', 'pragmatic/hive=h1,pragmatic/tls-copy=true']])
+        // The environments keep running: removal never deletes a namespace.
+        assert.ok(!fx.Kubectl.Calls.some(c => c[0] === 'DeleteNamespacesBySelector' || c[0] === 'DeleteNamespace'))
+        assert.deepEqual([...fx.Kubectl.Namespaces.keys()], ['pragmatic-env-dev', 'pragmatic-env-elsewhere'])
+    })
+
     it('removal does not need the agent channel: a Local hive with a safe id can always be uninstalled', async () =>
     {
         fx = await ConsoleInstallFixture.Create({ channelOn: false })

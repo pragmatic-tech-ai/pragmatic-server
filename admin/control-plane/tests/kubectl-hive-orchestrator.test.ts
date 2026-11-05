@@ -35,6 +35,7 @@ class FakeKubectl implements IKubectl
     public async Find(n: string, r: string): Promise<string | undefined> { await this.Record('Find', [n, r]); return this.found }
     public DeleteBySelector(n: string, r: string, s: string) { return this.Record('DeleteBySelector', [n, r, s]) }
     public async DeleteNamespacesBySelector(s: string, p: string): Promise<string[]> { await this.Record('DeleteNamespacesBySelector', [s, p]); return [] }
+    public async ListNamespacesBySelector(s: string, p: string): Promise<string[]> { await this.Record('ListNamespacesBySelector', [s, p]); return [] }
     public async Get(n: string, r: string)
     {
         await this.Record('Get', [n, r])

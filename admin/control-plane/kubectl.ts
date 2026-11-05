@@ -33,6 +33,8 @@ export interface IKubectl
      * outside the prefix is left alone); returns the names whose delete failed. A failed listing throws. Refuses an empty prefix.
      */
     DeleteNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
+    /** The names of the Namespaces that match the label selector AND start with `namePrefix`. Refuses an empty prefix. */
+    ListNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
 }
 
 /** The client-side name fence of DeleteNamespacesBySelector, shared by every IKubectl. */
@@ -357,6 +359,11 @@ export class KubectlCli implements IPortForwardingKubectl
 
     public async DeleteNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
     {
+        return NamespaceSweep.DeleteEach(await this.ListNamespacesBySelector(selector, namePrefix), name => this.DeleteNamespace(name))
+    }
+
+    public async ListNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
+    {
         const stdout = await this.Invoke([KubectlCli.GetVerb, KubectlCli.NamespacesResource, KubectlCli.SelectorFlag, selector, KubectlCli.OutputFlag, KubectlCli.Json])
         let names: string[]
         try
@@ -368,7 +375,7 @@ export class KubectlCli implements IPortForwardingKubectl
         {
             throw new KubectlError(KubectlCli.BadNamespaceListMessage, '', false)
         }
-        return NamespaceSweep.DeleteEach(NamespaceSweep.Select(names, namePrefix), name => this.DeleteNamespace(name))
+        return NamespaceSweep.Select(names, namePrefix)
     }
 
     /** Whether a kubectl can open port-forwards (it carries a context the platform can tunnel through). */

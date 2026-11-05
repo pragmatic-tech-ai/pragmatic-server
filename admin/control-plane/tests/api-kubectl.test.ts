@@ -210,6 +210,13 @@ test('DeleteNamespacesBySelector lists namespaces by label and deletes only thos
     ])
 })
 
+test('ListNamespacesBySelector lists by label and keeps only names inside the prefix', async () =>
+{
+    const { fake, kubectl } = Fixture.Make([Fixture.Ok({ items: [{ metadata: { name: 'pragmatic-env-a' } }, { metadata: { name: 'default' } }] })])
+    assert.deepEqual(await kubectl.ListNamespacesBySelector('pragmatic/hive=h1', 'pragmatic-env-'), ['pragmatic-env-a'])
+    assert.deepEqual(fake.Calls.map(c => [c[0], c[1]]), [[KubeMethod.Get, '/api/v1/namespaces?labelSelector=' + encodeURIComponent('pragmatic/hive=h1')]])
+})
+
 test('DeleteNamespacesBySelector reports a namespace whose delete failed and goes on', async () =>
 {
     const { kubectl } = Fixture.Make([

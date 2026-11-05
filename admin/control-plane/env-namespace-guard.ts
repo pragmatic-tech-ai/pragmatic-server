@@ -146,6 +146,15 @@ export class EnvNamespaceGuard implements IKubectl
         return this.inner.DeleteNamespacesBySelector(selector, namePrefix)
     }
 
+    public async ListNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
+    {
+        if (!namePrefix.startsWith(K8sManifestBuilder.EnvNamespacePrefix))
+        {
+            throw new EnvNamespaceRefusedError(namePrefix)
+        }
+        return this.inner.ListNamespacesBySelector(selector, namePrefix)
+    }
+
     public async RolloutStatus(namespace: string, deployment: string): Promise<void>
     {
         EnvNamespaceGuard.AssertEnvNamespace(namespace)

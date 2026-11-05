@@ -118,6 +118,13 @@ export class ConsoleFakeKubectl implements IKubectl
         return failed
     }
 
+    public async ListNamespacesBySelector(selector: string, namePrefix: string): Promise<string[]>
+    {
+        this.Calls.push(['ListNamespacesBySelector', selector, namePrefix])
+        const [key, value] = selector.split('=')
+        return [...this.Namespaces].filter(([name, labels]) => labels[key as string] === value && name.startsWith(namePrefix)).map(([name]) => name)
+    }
+
     public async RolloutRestart(n: string, d: string): Promise<void> { this.Calls.push(['RolloutRestart', n, d]) }
     public RolloutStatusError: Error | undefined
 

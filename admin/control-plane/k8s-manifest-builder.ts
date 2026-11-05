@@ -1060,7 +1060,8 @@ export class K8sManifestBuilder
 
     /**
      * Identities (v1 List, name + namespace only) of everything RenderTenantAdmin can render except the shared Namespace and
-     * the data PVC, plus the console's credential Secret copies and this tenant's development TLS copy in pragmatic-system.
+     * the data PVC, plus the console's credential Secret copies, this tenant's development TLS copy in pragmatic-system, and the
+     * in-hive IdP's serving objects (Deployment, Service, Ingress; never its namespace, data PVC or Secrets).
      * Optional objects (TLS Role + RoleBinding, Ingress, dev TLS copy) are always named so a removal after a TLS-source change
      * leaves nothing behind; the delete tolerates absent objects. Never the seed Secret (retained with the PVC: its master key
      * decrypts that data) and never the cluster-shared pragmatic-dev-tls. Refuses an invalid hive id.
@@ -1072,6 +1073,7 @@ export class K8sManifestBuilder
         const name = B.TenantAdminNameOf(tenantId)
         const tlsRole = B.TenantConsoleTlsRoleNameOf(tenantId)
         const system = B.SystemNamespace
+        const idp = B.IdpNameOf(tenantId)
         const items: K8sObject[] = [
             this.Identity(B.ApiVersionCore, B.ServiceAccountKind, name, system),
             this.Identity(B.ApiVersionRbac, B.ClusterRoleKind, name),
@@ -1086,6 +1088,10 @@ export class K8sManifestBuilder
             this.Identity(B.ApiVersionNetworking, B.IngressKind, name, system),
             ...B.TenantConsoleCredentialIdentitiesOf(tenantId),
             B.SystemSecretIdentity(B.TenantConsoleDevTlsSecretNameOf(tenantId)),
+            // The in-hive IdP stops serving with its console; its namespace, data volume and Secrets stay (a reinstall resumes it).
+            this.Identity(B.ApiVersionApps, B.DeploymentKind, idp, idp),
+            this.Identity(B.ApiVersionCore, B.ServiceKind, idp, idp),
+            this.Identity(B.ApiVersionNetworking, B.IngressKind, idp, idp),
         ]
         return this.ListOf(items)
     }

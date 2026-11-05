@@ -91,6 +91,11 @@ class FakeKubectl implements IKubectl
         return []
     }
 
+    public async ListNamespacesBySelector(_selector: string, _namePrefix: string): Promise<string[]>
+    {
+        return []
+    }
+
     public StatusFails = false
     public Statuses: Array<[string, string]> = []
 

@@ -5,6 +5,7 @@ import type { TenantAdminWorkloadSpec } from '../tenant-admin-workload.js'
 import { TenantAdminBootstrap } from '../tenant-admin-bootstrap.js'
 import { IngressTlsSource, type IngressTls } from '../ingress-tls.js'
 import { TenantConsoleAdmission } from '../tenant-console-admission.js'
+import { InClusterIdpSeedSource } from '../in-cluster-idp-seed.js'
 
 class TenantAdminFixture
 {
@@ -416,6 +417,9 @@ describe('K8sManifestBuilder.RenderTenantAdmin console exposure and RBAC', () =>
             'Secret/pragmatic-system/pragmatic-tenant-admin-acme-idp-ca',
             'Secret/pragmatic-system/pragmatic-tenant-admin-acme-idp-token',
             'Secret/pragmatic-system/pragmatic-tenant-admin-acme-dev-tls',
+            'Deployment/pragmatic-idp-acme/pragmatic-idp-acme',
+            'Service/pragmatic-idp-acme/pragmatic-idp-acme',
+            'Ingress/pragmatic-idp-acme/pragmatic-idp-acme',
         ])
         for (const item of doc.items)
         {
@@ -424,6 +428,20 @@ describe('K8sManifestBuilder.RenderTenantAdmin console exposure and RBAC', () =>
         }
         assert.ok(!doc.items.some((i: any) => i.kind === 'PersistentVolumeClaim' || i.kind === 'Namespace'))
         assert.ok(!text.includes(K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme')))
+    })
+
+    it('removal manifest stops the in-hive IdP (Deployment, Service, Ingress) and keeps its namespace, data volume and Secrets', () =>
+    {
+        const removal = ConsoleFixture.Removal()
+        const idp = K8sManifestBuilder.IdpNameOf('acme')
+        const inIdp = removal.filter((i: any) => i.metadata.namespace === idp).map((i: any) => i.kind).sort()
+        assert.deepEqual(inIdp, ['Deployment', 'Ingress', 'Service'])
+        const text = JSON.stringify(removal)
+        for (const kept of [K8sManifestBuilder.IdpClaimNameOf('acme'), InClusterIdpSeedSource.TlsSecretNameOf('acme'), InClusterIdpSeedSource.AdminSecretNameOf('acme')])
+        {
+            assert.ok(!text.includes('"' + kept + '"'), kept)
+        }
+        assert.ok(!removal.some((i: any) => i.kind === 'Namespace' || i.kind === 'ServiceAccount' && i.metadata.namespace === idp))
     })
 
     it('every rendered object except Namespace and PVC is named by the removal manifest', () =>
