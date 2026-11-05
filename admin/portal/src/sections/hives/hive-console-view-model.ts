@@ -51,6 +51,7 @@ export class HiveConsoleViewModel extends Observable
     private static readonly BaseDomainHint = '<base domain>'
     private static readonly TrustCommandPrefix = 'powershell -NoProfile -ExecutionPolicy Bypass -File admin\\control-plane\\dev\\dev-ca-trust.ps1 -Install -CaFile "'
     private static readonly TrustCommandSuffix = '"'
+    private static readonly DefaultIngressNamespace = 'ingress-nginx'
     private static readonly RemovedText = 'The console was removed.'
     private static readonly KeptPrefix = ' Kept in the cluster: '
     private static readonly KeptSeparator = ', '
@@ -60,7 +61,7 @@ export class HiveConsoleViewModel extends Observable
     private static readonly OwnerPasswordProperty = 'OwnerPassword'
     // Every bound value a change can move, raised when it did.
     private static readonly BoundProperties: readonly string[] = [
-        'BaseDomain', 'Host', 'HostPlaceholder', 'SelectedTls', 'SecretName', 'ClusterIssuer',
+        'BaseDomain', 'Host', 'HostPlaceholder', 'SelectedTls', 'SecretName', 'ClusterIssuer', 'IngressNamespace',
         'IsExistingSecret', 'IsCertManager', 'IsDevelopment', 'IsConfigured', 'IsNotConfigured',
         'Phase', 'IsIdle', 'IsInstalling', 'IsDeployed', 'IsFailed', 'HasProgress', 'StatusText',
         'ConsoleUrl', 'HasConsoleUrl', 'DevTrustCommand', 'HasDevTrustCommand', 'TrustCopyStatus',
@@ -91,6 +92,7 @@ export class HiveConsoleViewModel extends Observable
     private selectedTls: OptionViewModel<IngressTlsSource> | undefined
     private secretName = ''
     private clusterIssuer = ''
+    private ingressNamespace = ''
     private phase = ConsoleInstallPhase.Idle
     // The install status the panel shows (undefined: none), so a refused start can go back to it.
     private lastStatus: ConsoleInstallStatusDto | undefined
@@ -210,6 +212,22 @@ export class HiveConsoleViewModel extends Observable
     public set SecretName(value: string)
     {
         this.Edit(this.secretName, value, () => { this.secretName = value })
+    }
+
+    // The namespace the ingress controller runs in; empty means ingress-nginx (the only namespace that may reach the console).
+    public get IngressNamespace(): string
+    {
+        return this.ingressNamespace
+    }
+
+    public set IngressNamespace(value: string)
+    {
+        this.Edit(this.ingressNamespace, value, () => { this.ingressNamespace = value })
+    }
+
+    public get IngressNamespacePlaceholder(): string
+    {
+        return HiveConsoleViewModel.DefaultIngressNamespace
     }
 
     // The cert-manager ClusterIssuer (cert-manager only).
@@ -672,6 +690,11 @@ export class HiveConsoleViewModel extends Observable
         {
             spec.host = host
         }
+        const ingressNamespace = this.ingressNamespace.trim()
+        if (ingressNamespace.length > 0)
+        {
+            spec.ingressNamespace = ingressNamespace
+        }
         return spec
     }
 
@@ -689,6 +712,7 @@ export class HiveConsoleViewModel extends Observable
         this.selectedTls = this.tlsOptions.ToArray().find(o => o.Value === spec.tls.source) ?? this.selectedTls
         this.secretName = spec.tls.secretName ?? HiveConsoleViewModel.NoText
         this.clusterIssuer = spec.tls.clusterIssuer ?? HiveConsoleViewModel.NoText
+        this.ingressNamespace = spec.ingressNamespace ?? HiveConsoleViewModel.NoText
     }
 
     // Runs one settings or password request: busy while it runs, its refusal in ErrorText, a 401 expires the session.

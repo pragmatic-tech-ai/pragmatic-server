@@ -54,7 +54,8 @@ export enum IngressTlsSource
 }
 
 // Where a hive serves its tenant's console and how it is secured. No host: console-<tenantId>.<baseDomain>.
-export type HiveConsoleSpecDto = { baseDomain: string; host?: string; tls: { source: IngressTlsSource; secretName?: string; clusterIssuer?: string } }
+// ingressNamespace: the ingress controller's namespace, the only one the console's NetworkPolicy admits (absent: ingress-nginx).
+export type HiveConsoleSpecDto = { baseDomain: string; host?: string; tls: { source: IngressTlsSource; secretName?: string; clusterIssuer?: string }; ingressNamespace?: string }
 
 export type HiveDto =
 {

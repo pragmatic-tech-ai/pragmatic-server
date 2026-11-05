@@ -770,6 +770,8 @@ resources HivesResources {
                     TextBox [ UsesNativeInput = true, Text = $BaseDomain, Placeholder = "e.g. localtest.me", Margin = (0,0,0,12) ]
                     TextBlock [ Text = "Console host (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
                     TextBox [ UsesNativeInput = true, Text = $Host, Placeholder = $HostPlaceholder, Margin = (0,0,0,12) ]
+                    TextBlock [ Text = "Ingress controller namespace (optional; only it may reach the console)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+                    TextBox [ UsesNativeInput = true, Text = $IngressNamespace, Placeholder = $IngressNamespacePlaceholder, Margin = (0,0,0,12) ]
                     TextBlock [ Text = "TLS certificate", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
                     ComboBox [ ItemsSource = $TlsOptions, SelectedItem = $SelectedTls, HorizontalAlignment = Stretch, Margin = (0,0,0,12) ]
                     StackPanel [ Orientation = Vertical, Visibility = $IsExistingSecret << ToVisibility ] {

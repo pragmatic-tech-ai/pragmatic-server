@@ -116,6 +116,22 @@ describe('Hive tenant console (panel)', () =>
         assert.equal(panel.ErrorText, '')
     })
 
+    it('the ingress controller namespace is optional (placeholder ingress-nginx), sent trimmed when typed, and shown from saved settings', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = fx.Panel()
+        assert.equal(panel.IngressNamespace, '')
+        assert.equal(panel.IngressNamespacePlaceholder, 'ingress-nginx')
+        panel.BaseDomain = 'localtest.me'
+        panel.SelectedTls = ConsoleFixture.Option(panel, IngressTlsSource.Development)
+        panel.IngressNamespace = ' kube-system '
+        await panel.Save()
+        assert.deepEqual(fx.Api.ConsoleSaves, [['h1', { baseDomain: 'localtest.me', tls: { source: 'development' }, ingressNamespace: 'kube-system' }]])
+        const shown = new ConsoleFixture().Panel()
+        shown.Load({ ...fx.Api.Hives[0]!, console: { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development }, ingressNamespace: 'ingress' } })
+        assert.equal(shown.IngressNamespace, 'ingress')
+    })
+
     it('existing-secret needs a Secret name before Save is enabled', () =>
     {
         const fx = new ConsoleFixture()
