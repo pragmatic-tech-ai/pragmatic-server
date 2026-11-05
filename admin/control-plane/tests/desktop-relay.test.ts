@@ -289,12 +289,13 @@ class RelayDirectory implements ITenantDirectory
 /** An IKubectl stand-in that records every call; the relay must make none (no port-forward, no Secret read). */
 class RecordingKubectl
 {
+    private static readonly NotExpected = 'the relay must not call kubectl'
     public readonly calls: string[] = []
 
     public async Get(namespace: string, resource: string): Promise<string>
     {
         this.calls.push(namespace + '/' + resource)
-        throw new Error('not expected')
+        throw new Error(RecordingKubectl.NotExpected)
     }
 }
 

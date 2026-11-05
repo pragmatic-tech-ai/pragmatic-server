@@ -26,6 +26,11 @@ import type { TenantSession } from '../tenant-auth/tenant-session.js'
 import { TenantAdminEnv } from '../tenant-admin-env.js'
 import { ConsoleAdvertSender } from '../console-advert-sender.js'
 import { ConsoleEmailDomainStore } from '../console-email-domain-store.js'
+import { WebSocket } from 'ws'
+import { KubeHttpsTransport } from '../../../src/agent/kube-https-transport.js'
+import type { AuditRegistry } from '../audit-record.js'
+import { NodeExecFile, NodeProcessSpawner } from '../kubectl.js'
+import { DesktopRelay } from '../tenant-auth/desktop-relay.js'
 
 class FakeRolloutClient implements IRolloutClient
 {
@@ -119,6 +124,118 @@ class Names
     public static readonly AuditMethod = 'contribute'
     public static readonly AuditPath = 'acme-dev'
     public static readonly EmptyJson = 'null'
+    public static readonly Unauthorized = 401
+}
+
+/**
+ * Fails every outward call a composition could make (Kubernetes API over HTTPS, kubectl via execFile or spawn) and
+ * records it, so a test can assert none happened. Install patches the prototypes; Restore puts them back.
+ */
+class NetworkTrap
+{
+    private static readonly NotExpected = 'no outward call is expected here'
+    private static readonly Separator = ' '
+    public readonly Calls: string[] = []
+    private readonly send = KubeHttpsTransport.prototype.Send
+    private readonly run = NodeExecFile.prototype.Run
+    private readonly spawn = NodeProcessSpawner.prototype.Spawn
+
+    public Install(): void
+    {
+        KubeHttpsTransport.prototype.Send = (method: string, path: string) => this.Refuse(method + NetworkTrap.Separator + path)
+        NodeExecFile.prototype.Run = (file: string, args: readonly string[]) => this.Refuse(file + NetworkTrap.Separator + args.join(NetworkTrap.Separator))
+        NodeProcessSpawner.prototype.Spawn = (file: string, args: readonly string[]) =>
+        {
+            this.Calls.push(file + NetworkTrap.Separator + args.join(NetworkTrap.Separator))
+            throw new Error(NetworkTrap.NotExpected)
+        }
+    }
+
+    public Restore(): void
+    {
+        KubeHttpsTransport.prototype.Send = this.send
+        NodeExecFile.prototype.Run = this.run
+        NodeProcessSpawner.prototype.Spawn = this.spawn
+    }
+
+    private Refuse(call: string): Promise<never>
+    {
+        this.Calls.push(call)
+        return Promise.reject(new Error(NetworkTrap.NotExpected))
+    }
+}
+
+/** Holds one AuditRegistry's file writes inside WriteText until Release (as tests/held-audit.ts, on an existing instance). */
+class HeldWrite
+{
+    public Written = false
+    public readonly Entered: Promise<void>
+    private enter: () => void = () => undefined
+    private release: () => void = () => undefined
+
+    public constructor(audit: AuditRegistry)
+    {
+        this.Entered = new Promise<void>(res => { this.enter = res })
+        const gate = new Promise<void>(res => { this.release = res })
+        const target = audit as unknown as { WriteText(text: string): Promise<void> }
+        const write = target.WriteText.bind(audit)
+        target.WriteText = async (text: string) =>
+        {
+            this.enter()
+            await gate
+            await write(text)
+            this.Written = true
+        }
+    }
+
+    public Release(): void
+    {
+        this.release()
+    }
+}
+
+/** Probes a composed, listening host. */
+class HostProbe
+{
+    private static readonly RelayQuery = '?environment=acme-dev&action=contribute'
+    private static readonly UnexpectedResponse = 'unexpected-response'
+    private static readonly OpenEvent = 'open'
+    private static readonly ErrorEvent = 'error'
+
+    /** True once the host's listener is gone (Address throws when nothing listens). */
+    public static IsClosed(composition: TenantAdminComposition): boolean
+    {
+        try
+        {
+            composition.host.Address()
+            return false
+        }
+        catch
+        {
+            return true
+        }
+    }
+
+    /** Dials `/desktop/relay` with no bearer; resolves the HTTP status of the refusal (-1 when it opened or failed). */
+    public static UnauthenticatedRelay(composition: TenantAdminComposition): Promise<number>
+    {
+        const port = composition.host.Address().port
+        const ws = new WebSocket('ws://' + Names.DefaultBind + ':' + String(port) + DesktopRelay.Path + HostProbe.RelayQuery)
+        return new Promise(res =>
+        {
+            ws.once(HostProbe.UnexpectedResponse, (_req, response) =>
+            {
+                res(response.statusCode ?? 0)
+                ws.terminate()
+            })
+            ws.once(HostProbe.OpenEvent, () =>
+            {
+                res(-1)
+                ws.terminate()
+            })
+            ws.once(HostProbe.ErrorEvent, () => res(-1))
+        })
+    }
 }
 
 /** Drives `/desktop/*` requests straight through a composed plane's desktop endpoint, as Plexus would (no Origin header). */
@@ -266,8 +383,19 @@ describe('TenantAdminServer', () =>
     {
         const saRoot = writePod()
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient())
-        // No network call at compose: the service host is never dialled (nothing listens there in the test).
-        const composition = await server.Compose({ ...env(), [Names.ServiceHostVar]: Names.ServiceHost }, saRoot, () => undefined)
+        const trap = new NetworkTrap()
+        trap.Install()
+        let composition: TenantAdminComposition
+        try
+        {
+            composition = await server.Compose({ ...env(), [Names.ServiceHostVar]: Names.ServiceHost }, saRoot, () => undefined)
+            await new Promise<void>(res => setTimeout(res, Names.SettleMs))
+        }
+        finally
+        {
+            trap.Restore()
+        }
+        assert.deepEqual(trap.Calls, [], 'no Kubernetes API call and no kubectl process at compose')
         assert.ok(composition.reach instanceof InClusterEnvironmentReach)
         assert.ok(composition.plane.relay !== undefined)
         assert.equal(existsSync(join(root, Names.DesktopAuditFile)), false, 'nothing is written at compose')
@@ -275,23 +403,41 @@ describe('TenantAdminServer', () =>
         assert.ok(existsSync(join(root, Names.DesktopAuditFile)))
     })
 
-    it('closing the composed host closes the relay after the listener (its audit writes awaited)', async () =>
+    it('closing the composed host closes the listener, then the relay, and waits for its audit writes', async () =>
     {
         const saRoot = writePod()
         const cfg = TenantAdminServer.ReadConfig({ ...env(), [Names.ProbeVar]: Names.ProbeOff })
         const composition = await new TenantAdminServer(cfg, new FakeRolloutClient()).Compose({ ...env(), [Names.ServiceHostVar]: Names.ServiceHost }, saRoot, () => undefined)
         const relay = composition.plane.relay
         assert.ok(relay !== undefined)
+        const held = new HeldWrite(composition.desktopAudit)
         const close = relay.Close.bind(relay)
-        let relayClosed = false
+        let listenerClosedFirst: boolean | undefined
         relay.Close = async () =>
         {
+            listenerClosedFirst = HostProbe.IsClosed(composition)
             await close()
-            relayClosed = true
         }
         await composition.host.Listen(0, Names.DefaultBind)
-        await composition.host.Close()
-        assert.equal(relayClosed, true)
+        try
+        {
+            // An unauthenticated relay upgrade is refused and audited; its file write is held.
+            assert.equal(await HostProbe.UnauthenticatedRelay(composition), Names.Unauthorized)
+            await held.Entered
+            let closed = false
+            const closing = composition.host.Close().then(() => { closed = true })
+            await new Promise<void>(res => setTimeout(res, Names.SettleMs))
+            assert.equal(closed, false, 'Close waits for the held audit write')
+            assert.equal(listenerClosedFirst, true, 'the relay closes only after the listener has closed')
+            held.Release()
+            await closing
+            assert.equal(held.Written, true, 'the audit write finished before Close resolved')
+        }
+        finally
+        {
+            held.Release()
+            await composition.host.Close()
+        }
     })
 
     it('Compose loads the desktop audit file before building the plane', async () =>
