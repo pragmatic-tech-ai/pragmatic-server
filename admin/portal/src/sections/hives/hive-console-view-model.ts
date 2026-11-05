@@ -71,15 +71,15 @@ export class HiveConsoleViewModel extends Observable
     private static readonly CopiedText = 'Copied.'
     private static readonly CopyFailedText = 'Could not copy. Select the value and copy it by hand.'
     private static readonly OwnerPasswordProperty = 'OwnerPassword'
-    // Every bound value a change can move, raised when it did. IsReported is not listed: no markup binds it, since
-    // StatusText already carries the Reported state.
+    // Every bound value a change can move, raised when it did. Phase, IsInstalling, IsReported and IsBusy are not
+    // listed: no markup binds them (StatusText carries the phase, and the commands' CanExecute carries busy/installing).
     private static readonly BoundProperties: readonly string[] = [
         'BaseDomain', 'Host', 'HostPlaceholder', 'SelectedTls', 'SecretName', 'ClusterIssuer', 'IngressNamespace',
         'IsExistingSecret', 'IsCertManager', 'IsDevelopment', 'IsConfigured', 'IsNotConfigured',
-        'Phase', 'IsIdle', 'IsInstalling', 'IsDeployed', 'IsFailed', 'HasProgress', 'StatusText',
+        'IsIdle', 'IsDeployed', 'IsFailed', 'HasProgress', 'StatusText',
         'ConsoleUrl', 'HasConsoleUrl', 'DevTrustCommand', 'HasDevTrustCommand', 'TrustCopyStatus',
         'OwnerEmail', HiveConsoleViewModel.OwnerPasswordProperty, 'HasOwnerPassword', 'PasswordCopyStatus',
-        'ErrorText', 'IsBusy', 'IsConfirmingRemove', 'RemovalNote',
+        'ErrorText', 'IsConfirmingRemove', 'RemovalNote',
     ]
     // Bound values whose change notification never carries the old value (it would be the password).
     private static readonly SecretProperties: ReadonlySet<string> = new Set([HiveConsoleViewModel.OwnerPasswordProperty])

@@ -104,6 +104,12 @@ describe('Hive tenant console (panel)', () =>
         assert.equal(bound.includes('StatusText'), true)
     })
 
+    it('Phase, IsInstalling and IsBusy are not bound values either: no markup binds them', () =>
+    {
+        const bound = Reflect.get(HiveConsoleViewModel, 'BoundProperties') as readonly string[]
+        assert.deepEqual(['Phase', 'IsInstalling', 'IsBusy'].filter(name => bound.includes(name)), [])
+    })
+
     it('Save sends the console spec', async () =>
     {
         const fx = new ConsoleFixture()
