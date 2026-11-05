@@ -149,6 +149,23 @@ describe('PlatformEmailDomains', () =>
         assert.deepEqual(f.approvals.ApprovedFor('acme'), [])
     })
 
+    it('Revoke of a never-approved domain changes nothing', async () =>
+    {
+        await f.Advertise(['acme.test', 'two.test'])
+        await f.domains.Approve('acme', 'acme.test')
+        await f.domains.Revoke('acme', 'two.test')
+        await f.domains.Revoke('beta', 'beta.test')
+        assert.deepEqual(f.approvals.ApprovedFor('acme'), ['acme.test'])
+        assert.deepEqual(f.approvals.ApprovedFor('beta'), [])
+    })
+
+    it('Revoke clears a stored approval the policy now refuses', async () =>
+    {
+        await f.approvals.Put({ id: 'acme', tenantId: 'acme', domains: ['acme.test', 'gmail.com'] })
+        await f.domains.Revoke('acme', 'Gmail.COM')
+        assert.deepEqual(f.approvals.ApprovedFor('acme'), ['acme.test'])
+    })
+
     it('Approve refuses a domain the console does not advertise', async () =>
     {
         await f.Advertise(['acme.test'])

@@ -1,6 +1,14 @@
 /** A tenant's email domains as its console shows them; `editable` = whether the store may change them (the role is checked by the endpoint). */
 export type TenantEmailDomainsView = { domains: string[]; editable: boolean }
 
+/** What both email-domain write routes (tenant plane and operator) promise: one home so the two cannot drift. */
+export class TenantEmailDomainsLimits
+{
+    /** 20 domains of up to 253 characters each do not fit the planes' default 4 KiB body cap. */
+    public static readonly MaxBodyBytes = 16384
+    public static readonly DomainsRequiredMessage = 'domains (array of domain names) is required'
+}
+
 /** The store cannot change this tenant's email domains (they are set elsewhere); the message is one plain sentence (maps to 409). */
 export class EmailDomainsNotEditableError extends Error
 {

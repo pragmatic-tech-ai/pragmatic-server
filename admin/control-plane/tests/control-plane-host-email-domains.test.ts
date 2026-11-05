@@ -221,6 +221,26 @@ describe('ControlPlaneHost tenant email domains', () =>
         assert.equal(revoked.status, 200)
         assert.deepEqual(Send.Report(revoked).approvals?.map(a => a.approved), [false, false])
         assert.deepEqual(approvals.ApprovedFor('acme'), [])
+        const again = await Send.Request(host, 'POST', AcmePath + '/revoke', { domain: 'shared.test' })
+        assert.equal(again.status, 200)
+        assert.deepEqual(Send.Report(again).approvals?.map(a => a.approved), [false, false])
+        assert.deepEqual(approvals.ApprovedFor('acme'), [])
+    })
+
+    it('revoking a never-approved domain is 200 and changes nothing', async () =>
+    {
+        await approvals.Approve('acme', 'acme.test')
+        const r = await Send.Request(host, 'POST', AcmePath + '/revoke', { domain: 'shared.test' })
+        assert.equal(r.status, 200)
+        assert.deepEqual(approvals.ApprovedFor('acme'), ['acme.test'])
+    })
+
+    it('revoke clears a stored approval the policy now refuses', async () =>
+    {
+        await approvals.Put({ id: 'acme', tenantId: 'acme', domains: ['acme.test', 'gmail.com'] })
+        const r = await Send.Request(host, 'POST', AcmePath + '/revoke', { domain: 'gmail.com' })
+        assert.equal(r.status, 200)
+        assert.deepEqual(approvals.ApprovedFor('acme'), ['acme.test'])
     })
 
     it('approving a domain the console does not advertise is 409 with a sentence', async () =>

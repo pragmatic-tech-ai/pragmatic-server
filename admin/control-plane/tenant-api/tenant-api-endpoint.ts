@@ -9,7 +9,7 @@ import type { EnvironmentPlacement } from '../environment-placement.js'
 import type { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { RolloutAdoptionRefusedError, RolloutUnavailableError, type IRolloutClient } from './rollout-client.js'
 import type { ITenantDirectory } from './tenant-directory.js'
-import { EmailDomainsNotEditableError, type ITenantEmailDomains, type TenantEmailDomainsView } from './tenant-email-domains.js'
+import { EmailDomainsNotEditableError, TenantEmailDomainsLimits, type ITenantEmailDomains, type TenantEmailDomainsView } from './tenant-email-domains.js'
 import { InvalidEmailDomainError } from '../email-domain-policy.js'
 import type { EnvironmentRecord } from '../environment-record.js'
 import { ChannelNotSubscribedError, ManifestNotGatedError, ManifestWithdrawnError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from '../rollout-errors.js'
@@ -74,9 +74,6 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     /** GET reads, PUT (Owner only) replaces the tenant's email domains; a route only when the endpoint has an email-domain store. */
     private static readonly EmailDomainsPath = TenantApiEndpoint.Prefix + TenantApiEndpoint.SettingsSegment + '/' + TenantApiEndpoint.EmailDomainsSegment
     private static readonly DomainsKey = 'domains'
-    private static readonly DomainsRequiredMessage = 'domains (array of domain names) is required'
-    /** 20 domains of up to 253 characters each do not fit the default cap. */
-    private static readonly EmailDomainsMaxBodyBytes = 16384
     private static readonly SnapshotLeaf = 'snapshot'
     private static readonly AccountsLeaf = 'accounts'
     private static readonly GrantsLeaf = 'grants'
@@ -591,7 +588,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         {
             return true
         }
-        const raw = await M.ReadBody(req, M.EmailDomainsMaxBodyBytes)
+        const raw = await M.ReadBody(req, TenantEmailDomainsLimits.MaxBodyBytes)
         let body: unknown
         try
         {
@@ -604,7 +601,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         }
         if (body === null || typeof body !== 'object' || Array.isArray(body) || !(M.DomainsKey in body))
         {
-            this.WriteJson(res, M.StatusBadRequest, { [M.ErrorKey]: M.DomainsRequiredMessage })
+            this.WriteJson(res, M.StatusBadRequest, { [M.ErrorKey]: TenantEmailDomainsLimits.DomainsRequiredMessage })
             return true
         }
         let view: TenantEmailDomainsView

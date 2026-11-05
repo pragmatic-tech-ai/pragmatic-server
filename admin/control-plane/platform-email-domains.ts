@@ -150,20 +150,28 @@ export class PlatformEmailDomains implements ITenantEmailDomains
         await this.ApprovalStore().Approve(tenantId, normalised)
     }
 
-    /** Withdraws one domain's approval (a no-op when it was not approved); allowed for any known tenant, so a stale approval can be cleared. */
+    /**
+     * Withdraws one domain's approval (a no-op when it was not approved). Allowed for any known tenant and without the policy check
+     * (normalised only), so any stored approval can always be cleared, even one for a domain the policy has since come to refuse.
+     */
     public async Revoke(tenantId: string, domain: string): Promise<void>
     {
-        const normalised = this.NormalisedFor(tenantId, domain)
-        await this.ApprovalStore().Revoke(tenantId, normalised)
+        this.AssertKnown(tenantId)
+        await this.ApprovalStore().Revoke(tenantId, EmailDomainPolicy.Normalise(domain))
     }
 
-    /** The normalised domain; throws UnknownTenantError for an unknown tenant and InvalidEmailDomainError for a refused domain. */
-    private NormalisedFor(tenantId: string, domain: string): string
+    private AssertKnown(tenantId: string): void
     {
         if (this.directory.GetTenant(tenantId) === undefined)
         {
             throw new UnknownTenantError(tenantId)
         }
+    }
+
+    /** The normalised domain; throws UnknownTenantError for an unknown tenant and InvalidEmailDomainError for a refused domain. */
+    private NormalisedFor(tenantId: string, domain: string): string
+    {
+        this.AssertKnown(tenantId)
         const normalised = EmailDomainPolicy.Normalise(domain)
         const refusal = EmailDomainPolicy.Check(normalised)
         if (refusal !== undefined)

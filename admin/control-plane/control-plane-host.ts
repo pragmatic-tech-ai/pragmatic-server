@@ -49,7 +49,7 @@ import type { ConsoleAdvertRegistry } from './console-advert-registry.js'
 import type { ConsoleDomainApprovals } from './console-domain-approvals.js'
 import { EmailDomainPolicy, InvalidEmailDomainError } from './email-domain-policy.js'
 import { EmailDomainApprovalRefusedError, type PlatformEmailDomains } from './platform-email-domains.js'
-import { EmailDomainsNotEditableError } from './tenant-api/tenant-email-domains.js'
+import { EmailDomainsNotEditableError, TenantEmailDomainsLimits } from './tenant-api/tenant-email-domains.js'
 import { HiveConsoleSpecs, InvalidHiveConsoleError } from './hive-console-spec.js'
 import { InvalidIngressTlsError } from './ingress-tls.js'
 import { AgentInstallInProgressError, AgentInstallUnavailableError, type HiveAgentInstaller, type InstallStatus } from './hive-agent-installer.js'
@@ -341,9 +341,6 @@ export class ControlPlaneHost
     private static readonly TenantEmailDomainsPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.TenantsSegment + '/([^/]+)/' + ControlPlaneHost.EmailDomainsSegment +
         '(?:/(' + ControlPlaneHost.ApproveSegment + '|' + ControlPlaneHost.RevokeSegment + '))?$')
-    /** 20 domains of up to 253 characters each do not fit MaxBodyBytes; matches the tenant route's cap. */
-    private static readonly EmailDomainsMaxBodyBytes = 16384
-    private static readonly DomainsRequiredMessage = 'domains (array of domain names) is required'
     private static readonly DomainRequiredMessage = 'domain (an email domain name) is required'
     private static readonly DomainNotePrefix = 'domain: '
     private static readonly DomainsKey = 'domains'
@@ -1681,7 +1678,7 @@ export class ControlPlaneHost
         }
         if (method !== PlaneHttp.MethodGet)
         {
-            const body = await this.ReadJsonObject(req, res, C.EmailDomainsMaxBodyBytes)
+            const body = await this.ReadJsonObject(req, res, TenantEmailDomainsLimits.MaxBodyBytes)
             if (body === undefined)
             {
                 return true
@@ -1690,7 +1687,7 @@ export class ControlPlaneHost
             {
                 if (!(C.DomainsKey in body))
                 {
-                    PlaneHttp.WriteJson(res, C.StatusBadRequest, { error: C.DomainsRequiredMessage })
+                    PlaneHttp.WriteJson(res, C.StatusBadRequest, { error: TenantEmailDomainsLimits.DomainsRequiredMessage })
                     return true
                 }
                 await domains.Set(id, body[C.DomainsKey])
