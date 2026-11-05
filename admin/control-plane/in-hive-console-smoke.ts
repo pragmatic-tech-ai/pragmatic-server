@@ -5,7 +5,10 @@
  * Requires: a control plane running from this checkout (operator API on --control-plane, agent channel on), hive
  * `default-pragmatic-hive` (tenant `pragmatic-default`) with its agent connected on context `docker-desktop`, a FRESH
  * `pragmatic-server:dev` image in the host docker store (the smoke streams it into the docker-desktop node), host port 443 free,
- * openssl on PATH, and the Playwright Chromium browser. Run with:
+ * openssl on PATH, and the Playwright Chromium browser. Desktop discovery must answer, so the control plane needs a tenant-plane URL
+ * (PRAGMATIC_DESKTOP_TENANT_PLANE_URL, or both PRAGMATIC_TENANT_ADMIN_PORT and PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN); without one
+ * discovery answers 503 and the smoke stops at its discovery preflight. The console reaches the agent channel at the control plane's
+ * agent-channel URL (default http://host.docker.internal:<PRAGMATIC_AGENT_CHANNEL_PORT>). Run with:
  *
  *   npx tsx admin/control-plane/in-hive-console-smoke.ts --operator-email admin@control-plane.test --password-file <path>
  *       [--hive default-pragmatic-hive] [--base-domain localtest.me] [--control-plane http://127.0.0.1:7000]
@@ -15,8 +18,17 @@
  * the console through the in-hive IdP, environment create + delete from the console, then teardown (always). The operator and
  * Owner passwords are read into memory only: never printed, logged or put in an exception. Output is one PASS/FAIL line per
  * step; exit code 1 on any FAIL.
+ *
+ * Advert + discovery steps (Plan 2): a discovery preflight with a throwaway address (404 or 200; 503 names the env var above);
+ * 3b the in-hive tenant is left out of discovery before its console advertised; 4b the install status turns `reported`; 4c the
+ * Owner's email discovers the in-hive console; 7b the Owner sets an email domain in the console; 7c the operator sees it
+ * (source console, read-only, PUT 409); 7d an advertised but unapproved domain does not discover the tenant, an operator
+ * approval makes it discover the in-hive console, a revoke stops it; the teardown checks the advert was forgotten. Discovery
+ * is called with node http (no Origin) at most MaxDiscoverCalls times, under its throttle of 10 per minute per address. The
+ * Owner email is read from the operator API and never printed (it is scrubbed like a secret).
  */
 import { readFileSync } from 'node:fs'
+import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import type { TLSSocket } from 'node:tls'
 import { fileURLToPath } from 'node:url'
@@ -132,6 +144,40 @@ export class InHiveConsoleSmoke
     private static readonly TlsTimeoutMs = 30000
     private static readonly IngressSettleMs = 60000
     private static readonly StatusServerErrorFloor = 500
+    private static readonly StatusNotFound = 404
+    private static readonly StatusConflict = 409
+    private static readonly StatusUnavailable = 503
+
+    private static readonly TenantsPrefix = '/api/tenants/'
+    private static readonly EmailDomainsSuffix = '/email-domains'
+    private static readonly ApproveSuffix = '/email-domains/approve'
+    private static readonly RevokeSuffix = '/email-domains/revoke'
+    private static readonly DiscoverPath = '/api/desktop/discover'
+    private static readonly ConsoleEmailDomainsPath = '/tenant-api/settings/email-domains'
+    private static readonly SmokeDomain = 'smoke-ihc.test'
+    private static readonly DomainEmail = 'someone@smoke-ihc.test'
+    private static readonly ThrowawayEmail = 'nobody@smoke-ihc-discovery-preflight.test'
+    private static readonly StateReported = 'reported'
+    private static readonly ConsoleUrlKey = 'consoleUrl'
+    private static readonly StaleKey = 'stale'
+    private static readonly TenantsKey = 'tenants'
+    private static readonly TenantPlaneUrlKey = 'tenantPlaneUrl'
+    private static readonly IdKey = 'id'
+    private static readonly DomainsKey = 'domains'
+    private static readonly DomainKey = 'domain'
+    private static readonly EditableKey = 'editable'
+    private static readonly SourceKey = 'source'
+    private static readonly ApprovalsKey = 'approvals'
+    private static readonly ApprovedKey = 'approved'
+    private static readonly SourceConsole = 'console'
+    /** Discovery calls per run: preflight, 3b, 4c, three in 7d, one in the teardown; the throttle allows 10 per minute per address. */
+    private static readonly MaxDiscoverCalls = 7
+    private static readonly ReportPollIntervalMs = 5000
+    private static readonly ReportDeadlineMs = 3 * 60 * 1000
+    private static readonly DomainPollIntervalMs = 2000
+    private static readonly DomainDeadlineMs = 60 * 1000
+    private static readonly DataEvent = 'data'
+    private static readonly EndEvent = 'end'
 
     private static readonly HttpsScheme = 'https://'
     private static readonly Loopback = '127.0.0.1'
@@ -172,7 +218,32 @@ export class InHiveConsoleSmoke
     private static readonly Utf8 = 'utf8'
     private static readonly TimeoutEvent = 'timeout'
     private static readonly ErrorEvent = 'error'
+    private static readonly DiscoveryUnavailable = 'discovery answered 503: the control plane has no tenant-plane URL; set PRAGMATIC_DESKTOP_TENANT_PLANE_URL (or PRAGMATIC_TENANT_ADMIN_PORT and PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN) and restart it'
+    private static readonly DiscoverCapExceeded = 'discover call cap exceeded (the throttle allows 10 per minute per address)'
+    private static readonly MissingTenantOwner = 'tenant record carries no ownerEmail'
+    private static readonly ReportTimedOut = 'install did not turn reported within 3 minutes; last state '
+    private static readonly DomainTimedOut = 'the console-reported domain did not reach the operator report within 60 seconds'
+    private static readonly ListedWord = 'listed '
+    private static readonly ConsoleUrlWord = ' consoleUrl '
+    private static readonly StaleWord = ' stale '
+    private static readonly PlaneWord = ' tenantPlaneUrl '
     private static readonly Labels = {
+        DiscoverPreflight: 'preflight: discovery answers (404 or 200) for a throwaway address',
+        OwnerEmail: 'GET tenant returns the Owner email (not printed)',
+        NoAdvertYet: 'discover(Owner) before the install leaves the in-hive tenant out',
+        Reported: 'console-install turns reported with the console URL, not stale',
+        DiscoverOwner: 'discover(Owner) returns the in-hive console URL; tenantPlaneUrl differs',
+        ConsoleDomainPut: 'console: PUT /tenant-api/settings/email-domains returns 200 with the domain, editable',
+        OperatorDomainSeen: 'operator: GET email-domains shows the console-reported domain (source console, read-only, unapproved)',
+        OperatorDomainPut: 'operator: PUT email-domains on an in-hive tenant returns 409',
+        UnapprovedDomain: 'discover(domain) while unapproved leaves the tenant out',
+        ApproveDomain: 'operator: POST email-domains/approve returns 200 and marks the domain approved',
+        ApprovedDomain: 'discover(domain) after approval returns the in-hive console URL',
+        RevokeDomain: 'operator: POST email-domains/revoke returns 200 and clears the approval',
+        RevokedDomain: 'discover(domain) after revoke leaves the tenant out',
+        TeardownDomains: 'teardown: console email domains cleared (PUT empty list)',
+        TeardownRevoke: 'teardown: domain approval revoked',
+        AdvertForgotten: 'teardown: discover(Owner) no longer points at the in-hive console',
         Preflight: 'preflight: pragmatic-system and the hive agent token Secret exist',
         Ingress: 'preflight: ingress-nginx installed by the smoke and rolled out',
         IngressPresent: 'preflight: IngressClass nginx already present (not installed by the smoke)',
@@ -204,6 +275,10 @@ export class InHiveConsoleSmoke
     private installedIngress = false
     private envDeleted = false
     private envCreated = false
+    private domainsSet = false
+    private domainApproved = false
+    private discoverCalls = 0
+    private ownerEmail: string | undefined
     private readonly secrets: string[] = []
     private readonly exec = new NodeExecFile(InHiveConsoleSmoke.KubectlTimeoutMs)
 
@@ -263,6 +338,10 @@ export class InHiveConsoleSmoke
         {
             await this.Preflight()
             if (!await this.Login())
+            {
+                return false
+            }
+            if (!await this.DiscoveryPreflight() || !await this.ReadOwnerEmail())
             {
                 return false
             }
@@ -327,7 +406,33 @@ export class InHiveConsoleSmoke
         return pair !== undefined
     }
 
-    /** Steps 3-5: console settings, install to deployed, then the TLS handshake against the development CA. */
+    /** Discovery preflight: a throwaway address answers 404 or 200; a 503 means the control plane has no tenant-plane URL. */
+    private async DiscoveryPreflight(): Promise<boolean>
+    {
+        const S = InHiveConsoleSmoke
+        const answer = await this.Discover(S.ThrowawayEmail)
+        const ok = answer.status === S.StatusNotFound || answer.status === S.StatusOk
+        this.Expect(S.Labels.DiscoverPreflight, ok, answer.status === S.StatusUnavailable ? S.DiscoveryUnavailable : S.StatusWord + String(answer.status))
+        return ok
+    }
+
+    /** The tenant's Owner email from the operator API; kept in memory and scrubbed from every output line. */
+    private async ReadOwnerEmail(): Promise<boolean>
+    {
+        const S = InHiveConsoleSmoke
+        const answer = await this.Api(S.MethodGet, this.TenantPath(''))
+        const email = answer.body?.[S.OwnerEmailKey]
+        const ok = answer.status === S.StatusOk && typeof email === 'string' && email.length > 0
+        if (ok)
+        {
+            this.ownerEmail = email as string
+            this.secrets.push(email as string)
+        }
+        this.Expect(S.Labels.OwnerEmail, ok, answer.status === S.StatusOk ? S.MissingTenantOwner : this.Detail(answer))
+        return ok
+    }
+
+    /** Steps 3-5 (+3b, 4b, 4c): console settings, install to deployed, the TLS handshake, then the advert and Owner discovery. */
     private async Install(): Promise<boolean>
     {
         const S = InHiveConsoleSmoke
@@ -337,6 +442,8 @@ export class InHiveConsoleSmoke
         {
             return false
         }
+        const before = await this.Discover(this.ownerEmail as string)
+        this.Expect(S.Labels.NoAdvertYet, before.status === S.StatusNotFound || (before.status === S.StatusOk && this.EntryOf(before) === undefined), this.DiscoverDetail(before))
         const start = await this.Api(S.MethodPost, this.HivePath(S.ConsoleInstallSuffix))
         this.Expect(S.Labels.InstallStart, start.status === S.StatusAccepted, this.Detail(start))
         if (start.status !== S.StatusAccepted)
@@ -344,7 +451,8 @@ export class InHiveConsoleSmoke
             return false
         }
         const status = await this.PollInstall()
-        const deployed = status?.[S.StateKey] === S.StateDeployed
+        // The console's first advert can arrive during the rollout wait, so the first status seen after the run may already be reported.
+        const deployed = status?.[S.StateKey] === S.StateDeployed || status?.[S.StateKey] === S.StateReported
         this.Expect(S.Labels.Deployed, deployed, deployed ? '' : this.InstallDetail(status))
         if (!deployed)
         {
@@ -358,7 +466,46 @@ export class InHiveConsoleSmoke
         }
         const tls = await this.SettledTlsCheck(caFile)
         this.Expect(S.Labels.Tls, tls.ok, tls.detail)
-        return tls.ok
+        if (!tls.ok)
+        {
+            return false
+        }
+        return await this.CheckReported() && await this.CheckOwnerDiscovery()
+    }
+
+    /** Step 4b: the install status turns reported (the console advertised) with the console URL and not stale. */
+    private async CheckReported(): Promise<boolean>
+    {
+        const S = InHiveConsoleSmoke
+        const deadline = Date.now() + S.ReportDeadlineMs
+        let last: Record<string, unknown> | undefined
+        while (Date.now() < deadline)
+        {
+            last = (await this.Api(S.MethodGet, this.HivePath(S.ConsoleInstallSuffix))).body
+            if (last?.[S.StateKey] === S.StateReported)
+            {
+                break
+            }
+            await InHiveConsoleSmoke.Sleep(S.ReportPollIntervalMs)
+        }
+        const reported = last?.[S.StateKey] === S.StateReported
+        const ok = reported && last?.[S.ConsoleUrlKey] === this.ConsoleUrl() && last?.[S.StaleKey] === false
+        this.Expect(S.Labels.Reported, ok, reported
+            ? S.ConsoleUrlWord + String(last?.[S.ConsoleUrlKey]) + S.StaleWord + String(last?.[S.StaleKey])
+            : S.ReportTimedOut + String(last?.[S.StateKey]))
+        return ok
+    }
+
+    /** Step 4c: the Owner's email discovers the in-hive console; the top-level tenant-plane URL is a different string. */
+    private async CheckOwnerDiscovery(): Promise<boolean>
+    {
+        const S = InHiveConsoleSmoke
+        const answer = await this.Discover(this.ownerEmail as string)
+        const plane = answer.body?.[S.TenantPlaneUrlKey]
+        const ok = answer.status === S.StatusOk && this.EntryOf(answer)?.[S.ConsoleUrlKey] === this.ConsoleUrl()
+            && typeof plane === 'string' && plane !== this.ConsoleUrl()
+        this.Expect(S.Labels.DiscoverOwner, ok, this.DiscoverDetail(answer))
+        return ok
     }
 
     /**
@@ -388,7 +535,7 @@ export class InHiveConsoleSmoke
             const answer = await this.Api(S.MethodGet, this.HivePath(S.ConsoleInstallSuffix))
             last = answer.body
             const state = last?.[S.StateKey]
-            if (state === S.StateDeployed || state === S.StateFailed)
+            if (state === S.StateDeployed || state === S.StateReported || state === S.StateFailed)
             {
                 return last
             }
@@ -448,10 +595,11 @@ export class InHiveConsoleSmoke
         const S = InHiveConsoleSmoke
         const host = this.ConsoleHost()
         const browser = await chromium.launch({ args: [this.HostResolverRules()] })
+        let page: Page | undefined
         try
         {
             const context = await browser.newContext({ ignoreHTTPSErrors: true })
-            const page = await context.newPage()
+            page = await context.newPage()
             await page.goto(S.HttpsScheme + host + S.RootPath)
             await IdpLoginPage.WaitForForm(page, S.FormWaitMs)
             const onIdp = new URL(page.url()).host === K8sManifestBuilder.IdpBrowserHostOf(S.TenantId, this.options.baseDomain)
@@ -466,6 +614,7 @@ export class InHiveConsoleSmoke
             {
                 return
             }
+            await this.DomainSteps(page)
 
             const create = await this.PageFetch(page, S.MethodPost, S.EnvironmentsPath, JSON.stringify({ name: S.EnvName, template: S.EnvTemplate, type: S.EnvType }))
             this.envCreated = true
@@ -487,8 +636,114 @@ export class InHiveConsoleSmoke
         }
         finally
         {
+            if (page !== undefined)
+            {
+                await this.ClearConsoleDomains(page)
+            }
             await browser.close()
         }
+    }
+
+    /**
+     * Steps 7b-7d: the Owner sets a domain in the console; the operator sees it read-only and unapproved; discovery ignores it
+     * until an operator approves it, then answers with the in-hive console, and ignores it again once revoked.
+     */
+    private async DomainSteps(page: Page): Promise<void>
+    {
+        const S = InHiveConsoleSmoke
+        const put = await this.PageFetch(page, S.MethodPut, S.ConsoleEmailDomainsPath, JSON.stringify({ [S.DomainsKey]: [S.SmokeDomain] }))
+        this.domainsSet = true
+        const view = InHiveConsoleSmoke.ParseJson(put.text)
+        const putOk = put.status === S.StatusOk && InHiveConsoleSmoke.SameList(view?.[S.DomainsKey], [S.SmokeDomain]) && view?.[S.EditableKey] === true
+        this.Expect(S.Labels.ConsoleDomainPut, putOk, S.StatusWord + String(put.status) + S.DetailSep + this.ScrubText(put.text))
+        if (!putOk)
+        {
+            return
+        }
+
+        const report = await this.PollOperatorDomain()
+        const approval = this.ApprovalOf(report)
+        const seen = report !== undefined && report[S.SourceKey] === S.SourceConsole && report[S.EditableKey] === false && approval?.[S.ApprovedKey] === false
+        this.Expect(S.Labels.OperatorDomainSeen, seen, report === undefined ? S.DomainTimedOut : JSON.stringify(report))
+        const refused = await this.Api(S.MethodPut, this.TenantPath(S.EmailDomainsSuffix), { [S.DomainsKey]: [S.SmokeDomain] })
+        this.Expect(S.Labels.OperatorDomainPut, refused.status === S.StatusConflict, this.Detail(refused))
+        if (!seen)
+        {
+            return
+        }
+
+        const unapproved = await this.Discover(S.DomainEmail)
+        this.Expect(S.Labels.UnapprovedDomain, this.TenantLeftOut(unapproved), this.DiscoverDetail(unapproved))
+
+        const approve = await this.Api(S.MethodPost, this.TenantPath(S.ApproveSuffix), { [S.DomainKey]: S.SmokeDomain })
+        this.domainApproved = approve.status === S.StatusOk
+        this.Expect(S.Labels.ApproveDomain, approve.status === S.StatusOk && this.ApprovalOf(approve.body)?.[S.ApprovedKey] === true, this.Detail(approve))
+        if (!this.domainApproved)
+        {
+            return
+        }
+        const approved = await this.Discover(S.DomainEmail)
+        this.Expect(S.Labels.ApprovedDomain, approved.status === S.StatusOk && this.EntryOf(approved)?.[S.ConsoleUrlKey] === this.ConsoleUrl(), this.DiscoverDetail(approved))
+
+        const revoke = await this.Api(S.MethodPost, this.TenantPath(S.RevokeSuffix), { [S.DomainKey]: S.SmokeDomain })
+        const revoked = revoke.status === S.StatusOk && this.ApprovalOf(revoke.body)?.[S.ApprovedKey] === false
+        if (revoked)
+        {
+            this.domainApproved = false
+        }
+        this.Expect(S.Labels.RevokeDomain, revoked, this.Detail(revoke))
+        const after = await this.Discover(S.DomainEmail)
+        this.Expect(S.Labels.RevokedDomain, this.TenantLeftOut(after), this.DiscoverDetail(after))
+    }
+
+    /** Polls the operator report until the console-reported domain appears; the last report with it, or undefined at the deadline. */
+    private async PollOperatorDomain(): Promise<Record<string, unknown> | undefined>
+    {
+        const S = InHiveConsoleSmoke
+        const deadline = Date.now() + S.DomainDeadlineMs
+        while (Date.now() < deadline)
+        {
+            const report = (await this.Api(S.MethodGet, this.TenantPath(S.EmailDomainsSuffix))).body
+            const domains = report?.[S.DomainsKey]
+            if (Array.isArray(domains) && domains.includes(S.SmokeDomain))
+            {
+                return report
+            }
+            await InHiveConsoleSmoke.Sleep(S.DomainPollIntervalMs)
+        }
+        return undefined
+    }
+
+    /** The report's approval entry for the smoke domain, if any. */
+    private ApprovalOf(report: Record<string, unknown> | undefined): Record<string, unknown> | undefined
+    {
+        const S = InHiveConsoleSmoke
+        const approvals = report?.[S.ApprovalsKey]
+        if (!Array.isArray(approvals))
+        {
+            return undefined
+        }
+        return (approvals as Record<string, unknown>[]).find(a => a?.[S.DomainKey] === S.SmokeDomain)
+    }
+
+    /** Teardown part done in the page while it is open: PUT an empty domain list when 7b ran. */
+    private async ClearConsoleDomains(page: Page): Promise<void>
+    {
+        const S = InHiveConsoleSmoke
+        if (!this.domainsSet)
+        {
+            return
+        }
+        const cleared = await this.Attempt(async () =>
+        {
+            const answer = await this.PageFetch(page, S.MethodPut, S.ConsoleEmailDomainsPath, JSON.stringify({ [S.DomainsKey]: [] }))
+            if (answer.status !== S.StatusOk)
+            {
+                throw new Error(S.StatusWord + String(answer.status))
+            }
+            return ''
+        })
+        this.Expect(S.Labels.TeardownDomains, cleared.ok, cleared.detail)
     }
 
     /** Step 8's cluster checks: labels (hive + PSA baseline), the console's RoleBinding, and the server rollout. */
@@ -515,6 +770,19 @@ export class InHiveConsoleSmoke
             const env = await this.Attempt(() => this.Kubectl([S.DeleteVerb, S.NamespaceKind, K8sManifestBuilder.NamespaceOf(S.EnvName), S.IgnoreNotFound]))
             this.Expect(S.Labels.TeardownEnv, env.ok, env.detail)
         }
+        if (this.domainApproved)
+        {
+            const revoked = await this.Attempt(async () =>
+            {
+                const answer = await this.Api(S.MethodPost, this.TenantPath(S.RevokeSuffix), { [S.DomainKey]: S.SmokeDomain })
+                if (answer.status !== S.StatusOk)
+                {
+                    throw new Error(this.Detail(answer))
+                }
+                return ''
+            })
+            this.Expect(S.Labels.TeardownRevoke, revoked.ok, revoked.detail)
+        }
         if (this.sessionCookie !== undefined)
         {
             const removed = await this.Attempt(async () =>
@@ -527,6 +795,10 @@ export class InHiveConsoleSmoke
                 return ''
             })
             this.Expect(S.Labels.TeardownConsole, removed.ok, removed.detail)
+            if (removed.ok && this.ownerEmail !== undefined)
+            {
+                await this.CheckAdvertForgotten(this.ownerEmail)
+            }
         }
         const idp = await this.Attempt(() => this.Kubectl([S.DeleteVerb, S.NamespaceKind, K8sManifestBuilder.IdpNameOf(tenant), S.IgnoreNotFound]))
         this.Expect(S.Labels.TeardownIdp, idp.ok, idp.detail)
@@ -549,6 +821,91 @@ export class InHiveConsoleSmoke
         const policies = await this.Attempt(() => this.Kubectl([S.GetVerb, S.AdmissionPolicyKind + S.KindSeparator + S.AdmissionBindingKind, S.OutputFlag, S.NameOutput]))
         const fences = policies.detail.split(/\r?\n/).filter(l => l.endsWith(S.PathSeparator + policy))
         this.Expect(S.Labels.NoAdmission, policies.ok && fences.length === 0, S.RemainingWord + (fences.length === 0 ? S.NoneWord : fences.join(S.ListSep)))
+    }
+
+    /** Teardown: after the console removal the advert is forgotten, so an Owner match (if any) points at the tenant plane. */
+    private async CheckAdvertForgotten(ownerEmail: string): Promise<void>
+    {
+        const S = InHiveConsoleSmoke
+        const answer = await this.Discover(ownerEmail)
+        const entry = this.EntryOf(answer)
+        const ok = answer.status === S.StatusNotFound
+            || (answer.status === S.StatusOk && (entry === undefined || entry[S.ConsoleUrlKey] === answer.body?.[S.TenantPlaneUrlKey]))
+        this.Expect(S.Labels.AdvertForgotten, ok, this.DiscoverDetail(answer))
+    }
+
+    /**
+     * POST /api/desktop/discover with node http and no Origin header (a desktop client). Counted against MaxDiscoverCalls so a
+     * run stays under the endpoint's per-address throttle; past the cap the call is not made and answers status 0.
+     */
+    private async Discover(email: string): Promise<ApiAnswer>
+    {
+        const S = InHiveConsoleSmoke
+        if (this.discoverCalls >= S.MaxDiscoverCalls)
+        {
+            this.Expect(S.DiscoverCapExceeded, false)
+            return { status: 0, body: undefined, setCookie: [] }
+        }
+        this.discoverCalls++
+        const url = new URL(this.options.controlPlane + S.DiscoverPath)
+        const payload = JSON.stringify({ [S.EmailKey]: email })
+        return new Promise((resolve, reject) =>
+        {
+            const req = httpRequest({ hostname: url.hostname, port: url.port, path: url.pathname, method: S.MethodPost, headers: { [S.ContentTypeHeader]: S.JsonType } }, res =>
+            {
+                const chunks: Buffer[] = []
+                res.on(S.DataEvent, (c: Buffer) => chunks.push(c))
+                res.on(S.EndEvent, () => resolve({ status: res.statusCode ?? 0, body: InHiveConsoleSmoke.ParseJson(Buffer.concat(chunks).toString(S.Utf8)), setCookie: [] }))
+                res.on(S.ErrorEvent, reject)
+            })
+            req.on(S.ErrorEvent, reject)
+            req.end(payload)
+        })
+    }
+
+    /** The discovery answer's entry for the smoke tenant, if listed. */
+    private EntryOf(answer: ApiAnswer): Record<string, unknown> | undefined
+    {
+        const S = InHiveConsoleSmoke
+        const tenants = answer.body?.[S.TenantsKey]
+        if (!Array.isArray(tenants))
+        {
+            return undefined
+        }
+        return (tenants as Record<string, unknown>[]).find(t => t?.[S.IdKey] === S.TenantId)
+    }
+
+    /** 404, or 200 without the smoke tenant. */
+    private TenantLeftOut(answer: ApiAnswer): boolean
+    {
+        const S = InHiveConsoleSmoke
+        return answer.status === S.StatusNotFound || (answer.status === S.StatusOk && this.EntryOf(answer) === undefined)
+    }
+
+    /** Status, whether the smoke tenant is listed, its consoleUrl and the tenant-plane URL; never the email asked about. */
+    private DiscoverDetail(answer: ApiAnswer): string
+    {
+        const S = InHiveConsoleSmoke
+        const entry = this.EntryOf(answer)
+        return S.StatusWord + String(answer.status) + S.DetailSep + S.ListedWord + String(entry !== undefined)
+            + S.ConsoleUrlWord + String(entry?.[S.ConsoleUrlKey]) + S.PlaneWord + String(answer.body?.[S.TenantPlaneUrlKey])
+    }
+
+    private static ParseJson(text: string): Record<string, unknown> | undefined
+    {
+        try
+        {
+            return text.length === 0 ? undefined : JSON.parse(text) as Record<string, unknown>
+        }
+        catch
+        {
+            return undefined
+        }
+    }
+
+    private static SameList(value: unknown, expected: readonly string[]): boolean
+    {
+        return Array.isArray(value) && value.length === expected.length && value.every((v, i) => v === expected[i])
     }
 
     private async WaitNamespaceGone(namespace: string): Promise<boolean>
@@ -599,16 +956,7 @@ export class InHiveConsoleSmoke
         }
         const response = await fetch(this.options.controlPlane + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
         const text = await response.text()
-        let parsed: Record<string, unknown> | undefined
-        try
-        {
-            parsed = text.length === 0 ? undefined : JSON.parse(text) as Record<string, unknown>
-        }
-        catch
-        {
-            parsed = undefined
-        }
-        return { status: response.status, body: parsed, setCookie: response.headers.getSetCookie() }
+        return { status: response.status, body: InHiveConsoleSmoke.ParseJson(text), setCookie: response.headers.getSetCookie() }
     }
 
     private Detail(answer: ApiAnswer): string
@@ -649,6 +997,17 @@ export class InHiveConsoleSmoke
     private HivePath(suffix: string): string
     {
         return InHiveConsoleSmoke.ApiPrefix + encodeURIComponent(this.options.hiveId) + suffix
+    }
+
+    private TenantPath(suffix: string): string
+    {
+        return InHiveConsoleSmoke.TenantsPrefix + encodeURIComponent(InHiveConsoleSmoke.TenantId) + suffix
+    }
+
+    /** The in-hive console origin the advert and discovery carry: https://console-<tenant>.<baseDomain>. */
+    private ConsoleUrl(): string
+    {
+        return InHiveConsoleSmoke.HttpsScheme + this.ConsoleHost()
     }
 
     private ConsoleHost(): string
