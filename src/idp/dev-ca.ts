@@ -52,6 +52,9 @@ export class DevCa
     private static readonly StagingPrefix = '.devca-'
     private static readonly CaSubject = '/CN=pragmatic-idp-dev-ca'
     private static readonly SubjectPrefix = '/CN='
+    /** X.509 ub-common-name: openssl refuses a longer CN ("string too long"). */
+    private static readonly MaxCommonNameLength = 64
+    private static readonly LabelSeparator = '.'
     private static readonly ValidDays = '3650'
     private static readonly KeySpec = 'rsa:2048'
     private static readonly SanPrefix = 'subjectAltName='
@@ -63,7 +66,7 @@ export class DevCa
     private static readonly KeyMode = 0o600
     private static readonly OpensslFailed = 'DevCa: failed to run openssl (is the openssl CLI installed and on PATH?): '
 
-    /** `host` is one DNS name, or a list (CN = the first; every one becomes a DNS SAN). A bare string behaves exactly as a one-element list. */
+    /** `host` is one DNS name, or a list (CN = the first, or its first label when longer than 64 characters; every one becomes a DNS SAN). A bare string behaves exactly as a one-element list. */
     public static EnsureAt(dir: string, host: string | readonly string[], openssl: string = DevCa.Openssl): DevCaFiles
     {
         const hosts: readonly string[] = typeof host === 'string' ? [host] : host
@@ -139,7 +142,7 @@ export class DevCa
         DevCa.Run(openssl, [DevCa.ReqCmd, DevCa.FlagX509, DevCa.FlagNewkey, DevCa.KeySpec, DevCa.FlagNodes, DevCa.FlagKeyout, p(DevCa.CaKeyFile),
             DevCa.FlagOut, p(DevCa.CaCertFile), DevCa.FlagDays, DevCa.ValidDays, DevCa.FlagSubj, DevCa.CaSubject])
         DevCa.Run(openssl, [DevCa.ReqCmd, DevCa.FlagNewkey, DevCa.KeySpec, DevCa.FlagNodes, DevCa.FlagKeyout, p(DevCa.ServerKeyFile),
-            DevCa.FlagOut, p(DevCa.ServerCsrFile), DevCa.FlagSubj, DevCa.SubjectPrefix + hosts[0]])
+            DevCa.FlagOut, p(DevCa.ServerCsrFile), DevCa.FlagSubj, DevCa.SubjectPrefix + DevCa.CommonNameOf(hosts[0] as string)])
         writeFileSync(p(DevCa.ExtFile), DevCa.SanPrefix + hosts.map(h => DevCa.DnsPrefix + h).join(DevCa.SanSeparator) + DevCa.SanSuffix + DevCa.Eol + DevCa.BasicConstraints + DevCa.Eol)
         DevCa.Run(openssl, [DevCa.X509Cmd, DevCa.FlagReq, DevCa.FlagIn, p(DevCa.ServerCsrFile), DevCa.FlagCa, p(DevCa.CaCertFile),
             DevCa.FlagCaKey, p(DevCa.CaKeyFile), DevCa.FlagCaCreateSerial, DevCa.FlagOut, p(DevCa.ServerCertFile),
@@ -147,6 +150,19 @@ export class DevCa
         chmodSync(p(DevCa.CaKeyFile), DevCa.KeyMode)
         chmodSync(p(DevCa.ServerKeyFile), DevCa.KeyMode)
         rmSync(p(DevCa.CaSerialFile), { force: true })
+    }
+
+    /**
+     * The subject CN for the server cert: the first host when it fits X.509's 64-character CN limit, else its first DNS label (cut
+     * to the limit). Clients match the SAN list, which always carries every full host, so a shortened CN changes no verification.
+     */
+    private static CommonNameOf(host: string): string
+    {
+        if (host.length <= DevCa.MaxCommonNameLength)
+        {
+            return host
+        }
+        return (host.split(DevCa.LabelSeparator)[0] as string).slice(0, DevCa.MaxCommonNameLength)
     }
 
     private static Run(openssl: string, args: string[]): void

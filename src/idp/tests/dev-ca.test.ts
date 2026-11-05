@@ -170,3 +170,24 @@ test('a one-element list and a bare string mint equivalent single-SAN certs; eac
         }
     }
 })
+
+test('a first host longer than the 64-character CN limit still mints: the CN is its first label, the SAN keeps the full name', () =>
+{
+    const dir = mkdtempSync(join(tmpdir(), 'devca-'))
+    try
+    {
+        // The in-cluster IdP's Service-DNS host for tenant `pragmatic-default` is 81 characters.
+        const host = 'pragmatic-idp-pragmatic-default.pragmatic-idp-pragmatic-default.svc.cluster.local'
+        const f = DevCa.EnsureAt(dir, [host, 'idp-pragmatic-default.localtest.me'])
+        const cert = new X509Certificate(readFileSync(f.certFile))
+        assert.ok(cert.subjectAltName?.includes('DNS:' + host))
+        assert.ok(cert.subjectAltName?.includes('DNS:idp-pragmatic-default.localtest.me'))
+        assert.ok(cert.subject.includes('CN=pragmatic-idp-pragmatic-default'))
+        assert.ok(!cert.subject.includes('CN=' + host))
+        assert.ok(cert.checkHost(host) !== undefined)
+    }
+    finally
+    {
+        rmSync(dir, { recursive: true, force: true })
+    }
+})
