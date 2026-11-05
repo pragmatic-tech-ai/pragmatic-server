@@ -18,6 +18,7 @@ import type { IAccessAuditSink, AccessAuditEvent } from '../access-audit.js'
 
 class CapturingSink implements IAccessAuditSink
 {
+    public Drain(): Promise<void> { return Promise.resolve() }
     public readonly Events: AccessAuditEvent[] = []
 
     public Record(event: AccessAuditEvent): Promise<void>
@@ -29,6 +30,7 @@ class CapturingSink implements IAccessAuditSink
 
 class ThrowingSink implements IAccessAuditSink
 {
+    public Drain(): Promise<void> { return Promise.resolve() }
     public Record(): Promise<void>
     {
         throw new Error('sink down')

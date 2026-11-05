@@ -127,3 +127,46 @@ test('a rejecting store is swallowed and logged', async () =>
     })
     assert.equal(logger.Errors.length, 1)
 })
+
+// Holds every insert until Release(), as a slow database would.
+class HeldStore implements IAuditSink
+{
+    public Written = 0
+    private release: () => void = () => undefined
+    private readonly gate = new Promise<void>(resolve => { this.release = resolve })
+
+    public async Record(): Promise<void>
+    {
+        await this.gate
+        this.Written++
+    }
+
+    public Release(): void
+    {
+        this.release()
+    }
+}
+
+test('Drain resolves only after every fire-and-forget insert has finished (the last events survive a shutdown)', async () =>
+{
+    const store = new HeldStore()
+    const sink = new SqlAuditAccessSink(store)
+    const event = { Timestamp: new Date(), TenantId: 't1', Surface: AuditSurface.Rpc, MethodOrPath: 'x', Outcome: AuditOutcome.Allow }
+    void sink.Record(event)
+    void sink.Record(event)
+    let drained = false
+    const drain = sink.Drain().then(() => { drained = true })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(drained, false)
+    store.Release()
+    await drain
+    assert.equal(store.Written, 2)
+})
+
+test('Drain with nothing in flight resolves at once, and a failed insert does not make it reject', async () =>
+{
+    await new SqlAuditAccessSink(new CapturingStore()).Drain()
+    const sink = new SqlAuditAccessSink(new RejectingStore(), new CapturingLogger())
+    void sink.Record({ Timestamp: new Date(), TenantId: 't1', Surface: AuditSurface.Rpc, MethodOrPath: 'x', Outcome: AuditOutcome.Allow })
+    await sink.Drain()
+})

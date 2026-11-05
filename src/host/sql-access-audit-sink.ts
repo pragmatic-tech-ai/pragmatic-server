@@ -22,6 +22,7 @@ export class SqlAuditAccessSink implements IAccessAuditSink
 
     private readonly store: IAuditSink
     private readonly logger: ILogger
+    private readonly pending = new Set<Promise<void>>()
 
     public constructor(store: IAuditSink, logger: ILogger = new NullLogger())
     {
@@ -29,7 +30,25 @@ export class SqlAuditAccessSink implements IAccessAuditSink
         this.logger = logger
     }
 
-    public async Record(event: AccessAuditEvent): Promise<void>
+    /** Callers fire Record and forget it; each write is tracked here until it settles, so Drain can await the ones in flight. */
+    public Record(event: AccessAuditEvent): Promise<void>
+    {
+        const write = this.Write(event)
+        this.pending.add(write)
+        void write.finally(() => this.pending.delete(write))
+        return write
+    }
+
+    public async Drain(): Promise<void>
+    {
+        while (this.pending.size > 0)
+        {
+            await Promise.all([...this.pending])
+        }
+    }
+
+    /** Never rejects: a store failure is logged and swallowed. */
+    private async Write(event: AccessAuditEvent): Promise<void>
     {
         try
         {

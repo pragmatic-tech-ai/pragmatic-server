@@ -41,12 +41,19 @@ export interface AccessAuditEvent
 export interface IAccessAuditSink
 {
     Record(event: AccessAuditEvent): Promise<void>
+    /** Resolves once every write already started has finished (never rejects). The host's shutdown awaits it before it exits. */
+    Drain(): Promise<void>
 }
 
 /** Default sink: records nothing, so composing without an audit sink is byte-safe. */
 export class NullAccessAuditSink implements IAccessAuditSink
 {
     public Record(): Promise<void>
+    {
+        return Promise.resolve()
+    }
+
+    public Drain(): Promise<void>
     {
         return Promise.resolve()
     }

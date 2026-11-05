@@ -40,6 +40,7 @@ class CapturingLogger implements ILogger
 
 class CapturingAudit implements IAccessAuditSink
 {
+    public Drain(): Promise<void> { return Promise.resolve() }
     public readonly Events: AccessAuditEvent[] = []
 
     public async Record(event: AccessAuditEvent): Promise<void>

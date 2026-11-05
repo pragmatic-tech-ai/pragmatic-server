@@ -5,6 +5,8 @@ import { TenantProvisioningFactory } from '../config/tenant-provisioning-factory
 import { ProvisionedSecretsFactory } from '../config/provisioned-secrets-factory.js'
 import { WorkerHost } from '../cluster/worker-host.js'
 import { ServerBootstrap } from './server-bootstrap.js'
+import { GracefulShutdown } from './graceful-shutdown.js'
+import type { IAccessAuditSink } from '../host/access-audit.js'
 import { StructuredLogger } from '../observability/logger.js'
 import type { ILogger } from '../observability/logger.js'
 import { DeploymentMode } from '../platform/deployment-mode.js'
@@ -23,15 +25,14 @@ class WorkerMain
     private static readonly ShutdownErrorPrefix = 'pragmatic-worker shutdown error: '
 
     private static readonly StartupEvent = 'startup'
-    private static readonly ShutdownEvent = 'shutdown'
     private static readonly StartFailedEvent = 'start-failed'
-    private static readonly ShutdownErrorEvent = 'shutdown-error'
     private static readonly EventKey = 'event'
 
-    private shuttingDown = false
+    private readonly shutdown: GracefulShutdown
 
-    private constructor(private readonly host: WorkerHost, private readonly logger: ILogger, private readonly bundle?: ICloudBundle)
+    private constructor(host: WorkerHost, audit: IAccessAuditSink, logger: ILogger, bundle?: ICloudBundle)
     {
+        this.shutdown = new GracefulShutdown(host, audit, bundle, logger, WorkerMain.ShutdownLine, WorkerMain.ShutdownErrorPrefix)
     }
 
     public static async Run(): Promise<void>
@@ -51,7 +52,7 @@ class WorkerMain
             const rateLimit = ServerBootstrap.RateLimit(config, audit, observability, logger)
             const host = await WorkerHost.StartAsync(ServerBootstrap.ComposeWorkerOptions(config, provisioning, bundle?.Platform, provisionedSecrets, logger, observability, audit, rateLimit))
             logger.Info(ServerBootstrap.WorkerStartupLine(config), { [WorkerMain.EventKey]: WorkerMain.StartupEvent })
-            main = new WorkerMain(host, logger, bundle)
+            main = new WorkerMain(host, audit, logger, bundle)
         }
         catch (error)
         {
@@ -66,11 +67,6 @@ class WorkerMain
     {
         StructuredLogger.ToStdout().Error(WorkerMain.StartFailedPrefix + (error instanceof Error ? error.message : WorkerMain.UnknownError), { [WorkerMain.EventKey]: WorkerMain.StartFailedEvent })
         process.exit(1)
-    }
-
-    private async DisposeBundle(): Promise<void>
-    {
-        await WorkerMain.DisposeQuietly(this.bundle)
     }
 
     private static async BuildBundle(config: ServerConfig): Promise<ICloudBundle>
@@ -105,27 +101,14 @@ class WorkerMain
         }
     }
 
+    /** Stops the host, drains the access audit, disposes the bundle, then exits (once; a second signal is ignored). */
     private async Shutdown(): Promise<void>
     {
-        if (this.shuttingDown)
+        const code = await this.shutdown.Run()
+        if (code !== undefined)
         {
-            return
+            process.exit(code)
         }
-        this.shuttingDown = true
-        this.logger.Info(WorkerMain.ShutdownLine, { [WorkerMain.EventKey]: WorkerMain.ShutdownEvent })
-        try
-        {
-            await this.host.DisposeAsync()
-        }
-        catch (error)
-        {
-            this.logger.Error(WorkerMain.ShutdownErrorPrefix + (error instanceof Error ? error.message : WorkerMain.UnknownError), { [WorkerMain.EventKey]: WorkerMain.ShutdownErrorEvent })
-            await this.DisposeBundle()
-            process.exit(1)
-            return
-        }
-        await this.DisposeBundle()
-        process.exit(0)
     }
 }
 

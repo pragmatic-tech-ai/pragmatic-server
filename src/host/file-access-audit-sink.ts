@@ -52,6 +52,12 @@ export class FileAccessAuditSink implements IAccessAuditSink
         return Promise.resolve()
     }
 
+    /** Appends are synchronous, so nothing is ever in flight. */
+    public Drain(): Promise<void>
+    {
+        return Promise.resolve()
+    }
+
     private static Meter(failures: Counter | undefined, event: AccessAuditEvent): void
     {
         try

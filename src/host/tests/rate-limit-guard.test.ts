@@ -13,6 +13,7 @@ import type { ILogger, LogFields } from '../../observability/logger.js'
 
 class CapturingSink implements IAccessAuditSink
 {
+    public Drain(): Promise<void> { return Promise.resolve() }
     public readonly Events: AccessAuditEvent[] = []
 
     public Record(event: AccessAuditEvent): Promise<void>
@@ -24,6 +25,7 @@ class CapturingSink implements IAccessAuditSink
 
 class ThrowingSink implements IAccessAuditSink
 {
+    public Drain(): Promise<void> { return Promise.resolve() }
     public Record(): Promise<void>
     {
         throw new Error('sink down')
@@ -107,6 +109,7 @@ test('a bare guard (no args) allows everything and never touches audit or metric
 
 class RejectingSink implements IAccessAuditSink
 {
+    public Drain(): Promise<void> { return Promise.resolve() }
     public Record(): Promise<void>
     {
         return Promise.reject(new Error('sink rejected'))
