@@ -254,21 +254,6 @@ export class TenantAdminBootstrap
         return K8sManifestBuilder.TenantConsoleFingerprintSecretNameOf(tenantId)
     }
 
-    /**
-     * The tenant-admin's live-credential Secret copies in pragmatic-system, as a v1 List of identities to delete by name on hive
-     * delete (older clusters have them unlabelled): the fingerprint key, the IdP CA and the IdP admin-token copy - the same list
-     * TenantConsoleRemovalManifest names. Never the seed Secret.
-     */
-    public static CredentialRemovalManifest(tenantId: string): string
-    {
-        const C = TenantAdminBootstrap
-        return JSON.stringify({
-            [C.ApiVersionKey]: C.ApiVersion,
-            [C.KindKey]: C.ListKind,
-            [C.ItemsKey]: K8sManifestBuilder.TenantConsoleCredentialIdentitiesOf(tenantId),
-        })
-    }
-
     public async GenerateBootstrap(input: TenantBootstrapInput): Promise<TenantBootstrap>
     {
         const { tenant, hive } = input

@@ -4,7 +4,6 @@ import { AgentUninstallError, ConsoleUninstallError, HiveAgentUninstaller } from
 import { HiveBootstrapBundle } from '../hive-bootstrap-bundle.js'
 import { InClusterIdpSeedSource } from '../in-cluster-idp-seed.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
-import { TenantAdminBootstrap } from '../tenant-admin-bootstrap.js'
 import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
 import { KubectlError, type IKubectl } from '../kubectl.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
@@ -275,8 +274,7 @@ describe('HiveAgentUninstaller', () =>
         {
             assert.ok(kinds.includes(expected), expected)
         }
-        const credentials = (JSON.parse(TenantAdminBootstrap.CredentialRemovalManifest('t1')) as { items: Array<{ metadata: { name: string } }> }).items
-        for (const secret of credentials)
+        for (const secret of K8sManifestBuilder.TenantConsoleCredentialIdentitiesOf('t1') as Array<{ metadata: { name: string } }>)
         {
             assert.ok(kinds.includes('Secret/' + secret.metadata.name), secret.metadata.name)
         }

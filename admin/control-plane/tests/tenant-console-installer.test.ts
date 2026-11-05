@@ -79,11 +79,16 @@ describe('TenantConsoleInstaller', () =>
         fx = await ConsoleInstallFixture.Create()
         fx.Hives.set('aks1', { ...ConsoleInstallFixture.Hive('aks1'), cluster: { backend: HiveBackend.Aks, mode: InfraMode.Attach } })
         assert.throws(() => fx.Installer.Start('aks1'), ConsoleInstallUnavailableError)
-        assert.equal(fx.Installer.Supports(fx.Hives.get('aks1') as HiveRecord), false)
         fx.Dispose()
         fx = await ConsoleInstallFixture.Create({ channelOn: false })
         assert.throws(() => fx.Installer.Start('h1'), /agent channel is not configured/)
-        assert.equal(fx.Installer.Supports(fx.Hives.get('h1') as HiveRecord), false)
+        assert.equal(fx.Installer.StatusFor('h1'), undefined)
+    })
+
+    it('Start is the one install check (there is no separate Supports)', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        assert.equal('Supports' in fx.Installer, false)
     })
 
     it('a second start while installing', async () =>

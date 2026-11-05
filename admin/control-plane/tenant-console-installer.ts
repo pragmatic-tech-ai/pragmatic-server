@@ -276,15 +276,9 @@ export class TenantConsoleInstaller
     {
     }
 
-    /** Whether the control plane can install (and remove) this hive's console: a Local hive with a safe id, and the agent channel on. */
-    public Supports(hive: HiveRecord): boolean
-    {
-        return hive.cluster.backend === HiveBackend.Local && this.agentChannelUrl !== undefined && K8sManifestBuilder.IsValidHiveId(hive.id)
-    }
-
     /**
-     * Whether the control plane can remove this hive's console: a Local hive with a safe id. Unlike Supports, the agent channel does
-     * not matter (removal never talks to the agent), so turning the channel off never strands a console in the cluster.
+     * Whether the control plane can remove this hive's console: a Local hive with a safe id. Unlike an install (Start), the agent
+     * channel does not matter (removal never talks to the agent), so turning the channel off never strands a console in the cluster.
      */
     public CanUninstall(hive: HiveRecord): boolean
     {

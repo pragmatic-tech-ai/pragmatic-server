@@ -283,14 +283,17 @@ describe('TenantAdminBootstrap in-cluster IdP federation producer', () =>
 
     it('names the tenant-admin credential Secrets for removal (fingerprint key, IdP CA and admin-token copies), never the seed', () =>
     {
-        const removal = JSON.parse(TenantAdminBootstrap.CredentialRemovalManifest('acme')) as { kind: string; items: unknown[] }
-        assert.equal(removal.kind, 'List')
-        assert.deepEqual(removal.items, [
+        assert.deepEqual(K8sManifestBuilder.TenantConsoleCredentialIdentitiesOf('acme'), [
             { apiVersion: 'v1', kind: 'Secret', metadata: { name: K8sManifestBuilder.TenantConsoleFingerprintSecretNameOf('acme'), namespace: 'pragmatic-system' } },
             { apiVersion: 'v1', kind: 'Secret', metadata: { name: TenantAdminBootstrap.IdpCaSecretNameOf('acme'), namespace: 'pragmatic-system' } },
             { apiVersion: 'v1', kind: 'Secret', metadata: { name: TenantAdminBootstrap.IdpTokenSecretNameOf('acme'), namespace: 'pragmatic-system' } },
         ])
-        assert.ok(!TenantAdminBootstrap.CredentialRemovalManifest('acme').includes(K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme')))
+        assert.ok(!new K8sManifestBuilder().TenantConsoleRemovalManifest('acme', 'h1').includes(K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme')))
+    })
+
+    it('has no separate credential removal manifest: TenantConsoleRemovalManifest is the one removal list', () =>
+    {
+        assert.equal('CredentialRemovalManifest' in TenantAdminBootstrap, false)
     })
 
     it('projects a ca.crt-only Secret and never references the IdP TLS Secret from the pod', async () =>

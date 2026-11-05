@@ -464,7 +464,7 @@ describe('K8sManifestBuilder.RenderTenantAdmin console exposure and RBAC', () =>
 
     it('credential removal shares the console Secret identity list', () =>
     {
-        const credential = JSON.parse(TenantAdminBootstrap.CredentialRemovalManifest('acme')).items
+        const credential = K8sManifestBuilder.TenantConsoleCredentialIdentitiesOf('acme')
         const consoleSecrets = ConsoleFixture.Removal().filter((i: any) => i.kind === 'Secret' && i.metadata.name !== K8sManifestBuilder.TenantConsoleDevTlsSecretNameOf('acme'))
         assert.deepEqual(credential, consoleSecrets)
     })

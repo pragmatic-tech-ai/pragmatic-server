@@ -978,7 +978,7 @@ export class K8sManifestBuilder
 
     /**
      * Identities of the console's live-credential Secret copies in pragmatic-system (fingerprint key, IdP CA, IdP admin token):
-     * the one list both TenantConsoleRemovalManifest and TenantAdminBootstrap.CredentialRemovalManifest delete. Never the seed Secret.
+     * the list TenantConsoleRemovalManifest deletes (older clusters carry them unlabelled). Never the seed Secret.
      */
     public static TenantConsoleCredentialIdentitiesOf(tenantId: string): K8sObject[]
     {
