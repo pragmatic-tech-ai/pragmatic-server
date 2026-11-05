@@ -4,7 +4,7 @@ import { inspect } from 'node:util'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
-import { IngressTlsSource } from '../ingress-tls.js'
+import { IngressTlsSource, type IngressTls } from '../ingress-tls.js'
 import { TenantAdminBootstrap } from '../tenant-admin-bootstrap.js'
 import type { IHiveRegistrar, TenantBootstrap, TenantBootstrapInput } from '../tenant-admin-bootstrap.js'
 import { TenantAdminEnv } from '../tenant-admin-env.js'
@@ -61,6 +61,67 @@ class BootstrapFixture
             input.pullCredential = { secretName: 'pull-cred', dockerConfigJson: BootstrapFixture.PullJson }
         }
         return input
+    }
+
+    public static Items(manifest: string): any[]
+    {
+        return (JSON.parse(manifest) as { items: any[] }).items
+    }
+
+    /** The tenant-admin (console) Deployment of the fixture tenant. */
+    public static AdminDeployment(manifest: string): any
+    {
+        return BootstrapFixture.Items(manifest).find(i => i.kind === 'Deployment' && i.metadata.name === K8sManifestBuilder.TenantAdminNameOf('acme'))
+    }
+
+    public static SecretItems(b: TenantBootstrap): Array<{ metadata: { name: string; labels?: Record<string, string> }; type: string; data: Record<string, string> }>
+    {
+        return JSON.parse(b.secrets.RenderManifest()).items
+    }
+}
+
+/** Federated IdP material for the producer tests. */
+class FederatedFixture
+{
+    public static readonly CaPem = '-----BEGIN CERTIFICATE-----\nCAONLY\n-----END CERTIFICATE-----\n'
+
+    public static async Bootstrap(): Promise<TenantBootstrap>
+    {
+        const input = BootstrapFixture.Input()
+        input.idp = { ...input.idp!, ca: Buffer.from(FederatedFixture.CaPem), adminToken: 'idp-admin-token-value' }
+        return new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(input)
+    }
+}
+
+/** The in-hive console install input: reused agent token, console exposure, fingerprint key, pinned images, federated IdP. */
+class ConsoleFixture
+{
+    public static readonly FingerprintKey = Buffer.alloc(32, 7)
+    public static readonly MasterKey = Buffer.alloc(32, 3)
+    public static readonly AdminToken = 'idp-admin-token-for-console'
+    public static readonly Host = 'console-acme.localtest.me'
+    public static readonly Issuer = 'letsencrypt-test'
+    public static readonly Images = [{ imageRef: 'registry.example/pragmatic-server@sha256:abc' }, { imageRef: 'registry.example/pragmatic-idp:1.0' }]
+
+    public static Input(tls: IngressTls = { source: IngressTlsSource.Development }): TenantBootstrapInput
+    {
+        const input = BootstrapFixture.Input()
+        input.reuseAgentToken = true
+        input.console = { host: ConsoleFixture.Host, ingressTls: tls }
+        input.fingerprintKey = ConsoleFixture.FingerprintKey
+        input.verifiedImages = ConsoleFixture.Images
+        input.idp = { ...input.idp!, ca: Buffer.from(FederatedFixture.CaPem), adminToken: ConsoleFixture.AdminToken }
+        return input
+    }
+
+    public static IdpIngress(manifest: string): any
+    {
+        return BootstrapFixture.Items(manifest).find(i => i.kind === 'Ingress' && i.metadata.name === K8sManifestBuilder.IdpNameOf('acme'))
+    }
+
+    public static ConsoleIngress(manifest: string): any
+    {
+        return BootstrapFixture.Items(manifest).find(i => i.kind === 'Ingress' && i.spec.rules[0].host === ConsoleFixture.Host)
     }
 }
 
@@ -188,25 +249,10 @@ describe('TenantAdminBootstrap.GenerateBootstrap', () =>
 
 describe('TenantAdminBootstrap in-cluster IdP federation producer', () =>
 {
-    const CaPem = '-----BEGIN CERTIFICATE-----\nCAONLY\n-----END CERTIFICATE-----\n'
-
-    async function Federated()
-    {
-        const input = BootstrapFixture.Input()
-        input.idp = { ...input.idp!, ca: Buffer.from(CaPem), adminToken: 'idp-admin-token-value' }
-        return new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(input)
-    }
-
-    function AdminDeployment(manifest: string): any
-    {
-        const items = (JSON.parse(manifest) as { items: any[] }).items
-        return items.find(i => i.kind === 'Deployment' && i.metadata.name === K8sManifestBuilder.TenantAdminNameOf('acme'))
-    }
-
     it('populates spec.idp with browser/internal bases and ca-only + admin-token Secret refs', async () =>
     {
-        const b = await Federated()
-        const dep = AdminDeployment(b.manifest)
+        const b = await FederatedFixture.Bootstrap()
+        const dep = BootstrapFixture.AdminDeployment(b.manifest)
         const env = dep.spec.template.spec.containers[0].env as { name: string; value?: string }[]
         assert.ok(env.some(e => e.value === K8sManifestBuilder.IdpBrowserUrlOf('acme', 'tenants.test')))
         assert.ok(env.some(e => e.value === K8sManifestBuilder.IdpBaseUrlOf('acme', 9443)))
@@ -217,7 +263,7 @@ describe('TenantAdminBootstrap in-cluster IdP federation producer', () =>
 
     it('labels every Secret it carries for the hive except the seed (kept with the data PVC on hive delete)', async () =>
     {
-        const b = await Federated()
+        const b = await FederatedFixture.Bootstrap()
         const list = JSON.parse(b.secrets.RenderManifest()) as { items: { metadata: { name: string; labels?: Record<string, string> } }[] }
         const seedName = K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme')
         for (const item of list.items)
@@ -249,16 +295,16 @@ describe('TenantAdminBootstrap in-cluster IdP federation producer', () =>
 
     it('projects a ca.crt-only Secret and never references the IdP TLS Secret from the pod', async () =>
     {
-        const b = await Federated()
+        const b = await FederatedFixture.Bootstrap()
         const list = JSON.parse(b.secrets.RenderManifest()) as { items: { metadata: { name: string }; data: Record<string, string> }[] }
         const ca = list.items.find(i => i.metadata.name === TenantAdminBootstrap.IdpCaSecretNameOf('acme'))!
         assert.deepEqual(Object.keys(ca.data), ['ca.crt'])
-        assert.equal(Buffer.from(ca.data['ca.crt'], 'base64').toString(), CaPem)
+        assert.equal(Buffer.from(ca.data['ca.crt'], 'base64').toString(), FederatedFixture.CaPem)
         // The admin-token copy carries admin-token ONLY (same ca-only discipline).
         const tok = list.items.find(i => i.metadata.name === TenantAdminBootstrap.IdpTokenSecretNameOf('acme'))!
         assert.deepEqual(Object.keys(tok.data), ['admin-token'])
         assert.equal(Buffer.from(tok.data['admin-token'], 'base64').toString(), 'idp-admin-token-value')
-        const dep = AdminDeployment(b.manifest)
+        const dep = BootstrapFixture.AdminDeployment(b.manifest)
         const volumes = dep.spec.template.spec.volumes.map((v: any) => v.secret?.secretName).filter(Boolean)
         assert.ok(!volumes.includes('idp-tls'))
         assert.ok(!JSON.stringify(dep).includes('server.key'))
@@ -267,7 +313,7 @@ describe('TenantAdminBootstrap in-cluster IdP federation producer', () =>
 
     it('never echoes the projected IdP admin token or CA via JSON/string/inspect/manifest', async () =>
     {
-        const b = await Federated()
+        const b = await FederatedFixture.Bootstrap()
         const leaked = [JSON.stringify(b), String(b.secrets), inspect(b, { depth: 8 }), b.manifest].join('\n')
         assert.ok(!leaked.includes('idp-admin-token-value'))
         assert.ok(!leaked.includes(Buffer.from('idp-admin-token-value').toString('base64')))
@@ -283,51 +329,20 @@ describe('TenantAdminBootstrap in-cluster IdP federation producer', () =>
     it('throws when exactly one of ca/adminToken is supplied (all-or-nothing)', async () =>
     {
         const input = BootstrapFixture.Input()
-        input.idp = { ...input.idp!, ca: Buffer.from(CaPem) }
+        input.idp = { ...input.idp!, ca: Buffer.from(FederatedFixture.CaPem) }
         await assert.rejects(() => new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(input), /together/)
     })
 })
 
 describe('TenantAdminBootstrap as the in-hive console renderer', () =>
 {
-    const FingerprintKey = Buffer.alloc(32, 7)
-    const AdminToken = 'idp-admin-token-for-console'
-    const ConsoleHost = 'console-acme.localtest.me'
-    const Images = [{ imageRef: 'registry.example/pragmatic-server@sha256:abc' }, { imageRef: 'registry.example/pragmatic-idp:1.0' }]
-
-    function ConsoleInput(): TenantBootstrapInput
-    {
-        const input = BootstrapFixture.Input()
-        input.reuseAgentToken = true
-        input.console = { host: ConsoleHost, ingressTls: { source: IngressTlsSource.Development } }
-        input.fingerprintKey = FingerprintKey
-        input.verifiedImages = Images
-        input.idp = { ...input.idp!, ca: Buffer.from('-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----\n'), adminToken: AdminToken, ingressTls: { source: IngressTlsSource.Development } }
-        return input
-    }
-
-    function Items(manifest: string): any[]
-    {
-        return (JSON.parse(manifest) as { items: any[] }).items
-    }
-
-    function AdminDeployment(manifest: string): any
-    {
-        return Items(manifest).find(i => i.kind === 'Deployment' && i.metadata.name === K8sManifestBuilder.TenantAdminNameOf('acme'))
-    }
-
-    function SecretItems(b: TenantBootstrap): Array<{ metadata: { name: string; labels?: Record<string, string> }; type: string; data: Record<string, string> }>
-    {
-        return JSON.parse(b.secrets.RenderManifest()).items
-    }
-
     it('reuseAgentToken never registers and emits no token Secret', async () =>
     {
         const registrar = new FakeRegistrar()
-        const b = await new TenantAdminBootstrap(registrar).GenerateBootstrap(ConsoleInput())
+        const b = await new TenantAdminBootstrap(registrar).GenerateBootstrap(ConsoleFixture.Input())
         assert.equal(registrar.registered.length, 0)
         assert.ok(!b.secrets.Names().includes(K8sManifestBuilder.AgentTokenSecretNameOf('hive-a')))
-        const env = AdminDeployment(b.manifest).spec.template.spec.containers[0].env as any[]
+        const env = BootstrapFixture.AdminDeployment(b.manifest).spec.template.spec.containers[0].env as any[]
         const tokenEnv = env.find(e => e.valueFrom?.secretKeyRef?.key === 'token')
         assert.equal(tokenEnv.valueFrom.secretKeyRef.name, K8sManifestBuilder.AgentTokenSecretNameOf('hive-a'))
         assert.equal(b.agentTokenSecretName, K8sManifestBuilder.AgentTokenSecretNameOf('hive-a'))
@@ -335,78 +350,102 @@ describe('TenantAdminBootstrap as the in-hive console renderer', () =>
 
     it('reuseAgentToken leaves the running hive agent alone: no agent objects in the manifest', async () =>
     {
-        const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(ConsoleInput())
-        const items = Items(b.manifest)
+        const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(ConsoleFixture.Input())
+        const items = BootstrapFixture.Items(b.manifest)
         const agent = K8sManifestBuilder.HiveAgentNameOf('hive-a')
         assert.ok(!items.some(i => i.metadata.name === agent), 'no hive agent object')
         assert.equal(items[0].kind, 'Namespace')
         assert.equal(items.filter(i => i.kind === 'Namespace' && i.metadata.name === 'pragmatic-system').length, 1)
-        assert.ok(AdminDeployment(b.manifest) !== undefined)
+        assert.ok(BootstrapFixture.AdminDeployment(b.manifest) !== undefined)
     })
 
     it('the fingerprint key is its own hive-labelled Secret', async () =>
     {
-        const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(ConsoleInput())
+        const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(ConsoleFixture.Input())
         assert.equal(TenantAdminBootstrap.FingerprintKeySecretNameOf('acme'), 'pragmatic-tenant-admin-acme-fingerprint')
         assert.equal(TenantAdminBootstrap.FingerprintKeyKey, 'fingerprint.key')
-        const item = SecretItems(b).find(s => s.metadata.name === 'pragmatic-tenant-admin-acme-fingerprint')!
+        const item = BootstrapFixture.SecretItems(b).find(s => s.metadata.name === 'pragmatic-tenant-admin-acme-fingerprint')!
         assert.equal(item.type, 'Opaque')
         assert.deepEqual(item.metadata.labels, { 'pragmatic/hive': 'hive-a' })
         assert.deepEqual(Object.keys(item.data), ['fingerprint.key'])
-        assert.ok(Buffer.from(item.data['fingerprint.key'], 'base64').equals(FingerprintKey))
-        const pod = AdminDeployment(b.manifest).spec.template.spec
+        assert.ok(Buffer.from(item.data['fingerprint.key'], 'base64').equals(ConsoleFixture.FingerprintKey))
+        const pod = BootstrapFixture.AdminDeployment(b.manifest).spec.template.spec
         assert.ok(pod.volumes.some((v: any) => v.secret?.secretName === 'pragmatic-tenant-admin-acme-fingerprint'))
-        assert.ok((pod.containers[0].env as any[]).some(e => e.value === K8sManifestBuilder.FingerprintKeyFilePath))
+        assert.ok((pod.containers[0].env as any[]).some(e => e.name === TenantAdminEnv.FingerprintKeyFile && e.value === K8sManifestBuilder.FingerprintKeyFilePath))
     })
 
     it('refuses a fingerprint key or master key that is not 32 bytes', async () =>
     {
-        const short = ConsoleInput()
+        const short = ConsoleFixture.Input()
         short.fingerprintKey = Buffer.alloc(16)
         await assert.rejects(() => new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(short), /32 bytes/)
-        const badMaster = ConsoleInput()
+        const badMaster = ConsoleFixture.Input()
         badMaster.masterKey = Buffer.alloc(31)
         await assert.rejects(() => new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(badMaster), /32 bytes/)
     })
 
     it('verified images ride in the seed Secret', async () =>
     {
-        const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(ConsoleInput())
-        const seed = SecretItems(b).find(s => s.metadata.name === K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme'))!
-        assert.deepEqual(JSON.parse(Buffer.from(seed.data[TenantAdminBootstrap.VerifiedImagesKey], 'base64').toString('utf8')), Images)
+        const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(ConsoleFixture.Input())
+        const seed = BootstrapFixture.SecretItems(b).find(s => s.metadata.name === K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme'))!
+        assert.deepEqual(JSON.parse(Buffer.from(seed.data[TenantAdminBootstrap.VerifiedImagesKey], 'base64').toString('utf8')), ConsoleFixture.Images)
     })
 
     it('reinstall keeps the console master key', async () =>
     {
-        const masterKey = Buffer.alloc(32, 3)
-        const input = ConsoleInput()
-        input.masterKey = masterKey
+        const input = ConsoleFixture.Input()
+        input.masterKey = ConsoleFixture.MasterKey
         const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(input)
-        const seed = SecretItems(b).find(s => s.metadata.name === K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme'))!
-        assert.ok(Buffer.from(seed.data['master.key'], 'base64').equals(masterKey))
+        const seed = BootstrapFixture.SecretItems(b).find(s => s.metadata.name === K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme'))!
+        assert.ok(Buffer.from(seed.data['master.key'], 'base64').equals(ConsoleFixture.MasterKey))
     })
 
     it('console exposure reaches the console Ingress and the IdP Ingress TLS', async () =>
     {
-        const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(ConsoleInput())
-        const ingresses = Items(b.manifest).filter(i => i.kind === 'Ingress')
-        const consoleIngress = ingresses.find(i => i.spec.rules[0].host === ConsoleHost)
+        const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(ConsoleFixture.Input())
+        const ingresses = BootstrapFixture.Items(b.manifest).filter(i => i.kind === 'Ingress')
+        const consoleIngress = ingresses.find(i => i.spec.rules[0].host === ConsoleFixture.Host)
         assert.ok(consoleIngress !== undefined)
         assert.equal(consoleIngress.spec.tls[0].secretName, K8sManifestBuilder.TenantConsoleDevTlsSecretNameOf('acme'))
         const idpIngress = ingresses.find(i => i.metadata.name === K8sManifestBuilder.IdpNameOf('acme'))
         assert.ok(idpIngress !== undefined)
         assert.equal(idpIngress.metadata.annotations['nginx.ingress.kubernetes.io/ssl-passthrough'], undefined)
-        const env = AdminDeployment(b.manifest).spec.template.spec.containers[0].env as Array<{ name: string; value?: string }>
+        const env = BootstrapFixture.AdminDeployment(b.manifest).spec.template.spec.containers[0].env as Array<{ name: string; value?: string }>
         // Environments the console creates use the console's own TLS choice (its TLS Role only reads that Secret).
         assert.ok(env.some(e => e.name === TenantAdminEnv.IngressTlsSource && e.value === IngressTlsSource.Development))
     })
 
+    it('the IdP Ingress takes the console TLS choice, overriding a separate idp.ingressTls', async () =>
+    {
+        const input = ConsoleFixture.Input({ source: IngressTlsSource.CertManager, clusterIssuer: ConsoleFixture.Issuer })
+        input.idp = { ...input.idp!, ingressTls: { source: IngressTlsSource.Development } }
+        const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(input)
+        const issuer = 'cert-manager.io/cluster-issuer'
+        const consoleIngress = ConsoleFixture.ConsoleIngress(b.manifest)
+        const idpIngress = ConsoleFixture.IdpIngress(b.manifest)
+        assert.equal(consoleIngress.metadata.annotations[issuer], ConsoleFixture.Issuer)
+        assert.equal(idpIngress.metadata.annotations[issuer], consoleIngress.metadata.annotations[issuer])
+        assert.equal(idpIngress.spec.tls[0].secretName, K8sManifestBuilder.IdpNameOf('acme') + '-ingress-tls')
+    })
+
+    it('refuses a console exposure without a fingerprint key', async () =>
+    {
+        const input = ConsoleFixture.Input()
+        delete input.fingerprintKey
+        await assert.rejects(() => new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(input), /fingerprint key/)
+    })
+
     it('nothing secret leaks through JSON', async () =>
     {
-        const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(ConsoleInput())
+        const input = ConsoleFixture.Input()
+        input.masterKey = ConsoleFixture.MasterKey
+        const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(input)
         const leaked = [JSON.stringify(b), String(b.secrets), inspect(b, { depth: 8 }), b.manifest].join('\n')
-        assert.ok(!leaked.includes(FingerprintKey.toString('base64')))
-        assert.ok(!leaked.includes(AdminToken))
-        assert.ok(!leaked.includes(Buffer.from(AdminToken).toString('base64')))
+        assert.ok(!leaked.includes(ConsoleFixture.FingerprintKey.toString('base64')))
+        assert.ok(!leaked.includes(ConsoleFixture.MasterKey.toString('base64')))
+        assert.ok(!leaked.includes(ConsoleFixture.AdminToken))
+        assert.ok(!leaked.includes(Buffer.from(ConsoleFixture.AdminToken).toString('base64')))
+        // The master key leaves only through the Secret set's RenderManifest().
+        assert.ok(b.secrets.RenderManifest().includes(ConsoleFixture.MasterKey.toString('base64')))
     })
 })

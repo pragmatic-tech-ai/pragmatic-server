@@ -36,7 +36,8 @@ export interface TenantBootstrapInput
      * The tenant's IdP workload. RenderIdp puts it in its OWN namespace (K8sManifestBuilder.IdpNameOf(tenant.id)) and mounts the
      * Secrets it names (TLS, admin token) from THERE. Bootstrap only references them: it never mints or emits them (the bootstrap
      * Secret set is pragmatic-system only), so whoever provisions the IdP must create them in the IdP namespace. Omit when the IdP
-     * is provisioned separately.
+     * is provisioned separately. With a `console` exposure the IdP Ingress uses the console's TLS choice (one choice for the console,
+     * its IdP and the environments it creates); `idp.ingressTls` then is ignored and only applies without a console.
      */
     idp?: Pick<IdpWorkloadSpec, 'image' | 'port' | 'tlsSecretName' | 'adminTokenSecretName' | 'adminTokenRef' | 'ingressTls'> & TenantIdpMaterial
     /** The signing trust root's PUBLIC key (PEM). Never the private half. */
@@ -48,9 +49,12 @@ export interface TenantBootstrapInput
      * AgentTokenSecretNameOf(hive.id), the agent's own Secret.
      */
     reuseAgentToken?: boolean
-    /** Browser exposure of the console (host + Ingress TLS choice); the console also places its environments with this TLS choice. */
+    /**
+     * Browser exposure of the console (host + Ingress TLS choice). The same TLS choice secures the IdP Ingress and the environments
+     * the console creates. Requires `fingerprintKey`.
+     */
     console?: TenantConsoleExposure
-    /** The 32-byte session-fingerprint key; carried in its own hive-labelled Secret and mounted by the console. */
+    /** The 32-byte session-fingerprint key; carried in its own hive-labelled Secret and mounted by the console (required with `console`). */
     fingerprintKey?: Buffer
     /** The platform-pinned image refs the console may run; written into the seed Secret as verified-images.json. */
     verifiedImages?: readonly VerifiedImage[]
@@ -216,6 +220,7 @@ export class TenantAdminBootstrap
     private static readonly MasterKeyBytes = 32
     private static readonly BadMasterKey = 'TenantAdminBootstrap: the console master key must be exactly 32 bytes'
     private static readonly BadFingerprintKey = 'TenantAdminBootstrap: the console fingerprint key must be exactly 32 bytes'
+    private static readonly ConsoleNeedsFingerprintKey = 'TenantAdminBootstrap: a console exposure needs its session fingerprint key'
     private static readonly ApiVersionKey = 'apiVersion'
     private static readonly KindKey = 'kind'
     private static readonly ItemsKey = 'items'
@@ -269,6 +274,10 @@ export class TenantAdminBootstrap
         const { tenant, hive } = input
         TenantAdminBootstrap.AssertKeyLength(input.masterKey, TenantAdminBootstrap.MasterKeyBytes, TenantAdminBootstrap.BadMasterKey)
         TenantAdminBootstrap.AssertKeyLength(input.fingerprintKey, ConsoleFingerprintKeys.KeyBytes, TenantAdminBootstrap.BadFingerprintKey)
+        if (input.console !== undefined && input.fingerprintKey === undefined)
+        {
+            throw new Error(TenantAdminBootstrap.ConsoleNeedsFingerprintKey)
+        }
         const agentTokenSecretName = K8sManifestBuilder.AgentTokenSecretNameOf(hive.id)
         const seedSecretName = K8sManifestBuilder.TenantAdminSeedSecretNameOf(tenant.id)
         const seed: TenantDirectorySeed = { tenant: { ...tenant }, hives: [{ ...hive, agentTokenRef: agentTokenSecretName }], ...(input.organisation !== undefined ? { organisation: input.organisation } : {}) }
@@ -286,7 +295,8 @@ export class TenantAdminBootstrap
         }, undefined, SecretRetention.Retained)
         if (input.verifiedImages !== undefined)
         {
-            // The init container copies the seed Secret into the data root, where PinnedImageVerifier reads it.
+            // The init container copies the seed Secret into the data root, where PinnedImageVerifier reads it. Rebuilt as
+            // { imageRef } only, so a caller's object carrying stray runtime fields cannot widen the file's shape.
             const images: VerifiedImage[] = input.verifiedImages.map(i => ({ imageRef: i.imageRef }))
             secrets.AddEntry(seedSecretName, TenantAdminBootstrap.VerifiedImagesKey, JSON.stringify(images, undefined, TenantAdminBootstrap.JsonIndent))
         }
@@ -362,7 +372,9 @@ export class TenantAdminBootstrap
         const rendered = input.reuseAgentToken === true ? [] : [this.manifests.RenderHiveAgent(hive.id, input.channelUrl, agentTokenSecretName)]
         if (input.idp !== undefined)
         {
-            const { image, port, tlsSecretName, adminTokenSecretName, adminTokenRef, ingressTls } = input.idp
+            const { image, port, tlsSecretName, adminTokenSecretName, adminTokenRef } = input.idp
+            // One TLS choice: with a console exposure the IdP Ingress is secured like the console (and its environments).
+            const ingressTls = input.console?.ingressTls ?? input.idp.ingressTls
             const idp: IdpWorkloadSpec = { tenantId: tenant.id, hiveId: hive.id, image, port, tlsSecretName, adminTokenSecretName, adminTokenRef, ingressTls }
             if (admin.idp !== undefined)
             {
