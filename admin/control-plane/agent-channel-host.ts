@@ -117,7 +117,7 @@ export class AgentChannelHost
     {
         const path = (req.url ?? '').split('?')[0] as string
         const m = AgentChannelHost.RoutePattern.exec(path)
-        if (m === null || AgentChannelHost.SegmentMethods.get(m[2] as string) !== req.method || (m[2] === AgentChannelHost.ConsoleSegment && this.adverts === undefined))
+        if (m === null || AgentChannelHost.SegmentMethods.get(m[2] as string) !== req.method || !this.IsMounted(m[2] as string))
         {
             req.resume()
             PlaneHttp.WriteNotFound(res)
@@ -161,6 +161,12 @@ export class AgentChannelHost
             default:
                 await this.ReceiveSnapshot(req, res, id)
         }
+    }
+
+    /** Whether the route segment is served: every segment is, except console when no advert receiver was given. */
+    private IsMounted(segment: string): boolean
+    {
+        return segment !== AgentChannelHost.ConsoleSegment || this.adverts !== undefined
     }
 
     /** The ?limit= of a ledger request, clamped to [0, DefaultLedgerLimit]; the default when absent or not a number. */

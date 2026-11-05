@@ -416,6 +416,19 @@ describe('AgentChannelHost', () =>
         {
             await bare.Close()
         }
+    })
+
+    it('answers 401 for a console advert from an unregistered hive', async () =>
+    {
+        assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, '/agent/hives/ghost/console', Harness.BearerPrefix + token, Advert)).status, 401)
+        assert.equal(adverts.ForTenant(TenantId), undefined)
+    })
+
+    it('answers 413 for an oversized console advert and stores nothing', async () =>
+    {
+        const big = { ...Advert, emailDomains: ['x'.repeat(1100000)] }
+        const reply = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, big)
+        assert.equal(reply.status, 413)
         assert.equal(adverts.ForTenant(TenantId), undefined)
     })
 })
