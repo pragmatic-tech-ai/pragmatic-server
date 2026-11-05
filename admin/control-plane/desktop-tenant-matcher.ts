@@ -48,6 +48,13 @@ type TenantPlacement = { inHive: boolean; advert: ConsoleAdvertRecord | undefine
  */
 export class DesktopTenantMatcher
 {
+    private static readonly KeyFailureText = 'Discovery skips account fingerprints: the fingerprint key could not be read for hive '
+    private static readonly KeyFailureInfix = ': '
+    private static readonly UnknownErrorName = 'Error'
+
+    /** Hives whose unreadable fingerprint key was already logged (once per hive for the life of this matcher). */
+    private readonly reportedKeyFailures = new Set<string>()
+
     public constructor(
         private readonly index: TenantAccountIndex,
         private readonly directory: IDiscoveryDirectory,
@@ -165,7 +172,11 @@ export class DesktopTenantMatcher
         return ConsoleDomainApprovals.EffectiveDomains(advert.emailDomains, this.approvals.ApprovedFor(advert.tenantId))
     }
 
-    /** The hive's fingerprint key; a missing or unreadable key (e.g. a tampered sealed entry) reads as none, and nothing is logged. */
+    /**
+     * The hive's fingerprint key; a missing or unreadable key (e.g. a tampered sealed entry) reads as none. An unreadable key
+     * is logged once per hive (fixed sentence, hive id and error name only): discovery is unauthenticated, so a per-request
+     * log line would let anyone flood the log.
+     */
     private async KeyOf(hiveId: string): Promise<Buffer | undefined>
     {
         if (this.keys === undefined)
@@ -176,10 +187,21 @@ export class DesktopTenantMatcher
         {
             return await this.keys.Get(hiveId)
         }
-        catch
+        catch (err)
         {
+            this.ReportKeyFailure(hiveId, err)
             return undefined
         }
+    }
+
+    private ReportKeyFailure(hiveId: string, err: unknown): void
+    {
+        if (this.reportedKeyFailures.has(hiveId))
+        {
+            return
+        }
+        this.reportedKeyFailures.add(hiveId)
+        console.warn(DesktopTenantMatcher.KeyFailureText + hiveId + DesktopTenantMatcher.KeyFailureInfix + (err instanceof Error ? err.name : DesktopTenantMatcher.UnknownErrorName))
     }
 
     /** Keeps one entry per tenant; an account match replaces a domain match, never the reverse. */

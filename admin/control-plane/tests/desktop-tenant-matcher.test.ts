@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, it } from 'node:test'
+import { afterEach, beforeEach, describe, it, mock } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -181,14 +181,14 @@ describe('DesktopTenantMatcher', () =>
         directory.Tenants.set('acme', MatcherFixture.Tenant('acme', 'Acme', ['acme.test']))
         adverts.Records.set('acme', MatcherFixture.Advert())
         directory.Tenants.set('beta', MatcherFixture.Tenant('beta', 'Beta', ['acme.test']))
-        assert.deepEqual(Summary(await matcher.Match('carl@acme.test', MatcherFixture.Plane)), [{ id: 'beta', consoleUrl: MatcherFixture.Plane, match: DiscoveryMatch.Domain }])
+        assert.deepEqual(Summary(await matcher.Match(' CARL@Acme.Test  ', MatcherFixture.Plane)), [{ id: 'beta', consoleUrl: MatcherFixture.Plane, match: DiscoveryMatch.Domain }])
     })
 
     it('an advert domain matches an in-hive tenant', async () =>
     {
         adverts.Records.set('acme', MatcherFixture.Advert({ emailDomains: ['acme.test'] }))
         approvals.Approved.set('acme', ['acme.test'])
-        assert.deepEqual(Summary(await matcher.Match('carl@ACME.test', MatcherFixture.Plane)), [{ id: 'acme', consoleUrl: MatcherFixture.Console, match: DiscoveryMatch.Domain }])
+        assert.deepEqual(Summary(await matcher.Match('  Carl@ACME.test ', MatcherFixture.Plane)), [{ id: 'acme', consoleUrl: MatcherFixture.Console, match: DiscoveryMatch.Domain }])
     })
 
     it('an advertised domain the operator has not approved does not match', async () =>
@@ -288,7 +288,38 @@ describe('DesktopTenantMatcher', () =>
         adverts.Records.set('acme', MatcherFixture.Advert({ fingerprints: [ConsoleFingerprint.Of(MatcherFixture.Key, MatcherFixture.Ann)], emailDomains: ['acme.test'] }))
         approvals.Approved.set('acme', ['acme.test'])
         keys.Unreadable.add('h1')
-        assert.deepEqual(Summary(await matcher.Match(MatcherFixture.Ann, MatcherFixture.Plane)), [{ id: 'acme', consoleUrl: MatcherFixture.Console, match: DiscoveryMatch.Domain }])
+        const warn = mock.method(console, 'warn', () => undefined)
+        try
+        {
+            assert.deepEqual(Summary(await matcher.Match(MatcherFixture.Ann, MatcherFixture.Plane)), [{ id: 'acme', consoleUrl: MatcherFixture.Console, match: DiscoveryMatch.Domain }])
+        }
+        finally
+        {
+            warn.mock.restore()
+        }
+    })
+
+    it('an unreadable fingerprint key is logged once per hive, with the hive id and error name only', async () =>
+    {
+        adverts.Records.set('acme', MatcherFixture.Advert({ fingerprints: [ConsoleFingerprint.Of(MatcherFixture.Key, MatcherFixture.Ann)] }))
+        keys.Unreadable.add('h1')
+        const warn = mock.method(console, 'warn', () => undefined)
+        try
+        {
+            await matcher.Match(MatcherFixture.Ann, MatcherFixture.Plane)
+            await matcher.Match(MatcherFixture.Ann, MatcherFixture.Plane)
+            assert.equal(warn.mock.callCount(), 1)
+            const line = warn.mock.calls[0].arguments.map(a => String(a)).join(' ')
+            assert.match(line, /h1/)
+            assert.match(line, /SealedSecretUnreadableError/)
+            assert.ok(!line.includes(MatcherFixture.Key.toString('hex')), 'no key material')
+            assert.ok(!line.includes(MatcherFixture.Key.toString('base64')), 'no key material')
+            assert.ok(!line.toLowerCase().includes(MatcherFixture.Ann), 'no email')
+        }
+        finally
+        {
+            warn.mock.restore()
+        }
     })
 
     it('without adverts or keys an in-hive tenant is never matched', async () =>
