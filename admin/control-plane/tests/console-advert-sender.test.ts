@@ -41,11 +41,23 @@ class Names
     public static readonly OkBody = '{"refusedEmailDomains":[]}'
     public static readonly KeyBytes = 32
     public static readonly Conflict = 409
+    public static readonly Ok = 200
+    public static readonly ClientId = 'c1'
+    public static readonly TenantName = 'Acme'
+    public static readonly Created = '2026-01-01T00:00:00Z'
+    public static readonly JsonType = 'application/json'
+    public static readonly ContentTypeHeader = 'Content-Type'
+    public static readonly ShortTimeoutMs = 50
+    public static readonly TestTimeoutMs = 5000
+    public static readonly AbortedMessage = 'aborted'
+    public static readonly AbortEvent = 'abort'
+    public static readonly SendFailedPrefix = '[console-advert] send failed: '
 }
 
 class RecordingTransport implements IConsoleAdvertTransport
 {
     public readonly bodies: ConsoleAdvertBody[] = []
+    public readonly signals: Array<AbortSignal | undefined> = []
     public failWith: Error | undefined
     private gate: Promise<void> | undefined
     private open: (() => void) | undefined
@@ -61,12 +73,14 @@ class RecordingTransport implements IConsoleAdvertTransport
         this.open?.()
     }
 
-    public async Send(body: ConsoleAdvertBody): Promise<void>
+    public async Send(body: ConsoleAdvertBody, signal?: AbortSignal): Promise<void>
     {
         this.bodies.push(body)
+        this.signals.push(signal)
         if (this.gate !== undefined)
         {
-            await this.gate
+            const aborted = new Promise<void>((_res, rej) => signal?.addEventListener(Names.AbortEvent, () => rej(new Error(Names.AbortedMessage)), { once: true }))
+            await Promise.race([this.gate, aborted])
         }
         if (this.failWith !== undefined)
         {
@@ -181,14 +195,14 @@ describe('ConsoleAdvertSender', () =>
 
     it('the Owner fingerprint is of the trimmed, lower-cased email', () =>
     {
-        const tenant: TenantRecord = { id: Names.TenantId, clientId: 'c1', displayName: 'Acme', createdAt: '2026-01-01T00:00:00Z', ownerEmail: Names.MessyOwnerEmail }
+        const tenant: TenantRecord = { id: Names.TenantId, clientId: Names.ClientId, displayName: Names.TenantName, createdAt: Names.Created, ownerEmail: Names.MessyOwnerEmail }
         const s = new ConsoleAdvertSender(transport, new SeededConsoleAccounts(tenant), store, key, Names.ConsoleUrl, timer, line => lines.push(line))
         assert.deepEqual(s.Body().fingerprints, [ConsoleFingerprint.Of(key, Names.OwnerEmail)])
     })
 
     it('a seed without an Owner email advertises no fingerprints', () =>
     {
-        const tenant: TenantRecord = { id: Names.TenantId, clientId: 'c1', displayName: 'Acme', createdAt: '2026-01-01T00:00:00Z' }
+        const tenant: TenantRecord = { id: Names.TenantId, clientId: Names.ClientId, displayName: Names.TenantName, createdAt: Names.Created }
         assert.deepEqual(new SeededConsoleAccounts(tenant).Emails(), [])
     })
 
@@ -273,7 +287,7 @@ describe('ConsoleAdvertSender', () =>
         const s = sender()
         transport.failWith = new ConsoleAdvertUnavailableError(Names.ConflictMessage)
         await s.Start()
-        assert.deepEqual(lines, ['[console-advert] send failed: ' + Names.ConflictMessage])
+        assert.deepEqual(lines, [Names.SendFailedPrefix + Names.ConflictMessage])
         s.Stop()
     })
 
@@ -304,6 +318,29 @@ describe('ConsoleAdvertSender', () =>
         await Waits.Settle()
         assert.equal(transport.bodies.length, 2)
     })
+
+    it('Stop aborts the send in flight, Idle settles and nothing is logged late', async () =>
+    {
+        const s = sender()
+        await s.Start()
+        transport.Hold()
+        timer.Tick()
+        await Waits.Settle()
+        const signal = transport.signals[1]
+        assert.ok(signal !== undefined, 'every send carries an abort signal')
+        assert.equal(signal.aborted, false)
+        s.Stop()
+        assert.equal(signal.aborted, true)
+        await s.Idle()
+        await Waits.Settle()
+        assert.deepEqual(lines, [], 'an aborted send after Stop is not a failure to report')
+        transport.Release()
+    })
+
+    it('Idle is settled when nothing is in flight', async () =>
+    {
+        await sender().Idle()
+    })
 })
 
 describe('HttpConsoleAdvertTransport', () =>
@@ -321,7 +358,8 @@ describe('HttpConsoleAdvertTransport', () =>
         }
     })
 
-    const listen = async (handler: (req: IncomingMessage, body: string) => { status: number; body: string }): Promise<string> =>
+    /** A handler answering undefined never answers (a hung control plane). */
+    const listen = async (handler: (req: IncomingMessage, body: string) => { status: number; body: string } | undefined): Promise<string> =>
     {
         server = createServer((req, res) =>
         {
@@ -330,7 +368,11 @@ describe('HttpConsoleAdvertTransport', () =>
             req.on('end', () =>
             {
                 const answer = handler(req, Buffer.concat(chunks).toString())
-                res.writeHead(answer.status, { 'Content-Type': 'application/json' })
+                if (answer === undefined)
+                {
+                    return
+                }
+                res.writeHead(answer.status, { [Names.ContentTypeHeader]: Names.JsonType })
                 res.end(answer.body)
             })
         })
@@ -346,13 +388,13 @@ describe('HttpConsoleAdvertTransport', () =>
         const url = await listen((req, text) =>
         {
             seen = { method: req.method, url: req.url, authorization: req.headers.authorization, contentType: req.headers['content-type'], body: JSON.parse(text) }
-            return { status: 200, body: Names.OkBody }
+            return { status: Names.Ok, body: Names.OkBody }
         })
         await new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId).Send(body)
         assert.equal(seen.method, Names.Post)
         assert.equal(seen.url, Names.Path)
         assert.equal(seen.authorization, Names.Bearer)
-        assert.equal(seen.contentType, 'application/json')
+        assert.equal(seen.contentType, Names.JsonType)
         assert.deepEqual(seen.body, body)
     })
 
@@ -370,7 +412,7 @@ describe('HttpConsoleAdvertTransport', () =>
 
     it('an unreachable channel is the fixed sentence', async () =>
     {
-        const url = await listen(() => ({ status: 200, body: Names.OkBody }))
+        const url = await listen(() => ({ status: Names.Ok, body: Names.OkBody }))
         const s = server!
         server = undefined
         await new Promise<void>(res => s.close(() => res()))
@@ -380,5 +422,51 @@ describe('HttpConsoleAdvertTransport', () =>
             assert.equal(err.message, Names.UnreachableMessage)
             return true
         })
+    })
+
+    it('a channel that never answers times out as the unreachable sentence', { timeout: Names.TestTimeoutMs }, async () =>
+    {
+        const url = await listen(() => undefined)
+        await assert.rejects(() => new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId, Names.ShortTimeoutMs).Send(body), (err: unknown) =>
+        {
+            assert.ok(err instanceof ConsoleAdvertUnavailableError)
+            assert.equal(err.message, Names.UnreachableMessage)
+            return true
+        })
+    })
+
+    it('an aborted send is the unreachable sentence', { timeout: Names.TestTimeoutMs }, async () =>
+    {
+        const url = await listen(() => undefined)
+        const abort = new AbortController()
+        const sending = new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId).Send(body, abort.signal)
+        abort.abort()
+        await assert.rejects(() => sending, ConsoleAdvertUnavailableError)
+    })
+
+    it('a timed-out send is reported and the next send still runs', { timeout: Names.TestTimeoutMs }, async () =>
+    {
+        let calls = 0
+        const url = await listen(() => (++calls === 1 ? undefined : { status: Names.Ok, body: Names.OkBody }))
+        const root = mkdtempSync(join(tmpdir(), Names.TempPrefix))
+        try
+        {
+            const store = await ConsoleEmailDomainStore.Open(join(root, ConsoleEmailDomainStore.FileName), Names.TenantId, [Names.Domain])
+            const lines: string[] = []
+            const timer = new FakeTimer()
+            const s = new ConsoleAdvertSender(new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId, Names.ShortTimeoutMs),
+                new FakeAccounts([Names.OwnerEmail]), store, randomBytes(Names.KeyBytes), Names.ConsoleUrl, timer, line => lines.push(line))
+            await s.Start()
+            assert.deepEqual(lines, [Names.SendFailedPrefix + Names.UnreachableMessage])
+            timer.Tick()
+            await s.Idle()
+            assert.equal(calls, 2)
+            assert.equal(lines.length, 1, 'the second send succeeded')
+            s.Stop()
+        }
+        finally
+        {
+            rmSync(root, { recursive: true, force: true })
+        }
     })
 })

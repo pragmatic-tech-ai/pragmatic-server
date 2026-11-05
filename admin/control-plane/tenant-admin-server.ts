@@ -302,18 +302,22 @@ export class TenantAdminServer
     }
 
     /** Composes, binds the tenant listener, then starts the advert (its first send awaited; a failure is logged, never thrown). */
-    public async Run(env: NodeJS.ProcessEnv = process.env): Promise<TenantAdminComposition>
+    public async Run(env: NodeJS.ProcessEnv = process.env, log: (line: string) => void = TenantAdminServer.LogLine): Promise<TenantAdminComposition>
     {
-        const composition = await this.Compose(env)
+        const composition = await this.Compose(env, undefined, log)
         const cfg = composition.config
-        this.running = composition
         await composition.host.Listen(cfg.port, cfg.bind)
+        // Only a listener that bound counts as running, so Close after a failed Listen has nothing to stop.
+        this.running = composition
         console.log(TenantAdminServer.ListeningLine(cfg))
         await composition.advert?.Start()
         return composition
     }
 
-    /** Stops the advert and closes the tenant listener started by Run; a no-op when nothing runs. */
+    /**
+     * Stops the advert (aborting a send in flight and waiting for it to end, so nothing is logged afterwards) and closes the
+     * tenant listener started by Run; a no-op when nothing runs.
+     */
     public async Close(): Promise<void>
     {
         const composition = this.running
@@ -323,6 +327,7 @@ export class TenantAdminServer
             return
         }
         composition.advert?.Stop()
+        await composition.advert?.Idle()
         await composition.host.Close()
     }
 

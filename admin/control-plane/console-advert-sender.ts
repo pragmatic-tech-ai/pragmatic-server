@@ -32,10 +32,10 @@ export class SeededConsoleAccounts implements IConsoleAccountSource
     }
 }
 
-/** Delivers one advert to the control plane; throws on any failure. */
+/** Delivers one advert to the control plane; throws on any failure, including an abort through `signal`. */
 export interface IConsoleAdvertTransport
 {
-    Send(body: ConsoleAdvertBody): Promise<void>
+    Send(body: ConsoleAdvertBody, signal?: AbortSignal): Promise<void>
 }
 
 /** The agent channel did not take the advert; the message is a fixed sentence (plus the HTTP status), never a body or the token. */
@@ -53,10 +53,12 @@ export class ConsoleAdvertUnavailableError extends Error
 /**
  * POSTs the advert to `<baseUrl>/agent/hives/<hiveId>/console` with the hive's agent bearer (only in the Authorization header).
  * The answer's body is drained, never read into an error; the control plane's `refusedEmailDomains` is ignored because the
- * console validates with the same EmailDomainPolicy.
+ * console validates with the same EmailDomainPolicy. A request that outlives `timeoutMs`, or is aborted by the caller, reads as
+ * unreachable, so a hung control plane cannot hold the sender's one in-flight send for ever.
  */
 export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport
 {
+    public static readonly RequestTimeoutMs = 30000
     private static readonly AgentPrefix = '/agent/hives/'
     private static readonly ConsoleSegment = '/console'
     private static readonly AuthorizationHeader = 'Authorization'
@@ -64,20 +66,21 @@ export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport
     private static readonly ContentTypeHeader = 'Content-Type'
     private static readonly JsonType = 'application/json'
     private static readonly MethodPost = 'POST'
-    private static readonly RequestTimeoutMs = 30000
     private static readonly UnreachableMessage = 'The platform agent channel is unreachable'
     private static readonly FailedMessagePrefix = 'The platform agent channel answered HTTP '
 
     public constructor(
         private readonly baseUrl: string,
         private readonly bearerToken: string,
-        private readonly hiveId: string)
+        private readonly hiveId: string,
+        private readonly timeoutMs: number = HttpConsoleAdvertTransport.RequestTimeoutMs)
     {
     }
 
-    public async Send(body: ConsoleAdvertBody): Promise<void>
+    public async Send(body: ConsoleAdvertBody, signal?: AbortSignal): Promise<void>
     {
         const T = HttpConsoleAdvertTransport
+        const timeout = AbortSignal.timeout(this.timeoutMs)
         let response: Response
         try
         {
@@ -85,7 +88,7 @@ export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport
                 method: T.MethodPost,
                 headers: { [T.AuthorizationHeader]: T.BearerPrefix + this.bearerToken, [T.ContentTypeHeader]: T.JsonType },
                 body: JSON.stringify(body),
-                signal: AbortSignal.timeout(T.RequestTimeoutMs),
+                signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
             })
         }
         catch
@@ -142,6 +145,7 @@ export class ConsoleAdvertSender
 
     private readonly subscriptions: IDisposable[] = []
     private inFlight: Promise<void> | undefined
+    private sending: AbortController | undefined
     private queued = false
     private stopped = false
     private started = false
@@ -172,7 +176,10 @@ export class ConsoleAdvertSender
         await this.SendNow()
     }
 
-    /** Ends the timer and the subscriptions; a send queued behind one in flight is dropped. */
+    /**
+     * Ends the timer and the subscriptions, aborts the send in flight and drops one queued behind it. Nothing is logged for a
+     * send that ends after Stop; await Idle() to know it has ended.
+     */
     public Stop(): void
     {
         this.stopped = true
@@ -181,6 +188,13 @@ export class ConsoleAdvertSender
         {
             subscription.dispose()
         }
+        this.sending?.abort()
+    }
+
+    /** Settles once no send is in flight (at once when none is). Never rejects. */
+    public Idle(): Promise<void>
+    {
+        return this.inFlight ?? Promise.resolve()
     }
 
     /** At most one send in flight; changes during a send queue exactly one more. Never throws. */
@@ -222,13 +236,22 @@ export class ConsoleAdvertSender
 
     private async SendOnce(): Promise<void>
     {
+        const sending = new AbortController()
+        this.sending = sending
         try
         {
-            await this.transport.Send(this.Body())
+            await this.transport.Send(this.Body(), sending.signal)
         }
         catch (err)
         {
-            this.log(ConsoleAdvertSender.FailedPrefix + ConsoleAdvertSender.Describe(err))
+            if (!this.stopped)
+            {
+                this.log(ConsoleAdvertSender.FailedPrefix + ConsoleAdvertSender.Describe(err))
+            }
+        }
+        finally
+        {
+            this.sending = undefined
         }
     }
 
