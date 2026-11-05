@@ -202,9 +202,9 @@ File and class names, advert interval constants, the advert store shape, how the
 - **Residual: a forced delete leaves a running console (Plan 3 pre-flight D9).** A forced hive delete (delete anyway)
   skips the cluster, so the console keeps running with its sessions, its `/desktop/*` surface and the relay to its
   environments; a tenant delete is only as complete as the hive deletes before it. A forced delete leaves a running console
-  reachable until the cluster owner removes it; its adverts are refused (409). Making a console whose advert is refused as
-  not enabled stop serving sign-in and the relay is a follow-up feature, not built here (a control-plane outage must not
-  lock a tenant out).
+  reachable until the cluster owner removes it; its adverts are refused with 401 (the hive and its agent token are gone; 409
+  is only for a removed console on a hive that still exists). Making a console whose advert is refused (401 or 409) stop
+  serving sign-in and the relay is a follow-up feature, not built here (a control-plane outage must not lock a tenant out).
 - **Plexus main trusts the OS root store, process-wide, from start (Plan 3 pre-flight D19).** At the top of the ready
   handler Plexus sets Node's default CA list to the union of Node's bundled roots and the system store
   (`tls.getCACertificates('system')` with `tls.setDefaultCACertificates`): Node's system-CA option through the `tls` API,

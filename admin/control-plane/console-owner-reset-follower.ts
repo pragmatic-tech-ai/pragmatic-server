@@ -20,7 +20,9 @@ export interface IOwnerSessionEnder
  * after the revoke resolved, so a failed revoke is retried on the next advert; an unreadable marker counts as none (one extra
  * revoke, never a missed one). Any difference counts, not only a later time, so a control-plane clock that moved back still
  * ends the sessions. A session the Owner opened between the reset and the advert ends too.
- * A marker write that fails is reported (the caller logs it) and leaves the value unapplied, so the next advert revokes again.
+ * Once the revoke resolved the value counts as applied in memory, so a marker write that fails is reported (the caller logs
+ * it) without signing the Owner out again at later adverts of this process; only a restart, finding no durable marker,
+ * revokes once more (never a missed reset). A failed revoke itself leaves the value unapplied and is retried at every advert.
  * Kept free of control-plane imports: only the Owner rule (tenant-owner.ts) and node built-ins.
  */
 export class ConsoleOwnerResetFollower
@@ -63,8 +65,9 @@ export class ConsoleOwnerResetFollower
             return false
         }
         await this.principals.RevokeAllFor(this.tenant.id, TenantOwner.PrincipalOf(this.tenant))
-        await this.WriteMarker(resetAt)
+        // Applied once the revoke resolved: a marker write that fails is still reported, but signs nobody out again here.
         this.applied = { value: resetAt }
+        await this.WriteMarker(resetAt)
         return true
     }
 

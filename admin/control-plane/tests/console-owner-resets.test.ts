@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, it } from 'node:test'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConsoleOwnerResets } from '../console-owner-resets.js'
@@ -229,6 +229,20 @@ describe('ConsoleOwnerResetFollower', () =>
         assert.equal(await f.Apply(Names.Reset), true)
         assert.equal(sessions.Calls.length, 2)
         assert.deepEqual(JSON.parse(readFileSync(marker(), Names.Utf8)), { appliedAt: Names.Reset })
+    })
+
+    it('a failed marker write is reported but not re-revoked in this process; a restart re-revokes once', async () =>
+    {
+        // A directory where the marker file should be: the rename onto it fails, and reading it fails too.
+        mkdirSync(marker())
+        const f = follower()
+        await assert.rejects(() => f.Apply(Names.Reset))
+        assert.equal(sessions.Calls.length, 1, 'the revoke ran')
+        assert.equal(await f.Apply(Names.Reset), false, 'applied in memory: the next advert does not sign the Owner out again')
+        assert.equal(sessions.Calls.length, 1)
+        assert.deepEqual(readdirSync(root).filter(n => n.endsWith(Names.TempSuffix)), [], 'the temp file is removed')
+        await assert.rejects(() => follower().Apply(Names.Reset), 'a restarted console has no durable marker and revokes once more')
+        assert.equal(sessions.Calls.length, 2)
     })
 
     it('an unreadable marker counts as none (one extra revoke, never a missed one)', async () =>

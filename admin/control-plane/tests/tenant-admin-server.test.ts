@@ -22,7 +22,8 @@ import { PinnedImageVerifier } from '../pinned-image-verifier.js'
 import { EnvironmentPlacement } from '../environment-placement.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
-import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import { TenantSessionKind, type TenantSession } from '../tenant-auth/tenant-session.js'
+import { ControlPlaneServer } from '../server.js'
 import { TenantAdminEnv } from '../tenant-admin-env.js'
 import { ConsoleAdvertSender } from '../console-advert-sender.js'
 import { ConsoleEmailDomainStore } from '../console-email-domain-store.js'
@@ -110,6 +111,9 @@ class Names
     public static readonly ContentTypeHeader = 'Content-Type'
     public static readonly JsonType = 'application/json'
     public static readonly OkBody = '{"refusedEmailDomains":[]}'
+    public static readonly OtherPrincipalId = 'someone-else'
+    /** A pause so a revocation's stamp is strictly later than the sessions issued before it. */
+    public static readonly TickMs = 5
     public static readonly OwnerResetAt = '2026-11-04T10:00:00.000Z'
     public static readonly SendFailed = 'send failed'
     public static readonly Utf8 = 'utf8'
@@ -782,18 +786,27 @@ describe('TenantAdminServer console advert', () =>
         assert.deepEqual(lines.filter(l => l.includes(Names.SendFailed)), [], 'the aborted send is not reported')
     })
 
-    it('an Owner reset in the advert answer ends the seeded Owner sessions once and writes the applied marker', async () =>
+    it('an Owner reset in the advert answer ends the seeded Owner sessions and writes the applied marker', async () =>
     {
         writeConsoleSeed()
+        // Sessions the console's own store holds before it starts: the Owner's (console and desktop) and someone else's.
+        const before = ControlPlaneServer.TenantSessionsOf(root)
+        const ownerConsole = await before.Issue(Names.TenantId, Names.PrincipalId, Names.OwnerEmail)
+        const ownerDesktop = await before.Issue(Names.TenantId, Names.PrincipalId, Names.OwnerEmail, TenantSessionKind.Desktop)
+        const other = await before.Issue(Names.TenantId, Names.OtherPrincipalId)
+        await new Promise<void>(res => setTimeout(res, Names.TickMs))
         answerBody = JSON.stringify({ refusedEmailDomains: [], ownerResetAt: Names.OwnerResetAt })
         const url = await listenChannel()
         const env = await runEnv(url)
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient())
-        const composition = await server.Run(env, () => undefined)
+        await server.Run(env, () => undefined)
         try
         {
             assert.deepEqual(JSON.parse(readFileSync(join(root, ConsoleOwnerResetFollower.FileName), Names.Utf8)), { appliedAt: Names.OwnerResetAt })
-            assert.ok(composition.plane.principals !== undefined)
+            const after = ControlPlaneServer.TenantSessionsOf(root)
+            assert.equal(await after.Validate(ownerConsole.id), null, 'the Owner console session is refused')
+            assert.equal(await after.Validate(ownerDesktop.id), null, 'the Owner desktop session is refused')
+            assert.notEqual(await after.Validate(other.id), null, 'another principal keeps its session')
         }
         finally
         {

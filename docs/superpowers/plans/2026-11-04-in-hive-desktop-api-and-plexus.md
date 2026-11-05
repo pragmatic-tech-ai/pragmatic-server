@@ -45,7 +45,7 @@ Server (`admin/control-plane/`):
 - Modify `server.ts` - `BuildTenantPlane` gains a trailing `consoleTenantId?: string` passed to `DesktopEndpoint`.
 - Modify `tenant-admin-server.ts` - `Compose` mounts desktop + relay (reach present) with the console's desktop audit; `TenantAdminComposition.desktopAudit`.
 - Create `console-owner-resets.ts` - `ConsoleOwnerResets` (control-plane store) and `ConsoleOwnerResetFollower` (console side).
-- Modify the Plan 1 owner-password route in `control-plane-host.ts`, the Plan 2 advert route handler and the Plan 2 console advert sender (names per Plan 2's Produces) - wire the owner-reset pull.
+- Modify the Plan 1 owner-password path (SUPERSEDED (D3): the record is made in `TenantConsoleInstaller.ResetOwnerPassword`, before the IdP call; the route is unchanged), the Plan 2 advert route handler and the Plan 2 console advert sender (names per Plan 2's Produces) - wire the owner-reset pull.
 - Tests: `tests/desktop-endpoint.test.ts`, `tests/tenant-admin-server.test.ts`, `tests/desktop-relay.test.ts`, create `tests/console-owner-resets.test.ts`, plus the Plan 2 advert route/sender test files.
 
 Plexus (`C:\Users\Eugene\Projects\architecture-agent\Plexus`):
@@ -117,6 +117,8 @@ Plexus (`C:\Users\Eugene\Projects\architecture-agent\Plexus`):
 
 ### Task 3: An operator Owner reset ends the Owner's in-hive console sessions
 
+**Superseded in part (as built in 998502a, per pre-flight D1-D7; the spec's Accepted deviations are authoritative).** Do not "fix" the code back to the original wording below; the lines marked SUPERSEDED were corrected. In short: the reset is recorded inside `TenantConsoleInstaller.ResetOwnerPassword` after its guards and BEFORE the IdP call (D3); the record is kept through console removal and hive delete and forgotten only with the tenant (D4); the follower revokes on any well-formed value that differs from the marker, not only a newer one, and marks only after the revoke resolved (D5); the Owner principal rule is `TenantOwner.PrincipalOf` / `TenantOwner.DefaultPrincipalId` in tenant-owner.ts and there is no `ConsoleOwnerResets.DefaultOwnerPrincipalId` (D6); the follower lives in its own file console-owner-reset-follower.ts (D6); the transport returns `ConsoleAdvertAnswer` and agent-channel-host.ts writes the field (D1, D2).
+
 **Controller note (Plan 2 names, now written):** Plan 2 (docs/superpowers/plans/2026-11-04-in-hive-console-advert-and-discovery.md) names the route handler `ConsoleAdvertReceiver.Receive(hiveId, body)` (200 body today: the refused domains), the advert body `ConsoleAdvertBody`, and the console sender `ConsoleAdvertSender {Start, Stop, SendNow, Body}` composed by `TenantAdminServer.AdvertSenderOf`. This task adds `ownerResetAt?: string` to that 200 body and has `ConsoleAdvertSender` hand it to `ConsoleOwnerResetFollower.Apply`.
 
 **Files:**
@@ -125,7 +127,7 @@ Plexus (`C:\Users\Eugene\Projects\architecture-agent\Plexus`):
 - Modify: `admin/control-plane/server.ts` (construct and load the store; pass it to the host and to Plan 2's advert route handler)
 - Modify: Plan 2's advert route handler (`POST /agent/hives/:hive/console`) and Plan 2's console advert sender - read Plan 2's Produces for their exact class names and files
 - Modify: `admin/control-plane/tenant-admin-server.ts` (construct the follower, hand it to Plan 2's sender)
-- Modify: Plan 1's `in-hive-idp-admin.ts` (use `ConsoleOwnerResets.DefaultOwnerPrincipalId` instead of its inline `'owner'`)
+- Modify: Plan 1's `in-hive-idp-admin.ts` (use `TenantOwner.PrincipalOf` from the new tenant-owner.ts; there was no inline `'owner'`) [SUPERSEDED: D6]
 - Test: `admin/control-plane/tests/console-owner-resets.test.ts`, plus one case each in Plan 2's advert route and sender test files and in `tests/control-plane-host-hive-console.test.ts`
 
 **Interfaces:**
@@ -136,33 +138,33 @@ Plexus (`C:\Users\Eugene\Projects\architecture-agent\Plexus`):
   export class ConsoleOwnerResets          // control plane; JSON file { [tenantId]: iso }, written temp + rename
   {
       public static readonly FileName = 'console-owner-resets.json'
-      public static readonly DefaultOwnerPrincipalId = 'owner'   // the principal id InHiveIdpAdmin.SeedOwner gives an Owner without ownerPrincipalId
+      // SUPERSEDED (D6): no DefaultOwnerPrincipalId here; the rule is TenantOwner.PrincipalOf / TenantOwner.DefaultPrincipalId
       public constructor(path: string, now?: () => Date)
       public Load(): Promise<void>
       public Record(tenantId: string): Promise<string>      // stores and returns now().toISOString()
       public Of(tenantId: string): string | undefined
-      public Forget(tenantId: string): Promise<void>        // called where Plan 1 forgets the console's keys on console removal
+      public Forget(tenantId: string): Promise<void>        // SUPERSEDED (D4): called only on tenant delete; console removal and hive delete keep the record
   }
   export class ConsoleOwnerResetFollower   // console; marker file { appliedAt: iso }
   {
       public static readonly FileName = 'owner-reset-applied.json'
       public constructor(principals: TenantPrincipalSessions, tenant: TenantRecord, path: string)
-      /** Revokes every session and closes every socket/relay of the Owner when `resetAt` is newer than the applied marker (or there is no marker); then records it. Returns whether it revoked. Malformed or older values are ignored. */
+      /** SUPERSEDED (D5): revokes every session and closes every socket/relay of the Owner when `resetAt` is well formed and DIFFERS from the applied marker (or there is no marker), earlier values included; then records it (only after the revoke resolved). Returns whether it revoked. Undefined or malformed values are ignored. */
       public Apply(resetAt: string | undefined): Promise<boolean>
   }
   ```
-  Advert response: Plan 2's 200 body gains `ownerResetAt?: string` = `ConsoleOwnerResets.Of(tenantId)`. The sender calls `follower.Apply(body.ownerResetAt)` after every 200 (its failure is logged by error name only and never fails the advert). The owner-password route calls `ownerResets.Record(tenantId)` only after `ResetOwnerPassword` resolved. The Owner's console and desktop sessions therefore end within one advert interval (Plan 2: at most 5 minutes). The owner-password route's response body is unchanged.
+  Advert response: Plan 2's 200 body gains `ownerResetAt?: string` = `ConsoleOwnerResets.Of(tenantId)`. The sender calls `follower.Apply(body.ownerResetAt)` after every 200 (its failure is logged by error name only and never fails the advert). SUPERSEDED (D3): `TenantConsoleInstaller.ResetOwnerPassword` calls `ownerResets.Record(tenantId)` after its guards and BEFORE the IdP call (never after it resolved: that loses either the password or the revocation). The Owner's console and desktop sessions therefore end within one advert interval (Plan 2: at most 5 minutes). The owner-password route's response body is unchanged.
 
 - [ ] **Step 1: Write the failing tests** in `tests/console-owner-resets.test.ts`:
   - `Record stores the reset time per tenant and survives a reload` (fixed clock `2026-11-04T10:00:00.000Z`; new instance `Load` -> `Of('acme') === '2026-11-04T10:00:00.000Z'`).
   - `Forget drops the tenant`.
   - `Apply revokes the Owner once per reset`: fake principals recording calls; tenant `{ id: 'acme', ownerPrincipalId: 'p-1' }` -> `Apply('2026-11-04T10:00:00.000Z')` is `true` with call `['acme','p-1']`; the same value again is `false`; a later value is `true`.
   - `Apply without ownerPrincipalId revokes the default owner principal` -> call `['acme', 'owner']`.
-  - `Apply ignores undefined, malformed and older values` -> `false`, no call.
+  - SUPERSEDED (D5): `Apply ignores undefined and malformed values` -> `false`, no call; plus `an equal value is a no-op; a different value revokes, even an earlier one`.
   - `the applied marker survives a restart` (new follower on the same file, same value -> `false`).
-  - In Plan 2's advert route test file: `the advert answer carries the tenant's last Owner reset`. In Plan 2's sender test file: `a 200 advert answer is handed to the owner-reset follower`. In `tests/control-plane-host-hive-console.test.ts`: `an Owner reset of an in-hive console records the reset time` and `a failed reset records nothing`.
+  - In Plan 2's advert route test file: `the advert answer carries the tenant's last Owner reset`. In Plan 2's sender test file: `a 200 advert answer is handed to the owner-reset follower`. In `tests/control-plane-host-hive-console.test.ts`: `an Owner reset of an in-hive console records the reset time` and `a failed reset records nothing` (SUPERSEDED (D3): `a reset records before the IdP call` and `a refused reset (installing / no console) records nothing`).
 - [ ] **Step 2: Run** the four test files - Expected: FAIL.
-- [ ] **Step 3: Implement** the two classes and the wiring; replace the inline `'owner'` in `in-hive-idp-admin.ts` with the constant.
+- [ ] **Step 3: Implement** the two classes and the wiring; `in-hive-idp-admin.ts` uses `TenantOwner.PrincipalOf` (SUPERSEDED (D6): there was no inline `'owner'`).
 - [ ] **Step 4: Run** the server gates - Expected: PASS.
 - [ ] **Step 5: Commit** `feat(control-plane): an operator Owner reset ends the Owner's in-hive console sessions` (stage each touched file by path).
 
@@ -408,7 +410,7 @@ Plexus (`C:\Users\Eugene\Projects\architecture-agent\Plexus`):
 
 **Placeholder scan.** Task 3 names Plan 2's advert route and sender by role because Plan 2 is written in parallel; the executor reads Plan 2's Produces for the class names, and the payload field (`ownerResetAt`) and calls are pinned here. Task 9's helper path is named as expected with the rule to use the landed name.
 
-**Type consistency.** `consoleTenantId` (Task 1) is the trailing param of both `DesktopEndpoint` and `BuildTenantPlane` and is passed in Task 2. `ConsoleAddress.Validate/Normalise`, the four `AccountErrorKind` members and `AccountChannel.SignInAtConsole` (Task 4) are used unchanged in Tasks 6-8. `DesktopSession.ConsoleUrl` (Task 6) in Task 7. `TlsFailure.IsCertificate` (Task 5) in Task 6. `IConsoleAddressSetting` (Task 8) only in Task 8. `ConsoleOwnerResets.DefaultOwnerPrincipalId` replaces Plan 1's inline `'owner'`.
+**Type consistency.** `consoleTenantId` (Task 1) is the trailing param of both `DesktopEndpoint` and `BuildTenantPlane` and is passed in Task 2. `ConsoleAddress.Validate/Normalise`, the four `AccountErrorKind` members and `AccountChannel.SignInAtConsole` (Task 4) are used unchanged in Tasks 6-8. `DesktopSession.ConsoleUrl` (Task 6) in Task 7. `TlsFailure.IsCertificate` (Task 5) in Task 6. `IConsoleAddressSetting` (Task 8) only in Task 8. `TenantOwner.PrincipalOf` / `TenantOwner.DefaultPrincipalId` (tenant-owner.ts) is the one Owner-principal rule, re-exported as `TenantProvisioningService.OwnerPrincipalId` (SUPERSEDED the original `ConsoleOwnerResets.DefaultOwnerPrincipalId`, D6).
 
 **Review Focus.** Each line names its test in the owning task (6; 6+7; 5+6; 7; 4+6).
 

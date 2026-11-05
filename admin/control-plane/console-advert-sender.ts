@@ -82,8 +82,13 @@ export class WallClockDeadline implements IRequestDeadline
 export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport
 {
     public static readonly RequestTimeoutMs = 30000
-    /** The most of a 200 answer read; a longer answer is dropped as malformed. */
-    public static readonly MaxAnswerBytes = 4096
+    /**
+     * The most of a 200 answer read; a longer answer is dropped as malformed. The largest legitimate answer is
+     * `{"refusedEmailDomains":[...],"ownerResetAt":"<24-char ISO>"}` with all EmailDomainPolicy.MaxDomains (20) domains refused
+     * at the 253-character DNS maximum: 20 x (253 + 3 for quotes and comma) + about 70 for the keys and the time, roughly
+     * 5.2 KB. 16 KiB covers that three times over while still bounding what a hostile answer can make the console buffer.
+     */
+    public static readonly MaxAnswerBytes = 16384
     private static readonly OwnerResetKey = 'ownerResetAt'
     private static readonly Utf8 = 'utf8'
     private static readonly AgentPrefix = '/agent/hives/'
@@ -362,7 +367,10 @@ export class ConsoleAdvertSender
         }
         catch (err)
         {
-            this.log(ConsoleAdvertSender.OwnerResetFailedPrefix + ConsoleAdvertSender.NameOf(err))
+            if (!this.stopped)
+            {
+                this.log(ConsoleAdvertSender.OwnerResetFailedPrefix + ConsoleAdvertSender.NameOf(err))
+            }
         }
     }
 

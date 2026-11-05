@@ -53,6 +53,8 @@ class Names
     public static readonly SendFailedPrefix = '[console-advert] send failed: '
     public static readonly OwnerResetFailedPrefix = '[console-advert] owner reset not applied: '
     public static readonly ResetAt = '2026-11-04T10:00:00.000Z'
+    public static readonly MaxDomains = 20
+    public static readonly MaxDomainLength = 253
 }
 
 class RecordingTransport implements IConsoleAdvertTransport
@@ -431,6 +433,27 @@ describe('ConsoleAdvertSender', () =>
         assert.deepEqual(lines, [])
     })
 
+    it('a follower that fails after Stop logs nothing', async () =>
+    {
+        let release: () => void = () => undefined
+        const follower: IOwnerResetFollower = {
+            Apply: async () =>
+            {
+                await new Promise<void>(res => { release = res })
+                throw new TypeError(Names.SendFailed)
+            },
+        }
+        transport.answer = { ownerResetAt: Names.ResetAt }
+        const s = new ConsoleAdvertSender(transport, accounts, store, key, Names.ConsoleUrl, timer, line => lines.push(line), follower)
+        const sending = s.SendNow()
+        await Waits.Settle()
+        s.Stop()
+        release()
+        await sending
+        await s.Idle()
+        assert.deepEqual(lines, [])
+    })
+
     it('a throwing follower is logged by error name only and never fails the advert', async () =>
     {
         const follower = new FakeFollower()
@@ -505,6 +528,15 @@ describe('HttpConsoleAdvertTransport', () =>
     it('a 200 answer yields its ownerResetAt', async () =>
     {
         const url = await listen(() => ({ status: Names.Ok, body: JSON.stringify({ refusedEmailDomains: [], ownerResetAt: Names.ResetAt }) }))
+        assert.deepEqual(await new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId).Send(body), { ownerResetAt: Names.ResetAt })
+    })
+
+    it('a maximal legitimate answer (20 refused 253-character domains) still yields its ownerResetAt', async () =>
+    {
+        const refused = Array.from({ length: Names.MaxDomains }, (_v, i) => String(i).padStart(2, '0') + 'a'.repeat(Names.MaxDomainLength - 6) + '.com')
+        const answer = JSON.stringify({ refusedEmailDomains: refused, ownerResetAt: Names.ResetAt })
+        assert.ok(answer.length > 5000, 'the answer is larger than the old 4096-byte cap')
+        const url = await listen(() => ({ status: Names.Ok, body: answer }))
         assert.deepEqual(await new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId).Send(body), { ownerResetAt: Names.ResetAt })
     })
 
