@@ -219,6 +219,7 @@ export class TenantConsoleInstaller
     private static readonly Dot = '.'
     private static readonly SecretPrefix = 'secret/'
     private static readonly DeploymentPrefix = 'deployment/'
+    private static readonly IngressPrefix = 'ingress/'
     private static readonly DetailSeparator = ' '
     private static readonly Redacted = '[REDACTED]'
     private static readonly LogPrefix = '[console-install] hive '
@@ -430,8 +431,10 @@ export class TenantConsoleInstaller
             // Minted here on a first install (not inside the bootstrap), so it is in the scrub list either way.
             const masterKey = await C.ExistingMasterKey(kubectl, t) ?? randomBytes(C.MasterKeyBytes)
             C.Remember(run, masterKey)
-            const idp = await C.IdpMaterialOf(kubectl, t, spec.baseDomain)
+            const idp = await this.IdpMaterialOf(kubectl, t, spec.baseDomain)
             run.secrets.push(idp.adminToken, ...idp.scrub)
+            // Read before the Apply rewrites it: the copy the IdP Ingress served until now (installs before copies were labelled).
+            const legacyCopies = C.LegacyTlsCopies(await kubectl.Find(idpName, C.IngressPrefix + idpName), spec, t)
             const bootstrap = await this.bootstrap.GenerateBootstrap({
                 tenant,
                 hive,
@@ -473,6 +476,10 @@ export class TenantConsoleInstaller
             // Earlier TLS copies in the IdP namespace (another source, another existing-secret name) hold a private key nothing
             // references any more; the current copy is re-applied right below.
             await kubectl.DeleteBySelector(idpName, C.SecretResource, C.TlsCopySelectorOf(hive.id))
+            if (legacyCopies.length > 0)
+            {
+                await kubectl.DeleteManifest(C.SecretIdentities(idpName, legacyCopies))
+            }
             if (spec.tls.source === IngressTlsSource.Development && tlsCopy !== undefined)
             {
                 await kubectl.ApplyServerSide(C.TlsSecretManifest(K8sManifestBuilder.TenantConsoleDevTlsSecretNameOf(t), system, tlsCopy, hive.id))
@@ -587,10 +594,12 @@ export class TenantConsoleInstaller
     /**
      * The running IdP's CA and admin token when both its Secrets exist (a reinstall must not rotate them: every environment's IdP CA
      * copy and the console's admin client depend on them; the caller refreshes the sealed copy from what is read here); freshly minted
-     * material plus the Secrets to apply when neither exists. Exactly one present is a broken IdP: minting would silently rotate its CA,
-     * so it fails with a sentence naming the missing Secret.
+     * material plus the Secrets to apply (one server-side apply of both, so a half pair is unlikely) when neither exists. Exactly one
+     * present: after a completed install (its credentials are sealed) environments may already trust that CA, so minting would silently
+     * rotate it and the install fails with a sentence naming the missing Secret; with nothing sealed it is the leftover of a first install
+     * that never completed, so it is deleted and the IdP minted fresh.
      */
-    private static async IdpMaterialOf(kubectl: IKubectl, tenantId: string, baseDomain: string): Promise<IdpMaterial>
+    private async IdpMaterialOf(kubectl: IKubectl, tenantId: string, baseDomain: string): Promise<IdpMaterial>
     {
         const C = TenantConsoleInstaller
         const ns = K8sManifestBuilder.IdpNameOf(tenantId)
@@ -605,7 +614,11 @@ export class TenantConsoleInstaller
         if (ca !== undefined || token !== undefined)
         {
             const [missing, present] = ca === undefined ? [tlsName, adminName] : [adminName, tlsName]
-            throw new ConsoleInstallStepError(C.PartialIdpPrefix + missing + C.PartialIdpInfix + ns + C.PartialIdpWhile + present + C.PartialIdpSuffix)
+            if (await this.idpAdmin.Holds(tenantId))
+            {
+                throw new ConsoleInstallStepError(C.PartialIdpPrefix + missing + C.PartialIdpInfix + ns + C.PartialIdpWhile + present + C.PartialIdpSuffix)
+            }
+            await kubectl.DeleteManifest(C.SecretIdentities(ns, [present]))
         }
         const seeds = new InClusterIdpSeedSource(undefined, baseDomain)
         const seed = seeds.SeedFor(tenantId)
@@ -623,6 +636,45 @@ export class TenantConsoleInstaller
             const key = i.data?.[C.IdpServerKeyKey]
             return key === undefined ? [] : [key, Buffer.from(key, C.Base64).toString(C.Utf8).trim()]
         })
+    }
+
+    /**
+     * Unlabelled TLS copies in the IdP namespace an install from before copies were labelled may have left: the Secret the IdP Ingress
+     * named until now and, unless the new source is development, pragmatic-dev-tls. Never the copy the new choice uses, and never the
+     * IdP's own TLS or admin Secrets.
+     */
+    private static LegacyTlsCopies(ingressJson: string | undefined, spec: HiveConsoleSpec, tenantId: string): string[]
+    {
+        const idpName = K8sManifestBuilder.IdpNameOf(tenantId)
+        const names = new Set<string>()
+        if (ingressJson !== undefined)
+        {
+            const tls = (JSON.parse(ingressJson) as { spec?: { tls?: Array<{ secretName?: unknown }> } }).spec?.tls ?? []
+            for (const entry of tls)
+            {
+                if (typeof entry.secretName === 'string' && entry.secretName.length > 0)
+                {
+                    names.add(entry.secretName)
+                }
+            }
+        }
+        if (spec.tls.source !== IngressTlsSource.Development)
+        {
+            names.add(IngressTlsPolicy.DevelopmentSecretName)
+        }
+        for (const kept of [IngressTlsPolicy.SecretNameFor(spec.tls, idpName), InClusterIdpSeedSource.TlsSecretNameOf(tenantId), InClusterIdpSeedSource.AdminSecretNameOf(tenantId)])
+        {
+            names.delete(kept)
+        }
+        return [...names]
+    }
+
+    /** A v1 List of Secret identities (name + namespace only) to delete by name; absent ones are tolerated. */
+    private static SecretIdentities(namespace: string, names: readonly string[]): string
+    {
+        const C = TenantConsoleInstaller
+        const items = names.map(name => ({ [C.ApiVersionKey]: C.ApiVersionCore, [C.KindKey]: C.SecretKind, [C.MetadataKey]: { [C.NameKey]: name, [C.NamespaceKey]: namespace } }))
+        return JSON.stringify({ [C.ApiVersionKey]: C.ApiVersionCore, [C.KindKey]: C.ListKind, [C.ItemsKey]: items })
     }
 
     /** Selects this hive's TLS key copies (in the IdP namespace: the ones a TLS-source switch leaves behind). */

@@ -33,6 +33,8 @@ export interface IInHiveIdpAdmin
     SeedOwner(hive: HiveRecord, tenant: TenantRecord): Promise<void>
     /** Sets a fresh Owner password and returns it once. */
     ResetOwnerPassword(hive: HiveRecord, tenant: TenantRecord): Promise<InHiveOwnerPassword>
+    /** Whether both credentials are sealed for the tenant (an earlier install completed its storing step). */
+    Holds(tenantId: string): Promise<boolean>
     /** Drops the sealed credentials (hive delete). */
     Forget(tenantId: string): Promise<void>
 }
@@ -125,6 +127,13 @@ export class InHiveIdpAdmin implements IInHiveIdpAdmin
         {
             this.resetting.delete(tenant.id)
         }
+    }
+
+    /** An unreadable sealed blob propagates (SealedSecretUnreadableError): the caller must not treat it as "never installed". */
+    public async Holds(tenantId: string): Promise<boolean>
+    {
+        return await this.store.Get(InHiveIdpAdmin.CaRefOf(tenantId)) !== undefined
+            && await this.store.Get(InHiveIdpAdmin.TokenRefOf(tenantId)) !== undefined
     }
 
     public async Forget(tenantId: string): Promise<void>

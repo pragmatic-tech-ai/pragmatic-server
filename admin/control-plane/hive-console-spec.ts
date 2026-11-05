@@ -34,7 +34,7 @@ export class HiveConsoleSpecs
     private static readonly BadBaseDomain = 'The base domain must be a lowercase host name of at least two labels, such as example.com (not a public suffix such as co.uk).'
     private static readonly BadHost = 'The console host must be a lowercase host name of at least two labels, such as console.example.com.'
     private static readonly ReservedSecretName = "The TLS Secret name is reserved for the tenant's in-hive identity provider; choose another Secret name."
-    private static readonly HostOutsideDomain ='With development TLS the console host must be the base domain or a name under it.'
+    private static readonly HostOutsideDomain = 'With development TLS the console host must be the base domain or a name under it.'
 
     public static Parse(body: unknown): HiveConsoleSpec
     {

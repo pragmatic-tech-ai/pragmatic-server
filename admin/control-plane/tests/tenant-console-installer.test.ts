@@ -323,9 +323,26 @@ describe('TenantConsoleInstaller', () =>
         }
     })
 
-    it('exactly one of the running IdP Secrets present fails at preparing-certificates and never mints a new CA', async () =>
+    it('a half IdP Secret pair left by a first install that never completed is deleted and the IdP is minted fresh', async () =>
     {
         fx = await ConsoleInstallFixture.Create({ runningIdp: false })
+        const ns = K8sManifestBuilder.IdpNameOf('acme')
+        const tlsName = InClusterIdpSeedSource.TlsSecretNameOf('acme')
+        fx.Kubectl.Put(ns, 'secret/' + tlsName, { data: { 'ca.crt': Buffer.from('half').toString('base64') } })
+        fx.Installer.Start('h1')
+        assert.equal((await fx.Installer.WhenSettled('h1'))?.state, ConsoleInstallState.Deployed)
+        const leftover = fx.Kubectl.Deleted.map(m => Items.Of(m)).flat().filter(i => i.metadata.namespace === ns && i.metadata.name === tlsName)
+        assert.equal(leftover.length, 1)
+        // Both IdP Secrets land in ONE server-side apply.
+        const idpSeed = fx.Kubectl.ServerApplied.map(m => Items.Of(m)).find(items => items.some(i => i.metadata.name === tlsName))
+        assert.deepEqual(idpSeed?.map(i => i.metadata.name), [tlsName, InClusterIdpSeedSource.AdminSecretNameOf('acme')])
+        assert.notEqual(fx.IdpAdmin.Remembered[0]?.ca.toString(), 'half')
+    })
+
+    it('a half IdP Secret pair after a completed install (credentials sealed) fails at preparing-certificates and never mints a new CA', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create({ runningIdp: false })
+        fx.IdpAdmin.Sealed.add('acme')
         const ns = K8sManifestBuilder.IdpNameOf('acme')
         fx.Kubectl.Put(ns, 'secret/' + InClusterIdpSeedSource.AdminSecretNameOf('acme'), { data: { 'admin-token': Buffer.from('tok').toString('base64') } })
         fx.Installer.Start('h1')
@@ -368,6 +385,47 @@ describe('TenantConsoleInstaller', () =>
         assert.deepEqual(fx.Kubectl.Calls[sweep], ['DeleteBySelector', ns, 'secret', 'pragmatic/hive=h1,pragmatic/tls-copy=true'])
         const verbs = fx.Kubectl.Calls.map(c => c[0])
         assert.ok(sweep < verbs.lastIndexOf('ApplyServerSide'))
+    })
+
+    it('a TLS-source switch also deletes the unlabelled earlier copy the IdP Ingress named, and pragmatic-dev-tls, never the IdP own Secrets', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        const ns = K8sManifestBuilder.IdpNameOf('acme')
+        // An install from before TLS copies were labelled: the IdP Ingress serves an existing-secret copy.
+        fx.Kubectl.Put(ns, 'ingress/' + ns, { metadata: { name: ns }, spec: { tls: [{ hosts: ['idp-acme.example.com'], secretName: 'old-corp-tls' }] } })
+        fx.Hives.set('h1', { ...ConsoleInstallFixture.Hive('h1'), console: { baseDomain: 'example.com', tls: { source: IngressTlsSource.CertManager, clusterIssuer: 'le' } } })
+        fx.Installer.Start('h1')
+        assert.equal((await fx.Installer.WhenSettled('h1'))?.state, ConsoleInstallState.Deployed)
+        const deleted = fx.Kubectl.Deleted.map(m => Items.Of(m)).flat().filter(i => i.metadata.namespace === ns).map(i => i.kind + '/' + i.metadata.name)
+        assert.deepEqual(deleted.sort(), ['Secret/old-corp-tls', 'Secret/' + IngressTlsPolicy.DevelopmentSecretName].sort())
+        assert.ok(!deleted.includes('Secret/' + InClusterIdpSeedSource.TlsSecretNameOf('acme')))
+        assert.ok(!deleted.includes('Secret/' + InClusterIdpSeedSource.AdminSecretNameOf('acme')))
+    })
+
+    it('the copy the new source still uses is not deleted by the switch cleanup', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        const ns = K8sManifestBuilder.IdpNameOf('acme')
+        fx.Kubectl.Put(ns, 'ingress/' + ns, { metadata: { name: ns }, spec: { tls: [{ secretName: IngressTlsPolicy.DevelopmentSecretName }] } })
+        fx.Installer.Start('h1')
+        assert.equal((await fx.Installer.WhenSettled('h1'))?.state, ConsoleInstallState.Deployed)
+        assert.ok(!fx.Kubectl.Deleted.map(m => Items.Of(m)).flat().some(i => i.metadata.namespace === ns))
+    })
+
+    it('a first install failing after storing-secrets is retried with the same master key', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        const seedKey = `pragmatic-system|secret/${K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme')}`
+        fx.Kubectl.RolloutStatusError = new KubectlError('rollout timed out')
+        fx.Installer.Start('h1')
+        assert.equal((await fx.Installer.WhenSettled('h1'))?.step, ConsoleInstallStep.WaitingForRollout)
+        const first = (JSON.parse(fx.Kubectl.Objects.get(seedKey) as string) as Item).data?.['master.key']
+        fx.Kubectl.RolloutStatusError = undefined
+        fx.Installer.Start('h1')
+        assert.equal((await fx.Installer.WhenSettled('h1'))?.state, ConsoleInstallState.Deployed)
+        const second = (JSON.parse(fx.Kubectl.Objects.get(seedKey) as string) as Item).data?.['master.key']
+        assert.ok(first !== undefined && first.length > 0)
+        assert.equal(second, first)
     })
 
     it('a deleted hive stops the install before its next step', async () =>

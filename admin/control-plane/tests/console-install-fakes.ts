@@ -119,7 +119,16 @@ export class ConsoleFakeKubectl implements IKubectl
     }
 
     public async RolloutRestart(n: string, d: string): Promise<void> { this.Calls.push(['RolloutRestart', n, d]) }
-    public async RolloutStatus(n: string, d: string): Promise<void> { this.Calls.push(['RolloutStatus', n, d]) }
+    public RolloutStatusError: Error | undefined
+
+    public async RolloutStatus(n: string, d: string): Promise<void>
+    {
+        this.Calls.push(['RolloutStatus', n, d])
+        if (this.RolloutStatusError !== undefined)
+        {
+            throw this.RolloutStatusError
+        }
+    }
     public async DeleteBySelector(n: string, r: string, s: string): Promise<void> { this.Calls.push(['DeleteBySelector', n, r, s]); this.events.push('DeleteBySelector') }
     public async RolloutRestartSelector(n: string, s: string): Promise<void> { this.Calls.push(['RolloutRestartSelector', n, s]) }
     public async SetImage(_n: string, _d: string, _c: string, _i: string): Promise<void> { }
@@ -201,6 +210,14 @@ export class FakeInHiveIdpAdmin implements IInHiveIdpAdmin
             throw this.ResetError
         }
         return { ownerEmail: tenant.ownerEmail ?? '', ownerPassword: FakeInHiveIdpAdmin.Password }
+    }
+
+    /** Tenants whose IdP credentials are sealed (a completed earlier install remembered them). */
+    public readonly Sealed = new Set<string>()
+
+    public async Holds(tenantId: string): Promise<boolean>
+    {
+        return this.Sealed.has(tenantId) || this.Remembered.some(r => r.tenantId === tenantId)
     }
 
     public async Forget(tenantId: string): Promise<void>

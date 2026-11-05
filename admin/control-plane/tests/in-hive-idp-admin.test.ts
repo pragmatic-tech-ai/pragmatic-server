@@ -193,6 +193,16 @@ describe('InHiveIdpAdmin', () =>
         assert.deepEqual(fx.Kubectl.Forwards, [])
     })
 
+    it('Holds reports whether both sealed credentials exist', async () =>
+    {
+        fx = await Fixture.Create()
+        assert.equal(await fx.Admin.Holds('acme'), false)
+        await fx.Admin.Remember('acme', Buffer.from('CA PEM'), 'admin.token.Zq')
+        assert.equal(await fx.Admin.Holds('acme'), true)
+        await fx.Admin.Forget('acme')
+        assert.equal(await fx.Admin.Holds('acme'), false)
+    })
+
     it('a missing principal id falls back to the shared Owner principal', async () =>
     {
         fx = await Fixture.Create()
