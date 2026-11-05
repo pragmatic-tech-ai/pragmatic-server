@@ -9,6 +9,7 @@ import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
 import { FleetHiveRowViewModel } from '../fleet/fleet-page-view-model.js'
 import { AgentInstallPhase, HiveAgentInstallViewModel } from './hive-agent-install-view-model.js'
+import { HiveConsoleViewModel } from './hive-console-view-model.js'
 import { HiveInstallMode, HiveInstallViewModel } from './hive-install-view-model.js'
 import type { HivesSectionService } from './hives-section-service.js'
 
@@ -155,7 +156,9 @@ export class HiveCheckInRowViewModel extends Observable
 // and the environments it observes, read-only. Delete asks for the hive id.
 // A Local hive (its bundle says autoInstall) offers Install agent, which the
 // control plane runs itself, with the bundle, commands and Reissue token
-// under Install manually; any other hive keeps the manual install only.
+// under Install manually; any other hive keeps the manual install only. The
+// same Local hive offers its tenant console too (settings, install, Owner
+// password), polled only while the page shows, like the agent install.
 export class HiveDetailPageViewModel extends PortalPageViewModel
 {
     private static readonly NotFoundTemplate = 'Hive {id} was not found.'
@@ -236,6 +239,7 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
     private readonly reissueTokenCommand: RelayCommand
     private readonly install: HiveInstallViewModel
     private readonly agentInstall: HiveAgentInstallViewModel
+    private readonly console: HiveConsoleViewModel
     private readonly toggleManualCommand: RelayCommand
     private manualOpen = false
     // The install-path values as last raised, for their change notifications.
@@ -250,6 +254,7 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
         this.reissueTokenCommand = this.MutatingCommand(() => this.ReissueToken(), () => !this.agentInstall.IsInstalling)
         this.install = new HiveInstallViewModel(session, section, HiveInstallMode.FirstInstall)
         this.agentInstall = new HiveAgentInstallViewModel(session, Id, section.PollScheduler)
+        this.console = new HiveConsoleViewModel(session, Id, section.PollScheduler)
         this.toggleManualCommand = new RelayCommand(() => this.ToggleManual())
         this.pathShown = this.PathSnapshot()
         this.install.PropertyChanged(HiveInstallViewModel.AutoInstallProperty).subscribe(() => this.RaisePathChanged())
@@ -440,6 +445,12 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
         return this.agentInstall
     }
 
+    // The hive's tenant console: where it is served, its install and the Owner password.
+    public get Console(): HiveConsoleViewModel
+    {
+        return this.console
+    }
+
     // True when the control plane installs this hive's agent itself (Local hives).
     public get IsAutoInstall(): boolean
     {
@@ -473,16 +484,18 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
         return this.toggleManualCommand
     }
 
-    // Shown: follow the hive's latest automatic install (polling while it runs).
+    // Shown: follow the hive's latest agent and console installs (polling while they run).
     protected override OnShown(): void
     {
         void this.agentInstall.Resume()
+        void this.console.Resume()
     }
 
-    // Left: stop polling.
+    // Left: stop polling (and forget a shown console Owner password).
     protected override OnHidden(): void
     {
         this.agentInstall.Stop()
+        this.console.Stop()
     }
 
     private ToggleManual(): void
@@ -551,6 +564,10 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
         this.policy = policies.find(p => p.hiveId === this.Id)
         this.observed = new ObservedEnvironmentsViewModel(fleetHive?.environments ?? [])
         this.FillCredentials(hive)
+        if (hive !== undefined)
+        {
+            this.console.Load(hive)
+        }
         this.Refill(this.rolloutRows, (this.rollout?.environments ?? []).map(e => new HiveRolloutRowViewModel(e)))
         this.Refill(this.ledgerRows, ledger.map(l => new HiveLedgerRowViewModel(l)))
         this.Refill(this.checkIns, observations.map(o => new HiveCheckInRowViewModel(o)))

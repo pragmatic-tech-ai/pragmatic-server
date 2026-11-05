@@ -45,6 +45,17 @@ export type OwnerPasswordResetDto = { ownerEmail: string; ownerPassword: string;
 export type HiveClusterBackend = 'aks' | 'eks' | 'gke' | 'private' | 'local'
 export type HiveProvisionMode = 'provision' | 'attach'
 
+// Where the certificate of an Ingress the hive serves comes from; values match the server wire strings.
+export enum IngressTlsSource
+{
+    ExistingSecret = 'existing-secret',
+    CertManager = 'cert-manager',
+    Development = 'development',
+}
+
+// Where a hive serves its tenant's console and how it is secured. No host: console-<tenantId>.<baseDomain>.
+export type HiveConsoleSpecDto = { baseDomain: string; host?: string; tls: { source: IngressTlsSource; secretName?: string; clusterIssuer?: string } }
+
 export type HiveDto =
 {
     id: string
@@ -53,6 +64,8 @@ export type HiveDto =
     cluster: { backend: HiveClusterBackend; mode: HiveProvisionMode; configRef?: string }
     registry: { mode: HiveProvisionMode; endpoint?: string; credentialRef?: string }
     trustRootRef?: string
+    // Set once the operator chose to run the tenant console in this hive.
+    console?: HiveConsoleSpecDto
 }
 
 export type GraphDto =
@@ -175,6 +188,42 @@ export type AgentInstallStatusDto =
     finishedAt?: string
     error?: string
 }
+
+// Where an in-hive console install stands; values match the server wire strings. Deployed: the console is running,
+// its first report is still to come.
+export enum ConsoleInstallState
+{
+    Installing = 'installing',
+    Deployed = 'deployed',
+    Failed = 'failed',
+}
+
+// The console install's steps, in order; values match the server wire strings.
+export enum ConsoleInstallStep
+{
+    CheckingAgent = 'checking-agent',
+    PreparingCertificates = 'preparing-certificates',
+    ApplyingConsole = 'applying-console',
+    StoringSecrets = 'storing-secrets',
+    WaitingForRollout = 'waiting-for-rollout',
+    SeedingOwner = 'seeding-owner',
+}
+
+// A console install's status (the console-install route's reply). Never carries a secret; devCaFile is the
+// development CA certificate's path on the control plane's machine (development TLS only).
+export type ConsoleInstallStatusDto =
+{
+    state: ConsoleInstallState
+    step: ConsoleInstallStep
+    startedAt: string
+    finishedAt?: string
+    error?: string
+    consoleUrl?: string
+    devCaFile?: string
+}
+
+// A fresh Owner password in the hive's in-hive identity provider, shown once.
+export type InHiveOwnerPasswordDto = { ownerEmail: string; ownerPassword: string }
 
 // A hive delete's reply: what was deliberately kept in the cluster (the tenant-admin data volume and its seed
 // Secret), and what a delete anyway may have left behind.

@@ -1,8 +1,9 @@
-import type { HiveClusterBackend, HiveProvisionMode } from '../../portal-types.js'
+import { IngressTlsSource, type HiveClusterBackend, type HiveProvisionMode } from '../../portal-types.js'
 import { OptionViewModel } from '../../shell/option-view-model.js'
 
 // The ComboBox choices a hive's cluster and registry offer, shared by Create
-// hive and Stand up a hive. The first choice of each list is the default.
+// hive and Stand up a hive, and the TLS choices of its tenant console. The
+// first choice of each list is the default.
 export class HiveOptions
 {
     private static readonly AksBackend: HiveClusterBackend = 'aks'
@@ -19,6 +20,9 @@ export class HiveOptions
     private static readonly LocalLabel = 'Local'
     private static readonly ProvisionLabel = 'Provision'
     private static readonly AttachLabel = 'Attach existing'
+    private static readonly ExistingSecretLabel = 'Use an existing TLS Secret'
+    private static readonly CertManagerLabel = 'cert-manager ClusterIssuer'
+    private static readonly DevelopmentLabel = 'Development self-signed (development only)'
     // A hive id becomes Kubernetes names and the pragmatic/hive label value (the control plane enforces the same rule).
     private static readonly IdPattern = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
     // Mirrors the control plane's K8sManifestBuilder.HiveIdMaxLength: the tightest id-derived name (a kind cluster name).
@@ -60,6 +64,18 @@ export class HiveOptions
         return [
             new OptionViewModel(C.AttachMode, C.AttachLabel),
             new OptionViewModel(C.ProvisionMode, C.ProvisionLabel),
+        ]
+    }
+
+    // Where the tenant console's certificate comes from: an existing TLS Secret first; development self-signed last,
+    // labelled development only.
+    public static TlsSources(): OptionViewModel<IngressTlsSource>[]
+    {
+        const C = HiveOptions
+        return [
+            new OptionViewModel(IngressTlsSource.ExistingSecret, C.ExistingSecretLabel),
+            new OptionViewModel(IngressTlsSource.CertManager, C.CertManagerLabel),
+            new OptionViewModel(IngressTlsSource.Development, C.DevelopmentLabel),
         ]
     }
 }

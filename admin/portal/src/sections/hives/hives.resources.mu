@@ -24,6 +24,13 @@
 // detail show it for a Local hive, with the manual install behind
 // Install manually; any other hive keeps the manual install only.
 //
+// HiveConsoleViewModel is the same Local hive's tenant console on the hive
+// detail: where it is served (base domain, host, TLS source; development
+// self-signed is labelled development only), Install console with the same
+// step rows, the console address and the development CA trust command once
+// deployed, and Set Owner password, whose reply shows once in the panel and is
+// cleared when the page is left.
+//
 // Table rows use keyed templates set as the ListBox's ItemTemplate: a ListBox
 // resolves implicit-by-type templates only for MuralBase items, and the row
 // view-models are Observables. Tables use the PortalTable ListBox template
@@ -43,6 +50,7 @@ import HiveInstallViewModel from "./hive-install-view-model.js"
 import AgentTokenRevealPageViewModel from "./agent-token-reveal-page-view-model.js"
 import HiveAgentInstallViewModel from "./hive-agent-install-view-model.js"
 import AgentInstallStepViewModel from "./hive-agent-install-view-model.js"
+import HiveConsoleViewModel from "./hive-console-view-model.js"
 
 resources HivesResources {
     DataTemplate [ DataType = HivesPageViewModel ] {
@@ -209,6 +217,14 @@ resources HivesResources {
                             TextBlock [ Text = "Reissue agent token" ]
                         }
                         ContentControl [ Content = $Install, Margin = (0,0,0,16) ]
+                    }
+
+                    // The tenant console in this hive: its settings, its install and the Owner password (Local hives).
+                    StackPanel [ Orientation = Vertical, Margin = (0,0,0,16), Visibility = $IsAutoInstall << ToVisibility ] {
+                        TextBlock [ Text = "Tenant console", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,2) ]
+                        TextBlock [ Text = "Run the tenant's console in this hive. Pragmatic installs it with its identity provider; the tenant's environments are then managed from inside the hive.",
+                                    Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,6) ]
+                        ContentControl [ Content = $Console ]
                     }
 
                     // Home channel: telemetry the hive sends, not a connection we open.
@@ -739,6 +755,110 @@ resources HivesResources {
                 }
                 Button [ Variant = Secondary, Command = $StartCommand, Visibility = $IsConnected << ToVisibility ] {
                     TextBlock [ Text = "Reinstall agent" ]
+                }
+            }
+        }
+    }
+
+    // The tenant console: settings (Save, Remove with its confirmation), Install console with its steps, then the
+    // address, the development CA trust command and Set Owner password (its reply shown once).
+    DataTemplate [ DataType = HiveConsoleViewModel ] {
+        StackPanel [ Orientation = Vertical ] {
+            Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,8) ] {
+                StackPanel [ Orientation = Vertical ] {
+                    TextBlock [ Text = "Base domain", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+                    TextBox [ UsesNativeInput = true, Text = $BaseDomain, Placeholder = "e.g. localtest.me", Margin = (0,0,0,12) ]
+                    TextBlock [ Text = "Console host (optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+                    TextBox [ UsesNativeInput = true, Text = $Host, Placeholder = $HostPlaceholder, Margin = (0,0,0,12) ]
+                    TextBlock [ Text = "TLS certificate", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+                    ComboBox [ ItemsSource = $TlsOptions, SelectedItem = $SelectedTls, HorizontalAlignment = Stretch, Margin = (0,0,0,12) ]
+                    StackPanel [ Orientation = Vertical, Visibility = $IsExistingSecret << ToVisibility ] {
+                        TextBlock [ Text = "TLS Secret name (a kubernetes.io/tls Secret in pragmatic-system)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+                        TextBox [ UsesNativeInput = true, Text = $SecretName, Placeholder = "e.g. acme-console-tls", Margin = (0,0,0,12) ]
+                    }
+                    StackPanel [ Orientation = Vertical, Visibility = $IsCertManager << ToVisibility ] {
+                        TextBlock [ Text = "cert-manager ClusterIssuer", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+                        TextBox [ UsesNativeInput = true, Text = $ClusterIssuer, Placeholder = "e.g. letsencrypt", Margin = (0,0,0,12) ]
+                    }
+                    Border [ Fill = @StateWarningSoft, Padding = (12,10,12,10), Margin = (0,0,0,12), Visibility = $IsDevelopment << ToVisibility ] {
+                        TextBlock [ Text = "Development only. The certificates come from this control plane's development CA: only a machine that trusts that CA trusts them. The console host must be the base domain or a name under it.",
+                                    Foreground = @StateWarningInk, TextWrapping = Wrap ]
+                    }
+                    StackPanel [ Orientation = Horizontal ] {
+                        Button [ Variant = Primary, Command = $SaveCommand, Margin = (0,0,8,0) ] {
+                            TextBlock [ Text = "Save settings" ]
+                        }
+                        Button [ Variant = Secondary, Command = $RemoveCommand, Visibility = $IsConfigured << ToVisibility ] {
+                            TextBlock [ Text = "Remove console" ]
+                        }
+                    }
+                }
+            }
+            Border [ Fill = @StateWarningSoft, Padding = (12,10,12,10), Margin = (0,0,0,8), Visibility = $IsConfirmingRemove << ToVisibility ] {
+                DockPanel {
+                    StackPanel [ DockPanel.Dock = Right, Orientation = Horizontal, VerticalAlignment = Top, Margin = (12,0,0,0) ] {
+                        Button [ Variant = Secondary, Command = $CancelRemoveCommand, Margin = (0,0,8,0) ] {
+                            TextBlock [ Text = "Keep it" ]
+                        }
+                        Button [ Variant = Danger, Command = $ConfirmRemoveCommand ] {
+                            TextBlock [ Text = "Remove console" ]
+                        }
+                    }
+                    TextBlock [ Text = "Remove the console from this hive? Its objects, its cluster-wide grants and the environment namespaces it created are deleted from the cluster. Its data volume is kept.",
+                                Foreground = @StateWarningInk, TextWrapping = Wrap ]
+                }
+            }
+            TextBlock [ Text = "Save the settings first, then install the console.", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,8),
+                        Visibility = $IsNotConfigured << ToVisibility ]
+            Button [ Variant = Primary, Command = $InstallCommand, HorizontalAlignment = Left, Margin = (0,0,0,8),
+                     Visibility = $IsIdle << ToVisibility ] {
+                TextBlock [ Text = "Install console" ]
+            }
+            Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,8),
+                     Visibility = $HasProgress << ToVisibility ] {
+                StackPanel [ Orientation = Vertical ] {
+                    ItemsControl [ ItemsSource = $Steps, ItemsPanel = @AgentInstallStepsPanel ]
+                    TextBlock [ Text = $StatusText, Foreground = @Fg1, TextWrapping = Wrap, Margin = (0,8,0,0) ]
+                }
+            }
+            StackPanel [ Orientation = Horizontal, Margin = (0,0,0,8), Visibility = $HasConsoleUrl << ToVisibility ] {
+                TextBlock [ Text = "Console address", Style = @UiCaption, Foreground = @Fg2, VerticalAlignment = Center, Margin = (0,0,8,0) ]
+                TextBlock [ Text = $ConsoleUrl, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
+            }
+            Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,8),
+                     Visibility = $HasDevTrustCommand << ToVisibility ] {
+                StackPanel [ Orientation = Vertical ] {
+                    TextBlock [ Text = "To trust the development CA on this machine, run this from the repository root (Windows asks you to confirm):",
+                                Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,4) ]
+                    TextBlock [ Text = $DevTrustCommand, Style = @Code, Foreground = @Fg0, TextWrapping = Wrap ]
+                }
+            }
+            Border [ Fill = @StateWarningSoft, Padding = (12,10,12,10), Margin = (0,0,0,8), Visibility = $ErrorText << ToVisibility ] {
+                TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap ]
+            }
+            StackPanel [ Orientation = Horizontal, Margin = (0,0,0,8) ] {
+                Button [ Variant = Primary, Command = $RetryCommand, Margin = (0,0,8,0), Visibility = $IsFailed << ToVisibility ] {
+                    TextBlock [ Text = "Retry" ]
+                }
+                Button [ Variant = Secondary, Command = $InstallCommand, Margin = (0,0,8,0), Visibility = $IsDeployed << ToVisibility ] {
+                    TextBlock [ Text = "Reinstall console" ]
+                }
+                Button [ Variant = Secondary, Command = $SetOwnerPasswordCommand, Visibility = $IsDeployed << ToVisibility ] {
+                    TextBlock [ Text = "Set Owner password" ]
+                }
+            }
+            Border [ Fill = @StateWarningSoft, Padding = (12,10,12,10), Visibility = $HasOwnerPassword << ToVisibility ] {
+                StackPanel [ Orientation = Vertical ] {
+                    TextBlock [ Text = "This password is shown once and the old one no longer works. Pass it on over a secure channel; it is gone when you leave this page.",
+                                Foreground = @StateWarningInk, TextWrapping = Wrap, Margin = (0,0,0,8) ]
+                    StackPanel [ Orientation = Horizontal, Margin = (0,0,0,4) ] {
+                        TextBlock [ Text = "Owner", Style = @UiCaption, Foreground = @Fg2, VerticalAlignment = Center, Margin = (0,0,8,0) ]
+                        TextBlock [ Text = $OwnerEmail, Foreground = @Fg0, VerticalAlignment = Center ]
+                    }
+                    StackPanel [ Orientation = Horizontal ] {
+                        TextBlock [ Text = "Password", Style = @UiCaption, Foreground = @Fg2, VerticalAlignment = Center, Margin = (0,0,8,0) ]
+                        TextBlock [ Text = $OwnerPassword, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
+                    }
                 }
             }
         }

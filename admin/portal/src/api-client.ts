@@ -1,4 +1,4 @@
-import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto, HiveDeleteOutcomeDto, OwnerPasswordResetDto, PasswordChangedDto } from './portal-types.js'
+import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto, HiveDeleteOutcomeDto, OwnerPasswordResetDto, PasswordChangedDto, HiveConsoleSpecDto, ConsoleInstallStatusDto, InHiveOwnerPasswordDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -76,6 +76,8 @@ export class ControlPlaneClient
     private static readonly BootstrapSegment = 'bootstrap'
     private static readonly RolloutRegistrationSegment = 'rollout-registration'
     private static readonly AgentInstallSegment = 'agent-install'
+    private static readonly ConsoleSegment = 'console'
+    private static readonly ConsoleInstallSegment = 'console-install'
     private static readonly ForceQuery = '?force=true'
     private static readonly OwnerPasswordSegment = 'owner-password'
     private static readonly NoQuery = ''
@@ -344,6 +346,51 @@ export class ControlPlaneClient
             }
             throw e
         }
+    }
+
+    // Stores where the hive serves its tenant's console (host and TLS); the reply is the updated hive. A setting the
+    // control plane refuses is a 400 with a plain sentence; a running hive operation is a 409.
+    public async SetHiveConsole(hiveId: string, spec: HiveConsoleSpecDto): Promise<HiveDto>
+    {
+        return await this.Send<HiveDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.ConsoleSegment), { method: ControlPlaneClient.MethodPut, body: JSON.stringify(spec) })
+    }
+
+    // Removes the console from a cluster the control plane drives, then clears its settings; the reply is the updated
+    // hive. A cluster that refuses the removal is a 409 and the settings stay.
+    public async RemoveHiveConsole(hiveId: string): Promise<HiveDto>
+    {
+        return await this.Send<HiveDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.ConsoleSegment), { method: ControlPlaneClient.MethodDelete })
+    }
+
+    // Starts the control plane's console install for the hive; the reply is its first status (never a secret).
+    public async StartConsoleInstall(hiveId: string): Promise<ConsoleInstallStatusDto>
+    {
+        return await this.Send<ConsoleInstallStatusDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.ConsoleInstallSegment), { method: ControlPlaneClient.MethodPost })
+    }
+
+    // The hive's latest console install status; null when none has run since the control plane started.
+    public async GetConsoleInstall(hiveId: string): Promise<ConsoleInstallStatusDto | null>
+    {
+        try
+        {
+            return await this.Send<ConsoleInstallStatusDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.ConsoleInstallSegment), undefined)
+        }
+        catch (e)
+        {
+            if (e instanceof ApiError && e.Status === ApiError.NotFoundStatus)
+            {
+                return null
+            }
+            throw e
+        }
+    }
+
+    // Sets a fresh Owner password in the hive's in-hive identity provider; the reply is the only copy. A 503 when that
+    // identity provider cannot be reached.
+    public async ResetInHiveOwnerPassword(hiveId: string): Promise<InHiveOwnerPasswordDto>
+    {
+        const route = this.HiveSubRoute(hiveId, ControlPlaneClient.ConsoleSegment) + ControlPlaneClient.PathSeparator + ControlPlaneClient.OwnerPasswordSegment
+        return await this.Send<InHiveOwnerPasswordDto>(route, { method: ControlPlaneClient.MethodPost })
     }
 
     private HivePolicyRoute(hiveId: string, segment: string): string

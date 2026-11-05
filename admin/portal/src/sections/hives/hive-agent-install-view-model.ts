@@ -1,7 +1,7 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable, type IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { ApiError } from '../../api-client.js'
-import { AgentInstallState, AgentInstallStep, type AgentInstallStatusDto } from '../../portal-types.js'
+import { AgentInstallState, AgentInstallStep, type AgentInstallStatusDto, type ConsoleInstallStep } from '../../portal-types.js'
 import { TimerPollScheduler, type IPollScheduler } from '../../shell/poll-scheduler.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
 
@@ -27,7 +27,8 @@ export enum AgentInstallPhase
 }
 
 // One row of the install's step list: its label and whether it is pending,
-// running, done or failed. Every row is a real step the control plane runs.
+// running, done or failed. Every row is a real step the control plane runs:
+// an agent install's or (on the tenant console panel) a console install's.
 export class AgentInstallStepViewModel extends Observable
 {
     private static readonly RunningLabel = 'In progress'
@@ -44,7 +45,7 @@ export class AgentInstallStepViewModel extends Observable
 
     private state = AgentInstallStepState.Pending
 
-    public constructor(public readonly Step: AgentInstallStep, public readonly Label: string)
+    public constructor(public readonly Step: AgentInstallStep | ConsoleInstallStep, public readonly Label: string)
     {
         super()
     }

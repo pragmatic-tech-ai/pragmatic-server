@@ -7,8 +7,8 @@ import { DialogService, type DialogOptions } from '@pragmatic-tech-ai/mural/fram
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import { ApiError, type ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
-import { AgentInstallState, AgentInstallStep, type AgentInstallStatusDto } from '../../portal-types.js'
-import type { HiveDeleteOutcomeDto, OwnerPasswordResetDto, PasswordChangedDto } from '../../portal-types.js'
+import { AgentInstallState, AgentInstallStep, ConsoleInstallState, ConsoleInstallStep, type AgentInstallStatusDto, type ConsoleInstallStatusDto } from '../../portal-types.js'
+import type { HiveConsoleSpecDto, HiveDeleteOutcomeDto, InHiveOwnerPasswordDto, OwnerPasswordResetDto, PasswordChangedDto } from '../../portal-types.js'
 import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveBootstrapDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, ProvisionInputDto, ProvisionResultDto, SelectionDto, TenantDto } from '../../portal-types.js'
 import { DownloadService } from '../download-service.js'
 import type { IPageReloader } from '../page-reloader.js'
@@ -241,6 +241,18 @@ export class FakeControlPlane
     public readonly InstallStarts: string[] = []
     public InstallReads = 0
     public readonly Reissued: string[] = []
+    // The in-hive console: its settings writes and removals, its install (each start answers ConsoleStartReply; each
+    // read the next of ConsoleInstallReplies, the last one repeating, none: null) and its Owner password resets. While
+    // ConsoleFailure is set, every console write fails with it.
+    public readonly ConsoleSaves: Array<[string, HiveConsoleSpecDto]> = []
+    public readonly ConsoleRemovals: string[] = []
+    public ConsoleFailure: Error | undefined
+    public ConsoleStartReply: ConsoleInstallStatusDto = FakeControlPlane.ConsoleStatus(ConsoleInstallState.Installing, ConsoleInstallStep.CheckingAgent)
+    public ConsoleInstallReplies: Array<ConsoleInstallStatusDto | null> = []
+    public readonly ConsoleInstallStarts: string[] = []
+    public ConsoleInstallReads = 0
+    public InHiveOwnerPassword = 'fixture-in-hive-owner-password'
+    public readonly InHiveOwnerResets: string[] = []
     public ProvisionCalls = 0
     public readonly Provisioned: ProvisionInputDto[] = []
     public Failure: Error | undefined
@@ -777,6 +789,81 @@ export class FakeControlPlane
         this.ThrowIfFailing()
         this.Reissued.push(hiveId)
         return this.ReissuedToken
+    }
+
+    // A console install status at a step (startedAt fixed; finishedAt once settled).
+    public static ConsoleStatus(state: ConsoleInstallState, step: ConsoleInstallStep, extra: Partial<ConsoleInstallStatusDto> = {}): ConsoleInstallStatusDto
+    {
+        const status: ConsoleInstallStatusDto = { state, step, startedAt: '2026-11-04T10:00:00.000Z', ...extra }
+        if (state !== ConsoleInstallState.Installing)
+        {
+            status.finishedAt = '2026-11-04T10:05:00.000Z'
+        }
+        return status
+    }
+
+    public async SetHiveConsole(hiveId: string, spec: HiveConsoleSpecDto): Promise<HiveDto>
+    {
+        if (this.ConsoleFailure !== undefined)
+        {
+            throw this.ConsoleFailure
+        }
+        this.ConsoleSaves.push([hiveId, spec])
+        return this.UpdateHive(hiveId, h => ({ ...h, console: spec }))
+    }
+
+    public async RemoveHiveConsole(hiveId: string): Promise<HiveDto>
+    {
+        if (this.ConsoleFailure !== undefined)
+        {
+            throw this.ConsoleFailure
+        }
+        this.ConsoleRemovals.push(hiveId)
+        return this.UpdateHive(hiveId, h =>
+        {
+            const copy = { ...h }
+            delete copy.console
+            return copy
+        })
+    }
+
+    public async StartConsoleInstall(hiveId: string): Promise<ConsoleInstallStatusDto>
+    {
+        if (this.ConsoleFailure !== undefined)
+        {
+            throw this.ConsoleFailure
+        }
+        this.ConsoleInstallStarts.push(hiveId)
+        return { ...this.ConsoleStartReply }
+    }
+
+    public async GetConsoleInstall(_hiveId: string): Promise<ConsoleInstallStatusDto | null>
+    {
+        this.ConsoleInstallReads++
+        const next = this.ConsoleInstallReplies.length > 1 ? this.ConsoleInstallReplies.shift() : this.ConsoleInstallReplies[0]
+        return next === undefined || next === null ? null : { ...next }
+    }
+
+    public async ResetInHiveOwnerPassword(hiveId: string): Promise<InHiveOwnerPasswordDto>
+    {
+        if (this.ConsoleFailure !== undefined)
+        {
+            throw this.ConsoleFailure
+        }
+        this.InHiveOwnerResets.push(hiveId)
+        return { ownerEmail: this.OwnerResetEmail, ownerPassword: this.InHiveOwnerPassword }
+    }
+
+    private UpdateHive(hiveId: string, change: (hive: HiveDto) => HiveDto): HiveDto
+    {
+        const at = this.Hives.findIndex(h => h.id === hiveId)
+        if (at < 0)
+        {
+            throw new ApiError(ApiError.NotFoundStatus, 'not found')
+        }
+        const next = change(this.Hives[at] as HiveDto)
+        this.Hives[at] = next
+        return { ...next }
     }
 
     public AsClient(): ControlPlaneClient
