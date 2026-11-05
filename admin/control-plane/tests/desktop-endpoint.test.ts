@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { createHash, randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
-import { createServer, request, type IncomingMessage, type Server } from 'node:http'
+import { createServer, request, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,7 +24,7 @@ import { TenantSessionKind, TenantSessionStore } from '../tenant-auth/tenant-ses
 import { TenantOidcRelyingParty } from '../tenant-auth/tenant-oidc-relying-party.js'
 import { IdpClientStore } from '../../../src/idp/idp-client-store.js'
 
-type Reply = { status: number; body: Record<string, unknown> | undefined; text: string }
+type Reply = { status: number; body: Record<string, unknown> | undefined; text: string; headers: IncomingHttpHeaders }
 
 /** Records what the endpoint passes and answers a fixed principal; each Begin hands out a fresh RP state. */
 class FakeRelyingParty implements ITenantOidcRelyingParty
@@ -102,6 +102,7 @@ class EndpointKit
     public static readonly SignOutPath = '/desktop/sign-out'
     public static readonly ProfilePath = '/desktop/profile'
     public static readonly TargetsPath = '/desktop/targets'
+    public static readonly ConsolePath = '/desktop/console'
     public static readonly Loopback = '127.0.0.1'
     public static readonly Code = 'auth-code-1'
 
@@ -145,14 +146,14 @@ class EndpointHarness
     public readonly ClosedSessions: string[] = []
     private server: Server | undefined
 
-    public constructor(trustedProxy: boolean = false)
+    public constructor(trustedProxy: boolean = false, consoleTenantId?: string)
     {
         this.Endpoint = new DesktopEndpoint(
             this.Rp, this.Sessions, this.DesktopGate, new DesktopSignInFlows(),
             new DesktopTargets(new EndpointListing() as unknown as IEnvironmentService, this.directory), this.directory,
             s => TenantProfileMapper.ToDto(s, this.directory.GetTenant(s.tenantId), undefined, undefined, TenantAdminCapabilities.For(s, this.directory.GetTenant(s.tenantId))),
             this.Throttle, DesktopEndpoint.NewBeginThrottle(), trustedProxy,
-            { CloseSession: id => { this.ClosedSessions.push(id); return 1 } })
+            { CloseSession: id => { this.ClosedSessions.push(id); return 1 } }, consoleTenantId)
     }
 
     public async Start(): Promise<void>
@@ -199,7 +200,7 @@ class EndpointHarness
                 res.on('end', () =>
                 {
                     const text = Buffer.concat(chunks).toString('utf8')
-                    resolve({ status: res.statusCode ?? 0, body: text.length === 0 ? undefined : JSON.parse(text) as Record<string, unknown>, text })
+                    resolve({ status: res.statusCode ?? 0, body: text.length === 0 ? undefined : JSON.parse(text) as Record<string, unknown>, text, headers: res.headers })
                 })
             })
             req.on('error', reject)
@@ -447,7 +448,17 @@ class AddressKit
 
     public static async With(trustedProxy: boolean, body: (h: EndpointHarness) => Promise<void>): Promise<void>
     {
-        const h = new EndpointHarness(trustedProxy)
+        await AddressKit.Run(new EndpointHarness(trustedProxy), body)
+    }
+
+    /** Runs a body against a started harness whose listener serves the console of `consoleTenantId`. */
+    public static async WithConsole(consoleTenantId: string, body: (h: EndpointHarness) => Promise<void>): Promise<void>
+    {
+        await AddressKit.Run(new EndpointHarness(false, consoleTenantId), body)
+    }
+
+    private static async Run(h: EndpointHarness, body: (h: EndpointHarness) => Promise<void>): Promise<void>
+    {
         await h.Start()
         try
         {
@@ -459,6 +470,75 @@ class AddressKit
         }
     }
 }
+
+describe('DesktopEndpoint console lookup', () =>
+{
+    it('names the served tenant', async () =>
+    {
+        await AddressKit.WithConsole(EndpointKit.TenantId, async h =>
+        {
+            const r = await h.Send('GET', EndpointKit.ConsolePath, undefined)
+            assert.equal(r.status, 200)
+            assert.deepEqual(r.body, { tenantId: EndpointKit.TenantId, tenantName: EndpointKit.TenantName })
+            assert.equal(r.headers['cache-control'], 'no-store')
+        })
+    })
+
+    it('is not a route without a served tenant', async () =>
+    {
+        const h = new EndpointHarness()
+        try
+        {
+            const handled = await h.Endpoint.Handle({ headers: {}, method: 'GET' } as unknown as IncomingMessage, {} as ServerResponse, EndpointKit.ConsolePath)
+            assert.equal(handled, false)
+        }
+        finally
+        {
+            await h.Dispose()
+        }
+    })
+
+    it('refuses an Origin with 403 and a POST with 405', async () =>
+    {
+        await AddressKit.WithConsole(EndpointKit.TenantId, async h =>
+        {
+            const forbidden = await h.Send('GET', EndpointKit.ConsolePath, undefined, { origin: 'https://evil.example' })
+            assert.equal(forbidden.status, 403)
+            assert.deepEqual(forbidden.body, { error: 'forbidden' })
+            const post = await h.Send('POST', EndpointKit.ConsolePath, {})
+            assert.equal(post.status, 405)
+            assert.equal(post.headers['allow'], 'GET')
+        })
+    })
+
+    it('shares the begin rate limit', async () =>
+    {
+        await AddressKit.WithConsole(EndpointKit.TenantId, async h =>
+        {
+            for (let i = 0; i < 6; i++)
+            {
+                assert.equal((await h.Send('GET', EndpointKit.ConsolePath, undefined)).status, 200, 'lookup ' + String(i))
+            }
+            for (let i = 0; i < 4; i++)
+            {
+                assert.equal((await h.Begin(EndpointKit.RedirectUri, EndpointKit.Challenge(EndpointKit.Verifier()))).status, 200, 'begin ' + String(i))
+            }
+            const limited = await h.Send('GET', EndpointKit.ConsolePath, undefined)
+            assert.equal(limited.status, 429)
+            assert.ok(limited.headers['retry-after'] !== undefined)
+        })
+    })
+
+    it('for a served tenant the directory lost is 404 unknown-tenant', async () =>
+    {
+        await AddressKit.WithConsole('gone', async h =>
+        {
+            const r = await h.Send('GET', EndpointKit.ConsolePath, undefined)
+            assert.equal(r.status, 404)
+            assert.deepEqual(r.body, { error: 'unknown-tenant' })
+        })
+    })
+})
 
 describe('DesktopEndpoint client address', () =>
 {

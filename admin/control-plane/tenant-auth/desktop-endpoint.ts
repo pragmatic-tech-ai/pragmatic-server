@@ -53,6 +53,7 @@ export class DesktopEndpoint
     private static readonly SignOutPath = '/desktop/sign-out'
     private static readonly ProfilePath = '/desktop/profile'
     private static readonly TargetsPath = '/desktop/targets'
+    private static readonly ConsolePath = '/desktop/console'
     private static readonly RedirectPattern = /^http:\/\/127\.0\.0\.1:(\d{1,5})\/pragmatic-desktop\/callback$/
     private static readonly ChallengePattern = /^[A-Za-z0-9_-]{43}$/
     /** RFC 7636 verifier shape: 43-128 unreserved characters. */
@@ -126,9 +127,14 @@ export class DesktopEndpoint
         /** Behind a trusted proxy (PRAGMATIC_TENANT_ADMIN_TRUSTED_PROXY) the end user's address is the last x-forwarded-for hop. */
         private readonly trustedProxy: boolean = false,
         /** Connections a sign-out ends (the relay); absent, sign-out only revokes the session. */
-        private readonly connections?: IDesktopSessionConnections)
+        private readonly connections?: IDesktopSessionConnections,
+        /** The one tenant this listener serves (the in-hive console); absent on the control plane, where /desktop/console is not a route. */
+        private readonly consoleTenantId?: string)
     {
+        const consoleRoutes: [string, DesktopRoute][] = consoleTenantId === undefined ? []
+            : [[DesktopEndpoint.ConsolePath, { method: PlaneHttp.MethodGet, run: (req, res) => this.Console(req, res, consoleTenantId) }]]
         this.routes = new Map<string, DesktopRoute>([
+            ...consoleRoutes,
             [DesktopEndpoint.BeginPath, { method: PlaneHttp.MethodPost, run: (req, res) => this.Begin(req, res) }],
             [DesktopEndpoint.CompletePath, { method: PlaneHttp.MethodPost, run: (req, res) => this.Complete(req, res) }],
             [DesktopEndpoint.SignOutPath, { method: PlaneHttp.MethodPost, run: (req, res) => this.Authenticated(req, res, s => this.SignOut(res, s)) }],
@@ -169,6 +175,30 @@ export class DesktopEndpoint
         }
         await route.run(req, res)
         return true
+    }
+
+    /**
+     * No body -> `{ tenantId, tenantName }` of the one tenant this console serves. Unauthenticated and email-free, so it
+     * reveals nothing about accounts; it counts against the begin rate limit (it is the same kind of unauthenticated probe).
+     */
+    private async Console(req: IncomingMessage, res: ServerResponse, tenantId: string): Promise<void>
+    {
+        req.resume()
+        const ip = TenantClientAddress.Of(req, this.trustedProxy)
+        this.beginThrottle.RecordHit(ip)
+        const decision = this.beginThrottle.CheckAllowed(ip)
+        if (!decision.allowed)
+        {
+            this.ReplyTooMany(res, decision.retryAfterMs)
+            return
+        }
+        const tenant = this.directory.GetTenant(tenantId)
+        if (tenant === undefined)
+        {
+            this.Reply(res, DesktopEndpoint.StatusNotFound, DesktopEndpoint.UnknownTenantBody)
+            return
+        }
+        this.Reply(res, PlaneHttp.StatusOk, { tenantId, tenantName: tenant.displayName ?? tenantId })
     }
 
     /** `{ tenantId, redirectUri, bindingChallenge }` -> `{ authorizeUrl }`; the flow is kept under the RP's state. */

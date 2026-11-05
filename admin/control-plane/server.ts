@@ -393,10 +393,10 @@ export class ControlPlaneServer
 
     /**
      * Gate-free composition of the tenant plane; callers decide whether the plane is active (ComposeTenantPlane gates on env,
-     * the standalone server always builds it). `withDesktop` mounts the Plexus `/desktop/*` surface; it is off by default,
-     * so the in-hive tenant console does not serve it (that is a later follow-up). The desktop relay is mounted with it when
-     * `relay` supplies how environments are reached and where relays are audited. `emailDomains` mounts
-     * `/tenant-api/settings/email-domains` (unrouted without it).
+     * the standalone server always builds it). `withDesktop` mounts the Plexus `/desktop/*` surface; it is off by default.
+     * The desktop relay is mounted with it when `relay` supplies how environments are reached and where relays are audited.
+     * `emailDomains` mounts `/tenant-api/settings/email-domains` (unrouted without it). `consoleTenantId` is the one tenant
+     * an in-hive console serves: it mounts `GET /desktop/console` (absent on the control plane, where that is not a route).
      */
     public static BuildTenantPlane(
         dataRoot: string,
@@ -415,7 +415,8 @@ export class ControlPlaneServer
         trustedProxy: boolean = false,
         withDesktop: boolean = false,
         relay?: DesktopRelayWiring,
-        emailDomains?: ITenantEmailDomains): TenantPlane
+        emailDomains?: ITenantEmailDomains,
+        consoleTenantId?: string): TenantPlane
     {
         const durability: TenantAdminDurability = {
             storeRoot: join(dataRoot, ControlPlaneServer.TenantAdminOidcDir),
@@ -441,7 +442,7 @@ export class ControlPlaneServer
             }
             // A desktop sign-out also closes the relays opened under that session.
             plane.desktop = new DesktopEndpoint(rp, sessions, desktopGate, new DesktopSignInFlows(), targets, directory,
-                session => api.Profile(session), new LoginThrottle(), DesktopEndpoint.NewBeginThrottle(), trustedProxy, plane.relay)
+                session => api.Profile(session), new LoginThrottle(), DesktopEndpoint.NewBeginThrottle(), trustedProxy, plane.relay, consoleTenantId)
         }
         return plane
     }
