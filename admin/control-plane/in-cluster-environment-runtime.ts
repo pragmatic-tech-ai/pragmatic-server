@@ -9,6 +9,7 @@ import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { EffectiveRegistry } from './effective-registry.js'
 import { ImageVerificationError } from './image-verifier.js'
+import { ImageNotApprovedError } from './pinned-image-verifier.js'
 import { KeyNotFoundError } from './key-store.js'
 import type { HiveRecord } from './platform-records.js'
 import type { PlatformImageSigner } from './platform-signing-key.js'
@@ -246,6 +247,10 @@ export class InClusterEnvironmentRuntime implements IEnvironmentRuntime
     // never signature, digest or key material.
     private static ShowableReason(err: unknown): string | undefined
     {
+        if (err instanceof ImageNotApprovedError)
+        {
+            return err.Sentence
+        }
         if (err instanceof ImageVerificationError)
         {
             const C = InClusterEnvironmentRuntime

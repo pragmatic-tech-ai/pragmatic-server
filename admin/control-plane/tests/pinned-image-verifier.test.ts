@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PinnedImageVerifier } from '../pinned-image-verifier.js'
+import { ImageNotApprovedError, PinnedImageVerifier } from '../pinned-image-verifier.js'
 import { ImageVerificationError } from '../image-verifier.js'
 
 class PinnedFixture
@@ -11,7 +11,9 @@ class PinnedFixture
     public static IsNotVerified(ref: string): (e: unknown) => boolean
     {
         return (e: unknown) => e instanceof ImageVerificationError
+            && e instanceof ImageNotApprovedError
             && e.Reason === PinnedImageVerifier.NotVerifiedReason
+            && /Reinstall the console/.test(e.Sentence)
             && e.ImageRef === ref
     }
 

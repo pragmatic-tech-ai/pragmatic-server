@@ -828,6 +828,8 @@ resources HivesResources {
                 TextBlock [ Text = "Console address", Style = @UiCaption, Foreground = @Fg2, VerticalAlignment = Center, Margin = (0,0,8,0) ]
                 TextBlock [ Text = $ConsoleUrl, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
             }
+            TextBlock [ Text = "The console runs only the server image approved when it was installed. After a platform release, reinstall the console to approve the new server image for its environments.",
+                        Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,8), Visibility = $IsConfigured << ToVisibility ]
             Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,8),
                      Visibility = $HasDevTrustCommand << ToVisibility ] {
                 StackPanel [ Orientation = Vertical ] {

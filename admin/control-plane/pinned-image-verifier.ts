@@ -20,7 +20,30 @@ export class InvalidVerifiedImagesError extends Error
     }
 }
 
-/** The console's image gate: admits exactly the refs the platform pinned for this hive; everything else is refused. */
+/**
+ * An image ref the console may not run: the platform approved only the server image of the console's install. `Sentence` is what
+ * the operator sees: run a newer release by reinstalling the console, which approves the platform's current server image.
+ */
+export class ImageNotApprovedError extends ImageVerificationError
+{
+    private static readonly ErrorName = 'ImageNotApprovedError'
+    private static readonly SentencePrefix = 'The hive refused to run image '
+    private static readonly SentenceSuffix = ': the console runs only the server image the platform approved when the console was installed. Reinstall the console from the platform portal to approve the new server image.'
+
+    public readonly Sentence: string
+
+    public constructor(imageRef: string)
+    {
+        super(imageRef, PinnedImageVerifier.NotVerifiedReason)
+        this.name = ImageNotApprovedError.ErrorName
+        this.Sentence = ImageNotApprovedError.SentencePrefix + imageRef + ImageNotApprovedError.SentenceSuffix
+    }
+}
+
+/**
+ * The console's image gate: admits exactly the refs the platform pinned for this hive (the server image of the console's install);
+ * everything else is refused with ImageNotApprovedError, which tells the operator to reinstall the console after a platform release.
+ */
 export class PinnedImageVerifier implements IImageVerifier
 {
     public static readonly NotVerifiedReason = 'not verified for this hive by the platform'
@@ -61,7 +84,7 @@ export class PinnedImageVerifier implements IImageVerifier
     {
         if (!this.refs.has(imageRef))
         {
-            throw new ImageVerificationError(imageRef, PinnedImageVerifier.NotVerifiedReason)
+            throw new ImageNotApprovedError(imageRef)
         }
     }
 

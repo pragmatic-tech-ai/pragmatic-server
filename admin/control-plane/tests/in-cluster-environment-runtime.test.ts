@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { BundleBuilderAdapter } from '../docker-env-port.js'
 import { EnvServerSeedSource } from '../env-server-seed.js'
 import type { IKubectl } from '../kubectl.js'
+import { ImageNotApprovedError } from '../pinned-image-verifier.js'
 import assert from 'node:assert/strict'
 import type { EnvDefinition } from '../../../environments/seed/bundle.js'
 import type { EnvRuntimeContext } from '../environment-runtime.js'
@@ -189,6 +190,15 @@ test('an image the hive refused surfaces as a showable reason; other failures ca
         && e.message.endsWith(e.Reason))
     h.Orchestrator.FailWith = new Error(Fx.Secret)
     await assert.rejects(() => h.Runtime.BringUp(h.Ctx), (e: Error) => e instanceof InClusterOperationFailedError && e.Reason === undefined)
+})
+
+test('an image the console was not approved for tells the operator to reinstall the console', async () =>
+{
+    const h = new Harness()
+    h.Orchestrator.FailWith = new ImageNotApprovedError('localhost:5000/pragmatic-server:2.0')
+    await assert.rejects(() => h.Runtime.BringUp(h.Ctx), (e: Error) =>
+        e instanceof InClusterOperationFailedError
+        && e.Reason === 'The hive refused to run image localhost:5000/pragmatic-server:2.0: the console runs only the server image the platform approved when the console was installed. Reinstall the console from the platform portal to approve the new server image.')
 })
 
 test('the failure detail keeps the cause for the operator log, with the OIDC secret redacted, and never enters the message', async () =>
