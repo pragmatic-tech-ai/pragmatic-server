@@ -5,16 +5,19 @@ import { createServer, request, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { ConsoleAdvertRecord, IConsoleAdvertLookup } from '../console-advert-registry.js'
 import { DesktopDiscoveryEndpoint } from '../desktop-discovery-endpoint.js'
+import type { IDiscoveryDirectory } from '../desktop-tenant-matcher.js'
+import { IngressTlsSource } from '../ingress-tls.js'
+import { HiveBackend, InfraMode } from '../platform-records.js'
+import type { HiveRecord, TenantRecord } from '../platform-records.js'
 import { TenantAccountIndex } from '../tenant-account-index.js'
-import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
-import type { TenantRecord } from '../platform-records.js'
 
 type Reply = { status: number; body: unknown; retryAfter: string | undefined }
 
-class FakeDirectory implements ITenantDirectory
+class FakeDirectory implements IDiscoveryDirectory
 {
-    public constructor(private readonly tenants: readonly TenantRecord[])
+    public constructor(private readonly tenants: readonly TenantRecord[], private readonly hives: readonly HiveRecord[] = [])
     {
     }
 
@@ -23,14 +26,41 @@ class FakeDirectory implements ITenantDirectory
         return this.tenants.find(t => t.id === id)
     }
 
-    public GetHive(): undefined
+    public GetHive(id: string): HiveRecord | undefined
     {
-        return undefined
+        return this.hives.find(h => h.id === id)
     }
 
-    public ListHives(): readonly never[]
+    public ListHives(tenantId: string): readonly HiveRecord[]
     {
-        return []
+        return this.hives.filter(h => h.tenantId === tenantId)
+    }
+
+    public ListTenants(): readonly TenantRecord[]
+    {
+        return this.tenants
+    }
+}
+
+class FakeAdverts implements IConsoleAdvertLookup
+{
+    public constructor(private readonly records: readonly ConsoleAdvertRecord[])
+    {
+    }
+
+    public ForTenant(tenantId: string): ConsoleAdvertRecord | undefined
+    {
+        return this.records.find(r => r.tenantId === tenantId)
+    }
+
+    public All(): readonly Readonly<ConsoleAdvertRecord>[]
+    {
+        return this.records
+    }
+
+    public HasFingerprint(): boolean
+    {
+        return false
     }
 }
 
@@ -45,9 +75,29 @@ class DiscoveryFixture
     public static readonly EvilOrigin = 'http://evil.test'
     public static readonly ThrottleLimit = 10
 
-    public static Tenant(id: string, displayName: string): TenantRecord
+    public static readonly Console = 'https://console-acme.localtest.me'
+
+    public static Tenant(id: string, displayName: string, emailDomains?: string[]): TenantRecord
     {
-        return { id, clientId: 'c1', displayName, createdAt: '2026-01-01T00:00:00.000Z' }
+        return { id, clientId: 'c1', displayName, createdAt: '2026-01-01T00:00:00.000Z', emailDomains }
+    }
+
+    public static ConsoleHive(id: string, tenantId: string): HiveRecord
+    {
+        return {
+            id, tenantId, displayName: id, createdAt: '2026-01-01T00:00:00.000Z',
+            cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach },
+            registry: { mode: InfraMode.Attach },
+            console: { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } }
+        }
+    }
+
+    public static Advert(tenantId: string, hiveId: string): ConsoleAdvertRecord
+    {
+        return {
+            id: tenantId, tenantId, hiveId, consoleUrl: DiscoveryFixture.Console, fingerprints: [], emailDomains: [],
+            firstReportedAt: '2026-11-04T10:00:00.000Z', reportedAt: '2026-11-04T10:00:00.000Z'
+        }
     }
 
     public static Post(server: Server, payload: string, headers: Record<string, string> = {}): Promise<Reply>
@@ -82,9 +132,9 @@ describe('DesktopDiscoveryEndpoint', () =>
     let index: TenantAccountIndex
     let server: Server
 
-    async function Start(url: string | undefined, tenants: readonly TenantRecord[]): Promise<void>
+    async function Start(url: string | undefined, tenants: readonly TenantRecord[], hives: readonly HiveRecord[] = [], adverts: readonly ConsoleAdvertRecord[] = []): Promise<void>
     {
-        const endpoint = new DesktopDiscoveryEndpoint(index, new FakeDirectory(tenants), url, DesktopDiscoveryEndpoint.NewThrottle())
+        const endpoint = new DesktopDiscoveryEndpoint(index, new FakeDirectory(tenants, hives), url, DesktopDiscoveryEndpoint.NewThrottle(), new FakeAdverts(adverts))
         server = createServer((req, res) =>
         {
             void endpoint.Handle(req, res)
@@ -111,7 +161,7 @@ describe('DesktopDiscoveryEndpoint', () =>
         await Start(DiscoveryFixture.Url, [DiscoveryFixture.Tenant('acme', 'Acme')])
         const reply = await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))
         assert.equal(reply.status, 200)
-        assert.deepEqual(reply.body, { tenants: [{ id: 'acme', displayName: 'Acme' }], tenantPlaneUrl: DiscoveryFixture.Url })
+        assert.deepEqual(reply.body, { tenants: [{ id: 'acme', displayName: 'Acme', consoleUrl: DiscoveryFixture.Url }], tenantPlaneUrl: DiscoveryFixture.Url })
     })
 
     it('sorts tenants by display name and skips unknown tenant ids', async () =>
@@ -120,7 +170,38 @@ describe('DesktopDiscoveryEndpoint', () =>
         await index.Record('gone', 'owner', DiscoveryFixture.Ann)
         await Start(DiscoveryFixture.Url, [DiscoveryFixture.Tenant('zed', 'Aardvark'), DiscoveryFixture.Tenant('acme', 'Acme')])
         const reply = await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))
-        assert.deepEqual((reply.body as { tenants: unknown[] }).tenants, [{ id: 'zed', displayName: 'Aardvark' }, { id: 'acme', displayName: 'Acme' }])
+        assert.deepEqual((reply.body as { tenants: unknown[] }).tenants, [
+            { id: 'zed', displayName: 'Aardvark', consoleUrl: DiscoveryFixture.Url },
+            { id: 'acme', displayName: 'Acme', consoleUrl: DiscoveryFixture.Url }
+        ])
+    })
+
+    it('orders account matches before domain matches, then by display name', async () =>
+    {
+        await index.Record('zed', 'owner', DiscoveryFixture.Ann)
+        await Start(DiscoveryFixture.Url, [
+            DiscoveryFixture.Tenant('aard', 'Aardvark', ['acme.test']),
+            DiscoveryFixture.Tenant('zed', 'Zebra'),
+            DiscoveryFixture.Tenant('acme', 'Acme')
+        ])
+        const reply = await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))
+        assert.deepEqual((reply.body as { tenants: { id: string }[] }).tenants.map(t => t.id), ['acme', 'zed', 'aard'])
+    })
+
+    it('returns the in-hive console url for an advertised tenant', async () =>
+    {
+        await Start(DiscoveryFixture.Url, [DiscoveryFixture.Tenant('acme', 'Acme')], [DiscoveryFixture.ConsoleHive('h1', 'acme')], [DiscoveryFixture.Advert('acme', 'h1')])
+        const reply = await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))
+        assert.equal(reply.status, 200)
+        assert.deepEqual(reply.body, { tenants: [{ id: 'acme', displayName: 'Acme', consoleUrl: DiscoveryFixture.Console }], tenantPlaneUrl: DiscoveryFixture.Url })
+    })
+
+    it('answers 404 no-account for an in-hive tenant that has not advertised yet', async () =>
+    {
+        await Start(DiscoveryFixture.Url, [DiscoveryFixture.Tenant('acme', 'Acme')], [DiscoveryFixture.ConsoleHive('h1', 'acme')])
+        const reply = await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))
+        assert.equal(reply.status, 404)
+        assert.deepEqual(reply.body, { error: 'no-account' })
     })
 
     it('answers 404 no-account for an unknown email', async () =>

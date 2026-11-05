@@ -76,7 +76,7 @@ describe('ControlPlaneHost desktop discovery route', () =>
         await index.Load()
         await index.Record('acme', 'owner', ComposeFixture.Ann)
         const tenant: TenantRecord = { id: 'acme', clientId: 'c1', displayName: 'Acme', createdAt: '2026-01-01T00:00:00.000Z' }
-        const directory = { GetTenant: (id: string) => id === 'acme' ? tenant : undefined } as unknown as PlatformDirectory
+        const directory = { GetTenant: (id: string) => id === 'acme' ? tenant : undefined, ListTenants: () => [tenant], ListHives: () => [] } as unknown as PlatformDirectory
         const endpoint = new DesktopDiscoveryEndpoint(index, directory, ComposeFixture.Plane, DesktopDiscoveryEndpoint.NewThrottle())
         host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, dir, {} as IOperatorIdentity, false,
             directory, {} as PlatformDeploymentRegistry, {} as TenantProvisioningService, {} as HiveObservationRegistry,

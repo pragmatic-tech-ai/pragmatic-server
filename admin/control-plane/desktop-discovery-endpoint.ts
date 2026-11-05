@@ -1,13 +1,16 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { AuditThrottle } from './audit-throttle.js'
+import type { IConsoleAdvertLookup } from './console-advert-registry.js'
+import { DesktopTenantMatcher } from './desktop-tenant-matcher.js'
+import type { IDiscoveryDirectory, IDomainApprovalSource, IFingerprintKeySource } from './desktop-tenant-matcher.js'
 import { PlaneHttp } from './plane-http.js'
 import type { TenantAccountIndex } from './tenant-account-index.js'
-import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 
 /**
- * Public `POST /api/desktop/discover`: tells the desktop app which tenant(s) an email belongs to and where the tenant
- * plane is. Unauthenticated by design, so it is desktop-only (any Origin header is refused, which blocks browser-page
- * probing) and every non-browser request counts against a per-address throttle.
+ * Public `POST /api/desktop/discover`: tells the desktop app which tenant(s) an email belongs to and, per tenant, which
+ * console to sign in at (an in-hive tenant's advertised console, else the tenant plane). Matching is DesktopTenantMatcher's.
+ * Unauthenticated by design, so it is desktop-only (any Origin header is refused, which blocks browser-page probing) and
+ * every non-browser request counts against a per-address throttle.
  */
 export class DesktopDiscoveryEndpoint
 {
@@ -36,12 +39,18 @@ export class DesktopDiscoveryEndpoint
     private static readonly NoAccountBody = { error: 'no-account' }
     private static readonly EmailField = 'email'
 
+    private readonly matcher: DesktopTenantMatcher
+
     public constructor(
-        private readonly index: TenantAccountIndex,
-        private readonly directory: ITenantDirectory,
+        index: TenantAccountIndex,
+        directory: IDiscoveryDirectory,
         private readonly tenantPlaneUrl: string | undefined,
-        private readonly throttle: AuditThrottle)
+        private readonly throttle: AuditThrottle,
+        adverts?: IConsoleAdvertLookup,
+        keys?: IFingerprintKeySource,
+        approvals?: IDomainApprovalSource)
     {
+        this.matcher = new DesktopTenantMatcher(index, directory, adverts, keys, approvals)
     }
 
     /** Builds the throttle this endpoint expects (10 hits per minute per address). */
@@ -79,11 +88,8 @@ export class DesktopDiscoveryEndpoint
             PlaneHttp.WriteJson(res, DesktopDiscoveryEndpoint.StatusUnavailable, DesktopDiscoveryEndpoint.UnavailableBody)
             return
         }
-        const tenants = this.index.TenantsFor(email)
-            .map(id => this.directory.GetTenant(id))
-            .filter(t => t !== undefined)
-            .map(t => ({ id: t.id, displayName: t.displayName }))
-            .sort((a, b) => a.displayName.localeCompare(b.displayName))
+        const tenants = (await this.matcher.Match(email, this.tenantPlaneUrl))
+            .map(d => ({ id: d.tenant.id, displayName: d.tenant.displayName, consoleUrl: d.consoleUrl }))
         if (tenants.length === 0)
         {
             PlaneHttp.WriteJson(res, DesktopDiscoveryEndpoint.StatusNotFound, DesktopDiscoveryEndpoint.NoAccountBody)
