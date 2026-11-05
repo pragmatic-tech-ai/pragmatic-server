@@ -354,15 +354,27 @@ export class TenantEmailDomainsViewModel extends Observable
         {
             return
         }
-        await this.Request(async () =>
+        const done = await this.Request(async () =>
         {
             const report = await action()
             this.Change(() => { this.Show(report) })
         })
+        // An expired session leaves no sentence and needs no reload.
+        if (!done && this.errorText.length > 0)
+        {
+            // A refusal (e.g. the console no longer reports that domain) may mean the rows are out of date: resync them,
+            // keeping the refusal's sentence when the reload itself succeeds.
+            const refusal = this.errorText
+            await this.Load()
+            if (this.errorText.length === 0)
+            {
+                this.Change(() => { this.errorText = refusal })
+            }
+        }
     }
 
-    // Runs one write: busy while it runs, its refusal in ErrorText, a 401 expires the session.
-    private async Request(action: () => Promise<void>): Promise<void>
+    // Runs one write: busy while it runs, its refusal in ErrorText, a 401 expires the session. True when it succeeded.
+    private async Request(action: () => Promise<void>): Promise<boolean>
     {
         this.Change(() =>
         {
@@ -373,6 +385,7 @@ export class TenantEmailDomainsViewModel extends Observable
         try
         {
             await action()
+            return true
         }
         catch (e)
         {
@@ -380,6 +393,7 @@ export class TenantEmailDomainsViewModel extends Observable
             {
                 this.Change(() => { this.errorText = TenantEmailDomainsViewModel.MessageOf(e) })
             }
+            return false
         }
         finally
         {

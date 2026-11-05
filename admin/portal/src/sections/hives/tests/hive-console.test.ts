@@ -271,6 +271,61 @@ describe('Hive tenant console (panel)', () =>
         assert.equal(fx.Polls.Pending, 0)
     })
 
+    it('a reported status without a report time says so without a placeholder date', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        fx.Api.ConsoleInstallReplies = [FakeControlPlane.ConsoleStatus(ConsoleInstallState.Reported, ConsoleInstallStep.SeedingOwner)]
+        await panel.Resume()
+        assert.equal(panel.StatusText, 'Reported by the console.')
+        fx.Api.ConsoleInstallReplies = [FakeControlPlane.ConsoleStatus(ConsoleInstallState.Reported, ConsoleInstallStep.SeedingOwner, { stale: true })]
+        await panel.Resume()
+        assert.equal(panel.StatusText, 'The console last reported more than a day ago.')
+    })
+
+    it('Stop cancels the 15 second wait of a deployed console; no read lands after it', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        fx.Api.ConsoleInstallReplies = [FakeControlPlane.ConsoleStatus(ConsoleInstallState.Deployed, ConsoleInstallStep.SeedingOwner)]
+        await panel.Resume()
+        assert.equal(fx.Polls.Pending, 1)
+        assert.deepEqual(fx.Polls.Delays, [15000])
+        panel.Stop()
+        assert.equal(fx.Polls.Pending, 0)
+        const reads = fx.Api.ConsoleInstallReads
+        await fx.Poll()
+        assert.equal(fx.Api.ConsoleInstallReads, reads)
+        assert.equal(fx.Polls.Pending, 0)
+    })
+
+    it('a new Install from deployed replaces the 15 second wait with the install polling', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        fx.Api.ConsoleInstallReplies = [FakeControlPlane.ConsoleStatus(ConsoleInstallState.Deployed, ConsoleInstallStep.SeedingOwner)]
+        await panel.Resume()
+        assert.deepEqual(fx.Polls.Delays, [15000])
+        await panel.Install()
+        assert.equal(panel.IsInstalling, true)
+        assert.equal(fx.Polls.Pending, 1)
+        assert.deepEqual(fx.Polls.Delays, [15000, 2000])
+    })
+
+    it('a new Install from reported starts the install polling', async () =>
+    {
+        const fx = new ConsoleFixture()
+        const panel = await fx.Configured()
+        fx.Api.ConsoleInstallReplies = [FakeControlPlane.ConsoleStatus(ConsoleInstallState.Reported, ConsoleInstallStep.SeedingOwner, { reportedAt: '2026-11-04T10:07:00.000Z' })]
+        await panel.Resume()
+        assert.equal(fx.Polls.Pending, 0)
+        await panel.Install()
+        assert.equal(panel.IsInstalling, true)
+        assert.equal(panel.IsReported, false)
+        assert.equal(fx.Polls.Pending, 1)
+        assert.deepEqual(fx.Polls.Delays, [2000])
+    })
+
     it('a reported console whose step is not the last still shows every step done', async () =>
     {
         const fx = new ConsoleFixture()

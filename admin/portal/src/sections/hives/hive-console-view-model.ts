@@ -55,6 +55,8 @@ export class HiveConsoleViewModel extends Observable
     private static readonly ReportedSuffix = '.'
     private static readonly StalePrefix = 'Last reported at '
     private static readonly StaleSuffix = ', more than a day ago.'
+    private static readonly ReportedUndatedText = 'Reported by the console.'
+    private static readonly StaleUndatedText = 'The console last reported more than a day ago.'
     private static readonly NoText = ''
     private static readonly HostPrefix = 'console-'
     private static readonly HostSeparator = '.'
@@ -344,8 +346,15 @@ export class HiveConsoleViewModel extends Observable
     private ReportedText(): string
     {
         const C = HiveConsoleViewModel
-        const at = PortalDates.DateTimeLabel(this.lastStatus?.reportedAt)
-        return this.lastStatus?.stale === true ? C.StalePrefix + at + C.StaleSuffix : C.ReportedPrefix + at + C.ReportedSuffix
+        const stale = this.lastStatus?.stale === true
+        const reportedAt = this.lastStatus?.reportedAt
+        // A status without a readable report time (malformed) still says what is known, never "Unknown".
+        if (reportedAt === undefined || Number.isNaN(Date.parse(reportedAt)))
+        {
+            return stale ? C.StaleUndatedText : C.ReportedUndatedText
+        }
+        const at = PortalDates.DateTimeLabel(reportedAt)
+        return stale ? C.StalePrefix + at + C.StaleSuffix : C.ReportedPrefix + at + C.ReportedSuffix
     }
 
     // Where the console is served, once the install says; '' before.

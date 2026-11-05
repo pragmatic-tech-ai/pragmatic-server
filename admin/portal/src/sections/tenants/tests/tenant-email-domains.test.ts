@@ -153,6 +153,38 @@ describe('Tenant email domains', () =>
         assert.equal(block.Approvals.Get(1)!.StatusLabel, 'Pending')
     })
 
+    it('a refused approval reloads the rows, keeping the refusal sentence', async () =>
+    {
+        const fx = new DomainsFixture().InHive()
+        const block = await fx.Loaded()
+        // The console has since stopped reporting beta.test.
+        fx.Api.EmailDomainReports.set('t1', {
+            ...fx.Api.EmailDomainReports.get('t1')!, domains: ['acme.test'], sharedWith: [],
+            approvals: [{ domain: 'acme.test', approved: true, sharedWith: [] }],
+        })
+        fx.Api.EmailDomainsFailure = new ApiError(409, "beta.test is not among the email domains this tenant's console reports, so there is nothing to approve.")
+        const reads = fx.Api.EmailDomainReads
+        await block.Approvals.Get(1)!.Approve()
+        assert.equal(fx.Api.EmailDomainReads, reads + 1)
+        assert.deepEqual(block.Approvals.ToArray().map(r => r.Domain), ['acme.test'])
+        assert.equal(block.ErrorText, "beta.test is not among the email domains this tenant's console reports, so there is nothing to approve.")
+    })
+
+    it('a refused revoke reloads the rows too; an expired session does not reload', async () =>
+    {
+        const fx = new DomainsFixture().InHive()
+        const block = await fx.Loaded()
+        fx.Api.EmailDomainsFailure = new ApiError(503, 'The approval store is unavailable.')
+        const reads = fx.Api.EmailDomainReads
+        await block.Approvals.Get(0)!.Revoke()
+        assert.equal(fx.Api.EmailDomainReads, reads + 1)
+        assert.equal(block.ErrorText, 'The approval store is unavailable.')
+        fx.Api.EmailDomainsFailure = new ApiError(401, 'Sign in again.')
+        await block.Approvals.Get(0)!.Revoke()
+        assert.equal(fx.Api.EmailDomainReads, reads + 1)
+        assert.equal(fx.Host.Reloader.Count, 1)
+    })
+
     it('a control-plane tenant has no approval rows', async () =>
     {
         const fx = new DomainsFixture().Report({ domains: ['acme.test'] })
