@@ -195,6 +195,7 @@ describe('TenantConsoleInstaller', () =>
             ['Apply'],
             ['ApplyServerSide'],
             ['ApplyServerSide'],
+            ['DeleteBySelector', idp, 'secret', 'pragmatic/hive=h1,pragmatic/tls-copy=true'],
             ['ApplyServerSide'],
             ['ApplyServerSide'],
             ['Remember', 'acme'],
@@ -289,6 +290,84 @@ describe('TenantConsoleInstaller', () =>
             assert.ok(!text.includes(secret), 'leaked a secret')
         }
         assert.match(log, /\[console-install\] hive h1 failed at storing-secrets: KubectlError/)
+    })
+
+    it('a first install scrubs the master key it minted and the fresh IdP server key', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create({ runningIdp: false })
+        const kubectl = fx.Kubectl
+        const seedKey = `pragmatic-system|secret/${K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme')}`
+        const secrets: string[] = []
+        kubectl.ServerApplyFail = {
+            at: 1,
+            error: async () =>
+            {
+                const master = Buffer.from((JSON.parse(kubectl.Objects.get(seedKey) as string) as Item).data?.['master.key'] ?? '', 'base64')
+                const serverKey = Buffer.from(Items.Of(kubectl.ServerApplied[1] as string)[0]?.data?.['server.key'] ?? '', 'base64')
+                secrets.push(master.toString('base64'), master.toString('hex'), serverKey.toString('base64'), serverKey.toString('utf8').trim())
+                return new KubectlError('apply failed ' + secrets.join(' '), 'kubectl failed: ', false)
+            },
+        }
+        let status: unknown
+        await ErrorLog.Capture(async () =>
+        {
+            fx.Installer.Start('h1')
+            status = await fx.Installer.WhenSettled('h1')
+        })
+        assert.equal((status as { step: string }).step, ConsoleInstallStep.StoringSecrets)
+        assert.equal(secrets.length, 4)
+        assert.ok(secrets.every(s => s.length >= 32))
+        for (const secret of secrets)
+        {
+            assert.ok(!JSON.stringify(status).includes(secret), 'leaked a secret')
+        }
+    })
+
+    it('exactly one of the running IdP Secrets present fails at preparing-certificates and never mints a new CA', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create({ runningIdp: false })
+        const ns = K8sManifestBuilder.IdpNameOf('acme')
+        fx.Kubectl.Put(ns, 'secret/' + InClusterIdpSeedSource.AdminSecretNameOf('acme'), { data: { 'admin-token': Buffer.from('tok').toString('base64') } })
+        fx.Installer.Start('h1')
+        const status = await fx.Installer.WhenSettled('h1')
+        assert.equal(status?.state, ConsoleInstallState.Failed)
+        assert.equal(status?.step, ConsoleInstallStep.PreparingCertificates)
+        assert.match(status?.error ?? '', new RegExp(InClusterIdpSeedSource.TlsSecretNameOf('acme') + ' is missing'))
+        assert.equal(fx.Kubectl.Applied.length + fx.Kubectl.ServerApplied.length, 0)
+        assert.deepEqual(fx.IdpAdmin.Remembered, [])
+    })
+
+    it('an existing-secret named like the IdP own TLS or admin Secret is refused before anything is applied', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        const own = InClusterIdpSeedSource.TlsSecretNameOf('acme')
+        fx.Hives.set('h1', { ...ConsoleInstallFixture.Hive('h1'), console: { baseDomain: 'example.com', tls: { source: IngressTlsSource.ExistingSecret, secretName: own } } })
+        fx.Kubectl.Put('pragmatic-system', 'secret/' + own, { type: 'kubernetes.io/tls', data: { 'tls.crt': 'eA==', 'tls.key': 'eA==' } })
+        fx.Installer.Start('h1')
+        const status = await fx.Installer.WhenSettled('h1')
+        assert.equal(status?.step, ConsoleInstallStep.PreparingCertificates)
+        assert.match(status?.error ?? '', /identity provider/)
+        assert.equal(fx.Kubectl.Applied.length + fx.Kubectl.ServerApplied.length, 0)
+    })
+
+    it('a TLS-source switch sweeps the previous key copies out of the IdP namespace before the new copy lands', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        const ns = K8sManifestBuilder.IdpNameOf('acme')
+        fx.Installer.Start('h1')
+        await fx.Installer.WhenSettled('h1')
+        const firstCopies = fx.Kubectl.ServerApplied.map(m => Items.Of(m)).flat().filter(i => i.type === 'kubernetes.io/tls')
+        assert.ok(firstCopies.every(i => (i as unknown as { metadata: { labels?: Record<string, string> } }).metadata.labels?.['pragmatic/tls-copy'] === 'true'))
+        fx.Kubectl.Calls.length = 0
+        fx.Kubectl.ServerApplied.length = 0
+        fx.Hives.set('h1', { ...ConsoleInstallFixture.Hive('h1'), console: { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.ExistingSecret, secretName: 'corp-tls' } } })
+        fx.Kubectl.Put('pragmatic-system', 'secret/corp-tls', { type: 'kubernetes.io/tls', data: { 'tls.crt': 'Y2VydA==', 'tls.key': 'a2V5' } })
+        fx.Installer.Start('h1')
+        assert.equal((await fx.Installer.WhenSettled('h1'))?.state, ConsoleInstallState.Deployed)
+        const sweep = fx.Kubectl.Calls.findIndex(c => c[0] === 'DeleteBySelector')
+        assert.deepEqual(fx.Kubectl.Calls[sweep], ['DeleteBySelector', ns, 'secret', 'pragmatic/hive=h1,pragmatic/tls-copy=true'])
+        const verbs = fx.Kubectl.Calls.map(c => c[0])
+        assert.ok(sweep < verbs.lastIndexOf('ApplyServerSide'))
     })
 
     it('a deleted hive stops the install before its next step', async () =>

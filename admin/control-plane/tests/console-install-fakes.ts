@@ -192,8 +192,14 @@ export class FakeInHiveIdpAdmin implements IInHiveIdpAdmin
         this.Seeded.push(hive.id)
     }
 
+    public ResetError: Error | undefined
+
     public async ResetOwnerPassword(_hive: HiveRecord, tenant: TenantRecord): Promise<InHiveOwnerPassword>
     {
+        if (this.ResetError !== undefined)
+        {
+            throw this.ResetError
+        }
         return { ownerEmail: tenant.ownerEmail ?? '', ownerPassword: FakeInHiveIdpAdmin.Password }
     }
 

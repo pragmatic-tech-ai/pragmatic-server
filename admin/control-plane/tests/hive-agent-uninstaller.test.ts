@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { AgentUninstallError, HiveAgentUninstaller } from '../hive-agent-uninstaller.js'
+import { AgentUninstallError, ConsoleUninstallError, HiveAgentUninstaller } from '../hive-agent-uninstaller.js'
 import { HiveBootstrapBundle } from '../hive-bootstrap-bundle.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { TenantAdminBootstrap } from '../tenant-admin-bootstrap.js'
@@ -257,7 +257,8 @@ describe('HiveAgentUninstaller', () =>
     {
         const fx = new Fixture()
         fx.Orchestrators.Kubectl.NamespaceListError = new KubectlError('forbidden')
-        await assert.rejects(fx.Uninstaller.DeleteEnvironmentNamespaces(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach)), AgentUninstallError)
+        await assert.rejects(fx.Uninstaller.DeleteEnvironmentNamespaces(Fixture.Hive('h1', HiveBackend.Local, InfraMode.Attach)),
+            (err: unknown) => err instanceof ConsoleUninstallError && err instanceof AgentUninstallError && /^Could not remove the hive's console \(or the environment namespaces it created\) from its cluster: /.test(err.message))
         await assert.rejects(fx.Uninstaller.DeleteEnvironmentNamespaces(Fixture.Hive('Bad_Id', HiveBackend.Local, InfraMode.Attach)), AgentUninstallError)
         assert.equal(fx.Orchestrators.Kubectl.Calls.length, 1)
     })

@@ -1,4 +1,5 @@
 import { DevCertificateAuthority } from './dev-certificate-authority.js'
+import { InClusterIdpSeedSource } from './in-cluster-idp-seed.js'
 import { IngressTlsPolicy, IngressTlsSource, type IngressTls } from './ingress-tls.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 
@@ -32,7 +33,8 @@ export class HiveConsoleSpecs
     private static readonly MustBeObject = 'The console settings must be an object.'
     private static readonly BadBaseDomain = 'The base domain must be a lowercase host name of at least two labels, such as example.com (not a public suffix such as co.uk).'
     private static readonly BadHost = 'The console host must be a lowercase host name of at least two labels, such as console.example.com.'
-    private static readonly HostOutsideDomain = 'With development TLS the console host must be the base domain or a name under it.'
+    private static readonly ReservedSecretName = "The TLS Secret name is reserved for the tenant's in-hive identity provider; choose another Secret name."
+    private static readonly HostOutsideDomain ='With development TLS the console host must be the base domain or a name under it.'
 
     public static Parse(body: unknown): HiveConsoleSpec
     {
@@ -85,6 +87,12 @@ export class HiveConsoleSpecs
             throw new InvalidHiveConsoleError(HiveConsoleSpecs.BadEffectiveHost)
         }
         HiveConsoleSpecs.ValidateHostRules(spec, host)
+        // The existing Secret is copied into the IdP namespace under its own name: it must never replace the IdP's own Secrets.
+        const reserved = [InClusterIdpSeedSource.TlsSecretNameOf(tenantId), InClusterIdpSeedSource.AdminSecretNameOf(tenantId)]
+        if (spec.tls.source === IngressTlsSource.ExistingSecret && reserved.includes(spec.tls.secretName as string))
+        {
+            throw new InvalidHiveConsoleError(HiveConsoleSpecs.ReservedSecretName)
+        }
     }
 
     private static ValidateHostRules(spec: HiveConsoleSpec, host: string): void

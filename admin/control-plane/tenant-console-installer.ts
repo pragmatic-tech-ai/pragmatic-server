@@ -1,8 +1,9 @@
+import { randomBytes } from 'node:crypto'
 import type { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
 import { DevCaHostOutsideDomainError, DevCaKeyMissingError, type IDevCertificateIssuer, type IssuedCertificate } from './dev-certificate-authority.js'
 import { EffectiveRegistry } from './effective-registry.js'
 import { SystemInstallClock, type IInstallClock, type IInstallOrchestratorSource } from './hive-agent-installer.js'
-import { HiveConsoleSpecs, type HiveConsoleSpec } from './hive-console-spec.js'
+import { HiveConsoleSpecs, InvalidHiveConsoleError, type HiveConsoleSpec } from './hive-console-spec.js'
 import { IdpAdminError, IdpAdminTransportError } from './idp-admin-client.js'
 import { ImageVerificationError, type IImageVerifier } from './image-verifier.js'
 import { InClusterIdpSeedSource } from './in-cluster-idp-seed.js'
@@ -135,7 +136,7 @@ export class PlatformConsoleImageApproval implements IConsoleImageApproval
 }
 
 /** The IdP's CA + admin token for the bootstrap, and the seed Secrets to apply (undefined when the running IdP's are reused). */
-type IdpMaterial = { ca: Buffer; adminToken: string; secretsManifest: string | undefined }
+type IdpMaterial = { ca: Buffer; adminToken: string; secretsManifest: string | undefined; scrub: string[] }
 
 /** One install's mutable state; the installer hands out copies only. */
 class ConsoleInstallRun
@@ -210,7 +211,7 @@ export class TenantConsoleInstaller
     private static readonly ShowableErrors: ReadonlyArray<abstract new (...args: never[]) => Error> = [
         KubectlError, PortForwardError, IdpAdminError, IdpAdminTransportError, InHiveIdpUnavailableError, OwnerNotRecordedError,
         OwnerAccountMissingError, OwnerIdpRefusedError, IdpUnreachableError, ImageVerificationError, DevCaKeyMissingError,
-        DevCaHostOutsideDomainError,
+        DevCaHostOutsideDomainError, InvalidHiveConsoleError,
     ]
     private static readonly HttpsScheme = 'https'
     private static readonly HttpsPrefix = 'https://'
@@ -242,6 +243,17 @@ export class TenantConsoleInstaller
     private static readonly ApiVersionCore = 'v1'
     private static readonly SecretKind = 'Secret'
     private static readonly ListKind = 'List'
+    private static readonly MasterKeyBytes = 32
+    private static readonly IdpServerKeyKey = 'server.key'
+    private static readonly SecretResource = 'secret'
+    private static readonly TlsCopyLabel = 'pragmatic/tls-copy'
+    private static readonly TlsCopyValue = 'true'
+    private static readonly SelectorSeparator = ','
+    private static readonly LabelAssign = '='
+    private static readonly PartialIdpPrefix = 'The identity provider Secret '
+    private static readonly PartialIdpInfix = ' is missing from '
+    private static readonly PartialIdpWhile = ' while '
+    private static readonly PartialIdpSuffix = ' exists. Restore it, or delete both to give the identity provider a new certificate (every environment then needs its identity provider CA re-applied).'
 
     private readonly runs = new Map<string, ConsoleInstallRun>()
     private readonly manifests = new K8sManifestBuilder()
@@ -409,17 +421,17 @@ export class TenantConsoleInstaller
             {
                 throw new ConsoleInstallStepError(C.NoTrustRootMessage)
             }
+            // A legacy record may predate today's console rules (e.g. a TLS Secret named like the IdP's own): refuse it here too.
+            HiveConsoleSpecs.Validate(spec, t)
             const tlsCopy = await this.TlsMaterial(run, kubectl, spec, t, host)
             const approved = await this.images.Approve(hive, K8sManifestBuilder.AgentImage)
             const fingerprintKey = await this.fingerprints.Ensure(hive.id)
             C.Remember(run, fingerprintKey)
-            const masterKey = await C.ExistingMasterKey(kubectl, t)
-            if (masterKey !== undefined)
-            {
-                C.Remember(run, masterKey)
-            }
+            // Minted here on a first install (not inside the bootstrap), so it is in the scrub list either way.
+            const masterKey = await C.ExistingMasterKey(kubectl, t) ?? randomBytes(C.MasterKeyBytes)
+            C.Remember(run, masterKey)
             const idp = await C.IdpMaterialOf(kubectl, t, spec.baseDomain)
-            run.secrets.push(idp.adminToken)
+            run.secrets.push(idp.adminToken, ...idp.scrub)
             const bootstrap = await this.bootstrap.GenerateBootstrap({
                 tenant,
                 hive,
@@ -458,6 +470,9 @@ export class TenantConsoleInstaller
             {
                 await kubectl.ApplyServerSide(idp.secretsManifest)
             }
+            // Earlier TLS copies in the IdP namespace (another source, another existing-secret name) hold a private key nothing
+            // references any more; the current copy is re-applied right below.
+            await kubectl.DeleteBySelector(idpName, C.SecretResource, C.TlsCopySelectorOf(hive.id))
             if (spec.tls.source === IngressTlsSource.Development && tlsCopy !== undefined)
             {
                 await kubectl.ApplyServerSide(C.TlsSecretManifest(K8sManifestBuilder.TenantConsoleDevTlsSecretNameOf(t), system, tlsCopy, hive.id))
@@ -571,21 +586,50 @@ export class TenantConsoleInstaller
 
     /**
      * The running IdP's CA and admin token when both its Secrets exist (a reinstall must not rotate them: every environment's IdP CA
-     * copy and the console's admin client depend on them); otherwise freshly minted material plus the Secrets to apply.
+     * copy and the console's admin client depend on them; the caller refreshes the sealed copy from what is read here); freshly minted
+     * material plus the Secrets to apply when neither exists. Exactly one present is a broken IdP: minting would silently rotate its CA,
+     * so it fails with a sentence naming the missing Secret.
      */
     private static async IdpMaterialOf(kubectl: IKubectl, tenantId: string, baseDomain: string): Promise<IdpMaterial>
     {
         const C = TenantConsoleInstaller
         const ns = K8sManifestBuilder.IdpNameOf(tenantId)
-        const ca = C.DataOf(await kubectl.Find(ns, C.SecretPrefix + InClusterIdpSeedSource.TlsSecretNameOf(tenantId)), C.IdpCaKey)
-        const token = C.DataOf(await kubectl.Find(ns, C.SecretPrefix + InClusterIdpSeedSource.AdminSecretNameOf(tenantId)), InClusterIdpSeedSource.AdminTokenKey)
+        const tlsName = InClusterIdpSeedSource.TlsSecretNameOf(tenantId)
+        const adminName = InClusterIdpSeedSource.AdminSecretNameOf(tenantId)
+        const ca = C.DataOf(await kubectl.Find(ns, C.SecretPrefix + tlsName), C.IdpCaKey)
+        const token = C.DataOf(await kubectl.Find(ns, C.SecretPrefix + adminName), InClusterIdpSeedSource.AdminTokenKey)
         if (ca !== undefined && token !== undefined)
         {
-            return { ca: Buffer.from(ca, C.Base64), adminToken: Buffer.from(token, C.Base64).toString(C.Utf8), secretsManifest: undefined }
+            return { ca: Buffer.from(ca, C.Base64), adminToken: Buffer.from(token, C.Base64).toString(C.Utf8), secretsManifest: undefined, scrub: [] }
+        }
+        if (ca !== undefined || token !== undefined)
+        {
+            const [missing, present] = ca === undefined ? [tlsName, adminName] : [adminName, tlsName]
+            throw new ConsoleInstallStepError(C.PartialIdpPrefix + missing + C.PartialIdpInfix + ns + C.PartialIdpWhile + present + C.PartialIdpSuffix)
         }
         const seeds = new InClusterIdpSeedSource(undefined, baseDomain)
         const seed = seeds.SeedFor(tenantId)
-        return { ca: seed.ca, adminToken: seed.adminToken, secretsManifest: seeds.SecretsManifestFor(tenantId) }
+        const manifest = seeds.SecretsManifestFor(tenantId)
+        return { ca: seed.ca, adminToken: seed.adminToken, secretsManifest: manifest, scrub: C.ServerKeyFormsOf(manifest) }
+    }
+
+    /** The freshly minted IdP server key's printable forms (base64 as the Secret carries it, and the PEM text), for scrubbing. */
+    private static ServerKeyFormsOf(manifest: string): string[]
+    {
+        const C = TenantConsoleInstaller
+        const items = (JSON.parse(manifest) as { items?: Array<{ data?: Record<string, string> }> }).items ?? []
+        return items.flatMap(i =>
+        {
+            const key = i.data?.[C.IdpServerKeyKey]
+            return key === undefined ? [] : [key, Buffer.from(key, C.Base64).toString(C.Utf8).trim()]
+        })
+    }
+
+    /** Selects this hive's TLS key copies (in the IdP namespace: the ones a TLS-source switch leaves behind). */
+    private static TlsCopySelectorOf(hiveId: string): string
+    {
+        const C = TenantConsoleInstaller
+        return K8sManifestBuilder.HiveLabelSelectorOf(hiveId) + C.SelectorSeparator + C.TlsCopyLabel + C.LabelAssign + C.TlsCopyValue
     }
 
     /** A non-empty base64 `data` entry of a Secret's JSON, or undefined. */
@@ -620,15 +664,19 @@ export class TenantConsoleInstaller
         return items.length === 0 ? undefined : JSON.stringify({ [C.ApiVersionKey]: C.ApiVersionCore, [C.KindKey]: C.ListKind, [C.ItemsKey]: items })
     }
 
-    /** A hive-labelled kubernetes.io/tls Secret manifest; applied server-side through kubectl's stdin, never written anywhere else. */
+    /**
+     * A hive-labelled kubernetes.io/tls Secret manifest, also labelled as a TLS copy (so a later TLS-source switch can sweep it); applied
+     * server-side through kubectl's stdin, never written anywhere else.
+     */
     private static TlsSecretManifest(name: string, namespace: string, tls: IssuedCertificate, hiveId: string): string
     {
         const C = TenantConsoleInstaller
+        const labels = { ...K8sManifestBuilder.HiveLabelsOf(hiveId), [C.TlsCopyLabel]: C.TlsCopyValue }
         return JSON.stringify({
             [C.ApiVersionKey]: C.ApiVersionCore,
             [C.KindKey]: C.SecretKind,
             [C.TypeKey]: IngressTlsPolicy.TlsSecretType,
-            [C.MetadataKey]: { [C.NameKey]: name, [C.NamespaceKey]: namespace, [C.LabelsKey]: K8sManifestBuilder.HiveLabelsOf(hiveId) },
+            [C.MetadataKey]: { [C.NameKey]: name, [C.NamespaceKey]: namespace, [C.LabelsKey]: labels },
             [C.DataKey]: { [C.TlsCertKey]: tls.cert.toString(C.Base64), [C.TlsKeyKey]: tls.key.toString(C.Base64) },
         })
     }

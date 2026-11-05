@@ -48,14 +48,14 @@ import { HiveBootstrapBundle } from './hive-bootstrap-bundle.js'
 import { HiveConsoleSpecs, InvalidHiveConsoleError } from './hive-console-spec.js'
 import { InvalidIngressTlsError } from './ingress-tls.js'
 import { AgentInstallInProgressError, AgentInstallUnavailableError, type HiveAgentInstaller, type InstallStatus } from './hive-agent-installer.js'
-import { AgentUninstallError, HiveClusterDestroyError, type HiveAgentUninstaller } from './hive-agent-uninstaller.js'
+import { AgentUninstallError, ConsoleUninstallError, HiveClusterDestroyError, type HiveAgentUninstaller } from './hive-agent-uninstaller.js'
 import { ConsoleInstallInProgressError, ConsoleInstallUnavailableError, ConsoleNotConfiguredError, type ConsoleInstallStatus, type TenantConsoleInstaller } from './tenant-console-installer.js'
 import { InHiveIdpUnavailableError, type InHiveOwnerPassword } from './in-hive-idp-admin.js'
 import { HiveBackend, InfraMode, InvalidRecordIdError } from './platform-records.js'
 import { PlaneHttp } from './plane-http.js'
 import { ProvisioningOrchestrator, ProvisionFailedError } from './provisioning-orchestrator.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
-import { KubectlError } from './kubectl.js'
+import { KubectlError, PortForwardError } from './kubectl.js'
 import type { HiveRolloutStatus, PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import type { ManifestRecord } from './manifest-record.js'
 import { BodyTooLargeError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, ManifestWithdrawnError, PolicyStoreUnavailableError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from './rollout-errors.js'
@@ -279,6 +279,8 @@ export class ControlPlaneHost
     private static readonly ConsoleInstallOffMessage = 'Installing the console is not available on this control plane.'
     private static readonly ConsoleInstallRunningMessage = 'A console install is running for this hive. Wait for it to finish (or fail), then try again.'
     private static readonly AgentInstallRunningMessage = 'An agent install is running for this hive. Wait for it to finish (or fail) before installing the console.'
+    private static readonly AgentInstallBeforeRemovalMessage = 'An agent install is running for this hive. Wait for it to finish (or fail) before removing the console.'
+    private static readonly AgentInstallBeforeSettingsMessage = 'An agent install is running for this hive. Wait for it to finish (or fail) before changing the console settings.'
     private static readonly ConsoleRemoveFailedPrefix = "Could not remove the hive's console from its cluster: "
     private static readonly ConsoleLeftNotice = 'The console was not removed: its objects (including its cluster-wide grants) and the environment namespaces it created may remain in the cluster until someone removes them.'
     private static readonly ForgetFailedLogPrefix = '[hive-delete] hive '
@@ -462,6 +464,10 @@ export class ControlPlaneHost
         // The hive's cluster refused or could not be reached while its agent was being removed: the operator fixes cluster
         // access and retries, or deletes anyway. A conflict, not a server error (5xx answers are masked as generic 500s).
         [AgentUninstallError, ControlPlaneHost.StatusConflict],
+        // The console (or its environment namespaces) could not be removed: same remedy and code as the agent's removal.
+        [ConsoleUninstallError, ControlPlaneHost.StatusConflict],
+        // The tunnel to an in-hive IdP did not open (its pod is down or not ready): unavailable, not a masked server error.
+        [PortForwardError, ControlPlaneHost.StatusUnavailable],
         // A provisioned hive's kind cluster could not be destroyed (kind / Docker down): fix it and retry, or delete anyway.
         [HiveClusterDestroyError, ControlPlaneHost.StatusConflict],
         // Owner password reset: state the operator must fix -> 409; an unreachable tenant IdP -> 503 (not masked).
@@ -1442,7 +1448,8 @@ export class ControlPlaneHost
     /**
      * Serves /api/hives/ID/console. PUT stores where the hive serves its tenant's console and returns the updated hive. DELETE removes
      * the console from a cluster the control plane drives (a refusing cluster answers 409 with kubectl's redacted text and keeps the
-     * setting), then clears the setting and returns the hive. Both refuse (409) while a console install runs. False for any other method.
+     * setting), then clears the setting and returns the hive. Both refuse (409) while any hive operation runs (agent or console install,
+     * reissue, delete, console removal). False for any other method.
      */
     private async RouteHiveConsole(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray): Promise<boolean>
     {
@@ -1455,11 +1462,6 @@ export class ControlPlaneHost
         {
             return true
         }
-        if (this.consoleInstaller?.IsInstalling(id) === true)
-        {
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.ConsoleInstallRunningMessage })
-            return true
-        }
         if (method === PlaneHttp.MethodDelete)
         {
             await this.RemoveHiveConsole(res, id)
@@ -1467,6 +1469,11 @@ export class ControlPlaneHost
         }
         const body = await this.ReadJsonObject(req, res)
         if (body === undefined)
+        {
+            return true
+        }
+        // Checked after the body is read, right before the write: a removal, delete or install that began meanwhile still wins.
+        if (this.RefuseIfHiveBusy(res, id, ControlPlaneHost.AgentInstallBeforeSettingsMessage))
         {
             return true
         }
@@ -1478,7 +1485,7 @@ export class ControlPlaneHost
     /** DELETE /api/hives/ID/console under the per-hive operation lock (a delete, reissue or install in flight answers 409). */
     private async RemoveHiveConsole(res: ServerResponse, id: string): Promise<void>
     {
-        if (this.RefuseIfHiveBusy(res, id, ControlPlaneHost.AgentInstallRunningMessage))
+        if (this.RefuseIfHiveBusy(res, id, ControlPlaneHost.AgentInstallBeforeRemovalMessage))
         {
             return
         }
@@ -1991,7 +1998,7 @@ export class ControlPlaneHost
             {
                 if (err instanceof KubectlError)
                 {
-                    throw new AgentUninstallError(err.message)
+                    throw new ConsoleUninstallError(err.message)
                 }
                 throw err
             }

@@ -50,6 +50,8 @@ export class InHiveIdpAdmin implements IInHiveIdpAdmin
     private static readonly ServicePrefix = 'svc/'
     private static readonly LoopbackPrefix = 'https://127.0.0.1:'
     private static readonly Utf8 = 'utf8'
+    /** The CA comes from the sealed store as bytes; there is no on-disk CA directory for an in-hive IdP. */
+    private static readonly NoCaDir = ''
 
     /** Tenants with an in-hive Owner password reset in flight (one at a time per tenant). */
     private readonly resetting = new Set<string>()
@@ -156,7 +158,7 @@ export class InHiveIdpAdmin implements IInHiveIdpAdmin
                 ca,
                 adminToken: token.toString(InHiveIdpAdmin.Utf8),
                 adminTokenRef: InHiveIdpAdmin.TokenRefOf(tenantId),
-                caDir: '',
+                caDir: InHiveIdpAdmin.NoCaDir,
             }
             await op(this.adminClients(conn))
         }

@@ -21,7 +21,8 @@ import { HiveAgentUninstaller } from '../hive-agent-uninstaller.js'
 import { HiveBootstrapBundle } from '../hive-bootstrap-bundle.js'
 import { IngressTlsSource } from '../ingress-tls.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
-import { KubectlError } from '../kubectl.js'
+import { KubectlError, PortForwardError } from '../kubectl.js'
+import { InClusterIdpSeedSource } from '../in-cluster-idp-seed.js'
 import type { TenantConsoleInstaller } from '../tenant-console-installer.js'
 import { ConsoleInstallFixture, FakeInHiveIdpAdmin } from './console-install-fakes.js'
 
@@ -473,7 +474,60 @@ describe('ControlPlaneHost in-hive console install', () =>
         const r = await Send.Request(host, 'DELETE', '/api/hives/h1')
         assert.equal(r.status, 409)
         assert.equal((JSON.parse(r.body) as { code: string }).code, 'agent-uninstall-failed')
+        assert.match((JSON.parse(r.body) as { error: string }).error, /^Could not remove the hive's console \(or the environment namespaces it created\) from its cluster: /)
         assert.ok(directory.GetHive('h1') !== undefined)
         assert.deepEqual(fx.IdpAdmin.Forgotten, [])
+    })
+
+    it('owner-password answers 503 (not a masked 500) when the tunnel to the in-hive IdP cannot open', async () =>
+    {
+        fx.IdpAdmin.ResetError = new PortForwardError(PortForwardError.NotReadyMessage)
+        const r = await Send.Request(host, 'POST', '/api/hives/h1/console/owner-password')
+        assert.equal(r.status, 503)
+        assert.match(JSON.parse(r.body).error as string, /port-forward/)
+    })
+
+    it('PUT console refuses an existing-secret named like the IdP own Secrets', async () =>
+    {
+        for (const name of [InClusterIdpSeedSource.TlsSecretNameOf('t1'), InClusterIdpSeedSource.AdminSecretNameOf('t1')])
+        {
+            const r = await Send.Request(host, 'PUT', '/api/hives/h1/console', { baseDomain: 'example.com', tls: { source: 'existing-secret', secretName: name } })
+            assert.equal(r.status, 400)
+            assert.match(JSON.parse(r.body).error as string, /^[A-Z].*identity provider.*\.$/)
+        }
+        assert.equal(directory.GetHive('h1')?.console?.baseDomain, 'localtest.me')
+    })
+
+    it('DELETE console during an agent install names the removal in its refusal', async () =>
+    {
+        assert.equal((await Send.Request(host, 'POST', '/api/hives/h1/agent-install')).status, 202)
+        const r = await Send.Request(host, 'DELETE', '/api/hives/h1/console')
+        assert.equal(r.status, 409)
+        assert.match(JSON.parse(r.body).error as string, /before removing the console/)
+    })
+
+    it('PUT console refuses while a console removal holds the hive', async () =>
+    {
+        hold.Engage()
+        const removal = Send.Request(host, 'DELETE', '/api/hives/h1/console')
+        while (!fx.Kubectl.Calls.some(c => c[0] === 'Find'))
+        {
+            await new Promise(resolve => setImmediate(resolve))
+        }
+        const r = await Send.Request(host, 'PUT', '/api/hives/h1/console', { baseDomain: 'example.com', tls: { source: 'development' } })
+        assert.equal(r.status, 409)
+        await hold.Release()
+        assert.equal((await removal).status, 200)
+        assert.equal(directory.GetHive('h1')?.console, undefined)
+    })
+
+    it('a token reissue is refused while the console installs', async () =>
+    {
+        hold.Engage()
+        await Send.Request(host, 'POST', '/api/hives/h1/console-install')
+        const r = await Send.Request(host, 'POST', '/api/hives/h1/rollout-registration')
+        assert.equal(r.status, 409)
+        assert.match(JSON.parse(r.body).error as string, /console install is running/)
+        await hold.Release()
     })
 })

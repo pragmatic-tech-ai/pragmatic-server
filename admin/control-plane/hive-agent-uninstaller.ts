@@ -19,10 +19,27 @@ export class AgentUninstallError extends Error
     private static readonly Suffix = '. Fix cluster access and retry, or delete anyway to remove only the platform record.'
     private static readonly TrailingStop = /\.+$/
 
+    /** `prefix` names what could not be removed (subclasses pass their own); the reason and the two ways forward follow it. */
+    public constructor(reason: string, prefix: string = AgentUninstallError.Prefix)
+    {
+        super(prefix + reason.trim().replace(AgentUninstallError.TrailingStop, '') + AgentUninstallError.Suffix)
+        this.name = AgentUninstallError.ErrorName
+    }
+}
+
+/**
+ * The hive's console (or the environment namespaces it created) could not be removed from its cluster. Same remedy and same `Code`
+ * as AgentUninstallError (fix cluster access and retry, or delete anyway), so the portal's delete-anyway path applies unchanged.
+ */
+export class ConsoleUninstallError extends AgentUninstallError
+{
+    private static readonly ConsoleErrorName = 'ConsoleUninstallError'
+    private static readonly ConsolePrefix = "Could not remove the hive's console (or the environment namespaces it created) from its cluster: "
+
     public constructor(reason: string)
     {
-        super(AgentUninstallError.Prefix + reason.trim().replace(AgentUninstallError.TrailingStop, '') + AgentUninstallError.Suffix)
-        this.name = AgentUninstallError.ErrorName
+        super(reason, ConsoleUninstallError.ConsolePrefix)
+        this.name = ConsoleUninstallError.ConsoleErrorName
     }
 }
 
@@ -101,7 +118,7 @@ export class HiveAgentUninstaller
         {
             if (err instanceof KubectlError)
             {
-                throw new AgentUninstallError(err.message)
+                throw new ConsoleUninstallError(err.message)
             }
             throw err
         }
