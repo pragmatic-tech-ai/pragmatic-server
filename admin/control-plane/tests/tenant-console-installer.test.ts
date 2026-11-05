@@ -475,6 +475,16 @@ describe('TenantConsoleInstaller', () =>
         assert.deepEqual(fx.IdpAdmin.Forgotten, ['acme'])
     })
 
+    it('Forget of a hive without a console keeps the tenant in-hive IdP credentials (they belong to the console hive)', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        const second: HiveRecord = { ...ConsoleInstallFixture.Hive('h2'), console: undefined }
+        await fx.Fingerprints.Ensure('h2')
+        await fx.Installer.Forget(second)
+        assert.equal(await fx.Fingerprints.Get('h2'), undefined)
+        assert.deepEqual(fx.IdpAdmin.Forgotten, [])
+    })
+
     it('an Owner seeding failure fails the install at seeding-owner', async () =>
     {
         fx = await ConsoleInstallFixture.Create()

@@ -432,6 +432,23 @@ describe('ControlPlaneHost in-hive console install', () =>
         assert.equal(directory.GetHive('h1'), undefined)
     })
 
+    it('deleting a second hive of the tenant keeps the console hive IdP credentials', async () =>
+    {
+        await directory.CreateHive({ id: 'h2', tenantId: 't1', displayName: 'H2', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
+        fx.Kubectl.Put(K8sManifestBuilder.SystemNamespace, 'deployment/' + K8sManifestBuilder.TenantAdminNameOf('t1'), { metadata: { name: K8sManifestBuilder.TenantAdminNameOf('t1'), labels: { 'pragmatic/hive': 'h1' } } })
+        const r = await Send.Request(host, 'DELETE', '/api/hives/h2')
+        assert.equal(r.status, 200)
+        assert.equal(directory.GetHive('h2'), undefined)
+        assert.deepEqual(fx.IdpAdmin.Forgotten, [])
+    })
+
+    it('DELETE console forgets the tenant IdP credentials the control plane held for it', async () =>
+    {
+        const r = await Send.Request(host, 'DELETE', '/api/hives/h1/console')
+        assert.equal(r.status, 200)
+        assert.deepEqual(fx.IdpAdmin.Forgotten, ['t1'])
+    })
+
     it('hive delete removes console-created environment namespaces by hive label and keeps unlabelled pragmatic-env-* namespaces', async () =>
     {
         fx.Kubectl.Namespaces.set('pragmatic-env-console-dev', { 'pragmatic/hive': 'h1' })

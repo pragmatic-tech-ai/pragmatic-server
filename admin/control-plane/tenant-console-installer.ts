@@ -367,11 +367,23 @@ export class TenantConsoleInstaller
         await kubectl.DeleteManifest(this.manifests.TenantConsoleRemovalManifest(hive.tenantId, hive.id))
     }
 
-    /** On hive delete: drops the fingerprint key and the in-hive IdP credentials. */
+    /**
+     * On hive delete: drops the hive's fingerprint key and, when it is the tenant's console hive, the in-hive IdP credentials. Those
+     * are keyed by tenant: deleting another hive of the same tenant must not strand the console hive's IdP.
+     */
     public async Forget(hive: HiveRecord): Promise<void>
     {
         await this.fingerprints.Remove(hive.id)
-        await this.idpAdmin.Forget(hive.tenantId)
+        await this.ForgetConsoleCredentials(hive)
+    }
+
+    /** On console removal (and console-hive delete): drops the tenant's in-hive IdP credentials; a hive without a console has none. */
+    public async ForgetConsoleCredentials(hive: HiveRecord): Promise<void>
+    {
+        if (hive.console !== undefined)
+        {
+            await this.idpAdmin.Forget(hive.tenantId)
+        }
     }
 
     /** Sets a fresh in-hive Owner password and returns it once. Refused while an install runs or before the console is configured. */

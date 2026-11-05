@@ -284,6 +284,7 @@ export class ControlPlaneHost
     private static readonly ConsoleRemoveFailedPrefix = "Could not remove the hive's console from its cluster: "
     private static readonly ConsoleLeftNotice = 'The console was not removed: its objects (including its cluster-wide grants) and the environment namespaces it created may remain in the cluster until someone removes them.'
     private static readonly ForgetFailedLogPrefix = '[hive-delete] hive '
+    private static readonly ConsoleRemovalLogPrefix = '[console-remove] hive '
     private static readonly ForgetFailedLogInfix = ': forgetting its console keys failed: '
     private static readonly UnknownErrorName = 'Error'
     private static readonly NamespacesLeftNoticePrefix = 'These environment namespaces could not be deleted and may remain in the cluster: '
@@ -1482,6 +1483,32 @@ export class ControlPlaneHost
         return true
     }
 
+    /**
+     * Drops the tenant's in-hive IdP credentials once its console is gone. Best effort: the console is already removed, so a sealed-store
+     * failure only leaves an unreachable sealed copy behind and must not turn the removal into an error.
+     */
+    private async ForgetConsoleCredentials(hive: HiveRecord, logPrefix: string): Promise<void>
+    {
+        if (this.consoleInstaller === undefined)
+        {
+            return
+        }
+        try
+        {
+            await this.consoleInstaller.ForgetConsoleCredentials(hive)
+        }
+        catch (err)
+        {
+            ControlPlaneHost.LogForgetFailure(logPrefix, hive.id, err)
+        }
+    }
+
+    /** Logs a failed forget of console keys by the error's name only (a raw message may carry store details). */
+    private static LogForgetFailure(prefix: string, hiveId: string, err: unknown): void
+    {
+        console.error(prefix + hiveId + ControlPlaneHost.ForgetFailedLogInfix + (err instanceof Error ? err.name : ControlPlaneHost.UnknownErrorName))
+    }
+
     /** DELETE /api/hives/ID/console under the per-hive operation lock (a delete, reissue or install in flight answers 409). */
     private async RemoveHiveConsole(res: ServerResponse, id: string): Promise<void>
     {
@@ -1510,6 +1537,10 @@ export class ControlPlaneHost
                 }
             }
             const updated: HiveDto = await this.directory.SetHiveConsole(id, undefined)
+            if (hive !== undefined)
+            {
+                await this.ForgetConsoleCredentials(hive, ControlPlaneHost.ConsoleRemovalLogPrefix)
+            }
             PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, updated)
         }
         finally
@@ -2047,7 +2078,7 @@ export class ControlPlaneHost
             }
             catch (err)
             {
-                console.error(ControlPlaneHost.ForgetFailedLogPrefix + id + ControlPlaneHost.ForgetFailedLogInfix + (err instanceof Error ? err.name : ControlPlaneHost.UnknownErrorName))
+                ControlPlaneHost.LogForgetFailure(ControlPlaneHost.ForgetFailedLogPrefix, id, err)
             }
         }
         if (notices.length > 0)
