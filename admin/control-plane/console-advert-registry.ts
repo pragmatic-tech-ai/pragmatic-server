@@ -59,9 +59,18 @@ export class ConsoleAdvertRegistry extends JsonRecordStore<ConsoleAdvertRecord> 
         return this.fingerprintSets.get(tenantId)?.has(fingerprint) ?? false
     }
 
-    /** Replaces the tenant's advert; keeps firstReportedAt when the previous advert came from the same hive, else firstReportedAt = reportedAt. */
-    public async Report(advert: Omit<ConsoleAdvertRecord, 'id' | 'firstReportedAt'>): Promise<ConsoleAdvertRecord>
+    /**
+     * Replaces the tenant's advert; keeps firstReportedAt when the previous advert came from the same hive, else firstReportedAt = reportedAt.
+     * `admits` is asked right before the record is staged, with no await in between: false stores nothing and answers undefined. The
+     * receiver passes "the hive still runs its console", so an advert that lands after a console removal or hive delete (which forget
+     * the advert once the setting is gone) cannot bring the advert back.
+     */
+    public async Report(advert: Omit<ConsoleAdvertRecord, 'id' | 'firstReportedAt'>, admits: () => boolean = () => true): Promise<ConsoleAdvertRecord | undefined>
     {
+        if (!admits())
+        {
+            return undefined
+        }
         const previous = this.Get(advert.tenantId)
         const firstReportedAt = previous !== undefined && previous.hiveId === advert.hiveId ? previous.firstReportedAt : advert.reportedAt
         const record: ConsoleAdvertRecord = { ...advert, id: advert.tenantId, firstReportedAt }

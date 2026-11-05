@@ -99,6 +99,17 @@ test('ForgetHive drops only that hive\'s advert', async () =>
     })
 })
 
+test('Report stores nothing when its admission check refuses at write time', async () =>
+{
+    await RegistryFixture.Run(async f =>
+    {
+        await f.registry.Report(RegistryFixture.Advert())
+        assert.equal(await f.registry.Report(RegistryFixture.Advert({ fingerprints: [FpB] }), () => false), undefined)
+        assert.deepEqual(f.registry.ForTenant('acme')?.fingerprints, [FpA])
+        assert.equal(f.registry.HasFingerprint('acme', FpB), false)
+    })
+})
+
 test('ForgetTenant drops the tenant\'s advert', async () =>
 {
     await RegistryFixture.Run(async f =>

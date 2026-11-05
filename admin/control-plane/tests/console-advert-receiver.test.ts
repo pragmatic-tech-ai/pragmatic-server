@@ -170,3 +170,43 @@ test('a spec with an ingressNamespace still expects the derived host', async () 
         assert.equal(outcome.record.consoleUrl, GoodUrl)
     }, true, { ingressNamespace: 'ingress-nginx' })
 })
+
+/** A registry that lets the hive lose its console while a report is in flight (a removal racing the advert). */
+class RacingRegistry extends ConsoleAdvertRegistry
+{
+    public constructor(filePath: string, private readonly race: () => void)
+    {
+        super(filePath)
+    }
+
+    public override async Report(...args: Parameters<ConsoleAdvertRegistry['Report']>): ReturnType<ConsoleAdvertRegistry['Report']>
+    {
+        this.race()
+        await Promise.resolve()
+        return await super.Report(...args)
+    }
+}
+
+test('refuses an advert whose hive lost its console before the write, so a late advert cannot outlive the removal', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), 'advert-receiver-race-'))
+    try
+    {
+        let hive: HiveRecord | undefined = {
+            id: 'h1', tenantId: 'acme', console: { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } },
+        } as unknown as HiveRecord
+        const directory: IConsoleAdvertDirectory = { GetHive: id => (id === 'h1' ? hive : undefined) }
+        for (const race of [() => { hive = { ...hive, console: undefined } as unknown as HiveRecord }, () => { hive = undefined }])
+        {
+            hive = { id: 'h1', tenantId: 'acme', console: { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } } } as unknown as HiveRecord
+            const registry = new RacingRegistry(join(dir, ConsoleAdvertRegistry.FileName), race)
+            const receiver = new ConsoleAdvertReceiver(directory, registry, () => new Date('2026-11-04T12:00:00.000Z'))
+            await assert.rejects(() => receiver.Receive('h1', ReceiverFixture.Body()), ConsoleNotEnabledError)
+            assert.equal(registry.List().length, 0)
+        }
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})

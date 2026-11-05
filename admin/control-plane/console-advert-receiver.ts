@@ -77,8 +77,22 @@ export class ConsoleAdvertReceiver
             fingerprints,
             emailDomains: domains.accepted,
             reportedAt: this.now().toISOString(),
-        })
+        }, () => this.StillRunsConsole(hiveId, hive.tenantId))
+        if (record === undefined)
+        {
+            throw new ConsoleNotEnabledError()
+        }
         return { record, refusedEmailDomains: domains.refused }
+    }
+
+    /**
+     * Re-read at write time: the hive still exists for the same tenant and still has its console setting. A console removal or hive
+     * delete clears the setting first and forgets the advert after, so an advert checked here after the clear is refused (409).
+     */
+    private StillRunsConsole(hiveId: string, tenantId: string): boolean
+    {
+        const hive = this.directory.GetHive(hiveId)
+        return hive !== undefined && hive.tenantId === tenantId && hive.console !== undefined
     }
 
     private static ShapeOf(body: unknown): { consoleUrl: string; fingerprints: string[]; emailDomains: string[] }

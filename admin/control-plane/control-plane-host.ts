@@ -1550,6 +1550,8 @@ export class ControlPlaneHost
     /**
      * Drops the console advert a hive's console reported. Best effort: the record or setting is already gone, so a store failure only
      * leaves a stale advert (never usable: it names a hive without a console) and must not turn the completed change into an error.
+     * Callers run it only after the console setting is cleared (or the hive deleted): the receiver re-checks the setting at write
+     * time, so an advert in flight during the removal is refused rather than stored after this forget.
      */
     private async ForgetHiveAdvert(prefix: string, hiveId: string): Promise<void>
     {
