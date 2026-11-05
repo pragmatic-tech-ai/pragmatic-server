@@ -145,6 +145,17 @@ describe('ControlPlaneHost hive console settings', () =>
         assert.equal(directory.GetHive('h1')?.console, undefined)
     })
 
+    it('PUT stores an ingress controller namespace and refuses one that is not a DNS label', async () =>
+    {
+        const ok = await Harness.Put(host, '/api/hives/h1/console', { ...Harness.Good, ingressNamespace: 'kube-system' })
+        assert.equal(ok.status, 200)
+        assert.equal(directory.GetHive('h1')?.console?.ingressNamespace, 'kube-system')
+        const bad = await Harness.Put(host, '/api/hives/h1/console', { ...Harness.Good, ingressNamespace: 'Kube_System' })
+        assert.equal(bad.status, 400)
+        assert.match(JSON.parse(bad.body).error as string, /^The ingress controller namespace .*\.$/)
+        assert.equal(directory.GetHive('h1')?.console?.ingressNamespace, 'kube-system')
+    })
+
     it('PUT for an unknown hive is 404', async () =>
     {
         assert.equal((await Harness.Put(host, '/api/hives/nope/console', Harness.Good)).status, 404)

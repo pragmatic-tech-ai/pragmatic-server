@@ -164,7 +164,7 @@ export class K8sManifestBuilder
     private static readonly TcpProtocol = 'TCP'
     private static readonly IngressPolicyType = 'Ingress'
     private static readonly NamespaceNameLabel = 'kubernetes.io/metadata.name'
-    /** The namespace the nginx ingress controller runs in (the console's Ingress uses ingressClassName nginx). */
+    /** The default namespace of the nginx ingress controller (the console's Ingress uses ingressClassName nginx); the console settings may name another. */
     public static readonly IngressControllerNamespace = 'ingress-nginx'
     private static readonly IngressClassNameKey = 'ingressClassName'
     private static readonly IngressClassNginx = 'nginx'
@@ -1285,7 +1285,7 @@ export class K8sManifestBuilder
                 [B.PodSelectorKey]: { [B.MatchLabelsKey]: this.Selector(name) },
                 [B.PolicyTypesKey]: [B.IngressPolicyType],
                 [B.IngressRulesKey]: [{
-                    [B.FromKey]: [{ [B.NamespaceSelectorKey]: { [B.MatchLabelsKey]: { [B.NamespaceNameLabel]: B.IngressControllerNamespace } } }],
+                    [B.FromKey]: [{ [B.NamespaceSelectorKey]: { [B.MatchLabelsKey]: { [B.NamespaceNameLabel]: spec.console?.ingressNamespace ?? B.IngressControllerNamespace } } }],
                     [B.PortsKey]: [{ [B.ProtocolKey]: B.TcpProtocol, [B.PortKey]: spec.port }],
                 }],
             },

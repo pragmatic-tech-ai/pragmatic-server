@@ -62,3 +62,23 @@ test('Validate refuses a tenant whose default host is not a DNS name, and a deve
     const outside = { baseDomain: 'localtest.me', host: 'console.example.com', tls: { source: IngressTlsSource.Development } }
     assert.throws(() => HiveConsoleSpecs.Validate(outside, 'acme'), /base domain or a name under it/)
 })
+
+test('an ingress controller namespace is optional, kept when given, and defaults to ingress-nginx', () =>
+{
+    const plain = HiveConsoleSpecs.Parse({ baseDomain: 'localtest.me', tls: { source: 'development' } })
+    assert.equal(plain.ingressNamespace, undefined)
+    assert.equal(HiveConsoleSpecs.IngressNamespaceOf(plain), 'ingress-nginx')
+    const custom = HiveConsoleSpecs.Parse({ baseDomain: 'localtest.me', tls: { source: 'development' }, ingressNamespace: 'kube-system' })
+    assert.deepEqual(custom, { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development }, ingressNamespace: 'kube-system' })
+    assert.equal(HiveConsoleSpecs.IngressNamespaceOf(custom), 'kube-system')
+})
+
+test('the ingress controller namespace must be a DNS-1123 label', () =>
+{
+    for (const ingressNamespace of ['', 'Ingress', 'a.b', '-x', 'x-', 'a'.repeat(64), 5, 'has space'])
+    {
+        assert.throws(() => HiveConsoleSpecs.Parse({ baseDomain: 'localtest.me', tls: { source: 'development' }, ingressNamespace }),
+            (e: unknown) => e instanceof InvalidHiveConsoleError && /ingress controller namespace/.test((e as Error).message), String(ingressNamespace))
+    }
+    assert.equal(HiveConsoleSpecs.Parse({ baseDomain: 'localtest.me', tls: { source: 'development' }, ingressNamespace: 'a'.repeat(63) }).ingressNamespace, 'a'.repeat(63))
+})

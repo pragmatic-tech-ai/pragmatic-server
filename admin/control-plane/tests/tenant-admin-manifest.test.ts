@@ -284,6 +284,13 @@ describe('K8sManifestBuilder.RenderTenantAdmin console exposure and RBAC', () =>
         assert.equal(ConsoleFixture.Env(ConsoleFixture.Spec(), 'PRAGMATIC_TENANT_ADMIN_TRUSTED_PROXY'), 'true')
     })
 
+    it('the NetworkPolicy admits the configured ingress controller namespace', () =>
+    {
+        const spec: TenantAdminWorkloadSpec = { ...TenantAdminFixture.Spec(), console: { host: ConsoleFixture.Host, ingressTls: { source: IngressTlsSource.Development }, ingressNamespace: 'kube-system' } }
+        const policy = ConsoleFixture.Items(spec).find(i => i.kind === 'NetworkPolicy')
+        assert.deepEqual(policy.spec.ingress[0].from, [{ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'kube-system' } } }])
+    })
+
     it('without a console exposure there is no Ingress, no trusted proxy and no NetworkPolicy', () =>
     {
         assert.ok(!TenantAdminFixture.Items().some((i: any) => i.kind === 'NetworkPolicy' || i.kind === 'Ingress'))

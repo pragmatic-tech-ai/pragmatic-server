@@ -473,7 +473,7 @@ export class TenantConsoleInstaller
                 externalScheme: C.HttpsScheme,
                 channelUrl,
                 reuseAgentToken: true,
-                console: { host, ingressTls: spec.tls },
+                console: { host, ingressTls: spec.tls, ingressNamespace: HiveConsoleSpecs.IngressNamespaceOf(spec) },
                 fingerprintKey,
                 masterKey,
                 verifiedImages: [approved],

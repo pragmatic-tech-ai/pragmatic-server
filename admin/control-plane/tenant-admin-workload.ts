@@ -31,6 +31,8 @@ export interface TenantConsoleExposure
 {
     host: string
     ingressTls: IngressTls
+    /** The ingress controller's namespace, the only one the console's NetworkPolicy admits; absent means ingress-nginx. */
+    ingressNamespace?: string
 }
 
 export interface TenantAdminIdpInjection

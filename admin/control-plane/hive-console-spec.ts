@@ -3,8 +3,11 @@ import { InClusterIdpSeedSource } from './in-cluster-idp-seed.js'
 import { IngressTlsPolicy, IngressTlsSource, type IngressTls } from './ingress-tls.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 
-/** Where a hive's tenant console is served and how it is secured. */
-export type HiveConsoleSpec = { baseDomain: string; host?: string; tls: IngressTls }
+/**
+ * Where a hive's tenant console is served and how it is secured. `ingressNamespace` is the namespace the nginx ingress controller runs
+ * in (the only one the console's NetworkPolicy admits); absent means ingress-nginx.
+ */
+export type HiveConsoleSpec = { baseDomain: string; host?: string; tls: IngressTls; ingressNamespace?: string }
 
 /** A console setting that cannot be used; the message is a plain sentence safe to show the operator (maps to 400). */
 export class InvalidHiveConsoleError extends Error
@@ -24,8 +27,12 @@ export class HiveConsoleSpecs
     private static readonly BaseDomainKey = 'baseDomain'
     private static readonly HostKey = 'host'
     private static readonly TlsKey = 'tls'
+    private static readonly IngressNamespaceKey = 'ingressNamespace'
     private static readonly Dot = '.'
-    private static readonly TopKeys: ReadonlySet<string> = new Set([HiveConsoleSpecs.BaseDomainKey, HiveConsoleSpecs.HostKey, HiveConsoleSpecs.TlsKey])
+    private static readonly TopKeys: ReadonlySet<string> = new Set([HiveConsoleSpecs.BaseDomainKey, HiveConsoleSpecs.HostKey, HiveConsoleSpecs.TlsKey, HiveConsoleSpecs.IngressNamespaceKey])
+    /** A DNS-1123 label: what a Kubernetes namespace name must be. */
+    private static readonly NamespacePattern = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/
+    private static readonly BadIngressNamespace = 'The ingress controller namespace must be a Kubernetes namespace name: lowercase letters, digits and hyphens, at most 63 characters, such as ingress-nginx.'
     private static readonly TlsKeys: ReadonlySet<string> = new Set(['source', 'secretName', 'clusterIssuer'])
     private static readonly UnknownField = ' is not a console setting.'
     private static readonly UnknownTlsField = ' is not a TLS setting.'
@@ -74,8 +81,23 @@ export class HiveConsoleSpecs
         }
         const tls = IngressTlsPolicy.Parse(raw[HiveConsoleSpecs.TlsKey])
         const spec: HiveConsoleSpec = hasHost ? { baseDomain, host: host as string, tls } : { baseDomain, tls }
+        const ingressNamespace = raw[HiveConsoleSpecs.IngressNamespaceKey]
+        if (ingressNamespace !== undefined)
+        {
+            if (typeof ingressNamespace !== 'string' || !HiveConsoleSpecs.NamespacePattern.test(ingressNamespace))
+            {
+                throw new InvalidHiveConsoleError(HiveConsoleSpecs.BadIngressNamespace)
+            }
+            spec.ingressNamespace = ingressNamespace
+        }
         HiveConsoleSpecs.ValidateHostRules(spec, spec.host ?? baseDomain)
         return spec
+    }
+
+    /** The namespace the console's NetworkPolicy admits: the configured ingress controller namespace, else ingress-nginx. */
+    public static IngressNamespaceOf(spec: HiveConsoleSpec): string
+    {
+        return spec.ingressNamespace ?? K8sManifestBuilder.IngressControllerNamespace
     }
 
     /** Checks the host this spec gives the tenant (DNS rules; under the base domain for development TLS); throws InvalidHiveConsoleError. */

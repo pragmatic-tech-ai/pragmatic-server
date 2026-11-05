@@ -522,6 +522,19 @@ describe('TenantConsoleInstaller', () =>
         assert.deepEqual([...fx.Kubectl.Namespaces.keys()], ['pragmatic-env-dev', 'pragmatic-env-elsewhere'])
     })
 
+    it('the console NetworkPolicy admits the ingress controller namespace of the console settings (ingress-nginx by default)', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.Installer.Start('h1')
+        await fx.Installer.WhenSettled('h1')
+        const fromOf = (manifest: string): unknown => (Items.Of(manifest).find(i => i.kind === 'NetworkPolicy') as unknown as { spec: { ingress: Array<{ from: unknown }> } }).spec.ingress[0]!.from
+        assert.deepEqual(fromOf(fx.Kubectl.Applied[0]!), [{ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'ingress-nginx' } } }])
+        fx.Hives.set('h1', { ...ConsoleInstallFixture.Hive('h1'), console: { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development }, ingressNamespace: 'ingress' } })
+        fx.Installer.Start('h1')
+        await fx.Installer.WhenSettled('h1')
+        assert.deepEqual(fromOf(fx.Kubectl.Applied[1]!), [{ namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'ingress' } } }])
+    })
+
     it('refuses a cluster below Kubernetes 1.30 (no ValidatingAdmissionPolicy) at checking-agent, before anything is applied', async () =>
     {
         fx = await ConsoleInstallFixture.Create()
