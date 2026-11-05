@@ -49,6 +49,8 @@ export type TenantRecord = {
     idpCaRef?: string
     /** Reference to the IdP admin token, never the token itself (optional). */
     idpAdminTokenRef?: string
+    /** Declared email domains (lowercase, EmailDomainPolicy-valid). Used for control-plane tenants only; an in-hive tenant's domains come from its console advert. */
+    emailDomains?: string[]
 }
 
 export type HiveRecord = {

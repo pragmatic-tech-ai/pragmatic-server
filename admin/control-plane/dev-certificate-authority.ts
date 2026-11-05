@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DevCaError } from '../../src/idp/dev-ca.js'
+import { DnsNames } from './dns-names.js'
 import { SealedSecretStore } from './sealed-secret-store.js'
 
 export type IssuedCertificate = { cert: Buffer; key: Buffer }
@@ -61,18 +62,7 @@ export class DevCertificateAuthority implements IDevCertificateIssuer
     private static readonly LeafCertFile = 'leaf.crt'
     private static readonly LeafExtFile = 'leaf.ext'
     private static readonly StagingPrefix = '.dev-ca-staging-'
-    private static readonly LabelPattern = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/
-    private static readonly MaxNameLength = 253
-    private static readonly MinBaseLabels = 2
     private static readonly StaleStagingMs = 10 * 60 * 1000
-    // Well-known multi-label public suffixes (not exhaustive): a CA constrained to one would span unrelated owners.
-    private static readonly PublicSuffixes: ReadonlySet<string> = new Set([
-        'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk', 'ltd.uk', 'plc.uk', 'net.uk', 'sch.uk',
-        'com.au', 'net.au', 'org.au', 'edu.au', 'gov.au', 'co.nz', 'org.nz', 'net.nz', 'govt.nz',
-        'co.jp', 'ne.jp', 'or.jp', 'ac.jp', 'go.jp', 'co.kr', 'or.kr', 'co.in', 'net.in', 'org.in',
-        'com.br', 'net.br', 'org.br', 'com.cn', 'net.cn', 'org.cn', 'gov.cn', 'com.mx', 'org.mx',
-        'co.za', 'org.za', 'com.sg', 'com.hk', 'com.tw', 'com.tr', 'com.ar', 'com.ua', 'co.il', 'co.id',
-    ])
     private static readonly CmdReq = 'req'
     private static readonly CmdX509 = 'x509'
     private static readonly FlagX509 = '-x509'
@@ -157,11 +147,7 @@ export class DevCertificateAuthority implements IDevCertificateIssuer
      */
     public static IsValidDomain(domain: string): boolean
     {
-        const labels = domain.split(DevCertificateAuthority.Dot)
-        return domain.length <= DevCertificateAuthority.MaxNameLength
-            && labels.length >= DevCertificateAuthority.MinBaseLabels
-            && labels.every(l => DevCertificateAuthority.LabelPattern.test(l))
-            && !DevCertificateAuthority.PublicSuffixes.has(domain)
+        return DnsNames.IsValidDomain(domain)
     }
 
     private static CheckBase(baseDomain: string): void
@@ -187,8 +173,8 @@ export class DevCertificateAuthority implements IDevCertificateIssuer
     private static CheckHost(baseDomain: string, host: string): void
     {
         const bare = host.startsWith(DevCertificateAuthority.WildcardPrefix) ? host.slice(DevCertificateAuthority.WildcardPrefix.length) : host
-        const labelsOk = bare.length > 0 && host.length <= DevCertificateAuthority.MaxNameLength
-            && bare.split(DevCertificateAuthority.Dot).every(l => DevCertificateAuthority.LabelPattern.test(l))
+        const labelsOk = bare.length > 0 && host.length <= DnsNames.MaxNameLength
+            && bare.split(DevCertificateAuthority.Dot).every(l => DnsNames.IsLabel(l))
         const inDomain = bare === baseDomain || bare.endsWith(DevCertificateAuthority.Dot + baseDomain)
         if (!labelsOk || !inDomain)
         {

@@ -6,6 +6,7 @@ import { HivePlacementError } from './hive-placement-error.js'
 import { RecordId } from './platform-records.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { UnknownHiveError } from './rollout-errors.js'
+import { EmailDomainPolicy } from './email-domain-policy.js'
 import { HiveConsoleSpecs, type HiveConsoleSpec } from './hive-console-spec.js'
 import type { ClientRecord, TenantRecord, HiveRecord, ClusterSpec, RegistrySpec } from './platform-records.js'
 
@@ -265,6 +266,21 @@ export class PlatformDirectory
         {
             throw new TenantHasHivesError(id)
         }
+    }
+
+    /** Parse via EmailDomainPolicy; an empty list removes the field. UnknownTenantError for an unknown id. */
+    public async SetTenantEmailDomains(tenantId: string, domains: unknown): Promise<TenantRecord>
+    {
+        const tenant = this.tenants.Get(tenantId)
+        if (tenant === undefined)
+        {
+            throw new UnknownTenantError(tenantId)
+        }
+        const parsed = EmailDomainPolicy.Parse(domains)
+        const { emailDomains: _previous, ...rest } = tenant
+        const updated: TenantRecord = parsed.length === 0 ? rest : { ...rest, emailDomains: parsed }
+        await this.tenants.Put(updated)
+        return updated
     }
 
     public async DeleteTenant(id: string): Promise<void>

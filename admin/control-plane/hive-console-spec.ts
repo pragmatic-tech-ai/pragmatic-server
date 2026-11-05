@@ -2,6 +2,7 @@ import { DevCertificateAuthority } from './dev-certificate-authority.js'
 import { InClusterIdpSeedSource } from './in-cluster-idp-seed.js'
 import { IngressTlsPolicy, IngressTlsSource, type IngressTls } from './ingress-tls.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import type { HiveRecord } from './platform-records.js'
 
 /**
  * Where a hive's tenant console is served and how it is secured. `ingressNamespace` is the namespace the nginx ingress controller runs
@@ -126,6 +127,12 @@ export class HiveConsoleSpecs
     }
 
     /** The browser host of the tenant's console: the explicit host, else console-<tenant>.<baseDomain>. */
+    /** The hive (of one tenant's hives) that runs the in-hive console, if any (Plan 1 allows at most one). */
+    public static ConsoleHiveOf(hives: readonly HiveRecord[]): HiveRecord | undefined
+    {
+        return hives.find(h => h.console !== undefined)
+    }
+
     public static HostOf(spec: HiveConsoleSpec, tenantId: string): string
     {
         return spec.host ?? K8sManifestBuilder.ConsoleHostOf(tenantId, spec.baseDomain)

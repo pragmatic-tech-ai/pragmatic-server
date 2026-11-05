@@ -25,6 +25,7 @@ import { IngressTlsSource } from '../ingress-tls.js'
 import { InvalidHiveConsoleError } from '../hive-console-spec.js'
 import type { HiveConsoleSpec } from '../hive-console-spec.js'
 import { HivePlacementError } from '../hive-placement-error.js'
+import { InvalidEmailDomainError } from '../email-domain-policy.js'
 import type { IEnvironmentLookup } from '../platform-directory.js'
 
 class FakeEnvironments implements IEnvironmentLookup
@@ -437,6 +438,76 @@ test('Load fails with a plain error when two hives of one tenant both carry a co
             new HiveRegistry(f.hivesPath),
             new FakeEnvironments([]))
         await assert.rejects(() => reloaded.Load(), /already runs its console in hive/)
+    }
+    finally
+    {
+        await f.Dispose()
+    }
+})
+
+test('SetTenantEmailDomains stores normalised domains and survives a reload', async () =>
+{
+    const f = await DirectoryFixture.Create()
+    try
+    {
+        await f.Seed()
+        const updated = await f.directory.SetTenantEmailDomains('t1', ['B.test', 'a.test', 'A.test.'])
+        assert.deepEqual(updated.emailDomains, ['a.test', 'b.test'])
+        const again = new PlatformDirectory(
+            new ClientRegistry(join(f.dir, 'clients.json')),
+            new TenantRegistry(join(f.dir, 'tenants.json')),
+            new HiveRegistry(f.hivesPath),
+            new FakeEnvironments([]),
+            () => new Date(DirectoryFixture.Now))
+        await again.Load()
+        assert.deepEqual(again.GetTenant('t1')?.emailDomains, ['a.test', 'b.test'])
+    }
+    finally
+    {
+        await f.Dispose()
+    }
+})
+
+test('an empty email-domain list removes the field', async () =>
+{
+    const f = await DirectoryFixture.Create()
+    try
+    {
+        await f.Seed()
+        await f.directory.SetTenantEmailDomains('t1', ['a.test'])
+        const cleared = await f.directory.SetTenantEmailDomains('t1', [])
+        assert.equal(cleared.emailDomains, undefined)
+        assert.equal('emailDomains' in cleared, false)
+        assert.equal(f.directory.GetTenant('t1')?.emailDomains, undefined)
+    }
+    finally
+    {
+        await f.Dispose()
+    }
+})
+
+test('an invalid email domain is InvalidEmailDomainError and changes nothing', async () =>
+{
+    const f = await DirectoryFixture.Create()
+    try
+    {
+        await f.Seed()
+        await f.directory.SetTenantEmailDomains('t1', ['a.test'])
+        await assert.rejects(f.directory.SetTenantEmailDomains('t1', ['b.test', 'gmail.com']), InvalidEmailDomainError)
+        assert.deepEqual(f.directory.GetTenant('t1')?.emailDomains, ['a.test'])
+    }
+    finally
+    {
+        await f.Dispose()
+    }
+})
+
+test('SetTenantEmailDomains for an unknown tenant is UnknownTenantError', async () =>
+{
+    const f = await DirectoryFixture.Create()
+    try
+    {
+        await assert.rejects(f.directory.SetTenantEmailDomains('nope', ['a.test']), UnknownTenantError)
     }
     finally
     {

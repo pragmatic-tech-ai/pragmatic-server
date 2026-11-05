@@ -1,6 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { HiveConsoleSpecs, InvalidHiveConsoleError } from '../hive-console-spec.js'
+import { HiveBackend, InfraMode } from '../platform-records.js'
+import type { HiveRecord } from '../platform-records.js'
 import { InvalidIngressTlsError, IngressTlsSource } from '../ingress-tls.js'
 
 test('parses a minimal development spec', () =>
@@ -81,4 +83,14 @@ test('the ingress controller namespace must be a DNS-1123 label', () =>
             (e: unknown) => e instanceof InvalidHiveConsoleError && /ingress controller namespace/.test((e as Error).message), String(ingressNamespace))
     }
     assert.equal(HiveConsoleSpecs.Parse({ baseDomain: 'localtest.me', tls: { source: 'development' }, ingressNamespace: 'a'.repeat(63) }).ingressNamespace, 'a'.repeat(63))
+})
+
+test('ConsoleHiveOf finds the hive running the console', () =>
+{
+    const base = { tenantId: 't1', displayName: 'H', createdAt: '2026-11-05T00:00:00.000Z', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach, configRef: 'k' }, registry: { mode: InfraMode.Attach, endpoint: 'r', credentialRef: 'c' } }
+    const plain: HiveRecord = { ...base, id: 'h1' }
+    const withConsole: HiveRecord = { ...base, id: 'h2', console: { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } } }
+    assert.equal(HiveConsoleSpecs.ConsoleHiveOf([plain, withConsole])?.id, 'h2')
+    assert.equal(HiveConsoleSpecs.ConsoleHiveOf([plain]), undefined)
+    assert.equal(HiveConsoleSpecs.ConsoleHiveOf([]), undefined)
 })
