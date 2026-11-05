@@ -35,8 +35,10 @@ test('a public domain suffix gets its own sentence', () =>
 
 test('a non-ASCII domain is told to use its xn-- form', () =>
 {
-    const sentence = EmailDomainPolicy.Check('bücher.example')
-    assert.equal(sentence, 'bücher.example is not an ASCII domain name: enter its internationalised form, which starts with xn--.')
+    // 'b', U+00FC (u with diaeresis), 'cher.example': built from its code point so this file stays ASCII.
+    const domain = 'b' + String.fromCodePoint(0xfc) + 'cher.example'
+    const sentence = EmailDomainPolicy.Check(domain)
+    assert.equal(sentence, domain + ' is not an ASCII domain name: enter its internationalised form, which starts with xn--.')
 })
 
 test('refuses public mail domains', () =>
