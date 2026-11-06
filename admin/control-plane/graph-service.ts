@@ -1,5 +1,6 @@
 import type { GraphDetailDto, GraphLoadedDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AdminProxyError, AdminProxyErrorKind, type IAdminAccess, type IAdminProxy } from './admin-proxy.js'
+import { AdminProxyError, type IAdminAccess, type IAdminProxy } from './admin-proxy.js'
+import { GraphErrorCode } from './graph-error-code.js'
 import { EnvType, type EnvironmentRecord } from './environment-record.js'
 import { EnvironmentNotDevelopmentError, EnvironmentNotFoundError, EnvironmentNotRuntimeError } from './environment-service.js'
 import type { GraphDto, PromotionResultDto } from './control-plane-host.js'
@@ -47,11 +48,6 @@ export class GraphNameInvalidError extends Error
 
 export class GraphService
 {
-    // Must track the messages thrown in src/host/graphs/dev-graph-service.ts.
-    private static readonly ExistsText = 'already exists'
-    private static readonly NotFoundText = 'not found'
-    private static readonly InvalidNameText = 'invalid graph name'
-
     public constructor(
         private readonly environments: IEnvironmentLookup,
         private readonly proxy: IAdminProxy,
@@ -135,7 +131,7 @@ export class GraphService
         return record
     }
 
-    /** Maps the container's graph failure messages (Protocol-kind proxy errors only) back onto the graph error classes; anything else passes through. */
+    /** Maps the container's graph error codes back onto the graph error classes; anything else passes through. */
     private static async Classify<T>(graphName: string, call: () => Promise<T>): Promise<T>
     {
         try
@@ -144,24 +140,17 @@ export class GraphService
         }
         catch (err)
         {
-            if (!(err instanceof AdminProxyError) || err.Kind !== AdminProxyErrorKind.Protocol)
+            switch (err instanceof AdminProxyError ? err.Code : undefined)
             {
-                throw err
+                case GraphErrorCode.NameInvalid:
+                    throw new GraphNameInvalidError(graphName)
+                case GraphErrorCode.Exists:
+                    throw new GraphExistsError(graphName)
+                case GraphErrorCode.NotFound:
+                    throw new GraphNotFoundError(graphName)
+                default:
+                    throw err
             }
-            const lower = err.message.toLowerCase()
-            if (lower.includes(GraphService.InvalidNameText))
-            {
-                throw new GraphNameInvalidError(graphName)
-            }
-            if (lower.includes(GraphService.ExistsText))
-            {
-                throw new GraphExistsError(graphName)
-            }
-            if (lower.includes(GraphService.NotFoundText))
-            {
-                throw new GraphNotFoundError(graphName)
-            }
-            throw err
         }
     }
 

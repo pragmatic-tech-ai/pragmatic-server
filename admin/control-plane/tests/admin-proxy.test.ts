@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { AdminProxy, AdminProxyError, AdminProxyErrorKind } from '../admin-proxy.js'
+import { ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AdminConnectInfo, IAdminConnection, IAdminConnector } from '../admin-proxy.js'
 
 class FakeConnection implements IAdminConnection
@@ -242,6 +243,30 @@ describe('AdminProxy', () =>
             await assert.rejects(new AdminProxy(new FakeConnector(conn)).RevokeRole(Fixtures.Info, {} as any), (e: unknown) =>
                 e instanceof AdminProxyError && e.Kind === kind && e.message.includes(message))
         }
+    })
+
+    it('a graph code reaches AdminProxyError.Code as Protocol, whatever its text', async () =>
+    {
+        const conn = new FakeConnection()
+        conn.FailWith = new ResponseError(-32040, 'Graph not found: closed-deals')
+        await assert.rejects(new AdminProxy(new FakeConnector(conn)).GetGraph(Fixtures.Info, {} as any), (e: unknown) =>
+            e instanceof AdminProxyError && e.Kind === AdminProxyErrorKind.Protocol && e.Code === -32040)
+    })
+
+    it('a non-graph ResponseError keeps the text rules and its code', async () =>
+    {
+        const conn = new FakeConnection()
+        conn.FailWith = new ResponseError(-32602, 'invalid params: x')
+        await assert.rejects(new AdminProxy(new FakeConnector(conn)).GetGraph(Fixtures.Info, {} as any), (e: unknown) =>
+            e instanceof AdminProxyError && e.Kind === AdminProxyErrorKind.Invalid && e.Code === -32602)
+    })
+
+    it('an error without a code has Code undefined', async () =>
+    {
+        const conn = new FakeConnection()
+        conn.FailWith = new Error('socket hang up')
+        await assert.rejects(new AdminProxy(new FakeConnector(conn)).GetGraph(Fixtures.Info, {} as any), (e: unknown) =>
+            e instanceof AdminProxyError && e.Kind === AdminProxyErrorKind.Connect && e.Code === undefined)
     })
 
     it('IssueToken returns the issued token dto and classifies errors', async () =>

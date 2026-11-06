@@ -4,7 +4,6 @@ import type { GraphCreateParamsDto, GraphDetailDto, GraphExportDto, GraphLoadPar
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { EnvironmentNotFoundError } from '../environment-service.js'
 import { AdminProxyError, AdminProxyErrorKind, type AdminConnectInfo, type AdminSnapshot, type IAdminProxy } from '../admin-proxy.js'
-import { GraphExistsError as ContainerExistsError, GraphNotFoundError as ContainerNotFoundError, GraphNameInvalidError as ContainerInvalidError } from '../../../src/host/graphs/dev-graph-service.js'
 import { GraphService, GraphExistsError, GraphNotFoundError, GraphNameInvalidError, type IEnvironmentLookup } from '../graph-service.js'
 import { EnvironmentNotDevelopmentError, EnvironmentNotRuntimeError } from '../environment-service.js'
 
@@ -15,12 +14,12 @@ class Fixture
     public static readonly Description = 'first'
     public static readonly Missing = 'missing'
     public static readonly CreatedAt = '2026-10-20T00:00:00.000Z'
-    public static readonly ExistsMessage = 'Graph already exists: g1'
+    public static readonly ExistsCode = -32041
+    public static readonly NotFoundCode = -32040
+    public static readonly NameInvalidCode = -32042
+    public static readonly PackageConflictCode = -32043
     public static readonly NotFoundMessage = 'Graph not found: g1'
-    public static readonly InvalidMessage = 'Invalid graph name: Bad Name'
     public static readonly BadName = 'Bad Name'
-    public static readonly NotFoundName = 'not found'
-    public static readonly ExistsName = 'already exists'
     public static readonly OtherMessage = 'boom'
     public static readonly Unused = 'unused'
     public static readonly Rt1 = 'rt1'
@@ -43,6 +42,11 @@ class Fixture
             createdAt: Fixture.CreatedAt,
             status: EnvStatus.Running
         }
+    }
+
+    public static Coded(code: number): AdminProxyError
+    {
+        return new AdminProxyError(AdminProxyErrorKind.Protocol, Fixture.OtherMessage, false, code)
     }
 
     public static Summary(name: string, count: number): GraphSummaryDto
@@ -275,15 +279,17 @@ test('an unknown environment is rejected locally without proxying', async () =>
     assert.deepEqual(h.Proxy.Calls, [])
 })
 
-test('container errors are classified back into graph errors', async () =>
+test('graph codes are classified back into graph errors', async () =>
 {
     const h = new Harness()
-    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, Fixture.ExistsMessage)
+    h.Lookup.Add(Fixture.Record(Fixture.Rt1, EnvType.Runtime))
+    h.Proxy.Throw = Fixture.Coded(Fixture.ExistsCode)
     await assert.rejects(h.Service.Create(Fixture.Dev1, Fixture.G1, ''), GraphExistsError)
-    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, Fixture.NotFoundMessage)
+    h.Proxy.Throw = Fixture.Coded(Fixture.NotFoundCode)
     await assert.rejects(h.Service.Get(Fixture.Dev1, Fixture.G1), GraphNotFoundError)
     await assert.rejects(h.Service.Delete(Fixture.Dev1, Fixture.G1), GraphNotFoundError)
-    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, Fixture.InvalidMessage)
+    await assert.rejects(h.Service.Promote(Fixture.Dev1, Fixture.G1, Fixture.Rt1), GraphNotFoundError)
+    h.Proxy.Throw = Fixture.Coded(Fixture.NameInvalidCode)
     await assert.rejects(h.Service.Create(Fixture.Dev1, Fixture.BadName, ''), GraphNameInvalidError)
 })
 
@@ -301,31 +307,20 @@ test('an unrecognised container error passes through unchanged', async () =>
     await assert.rejects(h.Service.Get(Fixture.Dev1, Fixture.G1), (err: unknown) => err instanceof AdminProxyError && err.message === Fixture.OtherMessage)
 })
 
-test('the classifier recognises the real container error messages', async () =>
+test('a Protocol error without a graph code passes through even when its text says not found', async () =>
 {
     const h = new Harness()
-    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, new ContainerExistsError(Fixture.G1).message)
-    await assert.rejects(h.Service.Create(Fixture.Dev1, Fixture.G1, ''), GraphExistsError)
-    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, new ContainerNotFoundError(Fixture.G1).message)
-    await assert.rejects(h.Service.Get(Fixture.Dev1, Fixture.G1), GraphNotFoundError)
-    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, new ContainerInvalidError(Fixture.BadName).message)
-    await assert.rejects(h.Service.Create(Fixture.Dev1, Fixture.BadName, ''), GraphNameInvalidError)
+    const thrown = new AdminProxyError(AdminProxyErrorKind.Protocol, Fixture.NotFoundMessage)
+    h.Proxy.Throw = thrown
+    await assert.rejects(h.Service.Get(Fixture.Dev1, Fixture.G1), (err: unknown) => err === thrown)
 })
 
-test('a non-Protocol proxy error is never reclassified as a graph error', async () =>
+test('package codes pass through as the AdminProxyError with its Code', async () =>
 {
     const h = new Harness()
-    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Connect, Fixture.NotFoundMessage)
-    await assert.rejects(h.Service.Get(Fixture.Dev1, Fixture.G1), (err: unknown) => err instanceof AdminProxyError && err.Kind === AdminProxyErrorKind.Connect)
-})
-
-test('an invalid name that embeds a sentinel phrase is still classified as invalid', async () =>
-{
-    const h = new Harness()
-    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, new ContainerInvalidError(Fixture.NotFoundName).message)
-    await assert.rejects(h.Service.Create(Fixture.Dev1, Fixture.NotFoundName, ''), GraphNameInvalidError)
-    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, new ContainerInvalidError(Fixture.ExistsName).message)
-    await assert.rejects(h.Service.Create(Fixture.Dev1, Fixture.ExistsName, ''), GraphNameInvalidError)
+    h.Lookup.Add(Fixture.Record(Fixture.Rt1, EnvType.Runtime))
+    h.Proxy.Throw = Fixture.Coded(Fixture.PackageConflictCode)
+    await assert.rejects(h.Service.Promote(Fixture.Dev1, Fixture.G1, Fixture.Rt1), (err: unknown) => err instanceof AdminProxyError && err.Code === Fixture.PackageConflictCode)
 })
 
 test('promote_rejects_runtime_source_and_development_target', async () =>
@@ -373,14 +368,6 @@ test('a failing graph call still releases its lease', async () =>
     h.Proxy.Throw = new Error('boom')
     await assert.rejects(h.Service.List(Fixture.Dev1))
     assert.equal(h.Held, 0)
-})
-
-test('a container Protocol error from ExportGraph maps via Classify', async () =>
-{
-    const h = new Harness()
-    h.Lookup.Add(Fixture.Record(Fixture.Rt1, EnvType.Runtime))
-    h.Proxy.Throw = new AdminProxyError(AdminProxyErrorKind.Protocol, Fixture.NotFoundMessage)
-    await assert.rejects(h.Service.Promote(Fixture.Dev1, Fixture.G1, Fixture.Rt1), GraphNotFoundError)
 })
 
 test('GetLoaded requires a Runtime environment and returns the loaded manifest', async () =>

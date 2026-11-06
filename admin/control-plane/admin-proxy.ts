@@ -2,6 +2,7 @@ import { AdminProtocol, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-proto
 import type { AccountDto, AdminAckDto, CreateAccountParams, GraphCreateParamsDto, GraphDetailDto, GraphExportDto, GraphLoadParamsDto, GraphLoadedDto, GraphRefParamsDto, GraphSummaryDto, GrantDto, GrantMutationDto, IdentityConfigDto, IssueTokenParams, MessageConnection, RevokeTokenParams, SecurityModelDto, ServiceTokenSummaryDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { TransportFailure } from './transport-failure.js'
+import { GraphWireCodes } from './graph-error-code.js'
 
 export type AdminConnectInfo = { httpUrl: string; wsUrl: string; tenant: string; email: string; password: string }
 /** Runs admin calls against an environment as its Owner, holding whatever keeps it reachable (a cluster tunnel) until the call settles. */
@@ -33,12 +34,16 @@ export class AdminProxyError extends Error
     /** The connect failed at the TCP level (refused, reset, timed out): the environment's address itself is dead. */
     public readonly IsTransport: boolean
 
-    public constructor(kind: AdminProxyErrorKind, message?: string, isTransport: boolean = false)
+    /** The JSON-RPC error code the environment answered with, when there was one. */
+    public readonly Code: number | undefined
+
+    public constructor(kind: AdminProxyErrorKind, message?: string, isTransport: boolean = false, code?: number)
     {
         super(message ?? AdminProxyError.DefaultMessage(kind))
         this.name = AdminProxyError.ErrorName
         this.Kind = kind
         this.IsTransport = isTransport
+        this.Code = code
     }
 
     private static DefaultMessage(kind: AdminProxyErrorKind): string
@@ -274,24 +279,35 @@ export class AdminProxy implements IAdminProxy
             return err
         }
         const message = AdminProxy.MessageOf(err)
+        const code = AdminProxy.CodeOf(err)
+        if (GraphWireCodes.Includes(code))
+        {
+            return new AdminProxyError(AdminProxyErrorKind.Protocol, message, false, code)
+        }
         const lower = message.toLowerCase()
         if (lower.includes(AdminProxy.SelfLockoutText) || lower.includes(AdminProxy.LastAdminText))
         {
-            return new AdminProxyError(AdminProxyErrorKind.Rbac, message)
+            return new AdminProxyError(AdminProxyErrorKind.Rbac, message, false, code)
         }
         if (lower.includes(AdminProxy.InvalidParamsText))
         {
-            return new AdminProxyError(AdminProxyErrorKind.Invalid, message)
+            return new AdminProxyError(AdminProxyErrorKind.Invalid, message, false, code)
         }
         if (lower.includes(AdminProxy.TokenNotFoundText))
         {
-            return new AdminProxyError(AdminProxyErrorKind.NotFound, message)
+            return new AdminProxyError(AdminProxyErrorKind.NotFound, message, false, code)
         }
         if (AdminProxy.ConnectionTexts.some(t => lower.includes(t)))
         {
-            return new AdminProxyError(AdminProxyErrorKind.Connect, message)
+            return new AdminProxyError(AdminProxyErrorKind.Connect, message, false, code)
         }
-        return new AdminProxyError(AdminProxyErrorKind.Protocol, message)
+        return new AdminProxyError(AdminProxyErrorKind.Protocol, message, false, code)
+    }
+
+    private static CodeOf(err: unknown): number | undefined
+    {
+        const code = (err as { code?: unknown } | null | undefined)?.code
+        return typeof code === 'number' ? code : undefined
     }
 }
 
