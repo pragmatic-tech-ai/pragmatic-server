@@ -16,10 +16,18 @@ class FakeTxtResolver implements ITxtResolver
     public readonly Names: string[] = []
     public readonly byName = new Map<string, TxtLookup>()
     public gate: Promise<void> | undefined
+    public readonly entered: Promise<void>
+    private signalEntered!: () => void
+
+    public constructor()
+    {
+        this.entered = new Promise<void>(resolve => { this.signalEntered = resolve })
+    }
 
     public async ResolveTxt(name: string): Promise<TxtLookup>
     {
         this.Names.push(name)
+        this.signalEntered()
         if (this.gate !== undefined)
         {
             await this.gate
@@ -32,12 +40,14 @@ class FakeTxtResolver implements ITxtResolver
 class FakeTimer implements IAdvertTimer
 {
     public intervalMs = 0
+    public timers = 0
     public disposed = false
     private tick: (() => void) | undefined
 
     public Every(intervalMs: number, tick: () => void): IDisposable
     {
         this.intervalMs = intervalMs
+        this.timers++
         this.tick = tick
         return new Disposable(() => { this.disposed = true })
     }
@@ -114,7 +124,7 @@ describe('DomainVerificationRechecker', () =>
         resolver.byName.set('_pragmatic-verification.' + domain, { status: TxtLookupStatus.Found, records: [[DomainVerificationRecord.ValueFor(token)]] })
     }
 
-    const Settle = (): Promise<void> => new Promise(resolve => setTimeout(resolve, 25))
+    const Flush = (): Promise<void> => new Promise(resolve => setImmediate(resolve))
 
     it('RunOnce keeps a still-present record verified and refreshes lastCheckedAt', async () =>
     {
@@ -185,10 +195,11 @@ describe('DomainVerificationRechecker', () =>
         const rechecker = Rechecker(timer, counting)
         rechecker.Start()
         assert.equal(timer.intervalMs, DomainVerificationRechecker.IntervalMs)
-        await Settle()
+        await resolver.entered
         assert.equal(resolver.Names.length, 1)
         timer.Tick()
-        await Settle()
+        await Flush()
+        await Flush()
         assert.equal(resolver.Names.length, 1, 'a tick during a run does nothing')
         release()
         await counting.WaitForWrites(1)
@@ -198,6 +209,23 @@ describe('DomainVerificationRechecker', () =>
         assert.equal(resolver.Names.length, 2)
         rechecker.Stop()
         assert.equal(timer.disposed, true)
+    })
+
+    it('a throwing log sink is swallowed and RunOnce still resolves', async () =>
+    {
+        await Verify('t1', 'acme.com')
+        const rechecker = new DomainVerificationRechecker(approvals, new DomainTxtVerifier(resolver), new FakeTimer(), () => { throw new Error('sink down') }, () => CheckedAt)
+        assert.deepEqual(await rechecker.RunOnce(), { checked: 1, unverified: 1, failed: 0 })
+    })
+
+    it('a second Start is a no-op: exactly one timer', async () =>
+    {
+        const timer = new FakeTimer()
+        const rechecker = Rechecker(timer)
+        rechecker.Start()
+        rechecker.Start()
+        assert.equal(timer.timers, 1)
+        rechecker.Stop()
     })
 
     it('the log line carries counts only', async () =>

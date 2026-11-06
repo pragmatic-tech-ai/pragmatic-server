@@ -48,7 +48,8 @@ export class DomainVerificationRechecker
         this.ticking = undefined
     }
 
-    /** Checks the verified entries one at a time. A pass already in flight makes this call a no-op. */
+    /** Checks the verified entries one at a time. A pass already in flight makes this call a no-op that answers an
+     * all-zero summary (indistinguishable from nothing to check). */
     public async RunOnce(): Promise<RecheckSummary>
     {
         const summary: RecheckSummary = { checked: 0, unverified: 0, failed: 0 }
