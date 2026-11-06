@@ -5,42 +5,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { IdpRegistry } from '../idp-registry.js'
 import { IdpStatus, type IdpRecord } from '../idp-record.js'
+import { WriteGate } from './write-gate.js'
 
-/** Records each WriteFile's start and end; the write that runs after Hold() waits until Release(). */
+/** A registry whose file writes go through a WriteGate, so a test can hold one and see the order they ran in. */
 class HeldWriteIdpRegistry extends IdpRegistry
 {
-    public readonly Events: string[] = []
-    private held: Promise<void> | null = null
-    private release: () => void = () => undefined
-    private writeCount = 0
+    public readonly Gate = new WriteGate()
 
-    public Hold(): void
+    protected override WriteFile(body: object): Promise<void>
     {
-        this.held = new Promise<void>(resolve => { this.release = resolve })
-    }
-
-    public Release(): void
-    {
-        this.release()
-    }
-
-    public get Started(): number
-    {
-        return this.Events.filter(e => e.startsWith(IdpRecordFixture.StartTag)).length
-    }
-
-    protected override async WriteFile(body: object): Promise<void>
-    {
-        const n = ++this.writeCount
-        this.Events.push(`${IdpRecordFixture.StartTag}${n}`)
-        const held = this.held
-        this.held = null
-        if (held !== null)
-        {
-            await held
-        }
-        await super.WriteFile(body)
-        this.Events.push(`${IdpRecordFixture.EndTag}${n}`)
+        return this.Gate.Around(() => super.WriteFile(body))
     }
 }
 
@@ -48,14 +22,6 @@ class IdpRecordFixture
 {
     public static readonly FileName = 'idps.json'
     public static readonly TempPrefix = 'idp-registry-'
-    public static readonly StartTag = 'start'
-    public static readonly EndTag = 'end'
-
-    /** Lets every pending promise continuation run. */
-    public static Settle(): Promise<void>
-    {
-        return new Promise(resolve => setImmediate(resolve))
-    }
 
     public static Record(tenantId: string, port: number, status: IdpStatus = IdpStatus.Running): IdpRecord
     {
@@ -170,14 +136,14 @@ test('concurrent Put and Delete are serialised and the file ends in the last sta
         const path = join(dir, IdpRecordFixture.FileName)
         const registry = new HeldWriteIdpRegistry(path)
         await registry.Put(IdpRecordFixture.Record('x', 8443))
-        registry.Hold()
+        registry.Gate.Hold()
         const putY = registry.Put(IdpRecordFixture.Record('y', 8444))
         const deleteX = registry.Delete('x')
-        await IdpRecordFixture.Settle()
-        assert.equal(registry.Started, 2)
-        registry.Release()
+        await WriteGate.Settle()
+        assert.equal(registry.Gate.InFlight, 1)
+        registry.Gate.Release()
         await Promise.all([putY, deleteX])
-        assert.deepEqual(registry.Events, ['start1', 'end1', 'start2', 'end2', 'start3', 'end3'])
+        assert.deepEqual(registry.Gate.Events, [WriteGate.Start(1), WriteGate.End(1), WriteGate.Start(2), WriteGate.End(2), WriteGate.Start(3), WriteGate.End(3)])
         const reopened = new IdpRegistry(path)
         await reopened.Load()
         assert.deepEqual(reopened.List().map(r => r.tenantId), ['y'])

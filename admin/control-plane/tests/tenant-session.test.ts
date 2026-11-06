@@ -15,6 +15,9 @@ class SessionFixture
     public static readonly Ttl = 60000
     public static readonly Unknown = 'nope'
     public static readonly Start = 1000000
+    /** A pre-digest file's session key: the raw bearer token itself. */
+    public static readonly LegacyToken = 'raw-token-abcdef0123456789'
+    public static readonly SecondPrincipal = 'p2'
 
     public static async WithDir(body: (file: string) => Promise<void>): Promise<void>
     {
@@ -591,17 +594,17 @@ test('a legacy file migrated while an Issue runs keeps both the migrated session
         const expiresAt = new Date(Date.now() + SessionFixture.Ttl).toISOString()
         const issuedAt = new Date(Date.now() - 1000).toISOString()
         const legacy = {
-            sessions: { 'raw-token-abcdef0123456789': { id: 'raw-token-abcdef0123456789', tenantId: SessionFixture.Tenant, principalId: SessionFixture.Principal, issuedAt, expiresAt } },
+            sessions: { [SessionFixture.LegacyToken]: { id: SessionFixture.LegacyToken, tenantId: SessionFixture.Tenant, principalId: SessionFixture.Principal, issuedAt, expiresAt } },
         }
         await writeFile(file, JSON.stringify(legacy), 'utf8')
         const store = new TenantSessionStore(file, SessionFixture.Ttl)
-        const [validated, issued] = await Promise.all([store.Validate('raw-token-abcdef0123456789'), store.Issue(SessionFixture.Tenant, 'p2')])
+        const [validated, issued] = await Promise.all([store.Validate(SessionFixture.LegacyToken), store.Issue(SessionFixture.Tenant, SessionFixture.SecondPrincipal)])
         assert.equal(validated?.principalId, SessionFixture.Principal)
         const text = await readFile(file, 'utf8')
-        assert.ok(!text.includes('raw-token-abcdef0123456789'))
+        assert.ok(!text.includes(SessionFixture.LegacyToken))
         assert.equal((JSON.parse(text) as { tokenFormat: string }).tokenFormat, 'sha256')
         const reopened = new TenantSessionStore(file, SessionFixture.Ttl)
-        assert.equal((await reopened.Validate('raw-token-abcdef0123456789'))?.principalId, SessionFixture.Principal)
-        assert.equal((await reopened.Validate(issued.id))?.principalId, 'p2')
+        assert.equal((await reopened.Validate(SessionFixture.LegacyToken))?.principalId, SessionFixture.Principal)
+        assert.equal((await reopened.Validate(issued.id))?.principalId, SessionFixture.SecondPrincipal)
     })
 })

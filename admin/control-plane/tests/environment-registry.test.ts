@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { EnvironmentRegistry } from '../environment-registry.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord, type IContainerProbe } from '../environment-record.js'
+import { WriteGate } from './write-gate.js'
 
 class FakeProbe implements IContainerProbe
 {
@@ -16,55 +17,20 @@ class FakeProbe implements IContainerProbe
     }
 }
 
-/** Records each WriteFile's start and end; the write that runs after Hold() waits until Release(). */
+/** A registry whose file writes go through a WriteGate, so a test can hold one and see the order they ran in. */
 class HeldWriteRegistry extends EnvironmentRegistry
 {
-    public readonly Events: string[] = []
-    private held: Promise<void> | null = null
-    private release: () => void = () => undefined
-    private writeCount = 0
+    public readonly Gate = new WriteGate()
 
-    public Hold(): void
+    protected override WriteFile(body: object): Promise<void>
     {
-        this.held = new Promise<void>(resolve => { this.release = resolve })
-    }
-
-    public Release(): void
-    {
-        this.release()
-    }
-
-    public get Started(): number
-    {
-        return this.Events.filter(e => e.startsWith(RegistryFixture.StartTag)).length
-    }
-
-    protected override async WriteFile(body: object): Promise<void>
-    {
-        const n = ++this.writeCount
-        this.Events.push(`${RegistryFixture.StartTag}${n}`)
-        const held = this.held
-        this.held = null
-        if (held !== null)
-        {
-            await held
-        }
-        await super.WriteFile(body)
-        this.Events.push(`${RegistryFixture.EndTag}${n}`)
+        return this.Gate.Around(() => super.WriteFile(body))
     }
 }
 
 class RegistryFixture
 {
     public static readonly Encoding = 'utf8'
-    public static readonly StartTag = 'start'
-    public static readonly EndTag = 'end'
-
-    /** Lets every pending promise continuation run. */
-    public static Settle(): Promise<void>
-    {
-        return new Promise(resolve => setImmediate(resolve))
-    }
 
     public static Record(name: string, port: number, status: EnvStatus): EnvironmentRecord
     {
@@ -214,14 +180,14 @@ test('concurrent Puts are written one at a time and the file ends with every rec
     {
         const probe = new FakeProbe()
         const reg = new HeldWriteRegistry(file, probe)
-        reg.Hold()
+        reg.Gate.Hold()
         const putA = reg.Put(RegistryFixture.Record('a', 8081, EnvStatus.Running))
         const putB = reg.Put(RegistryFixture.Record('b', 8082, EnvStatus.Running))
-        await RegistryFixture.Settle()
-        assert.equal(reg.Started, 1)
-        reg.Release()
+        await WriteGate.Settle()
+        assert.deepEqual(reg.Gate.Events, [WriteGate.Start(1)])
+        reg.Gate.Release()
         await Promise.all([putA, putB])
-        assert.deepEqual(reg.Events, ['start1', 'end1', 'start2', 'end2'])
+        assert.deepEqual(reg.Gate.Events, [WriteGate.Start(1), WriteGate.End(1), WriteGate.Start(2), WriteGate.End(2)])
         const reopened = new EnvironmentRegistry(file, probe)
         await reopened.Load()
         assert.deepEqual(reopened.List().map(r => r.name).sort(), ['a', 'b'])
