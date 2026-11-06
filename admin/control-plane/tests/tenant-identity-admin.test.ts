@@ -9,31 +9,10 @@ import type { IEnvironmentService } from '../control-plane-host.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import { SeededTenantDirectory } from '../tenant-api/seeded-tenant-directory.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import { ResRecorder } from './res-recorder.js'
 
-/** Records what the endpoint wrote so a test can assert on status and JSON body without a real socket. */
-class ResRecorder
-{
-    public status = 0
-    public body = ''
-    public headers: Record<string, string> = {}
-
-    public writeHead(status: number, headers?: Record<string, string>): this
-    {
-        this.status = status
-        this.headers = headers ?? {}
-        return this
-    }
-
-    public end(body?: string): void
-    {
-        this.body = body ?? ''
-    }
-
-    public Json(): Record<string, unknown>
-    {
-        return JSON.parse(this.body) as Record<string, unknown>
-    }
-}
+/** A JSON object body, for reading one field of an answer. */
+type JsonObject = Record<string, unknown>
 
 /** A fake service recording every Admin* call (method + args); `Throw` makes every Admin* call reject. */
 class FakeService
@@ -275,7 +254,7 @@ describe('TenantApiEndpoint identity-admin routes', () =>
         {
             const res = await Driver.Send(Fixtures.Req(m, b), Fixtures.Base + 'a-env/' + s, Fixtures.TenantA)
             assert.equal(res.status, 400, m + ' ' + s)
-            assert.equal(typeof res.Json().error, 'string')
+            assert.equal(typeof res.Json<JsonObject>().error, 'string')
         }
         const malformed = await Driver.Send(Fixtures.Req('POST', undefined, '{bad'), Fixtures.Base + 'a-env/admin/grants', Fixtures.TenantA)
         assert.equal(malformed.status, 400)
@@ -305,7 +284,7 @@ describe('TenantApiEndpoint identity-admin routes', () =>
             service.Throw = err
             const res = await Driver.Send(Fixtures.Req('POST', Grant), Fixtures.Base + 'a-env/admin/grants', Fixtures.TenantA)
             assert.equal(res.status, status)
-            assert.equal(typeof res.Json().error, 'string')
+            assert.equal(typeof res.Json<JsonObject>().error, 'string')
             assert.doesNotMatch(res.body, /SECRET|10\.0\.0\.5|hunter2/)
         }
     })
@@ -315,11 +294,11 @@ describe('TenantApiEndpoint identity-admin routes', () =>
         service.Throw = new EnvironmentNotDevelopmentError('a-env')
         const mt = await Driver.Send(Fixtures.Req('POST'), Fixtures.Base + 'a-env/maker-token', Fixtures.TenantA)
         assert.equal(mt.status, 400)
-        assert.equal(typeof mt.Json().error, 'string')
+        assert.equal(typeof mt.Json<JsonObject>().error, 'string')
         service.Throw = new EnvironmentNotRuntimeError('a-env')
         const ar = await Driver.Send(Fixtures.Req('POST'), Fixtures.Base + 'a-env/app-reader-grant', Fixtures.TenantA)
         assert.equal(ar.status, 400)
-        assert.equal(typeof ar.Json().error, 'string')
+        assert.equal(typeof ar.Json<JsonObject>().error, 'string')
         assert.doesNotMatch(ar.body, /a-env/)
     })
 
@@ -339,7 +318,7 @@ describe('TenantApiEndpoint identity-admin routes', () =>
     {
         const res = await Driver.Send(Fixtures.Req('POST', IssueBody), Fixtures.Base + 'a-env/admin/tokens', Fixtures.TenantA)
         assert.equal(res.status, 201)
-        assert.equal(res.Json().token, 'secret-tok')
+        assert.equal(res.Json<JsonObject>().token, 'secret-tok')
         assert.equal(res.headers['Cache-Control'], 'no-store')
         assert.deepEqual(service.Calls[0]!.args, ['a-env', IssueBody])
     })
@@ -360,7 +339,7 @@ describe('TenantApiEndpoint identity-admin routes', () =>
         {
             const res = await Driver.Send(Fixtures.Req('POST', b), Fixtures.Base + 'a-env/admin/tokens', Fixtures.TenantA)
             assert.equal(res.status, 400)
-            assert.equal(typeof res.Json().error, 'string')
+            assert.equal(typeof res.Json<JsonObject>().error, 'string')
         }
         assert.equal(service.Calls.length, 0)
     })
@@ -388,7 +367,7 @@ describe('TenantApiEndpoint identity-admin routes', () =>
         service.Throw = new AdminProxyError(AdminProxyErrorKind.NotFound, 'SECRET-inner')
         const res = await Driver.Send(Fixtures.Req('DELETE', { tokenRef: 'r' }), Fixtures.Base + 'a-env/admin/tokens', Fixtures.TenantA)
         assert.equal(res.status, 404)
-        assert.equal(typeof res.Json().error, 'string')
+        assert.equal(typeof res.Json<JsonObject>().error, 'string')
         assert.doesNotMatch(res.body, /SECRET/)
     })
 

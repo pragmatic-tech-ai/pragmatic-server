@@ -384,7 +384,7 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
     private async AppendAudit(actor: string, method: string, path: string, status: number, note: string | undefined): Promise<void>
     {
         // The relay's outcome does not depend on the audit write.
-        await TenantAuditEntry.AppendBestEffort(this.audit, note === undefined ? { actor, method, path, status } : { actor, method, path, status, note })
+        await TenantAuditEntry.AppendBestEffort(this.audit, { actor, method, path, status, note })
     }
 
     /** Leases the env's address, mints the action's credential, dials onward, and only then completes the client upgrade. */

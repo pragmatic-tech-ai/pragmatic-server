@@ -10,6 +10,7 @@ import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import { ResRecorder } from './res-recorder.js'
 
 // Captures console.error lines for the duration of one call, restoring it afterwards.
 class ErrorLog
@@ -27,28 +28,6 @@ class ErrorLog
         {
             console.error = orig
         }
-    }
-}
-
-class ResRecorder
-{
-    public status = 0
-    public body = ''
-
-    public writeHead(status: number): this
-    {
-        this.status = status
-        return this
-    }
-
-    public end(body?: string): void
-    {
-        this.body = body ?? ''
-    }
-
-    public Json(): unknown
-    {
-        return JSON.parse(this.body)
     }
 }
 

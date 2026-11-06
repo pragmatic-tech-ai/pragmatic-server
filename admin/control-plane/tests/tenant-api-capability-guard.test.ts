@@ -9,24 +9,7 @@ import { SeededTenantDirectory } from '../tenant-api/seeded-tenant-directory.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import { TenantAdminCapabilities } from '../tenant-api/tenant-admin-capabilities.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
-
-/** Records what the endpoint wrote so a test can assert on status and JSON body without a real socket. */
-class ResRecorder
-{
-    public status = 0
-    public body = ''
-
-    public writeHead(status: number): this
-    {
-        this.status = status
-        return this
-    }
-
-    public end(body?: string): void
-    {
-        this.body = body ?? ''
-    }
-}
+import { ResRecorder } from './res-recorder.js'
 
 /** Answers every Admin*, lifecycle and list call with a benign value; the guard test only cares about the HTTP status. */
 class FakeService

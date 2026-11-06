@@ -23,44 +23,7 @@ import type { PlatformDeploymentRegistry } from '../platform-deployment-registry
 import { TenantApiEndpoint, TenantEnvAction } from '../tenant-api/tenant-api-endpoint.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
-
-/** Records what the endpoint wrote so a test can assert on status and JSON body without a real socket. */
-class ResRecorder
-{
-    public status = 0
-    public body = ''
-    public headersSent = false
-    public readonly headers: Record<string, string | number | string[]> = {}
-
-    public setHeader(name: string, value: string | number | string[]): void
-    {
-        this.headers[name] = value
-    }
-
-    public writeHead(status: number, headers?: Record<string, string | number | string[]>): this
-    {
-        this.status = status
-        if (headers !== undefined)
-        {
-            Object.assign(this.headers, headers)
-        }
-        this.headersSent = true
-        return this
-    }
-
-    public end(body?: string): void
-    {
-        if (body !== undefined)
-        {
-            this.body = body
-        }
-    }
-
-    public Json(): unknown
-    {
-        return JSON.parse(this.body)
-    }
-}
+import { ResRecorder } from './res-recorder.js'
 
 /** A fake environment service whose lifecycle methods record their calls and flip status, so a test can prove which action ran (and that cross-tenant actions never do). */
 class FakeService

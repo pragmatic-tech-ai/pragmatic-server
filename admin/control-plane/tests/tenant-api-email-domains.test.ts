@@ -9,23 +9,7 @@ import { SeededTenantDirectory } from '../tenant-api/seeded-tenant-directory.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import { EmailDomainsNotEditableError, type ITenantEmailDomains, type TenantEmailDomainsView } from '../tenant-api/tenant-email-domains.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
-
-class ResRecorder
-{
-    public status = 0
-    public body = ''
-
-    public writeHead(status: number): this
-    {
-        this.status = status
-        return this
-    }
-
-    public end(body?: string): void
-    {
-        this.body = body ?? ''
-    }
-}
+import { ResRecorder } from './res-recorder.js'
 
 /** An in-memory store: editable unless told otherwise; records the tenant ids it was asked about. */
 class FakeEmailDomains implements ITenantEmailDomains

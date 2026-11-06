@@ -10,50 +10,14 @@ import { AdminProxyError, AdminProxyErrorKind } from '../admin-proxy.js'
 import type { GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { GraphDto, IEnvironmentService, IGraphService, PromotionResultDto } from '../control-plane-host.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
+import { EnvironmentNotDevelopmentError, EnvironmentNotFoundError } from '../environment-service.js'
 import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from '../graph-service.js'
 import { TenantAdminCapabilities } from '../tenant-api/tenant-admin-capabilities.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import { TenantGraphAccess } from '../tenant-api/tenant-graph-access.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
-
-/** Records what the endpoint wrote so a test can assert on status and JSON body without a real socket. */
-class ResRecorder
-{
-    public status = 0
-    public body = ''
-    public headersSent = false
-    public readonly headers: Record<string, string | number | string[]> = {}
-
-    public setHeader(name: string, value: string | number | string[]): void
-    {
-        this.headers[name] = value
-    }
-
-    public writeHead(status: number, headers?: Record<string, string | number | string[]>): this
-    {
-        this.status = status
-        if (headers !== undefined)
-        {
-            Object.assign(this.headers, headers)
-        }
-        this.headersSent = true
-        return this
-    }
-
-    public end(body?: string): void
-    {
-        if (body !== undefined)
-        {
-            this.body = body
-        }
-    }
-
-    public Json(): unknown
-    {
-        return JSON.parse(this.body)
-    }
-}
+import { ResRecorder } from './res-recorder.js'
 
 /** A graph service that records every call and answers fixed DTOs, or throws `Throw` when it is set. */
 class FakeGraphs implements IGraphService
@@ -299,6 +263,7 @@ describe('TenantApiEndpoint graph routes', () =>
             ['{}', TenantGraphAccess.FieldsMessage],
             ['{"name":""}', TenantGraphAccess.FieldsMessage],
             ['{"name":"a","description":7}', TenantGraphAccess.FieldsMessage],
+            ['{"name":"a","description":null}', TenantGraphAccess.FieldsMessage],
         ]
         for (const [raw, message] of cases)
         {
@@ -311,8 +276,19 @@ describe('TenantApiEndpoint graph routes', () =>
         assert.equal(entries.length, cases.length)
         assert.ok(entries.every(e => e.status === 400))
         assert.deepEqual(entries.map(e => e.note).sort(), [
-            'environment=dev1 graph=', 'environment=dev1 graph=', 'environment=dev1 graph=', 'environment=dev1 graph=', 'environment=dev1 graph=a'
+            'environment=dev1 graph=', 'environment=dev1 graph=', 'environment=dev1 graph=', 'environment=dev1 graph=', 'environment=dev1 graph=a', 'environment=dev1 graph=a'
         ])
+    })
+
+    it('a POST whose body read fails is still audited once, with the final status', async () =>
+    {
+        const failing = new Readable({ read(): void { this.destroy(new Error('client aborted')) } }) as unknown as IncomingMessage & { method?: string }
+        failing.method = 'POST'
+        const res = new ResRecorder()
+        await assert.rejects(endpoint.Handle(failing, res as unknown as ServerResponse, Fixtures.DevGraphs, Fixtures.Session))
+        assert.deepEqual(graphs.Calls, [])
+        const entries = await Fixtures.Audit(auditFile)
+        assert.deepEqual(entries.map(e => [e.method, e.status, e.note]), [['POST', 500, 'environment=dev1 graph=']])
     })
 
     it('maps service failures to the fixed statuses and sentences', async () =>
@@ -323,6 +299,8 @@ describe('TenantApiEndpoint graph routes', () =>
             [new GraphNameInvalidError('sales'), 400, TenantGraphAccess.NameInvalidMessage],
             [new AdminProxyError(AdminProxyErrorKind.Connect), 503, TenantGraphAccess.ConnectMessage],
             [new Error('secret host 10.0.0.1'), 500, TenantGraphAccess.FailedMessage],
+            [new EnvironmentNotFoundError('dev1'), 404, 'Not found'],
+            [new EnvironmentNotDevelopmentError('dev1'), 400, TenantGraphAccess.NotDevelopmentMessage],
         ]
         const logged: unknown[][] = []
         mock.method(console, 'error', (...args: unknown[]) => { logged.push(args) })

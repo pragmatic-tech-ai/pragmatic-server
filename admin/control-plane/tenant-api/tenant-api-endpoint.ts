@@ -19,6 +19,7 @@ import { AdminProxyError, AdminProxyErrorKind } from '../admin-proxy.js'
 import { CreateFailedError, EnvironmentExistsError, EnvironmentNotDevelopmentError, EnvironmentNotFoundError, EnvironmentNotRuntimeError } from '../environment-service.js'
 import { EnvType, Template } from '../environment-record.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
+import { PlaneHttp } from '../plane-http.js'
 import { TenantGraphAccess } from './tenant-graph-access.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, IssueTokenParams, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
@@ -126,7 +127,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly StatusConflict = 409
     private static readonly StatusInternal = 500
     private static readonly StatusUnavailable = 503
-    private static readonly NotFoundMessage = 'Not found'
+    private static readonly NotFoundMessage = PlaneHttp.NotFoundMessage
     private static readonly BadJsonMessage = 'Request body must be valid JSON'
     private static readonly BodyObjectMessage = 'Request body must be a JSON object'
     private static readonly VersionRequiredMessage = 'version (non-empty string) is required'
@@ -890,10 +891,18 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             this.WriteNotFound(res)
             return true
         }
-        const outcome = await this.AnswerGraph(req, res, method, session, rec, graph, graphs)
-        if (!list)
+        // A failure escaping AnswerGraph (the body stream errored) is answered 500 by the host's generic writer: record that.
+        let outcome: GraphOutcome = { status: M.StatusInternal, graph }
+        try
         {
-            await graphs.Record(session, method, path, outcome.status, rec.name, outcome.graph)
+            outcome = await this.AnswerGraph(req, res, method, session, rec, graph, graphs)
+        }
+        finally
+        {
+            if (!list)
+            {
+                await graphs.Record(session, method, path, outcome.status, rec.name, outcome.graph)
+            }
         }
         return true
     }
@@ -925,7 +934,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
                 return { status: M.StatusBadRequest, graph }
             }
             const rawName = body[M.NameKey]
-            const rawDescription = body[M.DescriptionKey] ?? M.NoDetail
+            const rawDescription = body[M.DescriptionKey] === undefined ? M.NoDetail : body[M.DescriptionKey]
             name = M.NonEmpty(rawName) ? rawName as string : M.NoDetail
             if (name.length === 0 || typeof rawDescription !== 'string')
             {

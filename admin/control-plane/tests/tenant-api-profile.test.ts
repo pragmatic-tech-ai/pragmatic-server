@@ -7,27 +7,7 @@ import { TenantAdminCapabilities } from '../tenant-api/tenant-admin-capabilities
 import type { TenantProfileDto } from '../tenant-api/tenant-profile-dto.js'
 import { HiveBackend, InfraMode, type HiveRecord, type TenantRecord } from '../platform-records.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
-
-class ResRecorder
-{
-    public status = 0
-    public body = ''
-
-    public setHeader(): void
-    {
-    }
-
-    public writeHead(status: number): this
-    {
-        this.status = status
-        return this
-    }
-
-    public end(body?: string): void
-    {
-        this.body = body ?? ''
-    }
-}
+import { ResRecorder } from './res-recorder.js'
 
 class Fx
 {

@@ -3,8 +3,21 @@ import { AdminProxyError, AdminProxyErrorKind } from '../admin-proxy.js'
 import type { IGraphService } from '../control-plane-host.js'
 import { EnvironmentNotDevelopmentError, EnvironmentNotFoundError } from '../environment-service.js'
 import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from '../graph-service.js'
+import { PlaneHttp } from '../plane-http.js'
 import { TenantAuditEntry } from '../tenant-auth/tenant-audit-entry.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
+
+/** What a graph operation's failure was; StatusOf and MessageOf each map it to the wire. */
+enum GraphFailureKind
+{
+    Exists = 'exists',
+    GraphMissing = 'graph-missing',
+    EnvironmentMissing = 'environment-missing',
+    NameInvalid = 'name-invalid',
+    NotDevelopment = 'not-development',
+    Unreachable = 'unreachable',
+    Failed = 'failed',
+}
 
 /**
  * What the tenant API's graph routes need: the graph service (undefined when this composition cannot reach its
@@ -21,13 +34,25 @@ export class TenantGraphAccess
     public static readonly NameInvalidMessage = 'Use lowercase letters, digits and hyphens, starting with a letter or digit.'
     public static readonly ConnectMessage = 'The environment could not be reached. Check that it is running.'
     public static readonly FailedMessage = 'The graph operation failed.'
-    /** The tenant API's generic 404 body (an environment that vanished between the ownership check and the call). */
-    public static readonly EnvironmentNotFoundMessage = 'Not found'
-    private static readonly StatusBadRequest = 400
-    private static readonly StatusNotFound = 404
-    private static readonly StatusConflict = 409
-    private static readonly StatusInternal = 500
-    private static readonly StatusUnavailable = 503
+    private static readonly Statuses: Readonly<Record<GraphFailureKind, number>> = {
+        [GraphFailureKind.Exists]: 409,
+        [GraphFailureKind.GraphMissing]: 404,
+        [GraphFailureKind.EnvironmentMissing]: 404,
+        [GraphFailureKind.NameInvalid]: 400,
+        [GraphFailureKind.NotDevelopment]: 400,
+        [GraphFailureKind.Unreachable]: 503,
+        [GraphFailureKind.Failed]: 500,
+    }
+    private static readonly Messages: Readonly<Record<GraphFailureKind, string>> = {
+        [GraphFailureKind.Exists]: TenantGraphAccess.ExistsMessage,
+        [GraphFailureKind.GraphMissing]: TenantGraphAccess.NotFoundMessage,
+        // The tenant API's generic 404 body: an environment that vanished between the ownership check and the call.
+        [GraphFailureKind.EnvironmentMissing]: PlaneHttp.NotFoundMessage,
+        [GraphFailureKind.NameInvalid]: TenantGraphAccess.NameInvalidMessage,
+        [GraphFailureKind.NotDevelopment]: TenantGraphAccess.NotDevelopmentMessage,
+        [GraphFailureKind.Unreachable]: TenantGraphAccess.ConnectMessage,
+        [GraphFailureKind.Failed]: TenantGraphAccess.FailedMessage,
+    }
     private static readonly EnvironmentNote = 'environment='
     private static readonly GraphNote = ' graph='
 
@@ -50,53 +75,41 @@ export class TenantGraphAccess
 
     public static StatusOf(err: unknown): number
     {
-        const C = TenantGraphAccess
-        if (err instanceof GraphExistsError)
-        {
-            return C.StatusConflict
-        }
-        if (err instanceof GraphNotFoundError || err instanceof EnvironmentNotFoundError)
-        {
-            return C.StatusNotFound
-        }
-        if (err instanceof GraphNameInvalidError || err instanceof EnvironmentNotDevelopmentError)
-        {
-            return C.StatusBadRequest
-        }
-        if (err instanceof AdminProxyError && err.Kind === AdminProxyErrorKind.Connect)
-        {
-            return C.StatusUnavailable
-        }
-        return C.StatusInternal
+        return TenantGraphAccess.Statuses[TenantGraphAccess.KindOf(err)]
     }
 
     public static MessageOf(err: unknown): string
     {
-        const C = TenantGraphAccess
+        return TenantGraphAccess.Messages[TenantGraphAccess.KindOf(err)]
+    }
+
+    /** The one error-to-kind chain both StatusOf and MessageOf read, so a status and its sentence can never drift apart. */
+    private static KindOf(err: unknown): GraphFailureKind
+    {
         if (err instanceof GraphExistsError)
         {
-            return C.ExistsMessage
+            return GraphFailureKind.Exists
         }
         if (err instanceof GraphNotFoundError)
         {
-            return C.NotFoundMessage
+            return GraphFailureKind.GraphMissing
         }
         if (err instanceof EnvironmentNotFoundError)
         {
-            return C.EnvironmentNotFoundMessage
+            return GraphFailureKind.EnvironmentMissing
         }
         if (err instanceof GraphNameInvalidError)
         {
-            return C.NameInvalidMessage
+            return GraphFailureKind.NameInvalid
         }
         if (err instanceof EnvironmentNotDevelopmentError)
         {
-            return C.NotDevelopmentMessage
+            return GraphFailureKind.NotDevelopment
         }
         if (err instanceof AdminProxyError && err.Kind === AdminProxyErrorKind.Connect)
         {
-            return C.ConnectMessage
+            return GraphFailureKind.Unreachable
         }
-        return C.FailedMessage
+        return GraphFailureKind.Failed
     }
 }
