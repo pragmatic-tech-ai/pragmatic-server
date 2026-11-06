@@ -1,18 +1,19 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { randomBytes } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Disposable, Signal, type IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import {
-    ConsoleAdvertSender, ConsoleAdvertUnavailableError, HttpConsoleAdvertTransport, SeededConsoleAccounts,
+    ConsoleAdvertRefusedError, ConsoleAdvertSender, ConsoleAdvertUnavailableError, HttpConsoleAdvertTransport, SeededConsoleAccounts,
     type IAdvertTimer, type IConsoleAccountSource, type IConsoleAdvertTransport, type IOwnerResetFollower, type IRequestDeadline,
 } from '../console-advert-sender.js'
 import { ConsoleFingerprint, type ConsoleAdvertAnswer, type ConsoleAdvertBody } from '../console-advert-contract.js'
 import { ConsoleEmailDomainStore } from '../console-email-domain-store.js'
+import { AdvertTrigger, ConsoleRegistration, ConsoleRegistrationState } from '../console-registration.js'
 import type { TenantRecord } from '../platform-records.js'
 
 class Names
@@ -41,7 +42,14 @@ class Names
     public static readonly OkBody = '{"refusedEmailDomains":[]}'
     public static readonly KeyBytes = 32
     public static readonly Conflict = 409
+    public static readonly Unauthorized = 401
+    public static readonly BadRequest = 400
+    public static readonly ServerError = 500
     public static readonly Ok = 200
+    public static readonly StatusMessagePrefix = 'The platform agent channel answered HTTP '
+    public static readonly RefusedErrorName = 'ConsoleAdvertRefusedError'
+    public static readonly RefusedFile = '{"state":"refused"}'
+    public static readonly Utf8 = 'utf8'
     public static readonly ClientId = 'c1'
     public static readonly TenantName = 'Acme'
     public static readonly Created = '2026-01-01T00:00:00Z'
@@ -468,6 +476,156 @@ describe('ConsoleAdvertSender', () =>
         assert.equal(follower.applied.length, 2, 'the next answer is handed over again')
         s.Stop()
     })
+
+    describe('registration', () =>
+    {
+        let registration: ConsoleRegistration
+
+        const registered = (): ConsoleAdvertSender =>
+            new ConsoleAdvertSender(transport, accounts, store, key, Names.ConsoleUrl, timer, line => lines.push(line), undefined, registration)
+
+        beforeEach(async () =>
+        {
+            registration = await ConsoleRegistration.Open(join(root, ConsoleRegistration.FileName))
+        })
+
+        it('two refused timer ticks make the registration Refused; refused change sends do not', async () =>
+        {
+            transport.failWith = new ConsoleAdvertRefusedError(Names.Conflict)
+            const s = registered()
+            await s.Start()
+            await store.Set(Names.TenantId, [Names.NewDomain])
+            await s.Idle()
+            await store.Set(Names.TenantId, [Names.OtherDomain])
+            await s.Idle()
+            assert.equal(transport.bodies.length, 3)
+            assert.equal(registration.State, ConsoleRegistrationState.Registered, 'start and change refusals do not count')
+            timer.Tick()
+            await s.Idle()
+            assert.equal(registration.State, ConsoleRegistrationState.Registered, 'one timer refusal is not enough')
+            timer.Tick()
+            await s.Idle()
+            assert.equal(registration.State, ConsoleRegistrationState.Refused)
+            assert.deepEqual(lines.slice(-1), [Names.SendFailedPrefix + Names.ConflictMessage], 'a refusal logs the same sentence as before')
+            s.Stop()
+        })
+
+        it('a 200 from any send restores Registered', async () =>
+        {
+            writeFileSync(join(root, ConsoleRegistration.FileName), Names.RefusedFile, Names.Utf8)
+            registration = await ConsoleRegistration.Open(join(root, ConsoleRegistration.FileName))
+            assert.equal(registration.State, ConsoleRegistrationState.Refused)
+            transport.failWith = new ConsoleAdvertRefusedError(Names.Unauthorized)
+            const s = registered()
+            await s.Start()
+            assert.equal(registration.State, ConsoleRegistrationState.Refused)
+            transport.failWith = undefined
+            await store.Set(Names.TenantId, [Names.NewDomain])
+            await s.Idle()
+            assert.equal(registration.State, ConsoleRegistrationState.Registered, 'a change-triggered 200 restores it')
+            s.Stop()
+        })
+
+        it('the first send at startup restores Registered on a 200 but a refusal there does not count', async () =>
+        {
+            writeFileSync(join(root, ConsoleRegistration.FileName), Names.RefusedFile, Names.Utf8)
+            registration = await ConsoleRegistration.Open(join(root, ConsoleRegistration.FileName))
+            const s = registered()
+            await s.Start()
+            assert.equal(registration.State, ConsoleRegistrationState.Registered)
+            s.Stop()
+        })
+
+        it('a transient timer answer between two refused timer ticks keeps it Registered', async () =>
+        {
+            const s = registered()
+            await s.Start()
+            transport.failWith = new ConsoleAdvertRefusedError(Names.Conflict)
+            timer.Tick()
+            await s.Idle()
+            transport.failWith = new ConsoleAdvertUnavailableError(Names.UnreachableMessage)
+            timer.Tick()
+            await s.Idle()
+            transport.failWith = new ConsoleAdvertRefusedError(Names.Conflict)
+            timer.Tick()
+            await s.Idle()
+            assert.equal(registration.State, ConsoleRegistrationState.Registered)
+            s.Stop()
+        })
+
+        it('a timer tick queued behind a change send counts as a timer send', async () =>
+        {
+            const s = registered()
+            await s.Start()
+            transport.failWith = new ConsoleAdvertRefusedError(Names.Conflict)
+            transport.Hold()
+            await store.Set(Names.TenantId, [Names.NewDomain])
+            await Waits.Settle()
+            assert.equal(transport.bodies.length, 2, 'the change send is in flight')
+            timer.Tick()
+            timer.Tick()
+            transport.Release()
+            await s.Idle()
+            assert.equal(transport.bodies.length, 3, 'the two ticks merged into one send')
+            assert.equal(registration.State, ConsoleRegistrationState.Registered, 'the streak is 1')
+            timer.Tick()
+            await s.Idle()
+            assert.equal(registration.State, ConsoleRegistrationState.Refused, 'the merged send counted, so this tick is the second')
+            s.Stop()
+        })
+
+        it('a change queued behind a change send does not count', async () =>
+        {
+            const s = registered()
+            await s.Start()
+            transport.failWith = new ConsoleAdvertRefusedError(Names.Conflict)
+            timer.Tick()
+            await s.Idle()
+            transport.Hold()
+            await store.Set(Names.TenantId, [Names.NewDomain])
+            await Waits.Settle()
+            await store.Set(Names.TenantId, [Names.OtherDomain])
+            transport.Release()
+            await s.Idle()
+            assert.equal(transport.bodies.length, 4)
+            assert.equal(registration.State, ConsoleRegistrationState.Registered, 'the queued send was a change send')
+            timer.Tick()
+            await s.Idle()
+            assert.equal(registration.State, ConsoleRegistrationState.Refused, 'the change sends did not break the streak')
+            s.Stop()
+        })
+
+        it('no outcome is observed after Stop', async () =>
+        {
+            let s: ConsoleAdvertSender | undefined
+            let stopOnSend = false
+            const refusing: IConsoleAdvertTransport = {
+                Send: async () =>
+                {
+                    if (stopOnSend)
+                    {
+                        s?.Stop()
+                    }
+                    throw new ConsoleAdvertRefusedError(Names.Conflict)
+                },
+            }
+            s = new ConsoleAdvertSender(refusing, accounts, store, key, Names.ConsoleUrl, timer, line => lines.push(line), undefined, registration)
+            const seen: ConsoleRegistrationState[] = []
+            registration.Changed.subscribe(v => seen.push(v))
+            await s.SendNow(AdvertTrigger.Timer)
+            stopOnSend = true
+            await s.SendNow(AdvertTrigger.Timer)
+            assert.equal(registration.State, ConsoleRegistrationState.Registered, 'the refusal after Stop was not observed')
+            assert.deepEqual(seen, [])
+
+            writeFileSync(join(root, ConsoleRegistration.FileName), Names.RefusedFile, Names.Utf8)
+            registration = await ConsoleRegistration.Open(join(root, ConsoleRegistration.FileName))
+            const accepting: IConsoleAdvertTransport = { Send: async () => { s?.Stop(); return {} } }
+            s = new ConsoleAdvertSender(accepting, accounts, store, key, Names.ConsoleUrl, timer, line => lines.push(line), undefined, registration)
+            await s.SendNow(AdvertTrigger.Timer)
+            assert.equal(registration.State, ConsoleRegistrationState.Refused, 'the 200 after Stop was not observed')
+        })
+    })
 })
 
 describe('HttpConsoleAdvertTransport', () =>
@@ -569,6 +727,37 @@ describe('HttpConsoleAdvertTransport', () =>
             assert.ok(!err.message.includes(Names.Token))
             return true
         })
+    })
+
+    it('401 and 409 are refusals; 400 and 500 are not', async () =>
+    {
+        let status: number = Names.Ok
+        const url = await listen(() => ({ status, body: Names.ConflictBody }))
+        const transport = new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId)
+        for (const refused of [Names.Unauthorized, Names.Conflict])
+        {
+            status = refused
+            await assert.rejects(() => transport.Send(body), (err: unknown) =>
+            {
+                assert.ok(err instanceof ConsoleAdvertRefusedError, String(refused))
+                assert.ok(err instanceof ConsoleAdvertUnavailableError, 'a refusal is still an unavailable channel')
+                assert.equal(err.Status, refused)
+                assert.equal(err.name, Names.RefusedErrorName)
+                assert.equal(err.message, Names.StatusMessagePrefix + refused)
+                return true
+            })
+        }
+        for (const transient of [Names.BadRequest, Names.ServerError])
+        {
+            status = transient
+            await assert.rejects(() => transport.Send(body), (err: unknown) =>
+            {
+                assert.ok(err instanceof ConsoleAdvertUnavailableError, String(transient))
+                assert.ok(!(err instanceof ConsoleAdvertRefusedError), String(transient))
+                assert.equal(err.message, Names.StatusMessagePrefix + transient)
+                return true
+            })
+        }
     })
 
     it('an unreachable channel is the fixed sentence', async () =>

@@ -1,6 +1,7 @@
 import { Disposable, Signal, type IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { ConsoleFingerprint, type ConsoleAdvertAnswer, type ConsoleAdvertBody } from './console-advert-contract.js'
 import type { ConsoleEmailDomainStore } from './console-email-domain-store.js'
+import { AdvertOutcome, AdvertTrigger, type ConsoleRegistration } from './console-registration.js'
 import type { TenantRecord } from './platform-records.js'
 import { OwnerResetTime } from './tenant-owner.js'
 
@@ -48,12 +49,29 @@ export interface IOwnerResetFollower
 /** The agent channel did not take the advert; the message is a fixed sentence (plus the HTTP status), never a body or the token. */
 export class ConsoleAdvertUnavailableError extends Error
 {
+    /** The sentence a non-2xx answer carries, followed by its HTTP status. */
+    public static readonly StatusMessagePrefix = 'The platform agent channel answered HTTP '
     private static readonly ErrorName = 'ConsoleAdvertUnavailableError'
 
     public constructor(message: string)
     {
         super(message)
         this.name = ConsoleAdvertUnavailableError.ErrorName
+    }
+}
+
+/**
+ * The control plane refused the advert: HTTP 401 (hive token deregistered) or 409 (console not enabled for the hive). Still a
+ * ConsoleAdvertUnavailableError with the same message, so the send-failed log line is unchanged.
+ */
+export class ConsoleAdvertRefusedError extends ConsoleAdvertUnavailableError
+{
+    private static readonly RefusedName = 'ConsoleAdvertRefusedError'
+
+    public constructor(public readonly Status: number)
+    {
+        super(ConsoleAdvertUnavailableError.StatusMessagePrefix + Status)
+        this.name = ConsoleAdvertRefusedError.RefusedName
     }
 }
 
@@ -100,7 +118,8 @@ export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport
     private static readonly JsonType = 'application/json'
     private static readonly MethodPost = 'POST'
     private static readonly UnreachableMessage = 'The platform agent channel is unreachable'
-    private static readonly FailedMessagePrefix = 'The platform agent channel answered HTTP '
+    /** The answers that mean the platform no longer takes this console: 401 (hive token deregistered) and 409 (console not enabled for the hive). */
+    private static readonly RefusedStatuses: ReadonlySet<number> = new Set([401, 409])
 
     public constructor(
         private readonly baseUrl: string,
@@ -132,7 +151,11 @@ export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport
         if (!response.ok)
         {
             await T.Drain(response)
-            throw new ConsoleAdvertUnavailableError(T.FailedMessagePrefix + response.status)
+            if (T.RefusedStatuses.has(response.status))
+            {
+                throw new ConsoleAdvertRefusedError(response.status)
+            }
+            throw new ConsoleAdvertUnavailableError(ConsoleAdvertUnavailableError.StatusMessagePrefix + response.status)
         }
         return T.AnswerOf(await T.BoundedText(response))
     }
@@ -226,7 +249,9 @@ export class IntervalAdvertTimer implements IAdvertTimer
  * email domains it claims: once at start, every IntervalMs, and at once on an account or domain change. A failed send is
  * logged (a fixed sentence or the error's name, never a body, token or email) and the next tick or change retries. Every 200
  * answer is handed to the Owner-reset follower (when one is given), so an operator Owner reset ends the Owner's sessions here
- * within one interval; the follower's failure is logged by error name only and never fails the advert.
+ * within one interval; the follower's failure is logged by error name only and never fails the advert. Each send's outcome
+ * (Accepted, Refused on ConsoleAdvertRefusedError, Transient on any other failure) is handed to the registration (when one is
+ * given) with the send's trigger; a queued send that merged a timer tick counts as a Timer send.
  */
 export class ConsoleAdvertSender
 {
@@ -238,7 +263,8 @@ export class ConsoleAdvertSender
     private readonly subscriptions: IDisposable[] = []
     private inFlight: Promise<void> | undefined
     private sending: AbortController | undefined
-    private queued = false
+    /** The trigger of the one send queued behind the one in flight (Timer when any merged request was Timer); undefined when none. */
+    private queued: AdvertTrigger | undefined
     private stopped = false
     private started = false
 
@@ -250,11 +276,15 @@ export class ConsoleAdvertSender
         private readonly consoleUrl: string,
         private readonly timer: IAdvertTimer = new IntervalAdvertTimer(),
         private readonly log: (line: string) => void = line => console.error(line),
-        private readonly follower?: IOwnerResetFollower)
+        private readonly follower?: IOwnerResetFollower,
+        private readonly registration?: ConsoleRegistration)
     {
     }
 
-    /** Sends once (awaited, never throws), then every IntervalMs and on accounts.Changed / domains.Changed. A second Start is a no-op. */
+    /**
+     * Sends once (awaited, never throws; trigger Start), then every IntervalMs (Timer) and on accounts.Changed / domains.Changed
+     * (Change). A second Start is a no-op.
+     */
     public async Start(): Promise<void>
     {
         if (this.started)
@@ -263,10 +293,10 @@ export class ConsoleAdvertSender
         }
         this.started = true
         this.stopped = false
-        this.subscriptions.push(this.accounts.Changed.subscribe(() => { void this.SendNow() }))
-        this.subscriptions.push(this.domains.Changed.subscribe(() => { void this.SendNow() }))
-        this.subscriptions.push(this.timer.Every(ConsoleAdvertSender.IntervalMs, () => { void this.SendNow() }))
-        await this.SendNow()
+        this.subscriptions.push(this.accounts.Changed.subscribe(() => { void this.SendNow(AdvertTrigger.Change) }))
+        this.subscriptions.push(this.domains.Changed.subscribe(() => { void this.SendNow(AdvertTrigger.Change) }))
+        this.subscriptions.push(this.timer.Every(ConsoleAdvertSender.IntervalMs, () => { void this.SendNow(AdvertTrigger.Timer) }))
+        await this.SendNow(AdvertTrigger.Start)
     }
 
     /**
@@ -290,15 +320,18 @@ export class ConsoleAdvertSender
         return this.inFlight ?? Promise.resolve()
     }
 
-    /** At most one send in flight; changes during a send queue exactly one more. Never throws. */
-    public SendNow(): Promise<void>
+    /**
+     * At most one send in flight; requests during a send queue exactly one more, which counts as Timer when any merged request
+     * was Timer. `trigger` decides whether the outcome counts toward the registration's refusal threshold. Never throws.
+     */
+    public SendNow(trigger: AdvertTrigger = AdvertTrigger.Change): Promise<void>
     {
         if (this.inFlight !== undefined)
         {
-            this.queued = true
+            this.queued = this.queued === AdvertTrigger.Timer ? AdvertTrigger.Timer : trigger
             return this.inFlight
         }
-        this.inFlight = this.Drain()
+        this.inFlight = this.Drain(trigger)
         return this.inFlight
     }
 
@@ -309,25 +342,28 @@ export class ConsoleAdvertSender
         return { consoleUrl: this.consoleUrl, fingerprints: [...fingerprints].sort(), emailDomains: [...this.domains.Domains] }
     }
 
-    private async Drain(): Promise<void>
+    private async Drain(first: AdvertTrigger): Promise<void>
     {
+        let next: AdvertTrigger | undefined = first
         try
         {
             do
             {
-                this.queued = false
-                await this.SendOnce()
+                this.queued = undefined
+                await this.SendOnce(next)
+                next = this.queued
             }
-            while (this.queued && !this.stopped)
+            while (next !== undefined && !this.stopped)
         }
         finally
         {
-            this.queued = false
+            this.queued = undefined
             this.inFlight = undefined
         }
     }
 
-    private async SendOnce(): Promise<void>
+    /** One send; its outcome is observed (and a failure logged) unless the sender has stopped meanwhile. */
+    private async SendOnce(trigger: AdvertTrigger): Promise<void>
     {
         const sending = new AbortController()
         this.sending = sending
@@ -341,6 +377,7 @@ export class ConsoleAdvertSender
             if (!this.stopped)
             {
                 this.log(ConsoleAdvertSender.FailedPrefix + ConsoleAdvertSender.Describe(err))
+                await this.Observe(err instanceof ConsoleAdvertRefusedError ? AdvertOutcome.Refused : AdvertOutcome.Transient, trigger)
             }
             return
         }
@@ -348,7 +385,18 @@ export class ConsoleAdvertSender
         {
             this.sending = undefined
         }
+        await this.Observe(AdvertOutcome.Accepted, trigger)
         await this.Follow(answer)
+    }
+
+    /** Hands the outcome to the registration, when there is one and the sender has not stopped (Observe never rejects). */
+    private async Observe(outcome: AdvertOutcome, trigger: AdvertTrigger): Promise<void>
+    {
+        if (this.registration === undefined || this.stopped)
+        {
+            return
+        }
+        await this.registration.Observe(outcome, trigger)
     }
 
     /**
