@@ -191,9 +191,10 @@ export class EmailDomainApprovalRowViewModel extends Observable
 // sentence here.
 export class TenantEmailDomainsViewModel extends Observable
 {
-    private static readonly ReportedCaption = 'A reported domain sends people to this tenant only once it is approved.'
+    private static readonly ReportedCaption =
+        'A domain takes effect once the platform operator approves it, or once its DNS TXT record is verified and no other tenant claims it.'
     private static readonly ControlPlaneCaption =
-        'A domain sends people to this tenant only once it is approved. Domains you add here are approved on save; those the tenant Owner sets wait here for approval.'
+        'A domain takes effect once the platform operator approves it, or once its DNS TXT record is verified and no other tenant claims it. Domains you add here are approved on save; those the tenant Owner sets wait here for approval.'
     private static readonly ApprovedOnSavePrefix = ' Approved on save: '
     private static readonly SentenceEnd = '.'
     private static readonly NoneDeclaredLabel = 'None declared.'

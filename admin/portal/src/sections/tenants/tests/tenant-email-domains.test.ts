@@ -220,7 +220,7 @@ describe('Tenant email domains', () =>
         assert.equal(block.HasApprovals, true)
         assert.equal(block.HasDomainsLabel, false)
         assert.equal(block.ApprovalsCaption,
-            'A domain sends people to this tenant only once it is approved. Domains you add here are approved on save; those the tenant Owner sets wait here for approval.')
+            'A domain takes effect once the platform operator approves it, or once its DNS TXT record is verified and no other tenant claims it. Domains you add here are approved on save; those the tenant Owner sets wait here for approval.')
         assert.deepEqual(block.Approvals.ToArray().map(r => [r.Domain, r.StatusLabel, r.CanApprove, r.CanRevoke]), [
             ['acme.test', 'Approved', false, true],
             ['owner.test', 'Pending', true, true],
@@ -248,7 +248,8 @@ describe('Tenant email domains', () =>
     it('an in-hive tenant gets the reported-domain caption', async () =>
     {
         const block = await new DomainsFixture().InHive().Loaded()
-        assert.equal(block.ApprovalsCaption, 'A reported domain sends people to this tenant only once it is approved.')
+        assert.equal(block.ApprovalsCaption,
+            'A domain takes effect once the platform operator approves it, or once its DNS TXT record is verified and no other tenant claims it.')
     })
 
     it('an approved domain the tenant no longer claims is marked so and offers Revoke only', async () =>
@@ -416,6 +417,17 @@ describe('Tenant email domains', () =>
         await block.Approvals.Get(0)!.Verify()
         assert.equal(block.VerifyNoticeText, '')
         assert.equal(block.ErrorText, '')
+    })
+
+    it('an unclaimed row with a record gets no Verify', async () =>
+    {
+        const fx = new DomainsFixture().Report({
+            domains: [], approvals: [DomainsFixture.RecordRow('gone.test', DomainApprovalState.Approved, { claimed: false })],
+        })
+        const row = (await fx.Loaded()).Approvals.Get(0)!
+        assert.equal(row.HasRecord, true)
+        assert.equal(row.CanVerify, false)
+        assert.equal(row.VerifyCommand.CanExecute(), false)
     })
 
     it('a read-only operator gets no Verify', async () =>
