@@ -30,6 +30,8 @@ import { DesktopSignInFlows } from '../tenant-auth/desktop-sign-in-flows.js'
 import { DesktopTargets } from '../tenant-auth/desktop-targets.js'
 import type { DesktopRelay } from '../tenant-auth/desktop-relay.js'
 import type { Duplex } from 'node:stream'
+import { connect } from 'node:net'
+import { AdvertOutcome, AdvertTrigger, ConsoleRegistration, ConsoleRegistrationState } from '../console-registration.js'
 
 type Reply = { status: number; body: string }
 
@@ -720,12 +722,26 @@ class StubRelay
 {
     private static readonly Teapot = ['HTTP/1.1 418 Teapot', 'Connection: close', 'Content-Length: 0', '', ''].join(String.fromCharCode(13, 10))
     public readonly urls: string[] = []
+    /** Every code Retire was called with, in order. */
+    public readonly closedWith: number[] = []
+    public reinstated = 0
     public closed = 0
 
     public async Upgrade(req: IncomingMessage, socket: Duplex): Promise<void>
     {
         this.urls.push(String(req.url))
         socket.end(StubRelay.Teapot)
+    }
+
+    public Retire(code: number): number
+    {
+        this.closedWith.push(code)
+        return 0
+    }
+
+    public Reinstate(): void
+    {
+        this.reinstated++
     }
 
     public Close(): void
@@ -755,12 +771,16 @@ class DesktopHostKit
     public static readonly TargetsPath = '/desktop/targets'
     public static readonly AuthorizationHeader = 'authorization'
     public static readonly BearerPrefix = 'Bearer '
+    public static readonly BeginPath = '/desktop/sign-in/begin'
+    public static readonly ConsolePath = '/desktop/console'
+    public static readonly Crlf = String.fromCharCode(13, 10)
 
     public constructor(private readonly parent: string, public readonly Store: TenantSessionStore)
     {
     }
 
-    public Plane(withDesktop: boolean): TenantPlane
+    /** `consoleTenantId` makes it a console plane, serving `/desktop/console` for that tenant. */
+    public Plane(withDesktop: boolean, consoleTenantId?: string): TenantPlane
     {
         const rp = new CapturingRelyingParty()
         const directory = new StubDirectory([Kit.TenantId]) as unknown as ITenantDirectory
@@ -769,14 +789,68 @@ class DesktopHostKit
         if (withDesktop)
         {
             plane.desktop = new DesktopEndpoint(rp, this.Store, new DesktopAuthGate(this.Store), new DesktopSignInFlows(), new DesktopTargets(service, directory), directory,
-                s => ({ principalId: s.principalId } as TenantProfileDto), new LoginThrottle())
+                s => ({ principalId: s.principalId } as TenantProfileDto), new LoginThrottle(), undefined, false, undefined, consoleTenantId)
         }
         return plane
     }
 
-    public async WithHost(plane: TenantPlane, body: (host: TenantPlaneHost) => Promise<void>): Promise<void>
+    /** A console registration over a file in the kit's folder, opened Registered unless `state` is written first. */
+    public async Registration(state?: ConsoleRegistrationState): Promise<ConsoleRegistration>
     {
-        const host = new TenantPlaneHost(plane, Kit.Resolver(), this.parent, new FakeStreamingService([]) as unknown as IEnvironmentService)
+        const path = join(this.parent, ConsoleRegistration.FileName)
+        if (state !== undefined)
+        {
+            writeFileSync(path, JSON.stringify({ state }))
+        }
+        return await ConsoleRegistration.Open(path, () => undefined)
+    }
+
+    /** Two refused Timer adverts: the registration becomes Refused. */
+    public static async Refuse(registration: ConsoleRegistration): Promise<void>
+    {
+        await registration.Observe(AdvertOutcome.Refused, AdvertTrigger.Timer)
+        await registration.Observe(AdvertOutcome.Refused, AdvertTrigger.Timer)
+    }
+
+    /** Dials the relay path raw and resolves the status line and the body of the answer. */
+    public static RawUpgrade(host: TenantPlaneHost, headers: Record<string, string> = {}): Promise<{ statusLine: string; body: string }>
+    {
+        const { port } = host.Address()
+        return new Promise((res, rej) =>
+        {
+            const socket = connect(port, '127.0.0.1', () =>
+            {
+                socket.write(['GET /desktop/relay?environment=acme-dev&action=contribute HTTP/1.1', 'Host: ' + DesktopHostKit.LoopbackHost, 'Connection: Upgrade',
+                    'Upgrade: websocket', 'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+                    ...Object.entries(headers).map(([k, v]) => k + ': ' + v), '', ''].join(DesktopHostKit.Crlf))
+            })
+            const chunks: Buffer[] = []
+            socket.on('data', c => chunks.push(c))
+            socket.on('error', rej)
+            socket.on('close', () =>
+            {
+                const text = Buffer.concat(chunks).toString('utf8')
+                const split = text.indexOf(DesktopHostKit.Crlf + DesktopHostKit.Crlf)
+                res({ statusLine: text.slice(0, text.indexOf(DesktopHostKit.Crlf)), body: split < 0 ? '' : text.slice(split + 4) })
+            })
+        })
+    }
+
+    /** Dials the relay with a WebSocket client and resolves the answered HTTP status (-1 when the socket just failed). */
+    public static RelayStatus(host: TenantPlaneHost, headers: Record<string, string> = {}): Promise<number>
+    {
+        const { port } = host.Address()
+        return new Promise<number>(res =>
+        {
+            const ws = new WebSocket('ws://127.0.0.1:' + String(port) + '/desktop/relay?environment=acme-dev&action=contribute', { headers: { Host: DesktopHostKit.LoopbackHost, ...headers } })
+            ws.once('unexpected-response', (_req, response) => { res(response.statusCode ?? 0); ws.terminate() })
+            ws.once('error', () => res(-1))
+        })
+    }
+
+    public async WithHost(plane: TenantPlane, body: (host: TenantPlaneHost) => Promise<void>, registration?: ConsoleRegistration): Promise<void>
+    {
+        const host = new TenantPlaneHost(plane, Kit.Resolver(), this.parent, new FakeStreamingService([]) as unknown as IEnvironmentService, undefined, registration)
         await host.Listen(0, '127.0.0.1')
         try
         {
@@ -883,6 +957,114 @@ describe('TenantPlaneHost desktop surface', () =>
         {
             assert.equal((await Kit.Raw(host, HttpMethod.Get, Kit.SessionPath, { [Kit.HostHeader]: DesktopHostKit.LoopbackHost })).status, 403)
             assert.equal((await Kit.Raw(host, HttpMethod.Get, '/desktop', { [Kit.HostHeader]: DesktopHostKit.LoopbackHost })).status, 403)
+        })
+    })
+
+    it('a refused console answers 503 console-not-registered on /desktop/* but still answers /desktop/console', async () =>
+    {
+        const registration = await kit.Registration(ConsoleRegistrationState.Refused)
+        await kit.WithHost(kit.Plane(true, Kit.TenantId), async host =>
+        {
+            const targets = await Kit.Raw(host, HttpMethod.Get, DesktopHostKit.TargetsPath, { [Kit.HostHeader]: DesktopHostKit.LoopbackHost })
+            assert.equal(targets.status, 503)
+            assert.deepEqual(JSON.parse(targets.body), {
+                error: 'console-not-registered',
+                message: 'This console is no longer registered with the platform. Ask your administrator.',
+            })
+            assert.deepEqual(JSON.parse(targets.body), ConsoleRegistration.RefusedBody)
+            const begin = await Kit.Raw(host, HttpMethod.Post, DesktopHostKit.BeginPath, { [Kit.HostHeader]: DesktopHostKit.LoopbackHost })
+            assert.equal(begin.status, 503)
+            assert.deepEqual(JSON.parse(begin.body), ConsoleRegistration.RefusedBody)
+            const unknown = await Kit.Raw(host, HttpMethod.Get, '/desktop/nope', { [Kit.HostHeader]: DesktopHostKit.LoopbackHost })
+            assert.equal(unknown.status, 503)
+            const lookup = await Kit.Raw(host, HttpMethod.Get, DesktopHostKit.ConsolePath, { [Kit.HostHeader]: DesktopHostKit.LoopbackHost })
+            assert.equal(lookup.status, 200)
+            assert.equal(JSON.parse(lookup.body).tenantId, Kit.TenantId)
+        }, registration)
+    })
+
+    it('a refused console refuses the relay upgrade with 503 and the body; the relay is never asked', async () =>
+    {
+        const relay = new StubRelay()
+        const plane = kit.Plane(true, Kit.TenantId)
+        plane.relay = relay as unknown as DesktopRelay
+        const registration = await kit.Registration()
+        await kit.WithHost(plane, async host =>
+        {
+            await DesktopHostKit.Refuse(registration)
+            const answer = await DesktopHostKit.RawUpgrade(host)
+            assert.ok(answer.statusLine.startsWith('HTTP/1.1 503'), answer.statusLine)
+            assert.deepEqual(JSON.parse(answer.body), ConsoleRegistration.RefusedBody)
+            assert.deepEqual(relay.urls, [])
+        }, registration)
+    })
+
+    it('becoming Refused closes the open relays with 4003', async () =>
+    {
+        const relay = new StubRelay()
+        const plane = kit.Plane(true, Kit.TenantId)
+        plane.relay = relay as unknown as DesktopRelay
+        const registration = await kit.Registration()
+        await kit.WithHost(plane, async () =>
+        {
+            assert.deepEqual(relay.closedWith, [], 'a Registered console retires nothing')
+            await registration.Observe(AdvertOutcome.Refused, AdvertTrigger.Timer)
+            assert.deepEqual(relay.closedWith, [], 'one refusal is not enough')
+            await registration.Observe(AdvertOutcome.Refused, AdvertTrigger.Timer)
+            assert.deepEqual(relay.closedWith, [4003])
+            await registration.Observe(AdvertOutcome.Accepted, AdvertTrigger.Timer)
+            assert.deepEqual(relay.closedWith, [4003], 'Registered again closes nothing more')
+            assert.equal(relay.reinstated, 1)
+        }, registration)
+        await registration.Observe(AdvertOutcome.Refused, AdvertTrigger.Timer)
+        await registration.Observe(AdvertOutcome.Refused, AdvertTrigger.Timer)
+        assert.deepEqual(relay.closedWith, [4003], 'a closed host no longer listens')
+    })
+
+    it('a console opened Refused retires its relay at once', async () =>
+    {
+        const relay = new StubRelay()
+        const plane = kit.Plane(true, Kit.TenantId)
+        plane.relay = relay as unknown as DesktopRelay
+        await kit.WithHost(plane, async () =>
+        {
+            assert.deepEqual(relay.closedWith, [4003])
+        }, await kit.Registration(ConsoleRegistrationState.Refused))
+    })
+
+    it('sessions survive a refusal: Registered again, the same bearer works', async () =>
+    {
+        const relay = new StubRelay()
+        const plane = kit.Plane(true, Kit.TenantId)
+        plane.relay = relay as unknown as DesktopRelay
+        const registration = await kit.Registration()
+        await kit.WithHost(plane, async host =>
+        {
+            const session = await kit.Store.Issue(Kit.TenantId, 'sub-1', undefined, TenantSessionKind.Desktop)
+            const bearer = { [Kit.HostHeader]: DesktopHostKit.LoopbackHost, [DesktopHostKit.AuthorizationHeader]: DesktopHostKit.BearerPrefix + session.id }
+            await DesktopHostKit.Refuse(registration)
+            assert.equal((await Kit.Raw(host, HttpMethod.Get, DesktopHostKit.TargetsPath, bearer)).status, 503)
+            assert.equal(await DesktopHostKit.RelayStatus(host, { Authorization: DesktopHostKit.BearerPrefix + session.id }), 503)
+            await registration.Observe(AdvertOutcome.Accepted, AdvertTrigger.Change)
+            assert.equal((await Kit.Raw(host, HttpMethod.Get, DesktopHostKit.TargetsPath, bearer)).status, 200)
+            assert.equal(await DesktopHostKit.RelayStatus(host, { Authorization: DesktopHostKit.BearerPrefix + session.id }), 418)
+            assert.equal(relay.urls.length, 1, 'only the upgrade after the console came back reached the relay')
+            assert.notEqual(await kit.Store.Validate(session.id), null, 'the desktop session was never revoked')
+        }, registration)
+    })
+
+    it('without a registration the host never refuses', async () =>
+    {
+        const relay = new StubRelay()
+        const plane = kit.Plane(true)
+        plane.relay = relay as unknown as DesktopRelay
+        await kit.WithHost(plane, async host =>
+        {
+            const session = await kit.Store.Issue(Kit.TenantId, 'sub-1', undefined, TenantSessionKind.Desktop)
+            const ok = await Kit.Raw(host, HttpMethod.Get, DesktopHostKit.TargetsPath, { [Kit.HostHeader]: DesktopHostKit.LoopbackHost, [DesktopHostKit.AuthorizationHeader]: DesktopHostKit.BearerPrefix + session.id })
+            assert.equal(ok.status, 200)
+            assert.equal(await DesktopHostKit.RelayStatus(host), 418)
+            assert.deepEqual(relay.closedWith, [])
         })
     })
 })

@@ -150,11 +150,15 @@ type RelayContext = { session: TenantSession; actor: string; action: DesktopActi
  * A relay's lifetime is bounded. It pings the client every 30 s and terminates a client that has not answered the previous
  * ping by the next one (a 30 s pong window), so a crashed or sleeping desktop never holds a tunnel lease and an upstream
  * socket indefinitely. And it closes with 4001 (RelayPipe.Expired: expired, open a new relay) at the earlier of its
- * desktop session's expiry and its minted credential's expiry, so it never outlives either.
+ * desktop session's expiry and its minted credential's expiry, so it never outlives either. While its console is no longer
+ * registered with the platform (Retire, until Reinstate) every relay, open or still connecting, closes with 4003
+ * (ConsoleRetiredCloseCode).
  */
 export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConnections
 {
     public static readonly Path = '/desktop/relay'
+    /** The close code a relay ends with when its console is no longer registered with the platform (Retire). */
+    public static readonly ConsoleRetiredCloseCode = 4003
     private static readonly BaseUrl = 'http://localhost'
     private static readonly EnvironmentParam = 'environment'
     private static readonly ActionParam = 'action'
@@ -196,6 +200,8 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
     private readonly pipes = new Set<RelayPipe>()
     /** Audit appends still running (each starts after its answer was written); Close waits for them. */
     private readonly pendingAudits = new Set<Promise<void>>()
+    /** Set by Retire, cleared by Reinstate: the code a relay still connecting is closed with instead of opening. */
+    private retiredWith: number | undefined
 
     public constructor(
         private readonly gate: DesktopAuthGate,
@@ -336,6 +342,28 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         return closed
     }
 
+    /**
+     * Closes every open relay with `code` and returns how many; until Reinstate, a relay still connecting (its dial or session
+     * re-check in flight) is closed with `code` as soon as its upgrade completes, so none stays open. Sessions are untouched.
+     */
+    public Retire(code: number): number
+    {
+        this.retiredWith = code
+        let closed = 0
+        for (const pipe of [...this.pipes])
+        {
+            pipe.Close(code)
+            closed++
+        }
+        return closed
+    }
+
+    /** Lifts Retire: relays connect and stay open again. */
+    public Reinstate(): void
+    {
+        this.retiredWith = undefined
+    }
+
     /** Re-homes relays opened under a rotated session so a later ClosePrincipal keeps them. */
     public MoveSession(oldSessionId: string, newSessionId: string): void
     {
@@ -439,6 +467,15 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
             await this.Refuse(req, socket, DesktopRelay.StatusBadGateway, context.actor, context.action, context.envName)
             return
         }
+        // Retired while this relay connected: it is closed now (lease released, credential revoked, never tracked) and the
+        // upgrade completes only so the client sees the retirement code, exactly as the relays Retire closed did.
+        const retired = this.retiredWith
+        if (retired !== undefined)
+        {
+            pipe.Close(retired)
+            this.wss.handleUpgrade(req, socket, head, client => pipe.Attach(client))
+            return
+        }
         this.pipes.add(pipe)
         // ws can still abort the handshake without calling back (a bad subprotocol or extension header, a socket that is no
         // longer writable): the socket then closes with no client attached, and the pipe must release its lease and upstream.
@@ -502,17 +539,17 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         }
     }
 
-    /** Writes a plain HTTP refusal on the not-yet-upgraded socket and ends it. */
-    private static WriteRefusal(socket: Duplex, status: number): void
+    /** Writes a plain HTTP refusal on the not-yet-upgraded socket and ends it; `body` defaults to `{ error: <the status's sentence> }`. */
+    public static WriteRefusal(socket: Duplex, status: number, body: object = { error: DesktopRelay.Messages.get(status) }): void
     {
         if (socket.destroyed)
         {
             return
         }
-        const body = JSON.stringify({ error: DesktopRelay.Messages.get(status) })
+        const text = JSON.stringify(body)
         socket.once(DesktopRelay.FinishEvent, () => socket.destroy())
         socket.end(DesktopRelay.HttpVersion + String(status) + DesktopRelay.Space + String(STATUS_CODES[status]) + DesktopRelay.HeaderSeparator
-            + DesktopRelay.ResponseHeaders + String(Buffer.byteLength(body)) + DesktopRelay.HeaderSeparator + DesktopRelay.HeaderSeparator + body)
+            + DesktopRelay.ResponseHeaders + String(Buffer.byteLength(text)) + DesktopRelay.HeaderSeparator + DesktopRelay.HeaderSeparator + text)
     }
 
     /** A GET carrying `Upgrade: websocket`, a well-formed Sec-WebSocket-Key, and version 13 or 8. */
@@ -561,6 +598,8 @@ class RelayPipe
     public static readonly NormalClosure = 1000
     /** The relay reached its deadline (its desktop session or its minted credential expired): open a new relay. */
     public static readonly Expired = 4001
+    /** The console is no longer registered with the platform (DesktopRelay.Retire); its one home is DesktopRelay. */
+    public static readonly ConsoleRetired = DesktopRelay.ConsoleRetiredCloseCode
     /** A ping goes out this often; a client that has not answered the previous one by the next is terminated. */
     public static readonly HeartbeatMs = 30_000
     private static readonly PongEvent = 'pong'
@@ -593,6 +632,8 @@ class RelayPipe
     private readonly pending = new Map<string, InFlightRequest>()
     private readonly allowed: ReadonlySet<string>
     private closed = false
+    /** The code Close was given: a client attaching after the close is closed with it. */
+    private closedWith: number = RelayPipe.GoingAway
     private awaitingPong = false
     private heartbeat: IRelayTimer | undefined
     private deadline: IRelayTimer | undefined
@@ -630,7 +671,7 @@ class RelayPipe
     {
         if (this.closed)
         {
-            client.close(RelayPipe.GoingAway)
+            client.close(this.closedWith)
             return
         }
         this.client = client
@@ -698,6 +739,7 @@ class RelayPipe
             return
         }
         this.closed = true
+        this.closedWith = code
         this.heartbeat?.Cancel()
         this.deadline?.Cancel()
         this.lease.Release()

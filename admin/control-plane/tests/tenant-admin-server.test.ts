@@ -28,6 +28,7 @@ import { TenantAdminEnv } from '../tenant-admin-env.js'
 import { ConsoleAdvertSender } from '../console-advert-sender.js'
 import { ConsoleEmailDomainStore } from '../console-email-domain-store.js'
 import { ConsoleOwnerResetFollower } from '../console-owner-reset-follower.js'
+import { AdvertOutcome, AdvertTrigger, ConsoleRegistration } from '../console-registration.js'
 import { WebSocket } from 'ws'
 import { KubeHttpsTransport } from '../../../src/agent/kube-https-transport.js'
 import { AuditRegistry } from '../audit-record.js'
@@ -120,6 +121,7 @@ class Names
     public static readonly Utf8 = 'utf8'
     public static readonly CloseEvent = 'close'
     public static readonly ConsolePath = '/desktop/console'
+    public static readonly TargetsPath = '/desktop/targets'
     public static readonly DesktopAuditFile = 'tenant-desktop-audit.json'
     public static readonly ServiceHostVar = 'KUBERNETES_SERVICE_HOST'
     public static readonly ServiceHost = '10.0.0.1'
@@ -775,6 +777,66 @@ describe('TenantAdminServer console advert', () =>
         const composition = await server.Compose({}, undefined, () => undefined)
         assert.deepEqual(await DesktopProbe.Get(composition, Names.ConsolePath), { handled: true, status: Names.Ok, body: { tenantId: Names.TenantId, tenantName: Names.TenantName } })
         assert.deepEqual(await handle(composition, Names.Get), { status: Names.Ok, body: { domains: [Names.EmailDomain], editable: true, inHive: true, pending: [] } })
+    })
+
+    it('Compose opens the console registration from the data root and passes it to the host', async () =>
+    {
+        writeConsoleSeed()
+        writeFileSync(join(root, ConsoleRegistration.FileName), JSON.stringify({ state: 'refused' }))
+        const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
+        const composition = await server.Compose({}, undefined, () => undefined)
+        assert.equal(composition.registration.IsRefused, true)
+        await composition.host.Listen(0, Names.DefaultBind)
+        try
+        {
+            const { port } = composition.host.Address()
+            const answer = await fetch(`http://${Names.DefaultBind}:${port}${Names.TargetsPath}`)
+            assert.equal(answer.status, Names.Unavailable)
+            assert.deepEqual(await answer.json(), ConsoleRegistration.RefusedBody)
+        }
+        finally
+        {
+            await composition.host.Close()
+        }
+    })
+
+    it('Compose passes the registration to the advert sender: a 200 answer restores a Refused console', async () =>
+    {
+        writeConsoleSeed()
+        writeFileSync(join(root, ConsoleRegistration.FileName), JSON.stringify({ state: 'refused' }))
+        const env = await runEnv(await listenChannel())
+        const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient())
+        const composition = await server.Run(env, () => undefined)
+        try
+        {
+            assert.equal(posts.length, 1)
+            assert.equal(composition.registration.IsRefused, false)
+            assert.deepEqual(JSON.parse(readFileSync(join(root, ConsoleRegistration.FileName), Names.Utf8)), { state: 'registered' })
+        }
+        finally
+        {
+            await server.Close()
+        }
+    })
+
+    it('AdvertSenderOf hands each outcome to the registration it is given', async () =>
+    {
+        const registration = await ConsoleRegistration.Open(join(root, ConsoleRegistration.FileName), () => undefined)
+        await registration.Observe(AdvertOutcome.Refused, AdvertTrigger.Timer)
+        await registration.Observe(AdvertOutcome.Refused, AdvertTrigger.Timer)
+        const env = advertEnv(await listenChannel())
+        const sender = TenantAdminServer.AdvertSenderOf(env, TenantAdminServer.ReadConfig(env), tenant, await store(), () => undefined, undefined, registration)
+        assert.ok(sender !== undefined)
+        await sender.Start()
+        try
+        {
+            assert.equal(registration.IsRefused, false)
+        }
+        finally
+        {
+            sender.Stop()
+            await sender.Idle()
+        }
     })
 
     it('a PUT on the console route writes the console store and its file, never the seeded record', async () =>

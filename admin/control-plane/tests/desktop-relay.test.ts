@@ -981,6 +981,72 @@ describe('DesktopRelay contribute', () =>
     })
 })
 
+describe('DesktopRelay console retirement', () =>
+{
+    let kit: RelayKit
+
+    beforeEach(async () =>
+    {
+        kit = new RelayKit()
+        await kit.Start()
+    })
+
+    afterEach(async () =>
+    {
+        await kit.Stop()
+    })
+
+    /** Dials with every listener armed at once: whether the client opened, then its close code (or the refusal status). */
+    const Outcome = (): Promise<{ opened: boolean; code: number }> =>
+    {
+        const ws = new WebSocket(kit.Url(RelayKit.Dev, 'contribute'), { headers: { Authorization: 'Bearer ' + kit.desktopToken } })
+        return new Promise(res =>
+        {
+            let opened = false
+            ws.once('open', () => { opened = true })
+            ws.once('close', code => res({ opened, code }))
+            ws.once('unexpected-response', (_req, response) => { res({ opened: false, code: response.statusCode ?? 0 }); ws.terminate() })
+        })
+    }
+
+    it('the console retired close code is 4003', () =>
+    {
+        assert.equal(DesktopRelay.ConsoleRetiredCloseCode, 4003)
+    })
+
+    it('Retire closes every open relay with the given code and releases each lease once', async () =>
+    {
+        const { ws } = await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)
+        await RelayKit.RoundTrip(ws as WebSocket, 1)
+        const closed = RelayKit.Closed(ws as WebSocket)
+        assert.equal(kit.relay.Retire(DesktopRelay.ConsoleRetiredCloseCode), 1)
+        assert.equal(await closed, 4003)
+        await RelayKit.Until(() => kit.endpoints.releases === 1 && kit.upstream.closedByPeer === 1)
+        await new Promise(res => setTimeout(res, 30))
+        assert.equal(kit.endpoints.releases, 1)
+        assert.equal(kit.relay.Retire(DesktopRelay.ConsoleRetiredCloseCode), 0, 'nothing is left open')
+    })
+
+    it('a relay still dialing when the console is retired is closed with the code too, never left open; Reinstate opens relays again', async () =>
+    {
+        let open: () => void = () => undefined
+        kit.dialer.gate = new Promise<void>(res => { open = res })
+        const outcome = Outcome()
+        await RelayKit.Until(() => kit.upstream.Connections() === 1)
+        assert.equal(kit.relay.Retire(DesktopRelay.ConsoleRetiredCloseCode), 0, 'the dialing relay is not open yet')
+        open()
+        assert.equal((await outcome).code, 4003)
+        await RelayKit.Until(() => kit.endpoints.releases === 1 && kit.upstream.closedByPeer === 1)
+        assert.equal(kit.relay.Retire(DesktopRelay.ConsoleRetiredCloseCode), 0, 'the retired relay is not tracked')
+        kit.relay.Reinstate()
+        kit.dialer.gate = undefined
+        const { status, ws } = await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)
+        assert.equal(status, 101)
+        await RelayKit.RoundTrip(ws as WebSocket, 2)
+        ws?.close()
+    })
+})
+
 describe('DesktopRelay lifetime', () =>
 {
     let kit: RelayKit

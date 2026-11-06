@@ -47,13 +47,14 @@ export class DesktopEndpoint
     /** The begin rate limit: 10 begins per minute per address, then locked for a minute. */
     public static readonly MaxBeginsPerWindow = 10
     public static readonly BeginWindowMs = 60 * 1000
+    /** The in-hive console's lookup; it answers even while the console is refused by the platform (TenantPlaneHost). */
+    public static readonly ConsolePath = '/desktop/console'
 
     private static readonly BeginPath = '/desktop/sign-in/begin'
     private static readonly CompletePath = '/desktop/sign-in/complete'
     private static readonly SignOutPath = '/desktop/sign-out'
     private static readonly ProfilePath = '/desktop/profile'
     private static readonly TargetsPath = '/desktop/targets'
-    private static readonly ConsolePath = '/desktop/console'
     private static readonly RedirectPattern = /^http:\/\/127\.0\.0\.1:(\d{1,5})\/pragmatic-desktop\/callback$/
     private static readonly ChallengePattern = /^[A-Za-z0-9_-]{43}$/
     /** RFC 7636 verifier shape: 43-128 unreserved characters. */

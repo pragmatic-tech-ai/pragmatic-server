@@ -38,6 +38,7 @@ import { ConsoleAdvertSender, HttpConsoleAdvertTransport, IntervalAdvertTimer, S
 import { ConsoleEmailDomainStore } from './console-email-domain-store.js'
 import { ConsoleOwnerResetFollower } from './console-owner-reset-follower.js'
 import { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
+import { ConsoleRegistration } from './console-registration.js'
 import { SeededTenantDirectory, type TenantDirectorySeed } from './tenant-api/seeded-tenant-directory.js'
 import type { IRolloutClient } from './tenant-api/rollout-client.js'
 import { UnconfiguredRolloutClient } from './tenant-api/unconfigured-rollout-client.js'
@@ -88,6 +89,11 @@ export type TenantAdminComposition = {
     readonly desktopAudit: AuditRegistry
     /** The graph routes' audit (`<dataRoot>/tenant-graph-audit.json`), loaded before the plane is built. */
     readonly graphAudit: AuditRegistry
+    /**
+     * Whether the platform still takes this console's adverts (`<dataRoot>/console-registration.json`): the advert sender
+     * feeds it, and the host refuses the desktop surface and the relay while it is Refused.
+     */
+    readonly registration: ConsoleRegistration
 }
 
 /**
@@ -186,9 +192,10 @@ export class TenantAdminServer
      * The console's advert sender: undefined (and one log line naming the missing setting's env var, never a value) unless
      * consoleHost, a ConsoleFingerprintKeys.KeyBytes key file and RolloutUrl / RolloutToken / RolloutHiveId are all present.
      * It dials home over the same agent channel, bearer and hive as the HTTP rollout client. consoleUrl = 'https://' + consoleHost.
-     * Every 200 answer is handed to `follower` (the console's ConsoleOwnerResetFollower) when one is given.
+     * Every 200 answer is handed to `follower` (the console's ConsoleOwnerResetFollower) when one is given, and every
+     * outcome to `registration` (the console's ConsoleRegistration) when one is given.
      */
-    public static AdvertSenderOf(env: NodeJS.ProcessEnv, cfg: TenantAdminConfig, tenant: TenantRecord, domains: ConsoleEmailDomainStore, log: (line: string) => void = TenantAdminServer.LogLine, follower?: IOwnerResetFollower): ConsoleAdvertSender | undefined
+    public static AdvertSenderOf(env: NodeJS.ProcessEnv, cfg: TenantAdminConfig, tenant: TenantRecord, domains: ConsoleEmailDomainStore, log: (line: string) => void = TenantAdminServer.LogLine, follower?: IOwnerResetFollower, registration?: ConsoleRegistration): ConsoleAdvertSender | undefined
     {
         const S = TenantAdminServer
         const url = S.OptionalOf(env, TenantAdminEnv.RolloutUrl)
@@ -220,7 +227,7 @@ export class TenantAdminServer
             return S.AdvertOff(log, TenantAdminEnv.FingerprintKeyFile + S.BadKeyInfix + ConsoleFingerprintKeys.KeyBytes + S.BytesSuffix)
         }
         return new ConsoleAdvertSender(new HttpConsoleAdvertTransport(url, token, hiveId), new SeededConsoleAccounts(tenant), domains, key,
-            S.ConsoleUrlScheme + cfg.consoleHost, new IntervalAdvertTimer(), log, follower)
+            S.ConsoleUrlScheme + cfg.consoleHost, new IntervalAdvertTimer(), log, follower, registration)
     }
 
     /**
@@ -271,7 +278,7 @@ export class TenantAdminServer
     /**
      * Builds the whole tenant plane over this process's own data root without binding anything: seeded directory,
      * stores, services, plane (with the desktop surface; its relay only in a pod), host, health monitor, the console's email
-     * domains, the desktop audit and (in a configured console) its advert sender.
+     * domains, the desktop audit, the console registration (gating the host) and (in a configured console) its advert sender.
      */
     public async Compose(env: NodeJS.ProcessEnv = process.env, serviceAccountRoot?: string, log: (line: string) => void = TenantAdminServer.LogLine): Promise<TenantAdminComposition>
     {
@@ -317,14 +324,16 @@ export class TenantAdminServer
         const monitor = cfg.probeMs > 0
             ? new TenantHealthMonitor(directory, new HiveHealthProducer(service, orchestrators, placement), plane.events, cfg.probeMs, cfg.probeTimeoutMs, service)
             : undefined
-        const host = new TenantPlaneHost(plane, resolver, staticRoot, service, monitor)
+        // Never throws: a missing or bad file opens Registered, so the desktop is never locked out by it.
+        const registration = await ConsoleRegistration.Open(join(dataRoot, ConsoleRegistration.FileName), log)
+        const host = new TenantPlaneHost(plane, resolver, staticRoot, service, monitor, registration)
         // An operator Owner reset reaches this console in the advert answer; the follower then ends the Owner's sessions, sockets
         // and relays (the host has attached both to plane.principals above).
         const follower = plane.principals === undefined
             ? undefined
             : new ConsoleOwnerResetFollower(plane.principals, tenant, join(dataRoot, ConsoleOwnerResetFollower.FileName))
-        const advert = TenantAdminServer.AdvertSenderOf(env, cfg, tenant, emailDomains, log, follower)
-        return { directory, rollout: this.rollout, plane, host, monitor, config: cfg, reach, emailDomains, advert, desktopAudit, graphAudit }
+        const advert = TenantAdminServer.AdvertSenderOf(env, cfg, tenant, emailDomains, log, follower, registration)
+        return { directory, rollout: this.rollout, plane, host, monitor, config: cfg, reach, emailDomains, advert, desktopAudit, graphAudit, registration }
     }
 
     /** Composes, binds the tenant listener, then starts the advert (its first send awaited; a failure is logged, never thrown). */

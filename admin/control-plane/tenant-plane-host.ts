@@ -4,6 +4,8 @@ import type { AddressInfo } from 'node:net'
 import type { Duplex } from 'node:stream'
 import { resolve } from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
+import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
+import { ConsoleRegistration, ConsoleRegistrationState } from './console-registration.js'
 import type { IEnvironmentService } from './control-plane-host.js'
 import { EnvironmentChangeKind } from './environment-record.js'
 import { PlaneHttp } from './plane-http.js'
@@ -25,6 +27,12 @@ import type { TenantHealthMonitor } from './tenant-health-monitor.js'
  * `TenantHostResolver`; a host that is not a known tenant subdomain is refused (403) before any routing, on both HTTP and
  * ws. The one exception is `/desktop/*`, which is Host-independent (Plexus dials plain loopback): it takes its tenant only
  * from the sign-in flow or the desktop bearer, never the Host.
+ *
+ * On the in-hive console a `ConsoleRegistration` gates the desktop surface: while the platform refuses the console, every
+ * `/desktop/*` request except the `/desktop/console` lookup answers 503 with `ConsoleRegistration.RefusedBody`, the relay
+ * upgrade is refused 503 with that body before the relay is asked, and becoming Refused closes the open relays with 4003
+ * (`DesktopRelay.ConsoleRetiredCloseCode`). No session is touched: Registered again, the same bearer works. Without a
+ * registration (the platform's tenant plane) the host never refuses.
  */
 export class TenantPlaneHost
 {
@@ -38,6 +46,7 @@ export class TenantPlaneHost
     private static readonly StatusForbidden = 403
     private static readonly StatusUnauthorized = 401
     private static readonly StatusInternal = 500
+    private static readonly StatusUnavailable = 503
     private static readonly ForbiddenHostMessage = 'Host not allowed'
     private static readonly BadOriginMessage = 'Origin not allowed'
     private static readonly OriginHeader = 'origin'
@@ -57,6 +66,8 @@ export class TenantPlaneHost
     private readonly relay: DesktopRelay | undefined
     private readonly tenantStaticRootAbs: string
     private readonly changeSubscription: () => void
+    /** The registration's Changed subscription (retires / reinstates the relay); undefined without a registration. */
+    private readonly registrationSubscription: IDisposable | undefined
     private httpServer: HttpServer | undefined
     private wsServer: WebSocketServer | undefined
     /** Tenant ws sockets mapped to their teardown (events: unsubscribe; logs: kill the stream). Close() runs each. */
@@ -67,7 +78,9 @@ export class TenantPlaneHost
         private readonly resolver: TenantHostResolver,
         tenantStaticRoot: string,
         private readonly service: IEnvironmentService,
-        private readonly monitor?: TenantHealthMonitor)
+        private readonly monitor?: TenantHealthMonitor,
+        /** The in-hive console's registration with the platform; absent (the platform's tenant plane), nothing is refused. */
+        private readonly registration?: ConsoleRegistration)
     {
         this.endpoint = plane.endpoint
         this.gate = plane.gate
@@ -92,6 +105,29 @@ export class TenantPlaneHost
                 this.events.Emit(rec.tenantId, { type: TenantPlaneHost.TenantEventFor(change.kind), environmentName: rec.name })
             }
         })
+        // A console that opens Refused retires its relay at once; each change retires or reinstates it.
+        this.registrationSubscription = registration?.Changed.subscribe(state => this.ApplyRegistration(state))
+        if (registration?.IsRefused === true)
+        {
+            this.ApplyRegistration(ConsoleRegistrationState.Refused)
+        }
+    }
+
+    /** Refused closes the open relays with 4003 and keeps new ones from staying open; Registered lifts that. */
+    private ApplyRegistration(state: ConsoleRegistrationState): void
+    {
+        if (state === ConsoleRegistrationState.Refused)
+        {
+            this.relay?.Retire(DesktopRelay.ConsoleRetiredCloseCode)
+            return
+        }
+        this.relay?.Reinstate()
+    }
+
+    /** Whether the platform refuses this console right now (never without a registration). */
+    private get IsRefused(): boolean
+    {
+        return this.registration?.IsRefused === true
     }
 
     /** Maps an environment lifecycle-change kind to the tenant event type fanned out over the tenant bus. */
@@ -137,6 +173,7 @@ export class TenantPlaneHost
     {
         this.monitor?.Stop()
         this.changeSubscription()
+        this.registrationSubscription?.dispose()
         for (const [ws, tracked] of this.clients)
         {
             tracked.teardown()
@@ -209,9 +246,18 @@ export class TenantPlaneHost
         }
     }
 
-    /** Hands `/desktop/*` to the desktop endpoint; 404 when the plane has none or the path is not one of its routes. */
+    /**
+     * Hands `/desktop/*` to the desktop endpoint; 404 when the plane has none or the path is not one of its routes. While the
+     * console is refused, every path but the `/desktop/console` lookup answers 503 with the refused body instead.
+     */
     private async RouteDesktop(req: IncomingMessage, res: ServerResponse, path: string): Promise<void>
     {
+        if (this.IsRefused && path !== DesktopEndpoint.ConsolePath)
+        {
+            req.resume()
+            PlaneHttp.WriteJson(res, TenantPlaneHost.StatusUnavailable, ConsoleRegistration.RefusedBody)
+            return
+        }
         if (this.desktop !== undefined && await this.desktop.Handle(req, res, path))
         {
             return
@@ -258,7 +304,8 @@ export class TenantPlaneHost
     }
 
     /**
-     * Dispatches a ws upgrade. The desktop relay (`/desktop/relay`, answered by DesktopRelay with its own HTTP refusals),
+     * Dispatches a ws upgrade. The desktop relay (`/desktop/relay`, answered by DesktopRelay with its own HTTP refusals, or
+     * refused here 503 with the refused body while the console is refused),
      * `/tenant-api/events` and the tenant logs-stream pattern are served; any other path destroys the socket. The tenant
      * routes are each gated by the request host (a known tenant subdomain), the tenant origin, and a resolved
      * `pts_session` principal; any failure destroys the socket.
@@ -277,6 +324,13 @@ export class TenantPlaneHost
             if (this.relay === undefined)
             {
                 socket.destroy()
+                return
+            }
+            // Refused before the relay is asked, so this answer is not audited (nothing is leased, minted or dialed).
+            if (this.IsRefused)
+            {
+                socket.on(TenantPlaneHost.ErrorEvent, () => undefined)
+                DesktopRelay.WriteRefusal(socket, TenantPlaneHost.StatusUnavailable, ConsoleRegistration.RefusedBody)
                 return
             }
             this.relay.Upgrade(req, socket, head).catch(() => socket.destroy())
