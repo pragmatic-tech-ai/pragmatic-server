@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import { AtomicJsonFile } from './atomic-json-file.js'
 import { DomainApprovalState, DomainVerificationRecord, type DomainVerificationAnswer } from './domain-verification-record.js'
-import { EmailDomainPolicy } from './email-domain-policy.js'
+import { EmailDomainPolicy, InvalidEmailDomainError } from './email-domain-policy.js'
 import { DomainNotClaimedError, DomainVerificationUnavailableError, EmailDomainsNotEditableError, type ITenantEmailDomains, type TenantEmailDomainsView } from './tenant-api/tenant-email-domains.js'
 
 /**
@@ -95,8 +95,9 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
 
     /**
      * Asks the platform, through the attached channel, to check one listed domain's TXT record now, holds its answer and answers
-     * the updated view. Throws EmailDomainsNotEditableError (another tenant), DomainNotClaimedError (the normalised domain is not
-     * listed), DomainVerificationUnavailableError (no channel, or an answer for another domain) or the channel's own refusal.
+     * the updated view. Throws EmailDomainsNotEditableError (another tenant), InvalidEmailDomainError (the normalised domain is not
+     * a well-formed name; checked before the list and the channel), DomainNotClaimedError (it is not listed),
+     * DomainVerificationUnavailableError (no channel, or an answer for another domain) or the channel's own refusal.
      */
     public async Verify(tenantId: string, domain: string): Promise<TenantEmailDomainsView>
     {
@@ -106,6 +107,11 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
             throw new EmailDomainsNotEditableError(S.NotEditableMessage)
         }
         const normalised = EmailDomainPolicy.Normalise(domain)
+        const refusal = EmailDomainPolicy.CheckSyntax(normalised)
+        if (refusal !== undefined)
+        {
+            throw new InvalidEmailDomainError(refusal)
+        }
         if (!this.domains.includes(normalised))
         {
             throw new DomainNotClaimedError(normalised + S.NotListedSuffix)

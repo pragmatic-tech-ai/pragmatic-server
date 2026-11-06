@@ -19,6 +19,7 @@ class Names
     public static readonly SecondDomain = 'second.test'
     public static readonly ThirdDomain = 'third.test'
     public static readonly UnlistedDomain = 'unlisted.test'
+    public static readonly MalformedDomain = 'not a domain'
     public static readonly PublicMail = 'gmail.com'
     public static readonly Utf8 = 'utf8'
     public static readonly Token = 'A'.repeat(43)
@@ -205,7 +206,8 @@ describe('ConsoleEmailDomainStore', () =>
         store.AttachVerifyChannel(channel)
         const view = await store.Verify(Names.TenantId, Names.MessySeedDomain)
         assert.deepEqual(channel.Asked, [Names.SeedDomain])
-        assert.deepEqual(view.verifications.map(v => [v.domain, v.state]), [[Names.SeedDomain, DomainApprovalState.VerifiedContested], [Names.NewDomain, DomainApprovalState.Pending]].sort())
+        assert.deepEqual(view.verifications.map(v => [v.domain, v.state]), [[Names.NewDomain, DomainApprovalState.Pending], [Names.SeedDomain, DomainApprovalState.VerifiedContested]],
+            'in list order')
         assert.deepEqual(view.pending, [Names.NewDomain, Names.SeedDomain])
         assert.deepEqual(await store.For(Names.TenantId), view, 'the merged answer is held')
         assert.equal(existsSync(file), false, 'Verify writes nothing')
@@ -219,6 +221,16 @@ describe('ConsoleEmailDomainStore', () =>
         await assert.rejects(() => store.Verify(Names.OtherTenantId, Names.SeedDomain), EmailDomainsNotEditableError)
         await assert.rejects(() => store.Verify(Names.TenantId, Names.UnlistedDomain),
             (e: Error) => e instanceof DomainNotClaimedError && e.message === Names.UnlistedMessage)
+        assert.deepEqual(channel.Asked, [])
+    })
+
+    it('Verify refuses a malformed domain with InvalidEmailDomainError before the list and channel checks', async () =>
+    {
+        const store = await ConsoleEmailDomainStore.Open(file, Names.TenantId, [Names.SeedDomain])
+        await assert.rejects(() => store.Verify(Names.TenantId, Names.MalformedDomain), InvalidEmailDomainError)
+        const channel = new FakeVerifyChannel()
+        store.AttachVerifyChannel(channel)
+        await assert.rejects(() => store.Verify(Names.TenantId, Names.MalformedDomain), InvalidEmailDomainError)
         assert.deepEqual(channel.Asked, [])
     })
 

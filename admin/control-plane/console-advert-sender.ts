@@ -114,7 +114,7 @@ export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport, ICon
      * EmailDomainPolicy.MaxDomains (20) raw domains, so refused plus accepted domains are at most 20 together. The largest
      * legitimate answer is therefore 20 accepted domains at the 253-character DNS maximum, each with a full verification answer
      * (253 + the 43-character token + about 110 for the keys, the longest state and lastCheckedAt, about 409 bytes), plus the
-     * keys and ownerResetAt: roughly 8.3 KB. 32 KiB leaves about four times that as headroom while still bounding what a
+     * keys and ownerResetAt: roughly 8.3 KB. 32 KiB is about four times that, while still bounding what a
      * hostile answer can make the console buffer. A verify answer (one verification) is far below it.
      */
     public static readonly MaxAnswerBytes = 32768
