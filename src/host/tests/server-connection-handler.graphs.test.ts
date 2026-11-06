@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, GraphProtocol, AdminProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { GraphContributeParamsDto, GraphCreateParamsDto, GraphDetailDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { GraphContributeParamsDto, GraphCreateParamsDto, GraphDetailDto, GraphExportDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -9,38 +9,62 @@ import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { PolicyGate } from '../policy-gate.js'
 import { ScopedAccessContext, TokenScope } from '../token-scope.js'
+import { GraphNotFoundError, GraphExistsError, GraphNameInvalidError } from '../graphs/dev-graph-service.js'
 import type { IDevGraphService } from '../graphs/dev-graph-service.js'
+import { GraphPackageConflictError, GraphPackageSegmentError } from '../graphs/graph-package-ingest.js'
+import { GraphPackageMissingError } from '../graphs/graph-package-reader.js'
+import { GraphErrorCode } from '../graphs/graph-error-codes.js'
 
 class FakeGraphService implements IDevGraphService
 {
     public readonly Calls: string[] = []
+    public Failure: Error | undefined
+
+    public async ExportGraph(params: GraphRefParamsDto): Promise<GraphExportDto>
+    {
+        this.Fail()
+        return { name: params.graphName, packages: [] }
+    }
+
+    private Fail(): void
+    {
+        if (this.Failure !== undefined)
+        {
+            throw this.Failure
+        }
+    }
 
     public async CreateGraph(params: GraphCreateParamsDto): Promise<GraphSummaryDto>
     {
+        this.Fail()
         this.Calls.push(GraphFixture.CreateCall + params.graphName)
         return { name: params.graphName, description: params.description, packageCount: 0, createdAt: GraphFixture.Stamp }
     }
 
     public async ListGraphs(): Promise<GraphSummaryDto[]>
     {
+        this.Fail()
         this.Calls.push(GraphFixture.ListCall)
         return [{ name: GraphFixture.GraphName, description: GraphFixture.Description, packageCount: 0, createdAt: GraphFixture.Stamp }]
     }
 
     public async GetGraph(params: GraphRefParamsDto): Promise<GraphDetailDto>
     {
+        this.Fail()
         this.Calls.push(GraphFixture.GetCall + params.graphName)
         return { name: params.graphName, description: GraphFixture.Description, packages: [], createdAt: GraphFixture.Stamp }
     }
 
     public async ContributeGraph(params: GraphContributeParamsDto): Promise<GraphDetailDto>
     {
+        this.Fail()
         this.Calls.push(GraphFixture.ContributeCall + params.graphName)
         return { name: params.graphName, description: GraphFixture.Description, packages: [], createdAt: GraphFixture.Stamp }
     }
 
     public async DeleteGraph(params: GraphRefParamsDto): Promise<void>
     {
+        this.Fail()
         this.Calls.push(GraphFixture.DeleteCall + params.graphName)
     }
 }
@@ -290,6 +314,49 @@ test('a graph-contribute service credential is refused graph/delete even with an
     {
         await client.DeleteGraph({ graphName: GraphFixture.GraphName })
         assert.deepEqual(open.Service.Calls, [GraphFixture.DeleteCall + GraphFixture.GraphName])
+    })
+})
+
+test('graph failures answer their typed code with the unchanged message', async () =>
+{
+    const fixture = new GraphFixture()
+    const ref = { graphName: GraphFixture.GraphName }
+    const contribute = { graphName: GraphFixture.GraphName, solutionId: GraphFixture.SolutionId, packages: [] }
+    await fixture.With(TenantPurpose.Development, async client =>
+    {
+        fixture.Service.Failure = new GraphNotFoundError(GraphFixture.GraphName)
+        let error = await GraphFixture.ErrorOf(client.GetGraph(ref))
+        assert.equal(error.code, GraphErrorCode.NotFound)
+        assert.equal(error.code, -32040)
+        assert.equal(error.message, 'Graph not found: sales')
+        fixture.Service.Failure = new GraphExistsError(GraphFixture.GraphName)
+        error = await GraphFixture.ErrorOf(client.CreateGraph({ graphName: GraphFixture.GraphName, description: GraphFixture.Description }))
+        assert.equal(error.code, -32041)
+        fixture.Service.Failure = new GraphNameInvalidError(GraphFixture.GraphName)
+        error = await GraphFixture.ErrorOf(client.GetGraph(ref))
+        assert.equal(error.code, -32042)
+        fixture.Service.Failure = new GraphPackageConflictError()
+        error = await GraphFixture.ErrorOf(client.ContributeGraph(contribute))
+        assert.equal(error.code, -32043)
+        fixture.Service.Failure = new GraphPackageSegmentError()
+        error = await GraphFixture.ErrorOf(client.ContributeGraph(contribute))
+        assert.equal(error.code, -32044)
+        fixture.Service.Failure = new GraphPackageMissingError({ id: 'p', version: '1.0.0' })
+        error = await GraphFixture.ErrorOf(client.ExportGraph(ref))
+        assert.equal(error.code, -32045)
+        assert.equal(error.message, fixture.Service.Failure.message)
+    })
+})
+
+test('a non-graph failure still answers -32603 internal error', async () =>
+{
+    const fixture = new GraphFixture()
+    await fixture.With(TenantPurpose.Development, async client =>
+    {
+        fixture.Service.Failure = new Error('secret detail')
+        const error = await GraphFixture.ErrorOf(client.GetGraph({ graphName: GraphFixture.GraphName }))
+        assert.equal(error.code, ErrorCodes.InternalError)
+        assert.equal(error.message, 'internal error')
     })
 })
 

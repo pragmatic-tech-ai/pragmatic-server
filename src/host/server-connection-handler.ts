@@ -35,7 +35,8 @@ import { AdminService, AdminSelfLockoutError, LastAdministratorError, AdminConfi
 import { AdminEnums, AdminEnumError } from './admin-enums.js'
 import { TenantPurpose } from '../tenancy/tenant-purpose.js'
 import type { IDevGraphService } from './graphs/dev-graph-service.js'
-import { NoEnvironmentGraphError, type IEnvironmentGraphHost } from './graphs/environment-graph.js'
+import { GraphErrorCodes } from './graphs/graph-error-codes.js'
+import { NoEnvironmentGraphError,type IEnvironmentGraphHost } from './graphs/environment-graph.js'
 import type { PragmaticAppsRegistry } from './apps/pragmatic-apps-registry.js'
 import { CypherLimits } from '../config/cypher-limits.js'
 import { PagingLimits } from '../config/paging-limits.js'
@@ -99,7 +100,7 @@ export class ServerConnectionHandler
     private static readonly ApplicationsUnavailableMessage = 'pragmatic applications are not available on this connection'
     public static readonly RateLimitedCode = -32029
     public static readonly CypherTimeoutCode = -32030
-    // -32031 (protocol DrainingError) and -32032 (protocol wire error) are reserved; -32033 is the first free server-error code and stays distinct from the draining code Revoke() also sets.
+    // -32031 (protocol DrainingError) and -32032 (protocol wire error) are reserved; -32033 is the first free server-error code and stays distinct from the draining code Revoke() also sets. -32040..-32045 are the graph error codes (GraphErrorCode).
     public static readonly RevokedCode = -32033
     private static readonly RevokedMessage = 'connection authorization has been revoked'
 
@@ -333,7 +334,7 @@ export class ServerConnectionHandler
         const fail = (error: unknown): never =>
         {
             this.inFlight--
-            throw error instanceof ResponseError ? error : new ResponseError(ErrorCodes.InternalError, ServerConnectionHandler.GenericInternalMessage)
+            throw error instanceof ResponseError ? error : GraphErrorCodes.ToResponseError(error) ?? new ResponseError(ErrorCodes.InternalError, ServerConnectionHandler.GenericInternalMessage)
         }
         try
         {
