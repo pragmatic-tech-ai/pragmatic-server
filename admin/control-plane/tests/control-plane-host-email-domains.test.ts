@@ -96,6 +96,13 @@ class Send
         return JSON.parse(r.body) as TenantEmailDomainsReport
     }
 
+    /** Issues the tenant's tokens (a report does) and answers the stored token of one domain. */
+    public static async StoredToken(domains: PlatformEmailDomains, approvals: ConsoleDomainApprovals, tenantId: string, domain: string): Promise<string>
+    {
+        await domains.Report(tenantId)
+        return approvals.VerificationOf(tenantId, domain)?.token as string
+    }
+
     public static Error(r: Reply): string
     {
         return (JSON.parse(r.body) as { error: string }).error
@@ -162,7 +169,7 @@ describe('ControlPlaneHost tenant email domains', () =>
         resolver = new FakeTxtResolver()
         domains = new PlatformEmailDomains(directory, adverts, approvals, new DomainTxtVerifier(resolver))
         const deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
-        host =new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
+        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
             new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent),
             undefined, undefined, undefined, undefined, undefined, undefined, new OperatorAuthorization(), audit,
             undefined, undefined, undefined, undefined, undefined, undefined, undefined, adverts, approvals, domains)
@@ -370,16 +377,9 @@ describe('ControlPlaneHost tenant email domains', () =>
         ].sort())
     })
 
-    /** Issues the tenant's tokens (a GET does) and answers the stored token of one domain. */
-    const StoredToken = async (tenantId: string, domain: string): Promise<string> =>
-    {
-        await domains.Report(tenantId)
-        return approvals.VerificationOf(tenantId, domain)?.token as string
-    }
-
     it('POST verify with a matching record answers the report with state Verified and audits the domain', async () =>
     {
-        resolver.Publish(await StoredToken('acme', 'acme.test'))
+        resolver.Publish(await Send.StoredToken(domains, approvals, 'acme', 'acme.test'))
         const r = await Send.Request(host, 'POST', AcmePath + '/verify', { domain: 'Acme.TEST' })
         assert.equal(r.status, 200)
         const row = Send.Report(r).approvals.find(a => a.domain === 'acme.test') as EmailDomainApproval
@@ -408,7 +408,7 @@ describe('ControlPlaneHost tenant email domains', () =>
 
     it('POST verify while the lookup fails is 503 with the sentence and changes nothing', async () =>
     {
-        await StoredToken('acme', 'acme.test')
+        await Send.StoredToken(domains, approvals, 'acme', 'acme.test')
         const before = approvals.VerificationOf('acme', 'acme.test')
         resolver.answer = { status: TxtLookupStatus.Failed, records: [] }
         const r = await Send.Request(host, 'POST', AcmePath + '/verify', { domain: 'acme.test' })
@@ -432,7 +432,7 @@ describe('ControlPlaneHost tenant email domains', () =>
 
     it('a token in the body is ignored', async () =>
     {
-        const stored = await StoredToken('acme', 'acme.test')
+        const stored = await Send.StoredToken(domains, approvals, 'acme', 'acme.test')
         const sent = 'A'.repeat(43)
         assert.notEqual(stored, sent)
         resolver.Publish(stored)
@@ -446,7 +446,7 @@ describe('ControlPlaneHost tenant email domains', () =>
 
     it('a read-only operator gets 403 on verify', async () =>
     {
-        await StoredToken('acme', 'acme.test')
+        await Send.StoredToken(domains, approvals, 'acme', 'acme.test')
         const r = await Send.Request(host, 'POST', AcmePath + '/verify', { domain: 'acme.test' }, FakeOperator.ReadOnlyToken)
         assert.equal(r.status, 403)
         assert.deepEqual(resolver.Names, [])
@@ -455,7 +455,7 @@ describe('ControlPlaneHost tenant email domains', () =>
 
     it('GET answers each row\'s state, recordName and recordValue', async () =>
     {
-        const token = await StoredToken('acme', 'acme.test')
+        const token = await Send.StoredToken(domains, approvals, 'acme', 'acme.test')
         resolver.Publish(token)
         await Send.Request(host, 'POST', AcmePath + '/verify', { domain: 'acme.test' })
         const r = await Send.Request(host, 'GET', AcmePath)
