@@ -25,6 +25,7 @@ class Names
     public static readonly Token = 'A'.repeat(43)
     public static readonly OtherToken = 'B'.repeat(43)
     public static readonly CheckedAt = '2026-11-06T10:00:00.000Z'
+    public static readonly LaterCheckedAt = '2026-11-06T10:05:00.000Z'
     public static readonly NoChannelMessage = 'Domain verification is not available on this console.'
     public static readonly PlatformUnavailableMessage = 'The platform could not check the domain. Try again later.'
     public static readonly UnlistedMessage = 'unlisted.test is not among this console\'s email domains.'
@@ -211,6 +212,27 @@ describe('ConsoleEmailDomainStore', () =>
         assert.deepEqual(view.pending, [Names.NewDomain, Names.SeedDomain])
         assert.deepEqual(await store.For(Names.TenantId), view, 'the merged answer is held')
         assert.equal(existsSync(file), false, 'Verify writes nothing')
+    })
+
+    it('an older advert answer arriving after a Verify does not overwrite the Verify\'s newer answer; a newer one does', async () =>
+    {
+        const store = await ConsoleEmailDomainStore.Open(file, Names.TenantId, [Names.SeedDomain, Names.NewDomain])
+        const channel = new FakeVerifyChannel()
+        channel.Answer = { ...FakeVerifyChannel.AnswerFor(Names.SeedDomain, DomainApprovalState.Verified, true), lastCheckedAt: Names.LaterCheckedAt }
+        store.AttachVerifyChannel(channel)
+        await store.Verify(Names.TenantId, Names.SeedDomain)
+        store.AdoptVerifications([
+            FakeVerifyChannel.AnswerFor(Names.SeedDomain, DomainApprovalState.Pending, false),
+            FakeVerifyChannel.AnswerFor(Names.NewDomain, DomainApprovalState.Pending, false),
+        ])
+        const view = await store.For(Names.TenantId)
+        assert.deepEqual(view.verifications.map(v => [v.domain, v.state, v.verified, v.lastCheckedAt]), [
+            [Names.NewDomain, DomainApprovalState.Pending, false, Names.CheckedAt],
+            [Names.SeedDomain, DomainApprovalState.Verified, true, Names.LaterCheckedAt],
+        ], 'the newer Verify answer wins; the other domain adopts the advert answer')
+        store.AdoptVerifications([{ ...FakeVerifyChannel.AnswerFor(Names.SeedDomain, DomainApprovalState.Approved, false), lastCheckedAt: Names.LaterCheckedAt }])
+        assert.deepEqual((await store.For(Names.TenantId)).verifications.map(v => [v.domain, v.state]), [[Names.SeedDomain, DomainApprovalState.Approved]],
+            'an answer as new as the held one is adopted')
     })
 
     it('Verify refuses another tenant and an unlisted domain without asking the channel', async () =>

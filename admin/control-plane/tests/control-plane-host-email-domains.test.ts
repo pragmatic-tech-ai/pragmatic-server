@@ -22,6 +22,7 @@ import { ConsoleDomainApprovals } from '../console-domain-approvals.js'
 import { DomainApprovalState, DomainVerificationRecord } from '../domain-verification-record.js'
 import { EmailDomainSource, PlatformEmailDomains, type EmailDomainApproval, type TenantEmailDomainsReport } from '../platform-email-domains.js'
 import { DomainTxtVerifier, TxtLookupStatus, type ITxtResolver, type TxtLookup } from '../txt-resolver.js'
+import { DomainVerifyThrottledError } from '../tenant-api/tenant-email-domains.js'
 
 type Reply = { status: number; body: string }
 
@@ -418,7 +419,7 @@ describe('ControlPlaneHost tenant email domains', () =>
         assert.equal(approvals.VerificationOf('acme', 'acme.test')?.verified, false)
     })
 
-    it('POST verify past the tenant limit is 429', async () =>
+    it('POST verify past the operator\'s limit for the tenant is 429', async () =>
     {
         for (let i = 0; i < 10; i++)
         {
@@ -428,6 +429,18 @@ describe('ControlPlaneHost tenant email domains', () =>
         assert.equal(r.status, 429)
         assert.equal(Send.Error(r), 'Too many verification attempts for this tenant. Try again in a few minutes.')
         assert.equal(resolver.Names.length, 10)
+    })
+
+    it('a tenant past its own verify limit does not lock out the operator\'s POST verify', async () =>
+    {
+        for (let i = 0; i < 10; i++)
+        {
+            await domains.VerifyDomain('acme', 'acme.test')
+        }
+        await assert.rejects(domains.VerifyDomain('acme', 'acme.test'), DomainVerifyThrottledError)
+        const r = await Send.Request(host, 'POST', AcmePath + '/verify', { domain: 'acme.test' })
+        assert.equal(r.status, 200)
+        assert.equal(resolver.Names.length, 11)
     })
 
     it('a token in the body is ignored', async () =>

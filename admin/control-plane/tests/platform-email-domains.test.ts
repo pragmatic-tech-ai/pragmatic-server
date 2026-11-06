@@ -505,6 +505,26 @@ describe('PlatformEmailDomains', () =>
         assert.equal(f.resolver.Names.length, 11)
     })
 
+    it('the operator\'s verify has its own throttle: after 10 tenant-side lookups the tenant side is refused and the operator\'s still runs', async () =>
+    {
+        await f.domains.Set('beta', ['beta.test'])
+        for (let i = 0; i < 10; i++)
+        {
+            await f.domains.Verify('beta', 'beta.test')
+        }
+        await assert.rejects(f.domains.Verify('beta', 'beta.test'), DomainVerifyThrottledError)
+        assert.equal(f.resolver.Names.length, 10)
+        const answer = await f.domains.VerifyDomainAsOperator('beta', 'beta.test')
+        assert.equal(answer.domain, 'beta.test')
+        assert.equal(f.resolver.Names.length, 11)
+        for (let i = 1; i < 10; i++)
+        {
+            await f.domains.VerifyDomainAsOperator('beta', 'beta.test')
+        }
+        await assert.rejects(f.domains.VerifyDomainAsOperator('beta', 'beta.test'), DomainVerifyThrottledError)
+        assert.equal(f.resolver.Names.length, 20)
+    })
+
     it('VerifyDomain refuses an unclaimed domain (DomainNotClaimedError) and a malformed one (InvalidEmailDomainError), before any lookup', async () =>
     {
         await f.domains.Set('beta', ['beta.test'])

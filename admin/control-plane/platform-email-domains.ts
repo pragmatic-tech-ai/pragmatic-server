@@ -95,7 +95,12 @@ export class PlatformEmailDomains implements ITenantEmailDomains
     private static readonly ThrottledMessage = 'Too many verification attempts for this tenant. Try again in a few minutes.'
     private static readonly LookupIncompletePrefix = 'The DNS lookup for '
     private static readonly LookupIncompleteSuffix = ' did not complete. Try again later.'
-    /** Verification lookups per tenant: 10 in a 15-minute window, then a 15-minute lockout. */
+    /**
+     * The operator's verify throttles under this prefix plus the tenant id, apart from the tenant's own key (the tenant plane and
+     * the in-hive console share the bare tenant id), so a tenant spamming Verify cannot lock the operator out.
+     */
+    private static readonly OperatorThrottleKeyPrefix = 'operator:'
+    /** Verification lookups per throttle key (tenant side, operator side): 10 in a 15-minute window, then a 15-minute lockout. */
     private static readonly VerifyMaxHits = 10
     private static readonly VerifyWindowMs = 15 * 60 * 1000
     private static readonly VerifyLockoutMs = 15 * 60 * 1000
@@ -176,10 +181,22 @@ export class PlatformEmailDomains implements ITenantEmailDomains
     /**
      * Looks up one claimed domain's TXT record now and stores the result. Throws UnknownTenantError, InvalidEmailDomainError (not
      * a well-formed name), DomainNotClaimedError, DomainVerificationUnavailableError (no verifier or approval store, or the lookup
-     * did not complete: nothing is stored then) or DomainVerifyThrottledError (more than VerifyMaxHits lookups for this tenant in
-     * the window; refused before any lookup). The token is always the stored one, never a client's.
+     * did not complete: nothing is stored then) or DomainVerifyThrottledError (more than VerifyMaxHits tenant-side lookups for this
+     * tenant in the window; refused before any lookup). The token is always the stored one, never a client's. The tenant's side:
+     * the tenant plane and the in-hive console share this tenant's throttle key.
      */
     public async VerifyDomain(tenantId: string, domain: string): Promise<DomainVerificationAnswer>
+    {
+        return await this.VerifyThrottled(tenantId, domain, tenantId)
+    }
+
+    /** VerifyDomain for the operator (the operator route): the same checks and limit under the operator's own throttle key. */
+    public async VerifyDomainAsOperator(tenantId: string, domain: string): Promise<DomainVerificationAnswer>
+    {
+        return await this.VerifyThrottled(tenantId, domain, PlatformEmailDomains.OperatorThrottleKeyPrefix + tenantId)
+    }
+
+    private async VerifyThrottled(tenantId: string, domain: string, throttleKey: string): Promise<DomainVerificationAnswer>
     {
         const P = PlatformEmailDomains
         this.KnownTenant(tenantId)
@@ -195,12 +212,12 @@ export class PlatformEmailDomains implements ITenantEmailDomains
         }
         // AuditThrottle locks inside RecordHit once hits exceed maxHits, so checking again after the hit admits exactly
         // VerifyMaxHits lookups per window.
-        if (!this.throttle.CheckAllowed(tenantId).allowed)
+        if (!this.throttle.CheckAllowed(throttleKey).allowed)
         {
             throw new DomainVerifyThrottledError(P.ThrottledMessage)
         }
-        this.throttle.RecordHit(tenantId)
-        if (!this.throttle.CheckAllowed(tenantId).allowed)
+        this.throttle.RecordHit(throttleKey)
+        if (!this.throttle.CheckAllowed(throttleKey).allowed)
         {
             throw new DomainVerifyThrottledError(P.ThrottledMessage)
         }

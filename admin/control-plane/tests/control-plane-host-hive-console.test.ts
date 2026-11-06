@@ -703,7 +703,7 @@ describe('ControlPlaneHost in-hive console install', () =>
         assert.equal(directory.GetHive('h1'), undefined)
         assert.equal(directory.GetTenant('t2'), undefined)
         assert.equal(lines.filter(l => l.includes('advert failed: Error')).length, 3)
-        assert.equal(lines.filter(l => l.includes('approved email domains failed: Error')).length, 1)
+        assert.equal(lines.filter(l => l.includes('email domain standing failed: Error')).length, 1)
         assert.ok(lines.every(l => !l.includes('secret-detail')))
     })
 

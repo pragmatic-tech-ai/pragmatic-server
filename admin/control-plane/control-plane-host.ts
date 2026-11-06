@@ -292,7 +292,7 @@ export class ControlPlaneHost
     private static readonly TenantDeleteLogPrefix = '[tenant-delete] tenant '
     private static readonly ForgetFailedLogInfix = ': forgetting its console keys failed: '
     private static readonly ForgetAdvertLogInfix = ': forgetting its console advert failed: '
-    private static readonly ForgetApprovalsLogInfix = ': forgetting its approved email domains failed: '
+    private static readonly ForgetApprovalsLogInfix = ': forgetting its email domain standing failed: '
     private static readonly ForgetOwnerResetLogInfix = ': forgetting its recorded Owner reset failed: '
     private static readonly ConsoleRemoveLogPrefix = '[console-remove] hive '
     private static readonly UnknownErrorName = 'Error'
@@ -343,7 +343,6 @@ export class ControlPlaneHost
     private static readonly TenantEmailDomainsPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.TenantsSegment + '/([^/]+)/' + ControlPlaneHost.EmailDomainsSegment +
         '(?:/(' + ControlPlaneHost.ApproveSegment + '|' + ControlPlaneHost.RevokeSegment + '|' + ControlPlaneHost.VerifySegment + '))?$')
-    private static readonly DomainRequiredMessage = 'domain (an email domain name) is required'
     private static readonly DomainNotePrefix = 'domain: '
     private static readonly ApprovedOnSaveNotePrefix = 'approved on save: '
     private static readonly DomainsKey = 'domains'
@@ -568,9 +567,9 @@ export class ControlPlaneHost
         private readonly consoleInstaller?: TenantConsoleInstaller,
         /** The console adverts in-hive consoles reported; forgotten with the console, the hive or the tenant. */
         private readonly adverts?: ConsoleAdvertRegistry,
-        /** Operator-approved email domains per tenant; forgotten with the tenant only (they belong to the tenant, not a hive). */
+        /** Email-domain standing per tenant (approvals, revokes, verification tokens); forgotten with the tenant only (it belongs to the tenant, not a hive). */
         private readonly approvals?: ConsoleDomainApprovals,
-        /** Tenant email domains and their operator approvals (/api/tenants/ID/email-domains); undefined leaves those routes unmounted. */
+        /** Tenant email domains, their approvals, revokes and verification (/api/tenants/ID/email-domains); undefined leaves those routes unmounted. */
         private readonly emailDomains?: PlatformEmailDomains)
     {
         this.allowedHosts = new Set([...ControlPlaneHost.DefaultAllowedHosts, ...allowedHosts.map(h => h.toLowerCase())])
@@ -1580,9 +1579,9 @@ export class ControlPlaneHost
     }
 
     /**
-     * Drops a deleted tenant's console advert, approved email domains and recorded Owner reset; each best effort like
-     * ForgetHiveAdvert. The Owner reset is forgotten only here: a console removal or hive delete keeps it (the console's data
-     * volume and its sessions survive both).
+     * Drops a deleted tenant's console advert, email domain standing (approvals, revokes, verification tokens) and recorded
+     * Owner reset; each best effort like ForgetHiveAdvert. The Owner reset is forgotten only here: a console removal or hive
+     * delete keeps it (the console's data volume and its sessions survive both).
      */
     private async ForgetTenantConsoleRecords(tenantId: string): Promise<void>
     {
@@ -1728,7 +1727,7 @@ export class ControlPlaneHost
                 const domain = body[C.DomainKey]
                 if (!C.NonEmpty(domain))
                 {
-                    PlaneHttp.WriteJson(res, C.StatusBadRequest, { error: C.DomainRequiredMessage })
+                    PlaneHttp.WriteJson(res, C.StatusBadRequest, { error: TenantEmailDomainsLimits.DomainRequiredMessage })
                     return true
                 }
                 // Both answer the domain normalised and only once it passed the policy (approve) or the shape check (revoke), so
@@ -1736,7 +1735,7 @@ export class ControlPlaneHost
                 // Verify ignores any other key of the body (a token included): the lookup uses the stored token. Its note comes from
                 // the answer's normalised domain.
                 const noted = action === C.ApproveSegment ? await domains.Approve(id, domain as string)
-                    : action === C.VerifySegment ? (await domains.VerifyDomain(id, domain as string)).domain
+                    : action === C.VerifySegment ? (await domains.VerifyDomainAsOperator(id, domain as string)).domain
                     : await domains.Revoke(id, domain as string)
                 this.auditNotes.set(res, C.DomainNotePrefix + noted)
             }

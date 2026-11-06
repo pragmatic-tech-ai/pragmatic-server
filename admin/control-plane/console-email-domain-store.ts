@@ -133,11 +133,20 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
         return await this.For(tenantId)
     }
 
-    /** Holds, in memory only, the answers for domains currently in the list, replacing what was held before. */
+    /**
+     * Holds, in memory only, the answers for domains currently in the list, replacing what was held before; except that a held
+     * answer checked later than the incoming one for its domain is kept (an advert answer the platform computed before a Verify
+     * can arrive after it, and must not show the domain's older state until the next advert).
+     */
     public AdoptVerifications(answers: readonly DomainVerificationAnswer[]): void
     {
         const listed = new Set(this.domains)
-        this.verifications = new Map(answers.filter(a => listed.has(a.domain)).map(a => [a.domain, a]))
+        const held = this.verifications
+        this.verifications = new Map(answers.filter(a => listed.has(a.domain)).map(a =>
+        {
+            const prior = held.get(a.domain)
+            return [a.domain, prior !== undefined && ConsoleEmailDomainStore.CheckedLater(prior, a) ? prior : a]
+        }))
     }
 
     /** Where Verify sends a domain to be checked (the console's agent channel to the platform). */
@@ -179,6 +188,16 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
             throw new Error(ConsoleEmailDomainStore.MalformedPrefix + filePath)
         }
         return domains as string[]
+    }
+
+    /** True when `a` was checked after `b` (an answer never checked is the oldest). */
+    private static CheckedLater(a: DomainVerificationAnswer, b: DomainVerificationAnswer): boolean
+    {
+        if (a.lastCheckedAt === undefined)
+        {
+            return false
+        }
+        return b.lastCheckedAt === undefined || Date.parse(a.lastCheckedAt) > Date.parse(b.lastCheckedAt)
     }
 
     private static SameList(a: readonly string[], b: readonly string[]): boolean
