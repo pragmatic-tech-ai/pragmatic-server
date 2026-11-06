@@ -66,7 +66,9 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
     private static readonly ConfirmPasswordKey = 'confirmPassword'
     private static readonly BeginLoginRoute = '/tenant-auth/oidc/begin'
     private static readonly EmailDomainsRoute = '/tenant-api/settings/email-domains'
+    private static readonly EmailDomainsVerifyRoute = TenantApiClient.EmailDomainsRoute + '/verify'
     private static readonly DomainsKey = 'domains'
+    private static readonly DomainKey = 'domain'
     private static readonly HivesRoute = '/tenant-api/hives'
     private static readonly EnvironmentsRoute = '/tenant-api/environments'
     private static readonly ManifestsRoute = '/tenant-api/manifests'
@@ -142,6 +144,12 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
     public async SetEmailDomains(domains: readonly string[]): Promise<EmailDomainsDto>
     {
         return await this.Send<EmailDomainsDto>(TenantApiClient.EmailDomainsRoute, { method: TenantApiClient.MethodPut, body: JSON.stringify({ [TenantApiClient.DomainsKey]: domains }) })
+    }
+
+    // Checks the domain's DNS TXT record now (Owner only); the reply is the refreshed view. A refusal is a 400/409/429/503 with its sentence.
+    public async VerifyEmailDomain(domain: string): Promise<EmailDomainsDto>
+    {
+        return await this.Send<EmailDomainsDto>(TenantApiClient.EmailDomainsVerifyRoute, { method: TenantApiClient.MethodPost, body: JSON.stringify({ [TenantApiClient.DomainKey]: domain }) })
     }
 
     public BeginLogin(): void

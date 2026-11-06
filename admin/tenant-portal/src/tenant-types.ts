@@ -20,8 +20,21 @@ export type TenantProfileDto = {
     idp?: { baseUrl?: string; signingCaConfigured: boolean; adminTokenConfigured: boolean }
 }
 
-// The tenant's email domains as its store reports them; `editable` is whether the store may change them (the Owner check is the server's); `inHive` is whether the tenant's console runs in its own hive. Every domain takes effect only after the platform operator approves it: `pending` lists those still waiting where the server can see the approvals (the control plane); an in-hive console cannot, so it answers `pending: []` with `inHive: true`.
-export type EmailDomainsDto = { domains: string[]; editable: boolean; inHive: boolean; pending: string[] }
+// Where a claimed email domain stands with the platform; mirrors the server's DomainApprovalState by value.
+export enum DomainApprovalState
+{
+    Approved = 'approved',
+    Verified = 'verified',
+    VerifiedContested = 'verified-contested',
+    Revoked = 'revoked',
+    Pending = 'pending',
+}
+
+// One domain's verification as the server answers it: the TXT record to publish, whether it was last seen, and the domain's state.
+export type DomainVerificationDto = { domain: string; token: string; verified: boolean; state: DomainApprovalState; lastCheckedAt?: string; recordName: string; recordValue: string }
+
+// The tenant's email domains as its store reports them; `editable` is whether the store may change them (the Owner check is the server's); `inHive` is whether the tenant's console runs in its own hive. A domain takes effect once the platform operator approves it, or once its DNS TXT record is verified and no other tenant claims it: `pending` lists those not in effect yet where the server knows (the control plane, and an in-hive console after the platform's last answer); `verifications` carries each claimed domain's TXT record and state (a missing field reads as none).
+export type EmailDomainsDto = { domains: string[]; editable: boolean; inHive: boolean; pending: string[]; verifications?: DomainVerificationDto[] }
 
 export type HiveDto = {
     id: string

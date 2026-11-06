@@ -12,8 +12,35 @@
 
 import SettingsPageViewModel from "./settings-page-view-model.js"
 import SettingRowViewModel from "./settings-page-view-model.js"
+import DomainVerificationRowViewModel from "./email-domains-editor-view-model.js"
 
 resources SettingsResources {
+    // One claimed email domain: its state and whether its TXT record was seen, the
+    // record to add at the DNS provider, when it was last looked up, and (for the
+    // Owner) a Verify button.
+    DataTemplate x:key="DomainVerificationRowTemplate" [ DataType = DomainVerificationRowViewModel ] {
+        StackPanel [ Orientation = Vertical, Margin = (4,2,4,2) ] {
+            Grid {
+                ColumnDefinitions {
+                    ColumnDefinition [ Width = GridLength.Star ]
+                    ColumnDefinition [ Width = GridLength.Star ]
+                    ColumnDefinition [ Width = GridLength.Star ]
+                    ColumnDefinition [ Width = GridLength.Auto ]
+                }
+                TextBlock [ Grid.Column = 0, Text = $Domain, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
+                TextBlock [ Grid.Column = 1, Text = $StatusLabel, Foreground = @Fg1, VerticalAlignment = Center ]
+                TextBlock [ Grid.Column = 2, Text = $VerificationLabel, Foreground = @Fg1, VerticalAlignment = Center ]
+                Button [ Grid.Column = 3, Variant = Secondary, Command = $VerifyCommand, Visibility = $CanVerify << ToVisibility ] {
+                    TextBlock [ Text = "Verify" ]
+                }
+            }
+            TextBlock [ Text = "Add this TXT record at your DNS provider:", Style = @UiCaption, Foreground = @Fg2, Margin = (0,4,0,0) ]
+            TextBlock [ Text = $RecordName, Style = @Code, Foreground = @Fg1, TextWrapping = Wrap ]
+            TextBlock [ Text = $RecordValue, Style = @Code, Foreground = @Fg1, TextWrapping = Wrap ]
+            TextBlock [ Text = $LastCheckedText, Style = @UiCaption, Foreground = @Fg2 ]
+        }
+    }
+
     DataTemplate x:key="SettingRowTemplate" [ DataType = SettingRowViewModel ] {
         Grid [ Style = @TenantTableColumns ] {
             ColumnDefinitions {
@@ -100,6 +127,12 @@ resources SettingsResources {
                                             Visibility = $IsEditable << ToVisibility ]
                                 TextBlock [ Text = $ApprovalText, Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,8),
                                             Visibility = $ApprovalText << ToVisibility ]
+                                Border [ Style = @TenantPanel, Margin = (0,0,0,8), Visibility = $HasVerifications << ToVisibility ] {
+                                    ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $Verifications,
+                                              ItemTemplate = @DomainVerificationRowTemplate ]
+                                }
+                                TextBlock [ Text = $VerifyNoticeText, Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,8),
+                                            Visibility = $VerifyNoticeText << ToVisibility ]
                                 TextBlock [ Text = $ReadOnlyText, Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,8),
                                             Visibility = $ReadOnlyText << ToVisibility ]
                                 StackPanel [ Orientation = Horizontal, Visibility = $IsEditable << ToVisibility ] {

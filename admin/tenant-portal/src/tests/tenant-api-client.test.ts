@@ -201,6 +201,17 @@ describe('TenantApiClient fetch', () =>
         assert.deepEqual(JSON.parse(call.init?.body as string), { domains: ['acme.test', 'beta.test'] })
     })
 
+    it('VerifyEmailDomain posts { domain } to /tenant-api/settings/email-domains/verify', async () =>
+    {
+        FetchStub.Install({ domains: ['acme.test'], editable: true, inHive: false, pending: [], verifications: [] })
+        const view = await new TestClient(new FakeWebSocketFactory()).VerifyEmailDomain('acme.test')
+        assert.deepEqual(view.verifications, [])
+        const call = FetchStub.Calls[0]!
+        assert.equal(call.route, '/tenant-api/settings/email-domains/verify')
+        assert.equal(call.init?.method, 'POST')
+        assert.deepEqual(JSON.parse(call.init?.body as string), { domain: 'acme.test' })
+    })
+
     it('SelectTarget maps a 409 to TenantApiError', async () =>
     {
         FetchStub.Install({ error: 'conflict' }, 409)

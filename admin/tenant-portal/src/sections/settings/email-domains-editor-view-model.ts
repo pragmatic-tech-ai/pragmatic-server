@@ -1,8 +1,113 @@
-import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
+import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantApiError } from '../../tenant-api-client.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
-import type { EmailDomainsDto } from '../../tenant-types.js'
+import { DomainApprovalState, type DomainVerificationDto, type EmailDomainsDto } from '../../tenant-types.js'
+
+// One claimed domain on the Email domains tab: its state, whether its DNS TXT record was seen and when it was last
+// looked up, the record to add at the DNS provider, and a Verify button for the Owner. A domain takes effect once the
+// platform operator approves it, or once it is verified and no other tenant claims it.
+export class DomainVerificationRowViewModel extends Observable
+{
+    private static readonly ApprovedLabel = 'Approved'
+    private static readonly VerifiedLabel = 'Verified'
+    private static readonly VerifiedContestedLabel = 'Verified, contested - needs approval'
+    private static readonly RevokedLabel = 'Revoked'
+    private static readonly PendingLabel = 'Pending'
+    private static readonly NotVerifiedLabel = 'Not verified'
+    private static readonly LastCheckedPrefix = 'Last checked '
+    private static readonly LastCheckedSuffix = ' UTC'
+    private static readonly NotCheckedLabel = 'Not checked yet'
+    private static readonly MinuteLength = 16
+    private static readonly IsoSeparator = 'T'
+    private static readonly DisplaySeparator = ' '
+
+    private readonly verifyCommand: RelayCommand
+
+    public constructor(private readonly owner: EmailDomainsEditorViewModel, private readonly verification: DomainVerificationDto)
+    {
+        super()
+        this.verifyCommand = new RelayCommand(() => { void this.owner.VerifyDomain(this.verification.domain) }, () => this.CanVerify && !this.owner.IsVerifying)
+    }
+
+    public get Domain(): string
+    {
+        return this.verification.domain
+    }
+
+    // Whether the TXT record was last seen.
+    public get IsVerified(): boolean
+    {
+        return this.verification.verified
+    }
+
+    // The domain's state in words: Approved, Verified, Verified but contested, Revoked or Pending.
+    public get StatusLabel(): string
+    {
+        const R = DomainVerificationRowViewModel
+        switch (this.verification.state)
+        {
+            case DomainApprovalState.Approved:
+                return R.ApprovedLabel
+            case DomainApprovalState.Verified:
+                return R.VerifiedLabel
+            case DomainApprovalState.VerifiedContested:
+                return R.VerifiedContestedLabel
+            case DomainApprovalState.Revoked:
+                return R.RevokedLabel
+            default:
+                return R.PendingLabel
+        }
+    }
+
+    // 'Verified' when the TXT record was last seen, else 'Not verified'.
+    public get VerificationLabel(): string
+    {
+        const R = DomainVerificationRowViewModel
+        return this.verification.verified ? R.VerifiedLabel : R.NotVerifiedLabel
+    }
+
+    // The TXT record name to add at the DNS provider.
+    public get RecordName(): string
+    {
+        return this.verification.recordName
+    }
+
+    // The TXT record value to add (the token in it is public by design).
+    public get RecordValue(): string
+    {
+        return this.verification.recordValue
+    }
+
+    // 'Last checked 2026-11-06 09:30 UTC' or 'Not checked yet'.
+    public get LastCheckedText(): string
+    {
+        const R = DomainVerificationRowViewModel
+        const checked = this.verification.lastCheckedAt
+        if (checked === undefined)
+        {
+            return R.NotCheckedLabel
+        }
+        return R.LastCheckedPrefix + checked.slice(0, R.MinuteLength).replace(R.IsoSeparator, R.DisplaySeparator) + R.LastCheckedSuffix
+    }
+
+    // Whether Verify is offered: only to the Owner (the profile's settings capability).
+    public get CanVerify(): boolean
+    {
+        return this.owner.CanVerify
+    }
+
+    public get VerifyCommand(): RelayCommand
+    {
+        return this.verifyCommand
+    }
+
+    // Re-evaluates the Verify button after the owner's state moved.
+    public RaiseCanVerifyChanged(): void
+    {
+        this.verifyCommand.RaiseCanExecuteChanged()
+    }
+}
 
 // The Settings page's Email domains tab: the tenant Owner edits the domains whose
 // people are sent to this console at sign-in. Anyone else (or a store that does not
@@ -16,18 +121,24 @@ export class EmailDomainsEditorViewModel extends Observable
     private static readonly OwnerOnlyText = 'Only the tenant Owner can change the email domains.'
     private static readonly InHiveText = "This tenant's email domains are set in its in-hive console."
     private static readonly UnavailableText = 'Email domains are not available here.'
-    private static readonly ApprovalSentence = 'A domain only takes effect after the platform operator approves it.'
-    private static readonly PendingPrefix = 'Waiting for the platform operator to approve: '
+    private static readonly ApprovalSentence = 'A domain takes effect once the platform operator approves it, or once its DNS TXT record is verified and no other tenant claims it.'
+    private static readonly PendingPrefix = 'Not in effect yet: '
     private static readonly PendingSuffix = '. '
+    private static readonly NoRecordNotice = 'No matching TXT record was found yet. DNS changes can take a while to appear; try again later.'
     private static readonly NoText = ''
     // What the tab shows when no list could be read.
     private static readonly Nothing: EmailDomainsDto = { domains: [], editable: false, inHive: false, pending: [] }
     // Every bound value a change can move, raised when it did; typed so a renamed member fails typecheck.
     private static readonly BoundProperties: ReadonlyArray<keyof EmailDomainsEditorViewModel> = [
         'DomainsText', 'IsEditable', 'IsInHive', 'ApprovalText', 'ReadOnlyText', 'ErrorText', 'SavedText', 'IsSaving',
+        'HasVerifications', 'VerifyNoticeText', 'IsVerifying',
     ]
 
     private readonly saveCommand: RelayCommand
+    private readonly verifications = new ObservableCollection<DomainVerificationRowViewModel>()
+    private canVerify = false
+    private verifying = false
+    private verifyNoticeText = ''
     private domains: readonly string[] = []
     private text = ''
     private editable = false
@@ -115,6 +226,35 @@ export class EmailDomainsEditorViewModel extends Observable
         return this.saveCommand
     }
 
+    // One row per claimed domain with its TXT record and state; empty where the server sends none.
+    public get Verifications(): ObservableCollection<DomainVerificationRowViewModel>
+    {
+        return this.verifications
+    }
+
+    public get HasVerifications(): boolean
+    {
+        return this.verifications.Count > 0
+    }
+
+    // Whether Verify is offered: the profile's settings capability (the Owner), whether or not the list itself is editable.
+    public get CanVerify(): boolean
+    {
+        return this.canVerify
+    }
+
+    // True while a Verify is in flight.
+    public get IsVerifying(): boolean
+    {
+        return this.verifying
+    }
+
+    // 'No matching TXT record was found yet...' after a Verify that left the domain Not verified; '' otherwise.
+    public get VerifyNoticeText(): string
+    {
+        return this.verifyNoticeText
+    }
+
     private get CanSave(): boolean
     {
         return this.editable && !this.saving && !EmailDomainsEditorViewModel.SameList(this.Parsed(), this.domains)
@@ -126,6 +266,7 @@ export class EmailDomainsEditorViewModel extends Observable
         const E = EmailDomainsEditorViewModel
         this.Change(() =>
         {
+            this.canVerify = canChangeSettings
             this.Show(dto)
             this.editable = dto.editable && canChangeSettings
             this.readOnlyText = this.editable ? E.NoText : canChangeSettings ? E.InHiveText : E.OwnerOnlyText
@@ -140,6 +281,7 @@ export class EmailDomainsEditorViewModel extends Observable
         this.Change(() =>
         {
             this.Show(E.Nothing)
+            this.canVerify = false
             this.editable = false
             this.readOnlyText = E.UnavailableText
             this.errorText = E.NoText
@@ -152,6 +294,7 @@ export class EmailDomainsEditorViewModel extends Observable
         this.Change(() =>
         {
             this.Show(EmailDomainsEditorViewModel.Nothing)
+            this.canVerify = false
             this.editable = false
             this.readOnlyText = EmailDomainsEditorViewModel.NoText
             this.errorText = message
@@ -198,13 +341,59 @@ export class EmailDomainsEditorViewModel extends Observable
         }
     }
 
-    // Shows a reply: the list, where the console runs, and the domains still waiting for approval.
+    // Checks the domain's DNS TXT record now. Never throws: a refusal shows its sentence in ErrorText, a 401 expires the
+    // session, and a domain still Not verified afterwards shows the no-record notice.
+    public async VerifyDomain(domain: string): Promise<void>
+    {
+        if (!this.canVerify || this.verifying)
+        {
+            return
+        }
+        this.Change(() =>
+        {
+            this.verifying = true
+            this.errorText = EmailDomainsEditorViewModel.NoText
+            this.verifyNoticeText = EmailDomainsEditorViewModel.NoText
+        })
+        try
+        {
+            const reply = await this.session.Client.VerifyEmailDomain(domain)
+            const row = (reply.verifications ?? []).find(v => v.domain === domain)
+            this.Change(() =>
+            {
+                this.Show(reply)
+                this.verifyNoticeText = row !== undefined && !row.verified ? EmailDomainsEditorViewModel.NoRecordNotice : EmailDomainsEditorViewModel.NoText
+            })
+        }
+        catch (e)
+        {
+            if (e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus)
+            {
+                this.session.Expire()
+            }
+            else
+            {
+                this.Change(() => { this.errorText = e instanceof Error ? e.message : String(e) })
+            }
+        }
+        finally
+        {
+            this.Change(() => { this.verifying = false })
+        }
+    }
+
+    // Shows a reply: the list, where the console runs, the domains not in effect yet, and each domain's TXT record.
     private Show(dto: EmailDomainsDto): void
     {
         this.domains = [...dto.domains]
         this.text = dto.domains.join(EmailDomainsEditorViewModel.DomainSeparator)
         this.inHive = dto.inHive
         this.pending = [...dto.pending]
+        this.verifications.Clear()
+        for (const verification of dto.verifications ?? [])
+        {
+            this.verifications.Add(new DomainVerificationRowViewModel(this, verification))
+        }
     }
 
     // The typed text as a list; the server normalises and validates each domain.
@@ -232,6 +421,7 @@ export class EmailDomainsEditorViewModel extends Observable
             }
         })
         this.saveCommand.RaiseCanExecuteChanged()
+        this.verifications.ToArray().forEach(row => row.RaiseCanVerifyChanged())
     }
 
     private BoundValues(): unknown[]

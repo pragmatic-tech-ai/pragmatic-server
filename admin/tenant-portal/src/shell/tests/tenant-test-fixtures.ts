@@ -149,7 +149,8 @@ export class FakeTenantApi
     public Graphs = new Map<string, GraphDto[]>()
     public ProfileDto: TenantProfileDto | undefined
     public EmailDomains: EmailDomainsDto = { domains: ['acme.test'], editable: true, inHive: false, pending: [] }
-    public IssuedTokenValue = 'fixture-issued-token'
+    public OnVerifyEmailDomain: ((domain: string) => void) | undefined
+    public IssuedTokenValue ='fixture-issued-token'
     public Failure: Error | undefined
     public readonly FailOn = new Map<string, Error>()
     public readonly Calls: Array<[string, ...unknown[]]> = []
@@ -249,10 +250,24 @@ export class FakeTenantApi
         return this.CopyEmailDomains()
     }
 
+    // Recorded as ['VerifyEmailDomain', domain]; runs OnVerifyEmailDomain (which may change EmailDomains, like a DNS check would)
+    // and answers the refreshed view.
+    public async VerifyEmailDomain(domain: string): Promise<EmailDomainsDto>
+    {
+        await this.Enter('VerifyEmailDomain', domain)
+        this.OnVerifyEmailDomain?.(domain)
+        return this.CopyEmailDomains()
+    }
+
     private CopyEmailDomains(): EmailDomainsDto
     {
         const e = this.EmailDomains
-        return { domains: [...e.domains], editable: e.editable, inHive: e.inHive, pending: [...e.pending] }
+        const copy: EmailDomainsDto = { domains: [...e.domains], editable: e.editable, inHive: e.inHive, pending: [...e.pending] }
+        if (e.verifications !== undefined)
+        {
+            copy.verifications = e.verifications.map(v => ({ ...v }))
+        }
+        return copy
     }
 
     public BeginLogin(): void
