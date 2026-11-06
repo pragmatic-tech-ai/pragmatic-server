@@ -277,7 +277,7 @@ export class ControlPlaneServer
         const sealed = await SealedSecretStore.Open(join(dataRoot, SealedSecretStore.FileName), masterKey)
         const fingerprintKeys = new ConsoleFingerprintKeys(sealed)
         const discovery = new DesktopDiscoveryEndpoint(accountIndex, directory, ControlPlaneServer.DesktopTenantPlaneUrlOf(process.env), DesktopDiscoveryEndpoint.NewThrottle(),
-            adverts, fingerprintKeys, approvals)
+            adverts, fingerprintKeys, approvals, registry)
         // Installs a Local hive's tenant console through the same cluster access.
         const consoleInstaller = new TenantConsoleInstaller(directory, orchestrators, new TenantAdminBootstrap(deployments), fingerprintKeys,
             new DevCertificateAuthority(join(dataRoot, DevCertificateAuthority.DirName), sealed), new InHiveIdpAdmin(orchestrators, sealed),

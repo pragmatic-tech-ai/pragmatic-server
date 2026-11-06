@@ -216,3 +216,21 @@ test('Reconcile leaves a hive-bound Running record untouched even when the docke
         await rm(dir, { recursive: true, force: true })
     }
 })
+
+test('HasEnvironmentsOf is true only for a tenant that owns a record', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), 'envreg-'))
+    try
+    {
+        const reg = new EnvironmentRegistry(join(dir, 'envs.json'), new FakeProbe())
+        await reg.Put({ ...RegistryFixture.Record('a', 8081, EnvStatus.Running), tenantId: 't1' })
+        await reg.Put(RegistryFixture.Record('b', 8082, EnvStatus.Running))
+        assert.equal(reg.HasEnvironmentsOf('t1'), true)
+        assert.equal(reg.HasEnvironmentsOf('t2'), false)
+        assert.equal(reg.HasEnvironmentsOf(''), false)
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})

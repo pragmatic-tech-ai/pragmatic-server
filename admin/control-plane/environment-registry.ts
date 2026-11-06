@@ -53,6 +53,19 @@ export class EnvironmentRegistry
         return this.records.get(name)
     }
 
+    /** True when any record belongs to the tenant (a platform-managed environment). */
+    public HasEnvironmentsOf(tenantId: string): boolean
+    {
+        for (const record of this.records.values())
+        {
+            if (record.tenantId === tenantId)
+            {
+                return true
+            }
+        }
+        return false
+    }
+
     public async Put(record: EnvironmentRecord): Promise<void>
     {
         this.records.set(record.name, { ...record })

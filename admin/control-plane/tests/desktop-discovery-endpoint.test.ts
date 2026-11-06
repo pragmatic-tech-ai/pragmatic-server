@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ConsoleAdvertRecord, IConsoleAdvertLookup } from '../console-advert-registry.js'
 import { DesktopDiscoveryEndpoint } from '../desktop-discovery-endpoint.js'
+import type { IPlatformEnvironmentSource } from '../desktop-discovery-endpoint.js'
 import type { IDiscoveryDirectory } from '../desktop-tenant-matcher.js'
 import { IngressTlsSource } from '../ingress-tls.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
@@ -133,10 +134,10 @@ describe('DesktopDiscoveryEndpoint', () =>
     let server: Server
 
     async function Start(url: string | undefined, tenants: readonly TenantRecord[], hives: readonly HiveRecord[] = [], adverts: readonly ConsoleAdvertRecord[] = [],
-        approved: ReadonlyMap<string, readonly string[]> = new Map()): Promise<void>
+        approved: ReadonlyMap<string, readonly string[]> = new Map(), platform?: IPlatformEnvironmentSource): Promise<void>
     {
         const endpoint = new DesktopDiscoveryEndpoint(index, new FakeDirectory(tenants, hives), url, DesktopDiscoveryEndpoint.NewThrottle(), new FakeAdverts(adverts),
-            undefined, { StandingOf: tenantId => ({ approved: approved.get(tenantId) ?? [], revoked: [], verified: [] }) })
+            undefined, { StandingOf: tenantId => ({ approved: approved.get(tenantId) ?? [], revoked: [], verified: [] }) }, platform)
         server = createServer((req, res) =>
         {
             void endpoint.Handle(req, res)
@@ -203,6 +204,36 @@ describe('DesktopDiscoveryEndpoint', () =>
         const reply = await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))
         assert.equal(reply.status, 200)
         assert.deepEqual(reply.body, { tenants: [{ id: 'acme', displayName: 'Acme', consoleUrl: DiscoveryFixture.Console }], tenantPlaneUrl: DiscoveryFixture.Url })
+    })
+
+    it('marks an in-hive tenant with platform environments', async () =>
+    {
+        await Start(DiscoveryFixture.Url, [DiscoveryFixture.Tenant('acme', 'Acme')], [DiscoveryFixture.ConsoleHive('h1', 'acme')], [DiscoveryFixture.Advert('acme', 'h1')], new Map(),
+            { HasEnvironmentsOf: tenantId => tenantId === 'acme' })
+        const reply = await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))
+        assert.equal((reply.body as { tenants: { platformEnvironments?: boolean }[] }).tenants[0].platformEnvironments, true)
+    })
+
+    it('leaves the mark out for an in-hive tenant without platform environments', async () =>
+    {
+        await Start(DiscoveryFixture.Url, [DiscoveryFixture.Tenant('acme', 'Acme')], [DiscoveryFixture.ConsoleHive('h1', 'acme')], [DiscoveryFixture.Advert('acme', 'h1')], new Map(),
+            { HasEnvironmentsOf: () => false })
+        const reply = await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))
+        assert.equal('platformEnvironments' in (reply.body as { tenants: object[] }).tenants[0], false)
+    })
+
+    it('never marks a control-plane tenant', async () =>
+    {
+        await Start(DiscoveryFixture.Url, [DiscoveryFixture.Tenant('acme', 'Acme')], [], [], new Map(), { HasEnvironmentsOf: () => true })
+        const reply = await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))
+        assert.equal('platformEnvironments' in (reply.body as { tenants: object[] }).tenants[0], false)
+    })
+
+    it('leaves the mark out when no source is composed', async () =>
+    {
+        await Start(DiscoveryFixture.Url, [DiscoveryFixture.Tenant('acme', 'Acme')], [DiscoveryFixture.ConsoleHive('h1', 'acme')], [DiscoveryFixture.Advert('acme', 'h1')])
+        const reply = await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))
+        assert.equal('platformEnvironments' in (reply.body as { tenants: object[] }).tenants[0], false)
     })
 
     it('answers 404 no-account for an in-hive tenant that has not advertised yet', async () =>

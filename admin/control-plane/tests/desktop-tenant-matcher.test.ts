@@ -179,6 +179,19 @@ describe('DesktopTenantMatcher', () =>
         assert.deepEqual(Summary(await matcher.Match(MatcherFixture.Ann, MatcherFixture.Plane)), [{ id: 'acme', consoleUrl: MatcherFixture.Console, match: DiscoveryMatch.Account }])
     })
 
+    it('reports inHive true for advert and in-hive index matches, false for a control-plane match', async () =>
+    {
+        adverts.Records.set('acme', MatcherFixture.Advert({ fingerprints: [ConsoleFingerprint.Of(MatcherFixture.Key, MatcherFixture.Ann)] }))
+        assert.deepEqual((await matcher.Match(MatcherFixture.Ann, MatcherFixture.Plane)).map(d => d.inHive), [true])
+        adverts.Records.clear()
+        await index.Record('acme', 'owner', MatcherFixture.Ann)
+        adverts.Records.set('acme', MatcherFixture.Advert())
+        assert.deepEqual((await matcher.Match(MatcherFixture.Ann, MatcherFixture.Plane)).map(d => d.inHive), [true])
+        directory.Tenants.set('beta', MatcherFixture.Tenant('beta', 'Beta'))
+        await index.Record('beta', 'owner', 'bob@beta.test')
+        assert.deepEqual((await matcher.Match('bob@beta.test', MatcherFixture.Plane)).map(d => d.inHive), [false])
+    })
+
     it('an approved domain on a control-plane tenant record matches; the same domain on an in-hive record does not', async () =>
     {
         directory.Tenants.set('acme', MatcherFixture.Tenant('acme', 'Acme', ['acme.test']))

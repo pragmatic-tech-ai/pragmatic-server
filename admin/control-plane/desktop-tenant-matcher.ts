@@ -34,7 +34,8 @@ export enum DiscoveryMatch
     Domain = 'domain'
 }
 
-export type DiscoveredTenant = { tenant: TenantRecord; consoleUrl: string; match: DiscoveryMatch }
+/** `inHive`: the tenant runs an in-hive console (an advert, or an in-hive index match); a control-plane tenant is false. */
+export type DiscoveredTenant = { tenant: TenantRecord; consoleUrl: string; match: DiscoveryMatch; inHive: boolean }
 
 /** How one tenant is reached: whether it runs an in-hive console, and the advert that counts for it (if any). */
 type TenantPlacement = { inHive: boolean; advert: ConsoleAdvertRecord | undefined }
@@ -107,12 +108,12 @@ export class DesktopTenantMatcher
             const key = await this.KeyOf(advert.hiveId)
             if (key !== undefined && this.adverts.HasFingerprint(tenant.id, ConsoleFingerprint.Of(key, email)))
             {
-                DesktopTenantMatcher.Add(found, { tenant, consoleUrl: advert.consoleUrl, match: DiscoveryMatch.Account })
+                DesktopTenantMatcher.Add(found, { tenant, consoleUrl: advert.consoleUrl, match: DiscoveryMatch.Account, inHive: true })
                 continue
             }
             if (domain !== undefined && this.EffectiveDomainsOf(advert.tenantId, advert.emailDomains, claims).includes(domain))
             {
-                DesktopTenantMatcher.Add(found, { tenant, consoleUrl: advert.consoleUrl, match: DiscoveryMatch.Domain })
+                DesktopTenantMatcher.Add(found, { tenant, consoleUrl: advert.consoleUrl, match: DiscoveryMatch.Domain, inHive: true })
             }
         }
     }
@@ -131,7 +132,7 @@ export class DesktopTenantMatcher
             {
                 continue
             }
-            DesktopTenantMatcher.Add(found, { tenant, consoleUrl: placement.advert?.consoleUrl ?? tenantPlaneUrl, match: DiscoveryMatch.Account })
+            DesktopTenantMatcher.Add(found, { tenant, consoleUrl: placement.advert?.consoleUrl ?? tenantPlaneUrl, match: DiscoveryMatch.Account, inHive: placement.inHive })
         }
     }
 
@@ -147,7 +148,7 @@ export class DesktopTenantMatcher
             {
                 continue
             }
-            DesktopTenantMatcher.Add(found, { tenant, consoleUrl: tenantPlaneUrl, match: DiscoveryMatch.Domain })
+            DesktopTenantMatcher.Add(found, { tenant, consoleUrl: tenantPlaneUrl, match: DiscoveryMatch.Domain, inHive: false })
         }
     }
 

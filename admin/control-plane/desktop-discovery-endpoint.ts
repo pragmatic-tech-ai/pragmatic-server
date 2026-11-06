@@ -6,6 +6,12 @@ import type { IDiscoveryDirectory, IDomainApprovalSource, IFingerprintKeySource 
 import { PlaneHttp } from './plane-http.js'
 import type { TenantAccountIndex } from './tenant-account-index.js'
 
+/** Whether the platform manages environments for a tenant (EnvironmentRegistry satisfies it). */
+export interface IPlatformEnvironmentSource
+{
+    HasEnvironmentsOf(tenantId: string): boolean
+}
+
 /**
  * Public `POST /api/desktop/discover`: tells the desktop app which tenant(s) an email belongs to and, per tenant, which
  * console to sign in at (an in-hive tenant's advertised console, else the tenant plane). Matching is DesktopTenantMatcher's.
@@ -38,6 +44,7 @@ export class DesktopDiscoveryEndpoint
     private static readonly UnavailableBody = { error: 'unavailable' }
     private static readonly NoAccountBody = { error: 'no-account' }
     private static readonly EmailField = 'email'
+    private static readonly PlatformEnvironmentsField = 'platformEnvironments'
 
     private readonly matcher: DesktopTenantMatcher
 
@@ -48,7 +55,8 @@ export class DesktopDiscoveryEndpoint
         private readonly throttle: AuditThrottle,
         adverts?: IConsoleAdvertLookup,
         keys?: IFingerprintKeySource,
-        approvals?: IDomainApprovalSource)
+        approvals?: IDomainApprovalSource,
+        private readonly platformEnvironments?: IPlatformEnvironmentSource)
     {
         this.matcher = new DesktopTenantMatcher(index, directory, adverts, keys, approvals)
     }
@@ -89,7 +97,10 @@ export class DesktopDiscoveryEndpoint
             return
         }
         const tenants = (await this.matcher.Match(email, this.tenantPlaneUrl))
-            .map(d => ({ id: d.tenant.id, displayName: d.tenant.displayName, consoleUrl: d.consoleUrl }))
+            .map(d => ({
+                id: d.tenant.id, displayName: d.tenant.displayName, consoleUrl: d.consoleUrl,
+                ...(d.inHive && this.platformEnvironments?.HasEnvironmentsOf(d.tenant.id) === true ? { [DesktopDiscoveryEndpoint.PlatformEnvironmentsField]: true } : {})
+            }))
         if (tenants.length === 0)
         {
             PlaneHttp.WriteJson(res, DesktopDiscoveryEndpoint.StatusNotFound, DesktopDiscoveryEndpoint.NoAccountBody)
