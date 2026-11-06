@@ -774,6 +774,20 @@ class DesktopHostKit
     public static readonly BeginPath = '/desktop/sign-in/begin'
     public static readonly ConsolePath = '/desktop/console'
     public static readonly Crlf = String.fromCharCode(13, 10)
+    /** The blank line ending the head of an HTTP answer; the body starts right after it. */
+    public static readonly HeadEnd = DesktopHostKit.Crlf + DesktopHostKit.Crlf
+    public static readonly LoopbackAddress = '127.0.0.1'
+    public static readonly RelayRequestLine = 'GET /desktop/relay?environment=acme-dev&action=contribute HTTP/1.1'
+    /** The handshake headers ws accepts (an RFC 6455 key, version 13); the host's Host header comes first. */
+    public static readonly HandshakeHeaders: readonly string[] = [
+        'Host: ' + DesktopHostKit.LoopbackHost, 'Connection: Upgrade', 'Upgrade: websocket', 'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+    ]
+    public static readonly HeaderSeparator = ': '
+    public static readonly DataEvent = 'data'
+    public static readonly ErrorEvent = 'error'
+    public static readonly CloseEvent = 'close'
+    public static readonly Utf8 = 'utf8'
+    public static readonly NoBody = ''
 
     public constructor(private readonly parent: string, public readonly Store: TenantSessionStore)
     {
@@ -815,23 +829,23 @@ class DesktopHostKit
     /** Dials the relay path raw and resolves the status line and the body of the answer. */
     public static RawUpgrade(host: TenantPlaneHost, headers: Record<string, string> = {}): Promise<{ statusLine: string; body: string }>
     {
+        const K = DesktopHostKit
         const { port } = host.Address()
         return new Promise((res, rej) =>
         {
-            const socket = connect(port, '127.0.0.1', () =>
+            const socket = connect(port, K.LoopbackAddress, () =>
             {
-                socket.write(['GET /desktop/relay?environment=acme-dev&action=contribute HTTP/1.1', 'Host: ' + DesktopHostKit.LoopbackHost, 'Connection: Upgrade',
-                    'Upgrade: websocket', 'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
-                    ...Object.entries(headers).map(([k, v]) => k + ': ' + v), '', ''].join(DesktopHostKit.Crlf))
+                const lines = [K.RelayRequestLine, ...K.HandshakeHeaders, ...Object.entries(headers).map(([k, v]) => k + K.HeaderSeparator + v)]
+                socket.write(lines.join(K.Crlf) + K.HeadEnd)
             })
             const chunks: Buffer[] = []
-            socket.on('data', c => chunks.push(c))
-            socket.on('error', rej)
-            socket.on('close', () =>
+            socket.on(K.DataEvent, (c: Buffer) => chunks.push(c))
+            socket.on(K.ErrorEvent, rej)
+            socket.on(K.CloseEvent, () =>
             {
-                const text = Buffer.concat(chunks).toString('utf8')
-                const split = text.indexOf(DesktopHostKit.Crlf + DesktopHostKit.Crlf)
-                res({ statusLine: text.slice(0, text.indexOf(DesktopHostKit.Crlf)), body: split < 0 ? '' : text.slice(split + 4) })
+                const text = Buffer.concat(chunks).toString(K.Utf8)
+                const split = text.indexOf(K.HeadEnd)
+                res({ statusLine: text.slice(0, text.indexOf(K.Crlf)), body: split < 0 ? K.NoBody : text.slice(split + K.HeadEnd.length) })
             })
         })
     }
@@ -996,6 +1010,17 @@ describe('TenantPlaneHost desktop surface', () =>
             assert.ok(answer.statusLine.startsWith('HTTP/1.1 503'), answer.statusLine)
             assert.deepEqual(JSON.parse(answer.body), ConsoleRegistration.RefusedBody)
             assert.deepEqual(relay.urls, [])
+        }, registration)
+    })
+
+    it('a refused console with no relay still answers the relay upgrade 503 with the body', async () =>
+    {
+        const registration = await kit.Registration(ConsoleRegistrationState.Refused)
+        await kit.WithHost(kit.Plane(true, Kit.TenantId), async host =>
+        {
+            const answer = await DesktopHostKit.RawUpgrade(host)
+            assert.ok(answer.statusLine.startsWith('HTTP/1.1 503'), answer.statusLine)
+            assert.deepEqual(JSON.parse(answer.body), ConsoleRegistration.RefusedBody)
         }, registration)
     })
 

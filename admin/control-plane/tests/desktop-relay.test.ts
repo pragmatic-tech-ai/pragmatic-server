@@ -1035,7 +1035,9 @@ describe('DesktopRelay console retirement', () =>
         await RelayKit.Until(() => kit.upstream.Connections() === 1)
         assert.equal(kit.relay.Retire(DesktopRelay.ConsoleRetiredCloseCode), 0, 'the dialing relay is not open yet')
         open()
-        assert.equal((await outcome).code, 4003)
+        const { opened, code } = await outcome
+        assert.equal(opened, true, 'the upgrade completes (101) before the close')
+        assert.equal(code, 4003)
         await RelayKit.Until(() => kit.endpoints.releases === 1 && kit.upstream.closedByPeer === 1)
         assert.equal(kit.relay.Retire(DesktopRelay.ConsoleRetiredCloseCode), 0, 'the retired relay is not tracked')
         kit.relay.Reinstate()

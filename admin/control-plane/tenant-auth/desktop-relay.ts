@@ -598,8 +598,6 @@ class RelayPipe
     public static readonly NormalClosure = 1000
     /** The relay reached its deadline (its desktop session or its minted credential expired): open a new relay. */
     public static readonly Expired = 4001
-    /** The console is no longer registered with the platform (DesktopRelay.Retire); its one home is DesktopRelay. */
-    public static readonly ConsoleRetired = DesktopRelay.ConsoleRetiredCloseCode
     /** A ping goes out this often; a client that has not answered the previous one by the next is terminated. */
     public static readonly HeartbeatMs = 30_000
     private static readonly PongEvent = 'pong'

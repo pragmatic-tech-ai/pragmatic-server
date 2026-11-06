@@ -321,16 +321,17 @@ export class TenantPlaneHost
         // Host-independent like the rest of `/desktop/*`: the relay takes its tenant only from the desktop bearer.
         if (path === DesktopRelay.Path)
         {
-            if (this.relay === undefined)
-            {
-                socket.destroy()
-                return
-            }
-            // Refused before the relay is asked, so this answer is not audited (nothing is leased, minted or dialed).
+            // Refused before the relay is asked (and even when the console has none), so this answer is not audited: nothing
+            // is leased, minted or dialed.
             if (this.IsRefused)
             {
                 socket.on(TenantPlaneHost.ErrorEvent, () => undefined)
                 DesktopRelay.WriteRefusal(socket, TenantPlaneHost.StatusUnavailable, ConsoleRegistration.RefusedBody)
+                return
+            }
+            if (this.relay === undefined)
+            {
+                socket.destroy()
                 return
             }
             this.relay.Upgrade(req, socket, head).catch(() => socket.destroy())
