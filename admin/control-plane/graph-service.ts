@@ -1,5 +1,5 @@
 import type { GraphDetailDto, GraphLoadedDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AdminProxyError, type IAdminAccess, type IAdminProxy } from './admin-proxy.js'
+import { AdminProxyError, AdminProxyErrorKind, type IAdminAccess, type IAdminProxy } from './admin-proxy.js'
 import { GraphErrorCode } from './graph-error-code.js'
 import { EnvType, type EnvironmentRecord } from './environment-record.js'
 import { EnvironmentNotDevelopmentError, EnvironmentNotFoundError, EnvironmentNotRuntimeError } from './environment-service.js'
@@ -131,7 +131,7 @@ export class GraphService
         return record
     }
 
-    /** Maps the container's graph error codes back onto the graph error classes; anything else passes through. */
+    /** Maps the container's graph error codes (Protocol-kind proxy errors only) back onto the graph error classes; anything else passes through. */
     private static async Classify<T>(graphName: string, call: () => Promise<T>): Promise<T>
     {
         try
@@ -140,7 +140,7 @@ export class GraphService
         }
         catch (err)
         {
-            switch (err instanceof AdminProxyError ? err.Code : undefined)
+            switch (err instanceof AdminProxyError && err.Kind === AdminProxyErrorKind.Protocol ? err.Code : undefined)
             {
                 case GraphErrorCode.NameInvalid:
                     throw new GraphNameInvalidError(graphName)

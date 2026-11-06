@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import type { GraphCreateParamsDto, GraphDetailDto, GraphExportDto, GraphLoadParamsDto, GraphLoadedDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { EnvironmentNotFoundError } from '../environment-service.js'
+import { GraphWireCodes } from '../graph-error-code.js'
 import { AdminProxyError, AdminProxyErrorKind, type AdminConnectInfo, type AdminSnapshot, type IAdminProxy } from '../admin-proxy.js'
 import { GraphService, GraphExistsError, GraphNotFoundError, GraphNameInvalidError, type IEnvironmentLookup } from '../graph-service.js'
 import { EnvironmentNotDevelopmentError, EnvironmentNotRuntimeError } from '../environment-service.js'
@@ -18,6 +19,8 @@ class Fixture
     public static readonly NotFoundCode = -32040
     public static readonly NameInvalidCode = -32042
     public static readonly PackageConflictCode = -32043
+    public static readonly PackageSegmentCode = -32044
+    public static readonly PackageMissingCode = -32045
     public static readonly NotFoundMessage = 'Graph not found: g1'
     public static readonly BadName = 'Bad Name'
     public static readonly OtherMessage = 'boom'
@@ -321,6 +324,35 @@ test('package codes pass through as the AdminProxyError with its Code', async ()
     h.Lookup.Add(Fixture.Record(Fixture.Rt1, EnvType.Runtime))
     h.Proxy.Throw = Fixture.Coded(Fixture.PackageConflictCode)
     await assert.rejects(h.Service.Promote(Fixture.Dev1, Fixture.G1, Fixture.Rt1), (err: unknown) => err instanceof AdminProxyError && err.Code === Fixture.PackageConflictCode)
+})
+
+test('segment and missing package codes pass through as the AdminProxyError with their Code', async () =>
+{
+    const h = new Harness()
+    h.Lookup.Add(Fixture.Record(Fixture.Rt1, EnvType.Runtime))
+    for (const code of [Fixture.PackageSegmentCode, Fixture.PackageMissingCode])
+    {
+        h.Proxy.Throw = Fixture.Coded(code)
+        await assert.rejects(h.Service.Promote(Fixture.Dev1, Fixture.G1, Fixture.Rt1), (err: unknown) => err instanceof AdminProxyError && err.Code === code)
+    }
+})
+
+test('a non-Protocol proxy error carrying a graph code is never reclassified', async () =>
+{
+    const h = new Harness()
+    const thrown = new AdminProxyError(AdminProxyErrorKind.Connect, Fixture.OtherMessage, false, Fixture.NotFoundCode)
+    h.Proxy.Throw = thrown
+    await assert.rejects(h.Service.Get(Fixture.Dev1, Fixture.G1), (err: unknown) => err === thrown)
+})
+
+test('GraphWireCodes.Includes is true for every graph code and false for others', () =>
+{
+    for (const code of [-32040, -32041, -32042, -32043, -32044, -32045])
+    {
+        assert.equal(GraphWireCodes.Includes(code), true)
+    }
+    assert.equal(GraphWireCodes.Includes(-32603), false)
+    assert.equal(GraphWireCodes.Includes(undefined), false)
 })
 
 test('promote_rejects_runtime_source_and_development_target', async () =>

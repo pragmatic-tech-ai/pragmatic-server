@@ -261,7 +261,7 @@ describe('AdminProxy', () =>
             e instanceof AdminProxyError && e.Kind === AdminProxyErrorKind.Invalid && e.Code === -32602)
     })
 
-    it('an error without a code has Code undefined', async () =>
+    it('regression guard: an error without a code has Code undefined', async () =>
     {
         const conn = new FakeConnection()
         conn.FailWith = new Error('socket hang up')
