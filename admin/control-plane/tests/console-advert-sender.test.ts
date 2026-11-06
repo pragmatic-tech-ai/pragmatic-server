@@ -804,6 +804,37 @@ describe('HttpConsoleAdvertTransport', () =>
         await assert.rejects(() => sending, ConsoleAdvertUnavailableError)
     })
 
+    it('a real 400 or 500 answer on a timer tick between two refused ticks is transient and keeps it Registered', async () =>
+    {
+        let statuses: number[] = []
+        const url = await listen(() => ({ status: statuses.shift() ?? Names.Ok, body: Names.ConflictBody }))
+        const root = mkdtempSync(join(tmpdir(), Names.TempPrefix))
+        try
+        {
+            const store = await ConsoleEmailDomainStore.Open(join(root, ConsoleEmailDomainStore.FileName), Names.TenantId, [Names.Domain])
+            const timed = async (answers: number[]): Promise<ConsoleRegistrationState> =>
+            {
+                rmSync(join(root, ConsoleRegistration.FileName), { force: true })
+                const registration = await ConsoleRegistration.Open(join(root, ConsoleRegistration.FileName))
+                const s = new ConsoleAdvertSender(new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId), new FakeAccounts([Names.OwnerEmail]),
+                    store, randomBytes(Names.KeyBytes), Names.ConsoleUrl, new FakeTimer(), () => undefined, undefined, registration)
+                statuses = [...answers]
+                for (let i = 0; i < answers.length; i++)
+                {
+                    await s.SendNow(AdvertTrigger.Timer)
+                }
+                return registration.State
+            }
+            assert.equal(await timed([Names.Conflict, Names.Conflict]), ConsoleRegistrationState.Refused, 'control: two refused ticks')
+            assert.equal(await timed([Names.Conflict, Names.BadRequest, Names.Conflict]), ConsoleRegistrationState.Registered, 'a 400 resets the streak')
+            assert.equal(await timed([Names.Unauthorized, Names.ServerError, Names.Unauthorized]), ConsoleRegistrationState.Registered, 'a 500 resets the streak')
+        }
+        finally
+        {
+            rmSync(root, { recursive: true, force: true })
+        }
+    })
+
     it('a timed-out send is reported and the next send still runs', { timeout: Names.TestTimeoutMs }, async () =>
     {
         // Deterministic: the first request is held by the server until the test expires its deadline by hand (no wall-clock

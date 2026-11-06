@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { Signal } from '@pragmatic-tech-ai/todl-runtime'
+import { Signal, type IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { AtomicJsonFile, SerialRuns } from './atomic-json-file.js'
 
 /** Whether the platform still takes this console's adverts. The values are the persisted `state` field. */
@@ -26,13 +26,45 @@ export enum AdvertTrigger
 }
 
 /**
+ * A Signal whose subscribers are isolated from each other: each handler runs inside its own try/catch, so one that throws is
+ * reported through `onError` and the handlers after it are still called (todl-runtime's Signal.emit is a plain loop that a
+ * throwing handler would end). Subscribing, disposing and `subscriberCount` are Signal's own.
+ */
+class ListenerIsolatingSignal<T> extends Signal<T>
+{
+    public constructor(private readonly onError: (err: unknown) => void)
+    {
+        super()
+    }
+
+    public override subscribe(handler: (value: T) => void): IDisposable
+    {
+        return super.subscribe(value =>
+        {
+            try
+            {
+                handler(value)
+            }
+            catch (err)
+            {
+                this.onError(err)
+            }
+        })
+    }
+}
+
+/**
  * The in-hive console's registration with the platform, kept in `<dataRoot>/console-registration.json`
  * (`{ "state": "registered" | "refused" }`). A missing, empty, unreadable or malformed file opens Registered, so a bad file
  * never locks the desktop out. Observe applies each advert outcome: an Accepted answer from any send restores Registered;
  * RefusalThreshold consecutive Refused answers on Timer sends make it Refused; a Transient Timer answer resets that streak;
  * Start and Change sends that are refused or transient change nothing. The streak lives in memory only: a restarted console
- * keeps its state but counts again from 0. `Changed` fires only when the state actually changes. Writes are atomic and
- * serialised; a failed write keeps the in-memory state and is retried on the next observation.
+ * keeps its state but counts again from 0. Writes are atomic and serialised; a failed write keeps the in-memory state, is
+ * logged (a fixed sentence plus the error's name, never the path) and is retried on the next observation.
+ *
+ * `Changed` fires, carrying the new state, only when the state actually changes. Subscribe with
+ * `registration.Changed.subscribe(state => ...)` and dispose the returned handle to stop listening. Each subscriber is
+ * isolated: one that throws is logged by error name and every other subscriber is still told.
  */
 export class ConsoleRegistration
 {
@@ -44,22 +76,30 @@ export class ConsoleRegistration
         Object.freeze({ error: ConsoleRegistration.RefusedError, message: ConsoleRegistration.RefusedMessage })
     private static readonly StateKey = 'state'
     private static readonly Utf8 = 'utf8'
+    private static readonly WriteFailedPrefix = '[console-registration] state not saved: '
+    private static readonly ListenerFailedPrefix = '[console-registration] a Changed listener failed: '
+    private static readonly UnknownErrorName = 'unknown error'
 
-    public readonly Changed = new Signal<ConsoleRegistrationState>()
+    public readonly Changed: Signal<ConsoleRegistrationState>
     private readonly writes = new SerialRuns()
     private state: ConsoleRegistrationState
     /** The state the file is known to hold; differs from `state` while a write is pending or has failed. */
     private persisted: ConsoleRegistrationState
     private streak = 0
 
-    private constructor(private readonly filePath: string, state: ConsoleRegistrationState)
+    private constructor(
+        private readonly filePath: string,
+        state: ConsoleRegistrationState,
+        private readonly log: (line: string) => void)
     {
         this.state = state
         this.persisted = state
+        this.Changed = new ListenerIsolatingSignal<ConsoleRegistrationState>(
+            err => this.Report(ConsoleRegistration.ListenerFailedPrefix + ConsoleRegistration.NameOf(err)))
     }
 
-    /** Never throws and never writes: a missing, empty, unreadable or malformed file opens Registered. */
-    public static async Open(path: string): Promise<ConsoleRegistration>
+    /** Never throws and never writes: a missing, empty, unreadable or malformed file opens Registered. `log` takes failure lines. */
+    public static async Open(path: string, log: (line: string) => void = line => console.error(line)): Promise<ConsoleRegistration>
     {
         let text: string
         try
@@ -68,9 +108,9 @@ export class ConsoleRegistration
         }
         catch
         {
-            return new ConsoleRegistration(path, ConsoleRegistrationState.Registered)
+            return new ConsoleRegistration(path, ConsoleRegistrationState.Registered, log)
         }
-        return new ConsoleRegistration(path, ConsoleRegistration.StateIn(text))
+        return new ConsoleRegistration(path, ConsoleRegistration.StateIn(text), log)
     }
 
     public get State(): ConsoleRegistrationState
@@ -136,7 +176,10 @@ export class ConsoleRegistration
         return this.streak >= ConsoleRegistration.RefusalThreshold ? ConsoleRegistrationState.Refused : this.state
     }
 
-    /** A throwing subscriber neither reaches the advert sender nor stops the state from being persisted. */
+    /**
+     * Subscribers are isolated by ListenerIsolatingSignal, so nothing reaches here from them; the guard only keeps Observe's
+     * never-rejects promise should the signal itself fail.
+     */
     private Emit(state: ConsoleRegistrationState): void
     {
         try
@@ -145,8 +188,26 @@ export class ConsoleRegistration
         }
         catch
         {
-            // A subscriber's failure is its own; the registration has already changed.
+            // The registration has already changed; persisting still runs.
         }
+    }
+
+    /** Hands a failure line to the log; a throwing log is ignored so Observe never rejects. */
+    private Report(line: string): void
+    {
+        try
+        {
+            this.log(line)
+        }
+        catch
+        {
+            // Nowhere left to report to.
+        }
+    }
+
+    private static NameOf(err: unknown): string
+    {
+        return err instanceof Error ? err.name : ConsoleRegistration.UnknownErrorName
     }
 
     /** Writes the current state when the file is not known to hold it; a failure leaves `persisted` stale, so the next call retries. */
@@ -164,9 +225,10 @@ export class ConsoleRegistration
                 await AtomicJsonFile.Write(this.filePath, { [ConsoleRegistration.StateKey]: state })
                 this.persisted = state
             }
-            catch
+            catch (err)
             {
                 // Kept in memory; retried on the next observation.
+                this.Report(ConsoleRegistration.WriteFailedPrefix + ConsoleRegistration.NameOf(err))
             }
         })
     }

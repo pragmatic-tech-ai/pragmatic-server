@@ -19,6 +19,10 @@ class Names
     public static readonly BlockedDir = 'blocked'
     public static readonly SubscriberFailure = 'subscriber'
     public static readonly FileName = 'console-registration.json'
+    public static readonly WriteFailedPrefix = '[console-registration] state not saved: '
+    public static readonly ListenerFailedPrefix = '[console-registration] a Changed listener failed: '
+    public static readonly TypeErrorName = 'TypeError'
+    public static readonly ErrorNamePattern = /^[A-Za-z]+$/
     public static readonly RefusedError = 'console-not-registered'
     public static readonly RefusedMessage = 'This console is no longer registered with the platform. Ask your administrator.'
 }
@@ -172,27 +176,50 @@ describe('ConsoleRegistration', () =>
         mkdirSync(blocked)
         const target = join(blocked, ConsoleRegistration.FileName)
         mkdirSync(target)
-        const registration = await ConsoleRegistration.Open(target)
+        const lines: string[] = []
+        const registration = await ConsoleRegistration.Open(target, line => lines.push(line))
         const seen = record(registration)
         await registration.Observe(AdvertOutcome.Refused, AdvertTrigger.Timer)
         await registration.Observe(AdvertOutcome.Refused, AdvertTrigger.Timer)
         assert.equal(registration.State, ConsoleRegistrationState.Refused, 'the write failed (the path is a directory) but the state holds')
         assert.deepEqual(seen, [ConsoleRegistrationState.Refused])
+        assert.equal(lines.length, 1, 'the failed write is logged once')
+        assert.ok(lines[0].startsWith(Names.WriteFailedPrefix), lines[0])
+        assert.match(lines[0].slice(Names.WriteFailedPrefix.length), Names.ErrorNamePattern, 'the error name only')
+        assert.ok(!lines[0].includes(Names.BlockedDir), 'never the path')
         rmSync(target, { recursive: true })
         await registration.Observe(AdvertOutcome.Refused, AdvertTrigger.Timer)
         assert.deepEqual(JSON.parse(readFileSync(target, Names.Utf8)), { state: ConsoleRegistrationState.Refused }, 'the next observation writes it')
+        assert.equal(lines.length, 1, 'a successful retry logs nothing')
     })
 
-    it('a throwing Changed subscriber does not make Observe reject', async () =>
+    it('a throwing Changed subscriber is logged by name and the subscribers after it are still told', async () =>
     {
-        const registration = await ConsoleRegistration.Open(path)
-        registration.Changed.subscribe(() => { throw new Error(Names.SubscriberFailure) })
+        const lines: string[] = []
+        const registration = await ConsoleRegistration.Open(path, line => lines.push(line))
+        registration.Changed.subscribe(() => { throw new TypeError(Names.SubscriberFailure) })
+        const seen = record(registration)
         await observeAll(registration, [
             [AdvertOutcome.Refused, AdvertTrigger.Timer],
             [AdvertOutcome.Refused, AdvertTrigger.Timer],
         ])
         assert.equal(registration.State, ConsoleRegistrationState.Refused)
-        assert.equal((await ConsoleRegistration.Open(path)).State, ConsoleRegistrationState.Refused)
+        assert.deepEqual(seen, [ConsoleRegistrationState.Refused], 'the second subscriber was told')
+        assert.deepEqual(lines, [Names.ListenerFailedPrefix + Names.TypeErrorName])
+        assert.equal((await ConsoleRegistration.Open(path)).State, ConsoleRegistrationState.Refused, 'the state was still persisted')
+    })
+
+    it('a disposed subscription is no longer told', async () =>
+    {
+        const registration = await ConsoleRegistration.Open(path)
+        const seen: ConsoleRegistrationState[] = []
+        const subscription = registration.Changed.subscribe(s => seen.push(s))
+        assert.equal(registration.Changed.subscriberCount, 1)
+        subscription.dispose()
+        assert.equal(registration.Changed.subscriberCount, 0)
+        await registration.Observe(AdvertOutcome.Refused, AdvertTrigger.Timer)
+        await registration.Observe(AdvertOutcome.Refused, AdvertTrigger.Timer)
+        assert.deepEqual(seen, [])
     })
 
     it('RefusedBody is the fixed body', () =>
