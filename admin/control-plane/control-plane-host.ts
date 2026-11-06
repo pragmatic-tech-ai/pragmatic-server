@@ -49,7 +49,7 @@ import type { ConsoleAdvertRegistry } from './console-advert-registry.js'
 import type { ConsoleDomainApprovals } from './console-domain-approvals.js'
 import { InvalidEmailDomainError } from './email-domain-policy.js'
 import { EmailDomainApprovalRefusedError, type PlatformEmailDomains } from './platform-email-domains.js'
-import { EmailDomainsNotEditableError, TenantEmailDomainsLimits } from './tenant-api/tenant-email-domains.js'
+import { DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerifyThrottledError, EmailDomainsNotEditableError, TenantEmailDomainsLimits } from './tenant-api/tenant-email-domains.js'
 import { HiveConsoleSpecs, InvalidHiveConsoleError } from './hive-console-spec.js'
 import { InvalidIngressTlsError } from './ingress-tls.js'
 import { AgentInstallInProgressError, AgentInstallUnavailableError, type HiveAgentInstaller, type InstallStatus } from './hive-agent-installer.js'
@@ -338,10 +338,11 @@ export class ControlPlaneHost
     private static readonly EmailDomainsSegment = 'email-domains'
     private static readonly ApproveSegment = 'approve'
     private static readonly RevokeSegment = 'revoke'
-    /** /api/tenants/ID/email-domains (GET report, PUT record domains) and .../email-domains/(approve|revoke) (POST, any tenant). */
+    private static readonly VerifySegment = 'verify'
+    /** /api/tenants/ID/email-domains (GET report, PUT record domains) and .../email-domains/(approve|revoke|verify) (POST, any tenant). */
     private static readonly TenantEmailDomainsPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.TenantsSegment + '/([^/]+)/' + ControlPlaneHost.EmailDomainsSegment +
-        '(?:/(' + ControlPlaneHost.ApproveSegment + '|' + ControlPlaneHost.RevokeSegment + '))?$')
+        '(?:/(' + ControlPlaneHost.ApproveSegment + '|' + ControlPlaneHost.RevokeSegment + '|' + ControlPlaneHost.VerifySegment + '))?$')
     private static readonly DomainRequiredMessage = 'domain (an email domain name) is required'
     private static readonly DomainNotePrefix = 'domain: '
     private static readonly ApprovedOnSaveNotePrefix = 'approved on save: '
@@ -505,6 +506,11 @@ export class ControlPlaneHost
         [InvalidEmailDomainError, ControlPlaneHost.StatusBadRequest],
         [EmailDomainsNotEditableError, ControlPlaneHost.StatusConflict],
         [EmailDomainApprovalRefusedError, ControlPlaneHost.StatusConflict],
+        // DNS verification: a domain the tenant does not claim -> 409; too many lookups -> 429; no verifier or a lookup that did
+        // not complete -> 503 (nothing stored). Each message is one plain sentence.
+        [DomainNotClaimedError, ControlPlaneHost.StatusConflict],
+        [DomainVerifyThrottledError, ControlPlaneHost.StatusTooManyRequests],
+        [DomainVerificationUnavailableError, ControlPlaneHost.StatusUnavailable],
     ])
 
     private httpServer: HttpServer | undefined
@@ -1675,9 +1681,10 @@ export class ControlPlaneHost
 
     /**
      * Serves /api/tenants/ID/email-domains: GET the report (404 for an unknown tenant), PUT `{ domains }` (a control-plane tenant's
-     * record domains; each domain the save adds is approved and named in the audit note; 409 for an in-hive tenant), and POST .../approve or .../revoke
-     * `{ domain }` (one domain of any tenant; approving one the tenant does not claim is 409, revoking a malformed name is 400).
-     * Writes are Full-gated by the central gate and audited there; an approval or revoke notes its domain. Every success answers
+     * record domains; each domain the save adds is approved and named in the audit note; 409 for an in-hive tenant), and POST .../approve,
+     * .../revoke or .../verify `{ domain }` (one domain of any tenant; approving or verifying one the tenant does not claim is 409,
+     * revoking or verifying a malformed name is 400, verifying past the tenant's lookup limit is 429, a lookup that does not complete 503).
+     * Writes are Full-gated by the central gate and audited there; an approval, revoke or verify notes its domain. Every success answers
      * the fresh report. False for any other method.
      */
     private async RouteTenantEmailDomains(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray, domains: PlatformEmailDomains): Promise<boolean>
@@ -1726,7 +1733,11 @@ export class ControlPlaneHost
                 }
                 // Both answer the domain normalised and only once it passed the policy (approve) or the shape check (revoke), so
                 // the audit note carries a well-formed name of at most 253 characters.
-                const noted = action === C.ApproveSegment ? await domains.Approve(id, domain as string) : await domains.Revoke(id, domain as string)
+                // Verify ignores any other key of the body (a token included): the lookup uses the stored token. Its note comes from
+                // the answer's normalised domain.
+                const noted = action === C.ApproveSegment ? await domains.Approve(id, domain as string)
+                    : action === C.VerifySegment ? (await domains.VerifyDomain(id, domain as string)).domain
+                    : await domains.Revoke(id, domain as string)
                 this.auditNotes.set(res, C.DomainNotePrefix + noted)
             }
         }

@@ -21,8 +21,27 @@ import { ConsoleAdvertRegistry } from '../console-advert-registry.js'
 import { ConsoleDomainApprovals } from '../console-domain-approvals.js'
 import { DomainApprovalState, DomainVerificationRecord } from '../domain-verification-record.js'
 import { EmailDomainSource, PlatformEmailDomains, type EmailDomainApproval, type TenantEmailDomainsReport } from '../platform-email-domains.js'
+import { DomainTxtVerifier, TxtLookupStatus, type ITxtResolver, type TxtLookup } from '../txt-resolver.js'
 
 type Reply = { status: number; body: string }
+
+/** Answers every lookup with `answer` and records each queried name. */
+class FakeTxtResolver implements ITxtResolver
+{
+    public readonly Names: string[] = []
+    public answer: TxtLookup = { status: TxtLookupStatus.NoRecord, records: [] }
+
+    public async ResolveTxt(name: string): Promise<TxtLookup>
+    {
+        this.Names.push(name)
+        return { status: this.answer.status, records: this.answer.records.map(r => [...r]) }
+    }
+
+    public Publish(token: string): void
+    {
+        this.answer = { status: TxtLookupStatus.Found, records: [[DomainVerificationRecord.ValueFor(token)]] }
+    }
+}
 
 class FakeOperator implements IOperatorIdentity
 {
@@ -114,6 +133,7 @@ describe('ControlPlaneHost tenant email domains', () =>
     let approvals: ConsoleDomainApprovals
     let audit: AuditRegistry
     let domains: PlatformEmailDomains
+    let resolver: FakeTxtResolver
 
     beforeEach(async () =>
     {
@@ -139,9 +159,10 @@ describe('ControlPlaneHost tenant email domains', () =>
         await adverts.Report({ tenantId: 'acme', hiveId: 'acme-hive', consoleUrl: 'https://console-acme.localtest.me', fingerprints: [], emailDomains: ['acme.test', 'shared.test'], reportedAt: '2026-11-04T10:00:00.000Z' })
         audit = new AuditRegistry(join(parent, 'audit.json'))
         await audit.Load()
-        domains = new PlatformEmailDomains(directory, adverts, approvals)
+        resolver = new FakeTxtResolver()
+        domains = new PlatformEmailDomains(directory, adverts, approvals, new DomainTxtVerifier(resolver))
         const deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
+        host =new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
             new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent),
             undefined, undefined, undefined, undefined, undefined, undefined, new OperatorAuthorization(), audit,
             undefined, undefined, undefined, undefined, undefined, undefined, undefined, adverts, approvals, domains)
@@ -347,6 +368,104 @@ describe('ControlPlaneHost tenant email domains', () =>
             ['op@example.com', 'POST', AcmePath + '/revoke', 200, 'domain: acme.test'],
             ['op@example.com', 'PUT', BetaPath, 200, 'approved on save: beta.test'],
         ].sort())
+    })
+
+    /** Issues the tenant's tokens (a GET does) and answers the stored token of one domain. */
+    const StoredToken = async (tenantId: string, domain: string): Promise<string> =>
+    {
+        await domains.Report(tenantId)
+        return approvals.VerificationOf(tenantId, domain)?.token as string
+    }
+
+    it('POST verify with a matching record answers the report with state Verified and audits the domain', async () =>
+    {
+        resolver.Publish(await StoredToken('acme', 'acme.test'))
+        const r = await Send.Request(host, 'POST', AcmePath + '/verify', { domain: 'Acme.TEST' })
+        assert.equal(r.status, 200)
+        const row = Send.Report(r).approvals.find(a => a.domain === 'acme.test') as EmailDomainApproval
+        assert.equal(row.state, DomainApprovalState.Verified)
+        assert.equal(row.verified, true)
+        assert.equal(row.recordName, DomainVerificationRecord.NamePrefix + 'acme.test')
+        assert.equal(row.recordValue, DomainVerificationRecord.ValueFor(approvals.VerificationOf('acme', 'acme.test')?.token as string))
+        assert.deepEqual(resolver.Names, [DomainVerificationRecord.NameFor('acme.test')])
+        const entries = audit.Recent(10).filter(e => e.path === AcmePath + '/verify')
+        assert.deepEqual(entries.map(e => [e.actor, e.method, e.status, e.note]), [['op@example.com', 'POST', 200, 'domain: acme.test']])
+    })
+
+    it('POST verify for an unclaimed domain is 409, for a malformed one 400', async () =>
+    {
+        const unclaimed = await Send.Request(host, 'POST', AcmePath + '/verify', { domain: 'other.test' })
+        assert.equal(unclaimed.status, 409)
+        assert.equal(Send.Error(unclaimed), "other.test is not among this tenant's email domains, so there is nothing to verify.")
+        const malformed = await Send.Request(host, 'POST', AcmePath + '/verify', { domain: 'not a domain' })
+        assert.equal(malformed.status, 400)
+        const missing = await Send.Request(host, 'POST', AcmePath + '/verify', {})
+        assert.equal(missing.status, 400)
+        assert.equal(Send.Error(missing), 'domain (an email domain name) is required')
+        assert.equal((await Send.Request(host, 'POST', '/api/tenants/nope/email-domains/verify', { domain: 'acme.test' })).status, 404)
+        assert.deepEqual(resolver.Names, [])
+    })
+
+    it('POST verify while the lookup fails is 503 with the sentence and changes nothing', async () =>
+    {
+        await StoredToken('acme', 'acme.test')
+        const before = approvals.VerificationOf('acme', 'acme.test')
+        resolver.answer = { status: TxtLookupStatus.Failed, records: [] }
+        const r = await Send.Request(host, 'POST', AcmePath + '/verify', { domain: 'acme.test' })
+        assert.equal(r.status, 503)
+        assert.equal(Send.Error(r), 'The DNS lookup for _pragmatic-verification.acme.test did not complete. Try again later.')
+        assert.deepEqual(approvals.VerificationOf('acme', 'acme.test'), before)
+        assert.equal(approvals.VerificationOf('acme', 'acme.test')?.verified, false)
+    })
+
+    it('POST verify past the tenant limit is 429', async () =>
+    {
+        for (let i = 0; i < 10; i++)
+        {
+            assert.equal((await Send.Request(host, 'POST', AcmePath + '/verify', { domain: 'acme.test' })).status, 200)
+        }
+        const r = await Send.Request(host, 'POST', AcmePath + '/verify', { domain: 'acme.test' })
+        assert.equal(r.status, 429)
+        assert.equal(Send.Error(r), 'Too many verification attempts for this tenant. Try again in a few minutes.')
+        assert.equal(resolver.Names.length, 10)
+    })
+
+    it('a token in the body is ignored', async () =>
+    {
+        const stored = await StoredToken('acme', 'acme.test')
+        const sent = 'A'.repeat(43)
+        assert.notEqual(stored, sent)
+        resolver.Publish(stored)
+        const r = await Send.Request(host, 'POST', AcmePath + '/verify', { domain: 'acme.test', token: sent })
+        assert.equal(r.status, 200)
+        // The fake publishes only the stored token's value, so Verified proves the lookup was matched against the stored token.
+        assert.equal(Send.Report(r).approvals.find(a => a.domain === 'acme.test')?.state, DomainApprovalState.Verified)
+        assert.equal(approvals.VerificationOf('acme', 'acme.test')?.token, stored)
+        assert.equal(approvals.VerificationOf('acme', 'acme.test')?.verified, true)
+    })
+
+    it('a read-only operator gets 403 on verify', async () =>
+    {
+        await StoredToken('acme', 'acme.test')
+        const r = await Send.Request(host, 'POST', AcmePath + '/verify', { domain: 'acme.test' }, FakeOperator.ReadOnlyToken)
+        assert.equal(r.status, 403)
+        assert.deepEqual(resolver.Names, [])
+        assert.equal(approvals.VerificationOf('acme', 'acme.test')?.verified, false)
+    })
+
+    it('GET answers each row\'s state, recordName and recordValue', async () =>
+    {
+        const token = await StoredToken('acme', 'acme.test')
+        resolver.Publish(token)
+        await Send.Request(host, 'POST', AcmePath + '/verify', { domain: 'acme.test' })
+        const r = await Send.Request(host, 'GET', AcmePath)
+        assert.equal(r.status, 200)
+        const rows = Send.Report(r).approvals
+        const acme = rows.find(a => a.domain === 'acme.test') as EmailDomainApproval
+        assert.deepEqual([acme.state, acme.verified, acme.recordName, acme.recordValue], [DomainApprovalState.Verified, true, DomainVerificationRecord.NamePrefix + 'acme.test', DomainVerificationRecord.ValueFor(token)])
+        const shared = rows.find(a => a.domain === 'shared.test') as EmailDomainApproval
+        assert.deepEqual([shared.state, shared.verified, shared.recordName], [DomainApprovalState.Pending, false, DomainVerificationRecord.NamePrefix + 'shared.test'])
+        assert.match(shared.recordValue as string, /^pragmatic-domain-verification=[A-Za-z0-9_-]{43}$/)
     })
 })
 
