@@ -3,9 +3,13 @@
  * ONLY: NOT a *.test.ts, NOT part of `tsx --test` / `npm test`, never executed by CI, excluded from the tenant-admin build by its
  * `-smoke.ts` name. The controller runs it against a deployed in-hive console (plan Task 15).
  *
- * Why a hold: an idle open relay is the same condition for nginx's read/send timers as a call awaiting its answer (both measure the
- * gap between socket reads and writes), so the relay is held idle for HoldSeconds between two ListGraphs calls. If an Ingress timer
- * cut the socket, the second call fails (the protocol rejects an in-flight call when the socket closes) or CloseCode() is set.
+ * What the hold proves: the relay is held open and without calls for HoldSeconds (default 150) between two ListGraphs calls, and the
+ * second call must still succeed with CloseCode() undefined. That is end-to-end evidence that a relay survives a long gap through
+ * the real Ingress, which is what a user hits. It is NOT proof of the Ingress WebSocket timeout settings: the server pings every
+ * 30 s (HeartbeatMs in tenant-auth/desktop-relay.ts) and the client auto-answers with a pong, so the hold is not wire-idle and any
+ * nginx read/send timeout longer than 30 s (the 60 s default included) is reset by that traffic. The Ingress annotation and the
+ * timeouts nginx actually renders are checked separately on the cluster (plan Task 15). If a timer did cut the socket, the second
+ * call fails (the protocol rejects an in-flight call when the socket closes) or CloseCode() is set.
  *
  * Requires: a deployed in-hive console with its development CA trusted by node, the owner's email and password in files, the
  * Playwright Chromium browser. Run with:
@@ -32,7 +36,7 @@ import { IdpLoginPage } from './idp-login-page.js'
 type SmokeOptions = { console: string; environment: string; ownerEmailFile: string; passwordFile: string; holdSeconds: number }
 
 /** The code and state the IdP redirected the browser back to the loopback with. */
-type Callback = { code: string; state: string }
+type Callback = { code: string; state: string; path: string }
 
 /** A loopback listener that captures the one IdP redirect. */
 type Loopback = { port: number; callback: Promise<Callback>; close(): void }
@@ -107,8 +111,11 @@ export class ConsoleRelayHoldSmoke
     private static readonly CloseCodeWord = 'close code '
     private static readonly HoldWord = 'held idle for seconds '
     private static readonly CallbackTimedOut = 'the IdP redirect did not reach the loopback in time'
+    private static readonly CallbackMismatch = 'the loopback callback path or state differs from what was sent; not completing'
     private static readonly Labels = {
-        Lookup: 'console lookup (GET /desktop/console) answers 200 with a tenantId',
+        EmailFile: 'owner email file is readable',
+        PasswordFile: 'password file is readable',
+        Lookup:'console lookup (GET /desktop/console) answers 200 with a tenantId',
         Begin: 'begin returns 200 with an authorize URL',
         Browser: 'browser: IdP login form, then the loopback captured a code and state',
         Complete: 'complete returns 200 with a token',
@@ -139,11 +146,26 @@ export class ConsoleRelayHoldSmoke
             console.log(S.UsageMessage)
             process.exit(1)
         }
-        const ownerEmail = readFileSync(options.ownerEmailFile, S.Utf8).trim()
-        const password = readFileSync(options.passwordFile, S.Utf8).trim()
-        const ok = await new ConsoleRelayHoldSmoke(options, ownerEmail, password).Run()
+        const ownerEmail = S.ReadInput(options.ownerEmailFile, S.Labels.EmailFile)
+        const password = ownerEmail === undefined ? undefined : S.ReadInput(options.passwordFile, S.Labels.PasswordFile)
+        const ok = ownerEmail !== undefined && password !== undefined && await new ConsoleRelayHoldSmoke(options, ownerEmail, password).Run()
         console.log(ok ? S.OverallPass : S.OverallFail)
         process.exit(ok ? 0 : 1)
+    }
+
+    /** Reads one input file; on failure prints a FAIL line naming the input and the error name (never the path's content), and returns undefined. */
+    private static ReadInput(path: string, label: string): string | undefined
+    {
+        const S = ConsoleRelayHoldSmoke
+        try
+        {
+            return readFileSync(path, S.Utf8).trim()
+        }
+        catch (err)
+        {
+            console.log(S.FailTag + label + S.DetailSep + S.ErrorNameWord + S.SafeName(err))
+            return undefined
+        }
     }
 
     private static ParseArgs(argv: readonly string[]): SmokeOptions | undefined
@@ -236,8 +258,10 @@ export class ConsoleRelayHoldSmoke
             }
 
             const captured = await this.DriveBrowser(authorizeUrl, loopback)
-            this.Expect(S.Labels.Browser, captured !== undefined)
-            if (captured === undefined)
+            const sentState = new URL(authorizeUrl).searchParams.get(S.StateKey)
+            const matches = captured !== undefined && captured.path === S.CallbackPath && sentState !== null && captured.state === sentState
+            this.Expect(S.Labels.Browser, matches, captured === undefined ? S.CallbackTimedOut : S.CallbackMismatch)
+            if (captured === undefined || !matches)
             {
                 return undefined
             }
@@ -269,10 +293,19 @@ export class ConsoleRelayHoldSmoke
             await page.goto(authorizeUrl)
             await IdpLoginPage.WaitForForm(page, S.FormWaitMs)
             await IdpLoginPage.Submit(page, this.ownerEmail, this.password)
-            return await Promise.race<Callback | undefined>([
-                loopback.callback,
-                S.Sleep(S.ReturnWaitMs).then(() => undefined),
-            ])
+            let timer: NodeJS.Timeout | undefined
+            const timeout = new Promise<undefined>(resolve =>
+            {
+                timer = setTimeout(() => resolve(undefined), S.ReturnWaitMs)
+            })
+            try
+            {
+                return await Promise.race<Callback | undefined>([loopback.callback, timeout])
+            }
+            finally
+            {
+                clearTimeout(timer)
+            }
         }
         finally
         {
@@ -396,13 +429,13 @@ export class ConsoleRelayHoldSmoke
             })
             const server: Server = createServer((req, res) =>
             {
-                const params = new URL(req.url ?? '', S.HttpScheme + S.Loopback).searchParams
-                const code = params.get(S.CodeKey)
-                const state = params.get(S.StateKey)
+                const url = new URL(req.url ?? '', S.HttpScheme + S.Loopback)
+                const code = url.searchParams.get(S.CodeKey)
+                const state = url.searchParams.get(S.StateKey)
                 res.end(S.CallbackBody)
                 if (code !== null && state !== null)
                 {
-                    deliver({ code, state })
+                    deliver({ code, state, path: url.pathname })
                 }
             })
             server.once(S.ErrorEvent, reject)
