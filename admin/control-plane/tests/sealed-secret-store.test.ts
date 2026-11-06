@@ -1,6 +1,6 @@
-import { test } from 'node:test'
+import { mock, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -170,5 +170,39 @@ test('refs containing the separator are rejected without touching the store', as
         await assert.rejects(async () => store.Put(bad, randomBytes(8)), fixed)
         await assert.rejects(async () => store.Get(bad), fixed)
         await assert.rejects(async () => store.Delete(bad), fixed)
+    })
+})
+
+test('every Put syncs the temp file to disk (fsync is passed)', async () =>
+{
+    await SealedFixture.WithDir(async file =>
+    {
+        const probe = await open(`${file}.probe`, 'w')
+        const proto = Object.getPrototypeOf(probe) as { sync: () => Promise<void> }
+        await probe.close()
+        const sync = mock.method(proto, 'sync')
+        try
+        {
+            const store = await SealedSecretStore.Open(file, randomBytes(32))
+            await store.Put(SealedFixture.Ref, randomBytes(8))
+            const afterFirst = sync.mock.callCount()
+            assert.ok(afterFirst >= 1)
+            await store.Put(SealedFixture.Ref, randomBytes(8))
+            assert.ok(sync.mock.callCount() > afterFirst)
+        }
+        finally
+        {
+            sync.mock.restore()
+        }
+    })
+})
+
+test('the sealed file is private to its owner', { skip: process.platform === 'win32' }, async () =>
+{
+    await SealedFixture.WithDir(async file =>
+    {
+        const store = await SealedSecretStore.Open(file, randomBytes(32))
+        await store.Put(SealedFixture.Ref, randomBytes(8))
+        assert.equal((await stat(file)).mode & 0o077, 0)
     })
 })

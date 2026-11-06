@@ -28,8 +28,8 @@ export class SealedSecretFileError extends Error
 
 /**
  * Byte secrets sealed with the master key (AES-256-GCM via EncryptedSecretStore) and persisted
- * as { "sealed": { "<ref>": "<blob>" } }. Put/Delete are serialized through a promise chain so
- * concurrent writers never interleave or share a temp file. Values never appear in errors or JSON.
+ * as { "sealed": { "<ref>": "<blob>" } }. Get/Put/Delete run one at a time through a SerialRuns, so
+ * concurrent callers never interleave or share a temp file. Values never appear in errors or JSON.
  */
 export class SealedSecretStore
 {
@@ -44,7 +44,7 @@ export class SealedSecretStore
     private static readonly BadRefText = 'A sealed secret reference is invalid.'
     private static readonly Redacted = '[SealedSecretStore: values redacted]'
 
-    private readonly writes = new SerialRuns()
+    private readonly runs = new SerialRuns()
 
     private constructor(
         private readonly filePath: string,
@@ -117,7 +117,7 @@ export class SealedSecretStore
     public Get(ref: string): Promise<Buffer | undefined>
     {
         SealedSecretStore.CheckRef(ref)
-        return this.writes.Run(async () =>
+        return this.runs.Run(async () =>
         {
             if (!this.entries.has(ref))
             {
@@ -136,7 +136,7 @@ export class SealedSecretStore
     public Put(ref: string, value: Buffer): Promise<void>
     {
         SealedSecretStore.CheckRef(ref)
-        return this.writes.Run(async () =>
+        return this.runs.Run(async () =>
         {
             const next = new Map(this.entries)
             const plain = `${ref}${SealedSecretStore.Separator}${value.toString(SealedSecretStore.ValueEncoding)}`
@@ -149,7 +149,7 @@ export class SealedSecretStore
     public Delete(ref: string): Promise<void>
     {
         SealedSecretStore.CheckRef(ref)
-        return this.writes.Run(async () =>
+        return this.runs.Run(async () =>
         {
             const next = new Map(this.entries)
             next.delete(ref)

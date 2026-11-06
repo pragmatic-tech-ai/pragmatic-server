@@ -6,9 +6,12 @@ import { dirname } from 'node:path'
 export type AtomicWriteOptions = { readonly mode?: number; readonly fsync?: boolean }
 
 /**
- * Writes a JSON file atomically: the parent directory is created, the text goes to a uniquely named temp file next to the
- * target (`<path>.<uuid>.tmp`), which is then renamed over it; a failed rename removes the temp file and rethrows. Node
- * built-ins only, so the in-hive console's dependency-light code may use it.
+ * Writes a file atomically (JSON via Write, any text via WriteText): the parent directory is created, the text goes to a
+ * uniquely named temp file next to the target (`<path>.<uuid>.tmp`), which is then renamed over it. Any failure after the
+ * temp file was opened removes it and rethrows the ORIGINAL error (a close failure never replaces it). With `fsync: true`
+ * the temp file is synced before the rename and, on POSIX only, the parent directory is synced after it, so the rename
+ * itself survives a crash (directory fsync is unsupported on Windows and is skipped there). Node built-ins only, so the
+ * in-hive console's dependency-light code may use it.
  */
 export class AtomicJsonFile
 {
@@ -16,6 +19,8 @@ export class AtomicJsonFile
     private static readonly Utf8 = 'utf8'
 
     private static readonly OpenFlags = 'w'
+    private static readonly ReadFlags = 'r'
+    private static readonly WindowsPlatform = 'win32'
 
     /** `indent` is passed to JSON.stringify (omitted: compact). */
     public static Write(path: string, value: unknown, indent?: number, options?: AtomicWriteOptions): Promise<void>
@@ -39,16 +44,36 @@ export class AtomicJsonFile
                     await handle.sync()
                 }
             }
-            finally
+            catch (err)
             {
-                await handle.close()
+                // Best-effort close: the write/sync error is the cause the caller must see.
+                await handle.close().catch(() => undefined)
+                throw err
             }
+            await handle.close()
             await rename(temp, path)
         }
         catch (err)
         {
             await unlink(temp).catch(() => undefined)
             throw err
+        }
+        if (options?.fsync === true && process.platform !== AtomicJsonFile.WindowsPlatform)
+        {
+            await AtomicJsonFile.SyncDirectory(dirname(path))
+        }
+    }
+
+    private static async SyncDirectory(directory: string): Promise<void>
+    {
+        const handle = await open(directory, AtomicJsonFile.ReadFlags)
+        try
+        {
+            await handle.sync()
+        }
+        finally
+        {
+            await handle.close()
         }
     }
 }
