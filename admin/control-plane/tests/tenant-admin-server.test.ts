@@ -30,7 +30,8 @@ import { ConsoleEmailDomainStore } from '../console-email-domain-store.js'
 import { ConsoleOwnerResetFollower } from '../console-owner-reset-follower.js'
 import { WebSocket } from 'ws'
 import { KubeHttpsTransport } from '../../../src/agent/kube-https-transport.js'
-import type { AuditRegistry } from '../audit-record.js'
+import { AuditRegistry } from '../audit-record.js'
+import { TenantGraphAccess } from '../tenant-api/tenant-graph-access.js'
 import { NodeExecFile, NodeProcessSpawner } from '../kubectl.js'
 import { DesktopRelay } from '../tenant-auth/desktop-relay.js'
 
@@ -698,13 +699,13 @@ describe('TenantAdminServer console advert', () =>
     })
 
     /** Drives one request through the composed plane's tenant API as the seeded Owner. */
-    const handle = async (composition: TenantAdminComposition, method: string, body?: unknown): Promise<{ status: number; body: unknown }> =>
+    const handle = async (composition: TenantAdminComposition, method: string, body?: unknown, path: string = Names.EmailDomainsPath): Promise<{ status: number; body: unknown }> =>
     {
         const req = Object.assign(Readable.from(body === undefined ? [] : [Buffer.from(JSON.stringify(body))]), { method, headers: {} })
         let status = 0
         let text = ''
         const res = { writeHead: (s: number) => { status = s }, end: (b: string) => { text = b } }
-        await composition.plane.api.Handle(req as unknown as IncomingMessage, res as unknown as ServerResponse, Names.EmailDomainsPath, session)
+        await composition.plane.api.Handle(req as unknown as IncomingMessage, res as unknown as ServerResponse, path, session)
         return { status, body: JSON.parse(text) }
     }
 
@@ -718,6 +719,32 @@ describe('TenantAdminServer console advert', () =>
         assert.equal(existsSync(join(root, ConsoleEmailDomainStore.FileName)), false)
         assert.equal(composition.advert, undefined, 'no advert outside a configured console')
         assert.equal(lines.length, 1)
+    })
+
+    it('a console outside a pod answers 503 on the graph routes and audits to tenant-graph-audit.json', async () =>
+    {
+        writeConsoleSeed()
+        const record = {
+            name: 'dev1', type: 'development', template: 'dev-blank', environmentId: 'eid-dev1', tenantId: Names.TenantId, hiveId: Names.HiveId, hostPort: 8101,
+            containerName: 'c-dev1', volumeName: 'v-dev1', bundleDir: '/b/dev1', createdAt: Names.Created, status: 'running',
+        }
+        writeFileSync(join(root, ControlPlaneServer.RegistryFile), JSON.stringify({ environments: { dev1: record } }))
+        const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
+        const composition = await server.Compose({}, undefined, () => undefined)
+        assert.equal(composition.reach, undefined)
+        const graphsPath = '/tenant-api/environments/dev1/graphs'
+        const get = await handle(composition, Names.Get, undefined, graphsPath)
+        assert.equal(get.status, Names.Unavailable)
+        assert.deepEqual(get.body, { error: TenantGraphAccess.UnreachableMessage })
+        const post = await handle(composition, 'POST', { name: 'sales' }, graphsPath)
+        assert.equal(post.status, Names.Unavailable)
+        const file = join(root, 'tenant-graph-audit.json')
+        assert.ok(existsSync(file))
+        const reloaded = new AuditRegistry(file)
+        await reloaded.Load()
+        assert.deepEqual(reloaded.List().map(r => r.status), [Names.Unavailable])
+        assert.equal(composition.graphAudit.List().length, 1)
+        assert.equal(composition.graphAudit.List()[0].status, Names.Unavailable)
     })
 
     it('Compose mounts the email-domain route on the console plane', async () =>

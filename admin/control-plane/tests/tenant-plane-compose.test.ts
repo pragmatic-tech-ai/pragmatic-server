@@ -7,6 +7,16 @@ import { join } from 'node:path'
 import { ControlPlaneServer } from '../server.js'
 import { TenantAdminClientRegistry } from '../tenant-auth/tenant-admin-client-record.js'
 import { DesktopRelay } from '../tenant-auth/desktop-relay.js'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { Readable } from 'node:stream'
+import { AuditRegistry } from '../audit-record.js'
+import type { IEnvironmentService, IGraphService } from '../control-plane-host.js'
+import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
+import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
+import { TenantGraphAccess } from '../tenant-api/tenant-graph-access.js'
+import type { TenantPlane } from '../tenant-auth/tenant-plane.js'
+import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import { ResRecorder } from './res-recorder.js'
 
 describe('ControlPlaneServer.ExternalPortWarning', () =>
 {
@@ -233,5 +243,84 @@ describe('ControlPlaneServer.ComposeTenantPlane', () =>
     it('returns undefined (fail-closed) when the base domain env is unset', () =>
     {
         assert.equal(compose({ PRAGMATIC_TENANT_ADMIN_PORT: Port } as NodeJS.ProcessEnv), undefined)
+    })
+})
+
+/** A tenant API driven through BuildTenantPlane: one tenant owning a Development and a Runtime environment. */
+class GraphPlane
+{
+    public static readonly DevGraphs = '/tenant-api/environments/dev1/graphs'
+    public static readonly RuntimeGraphs = '/tenant-api/environments/rt1/graphs'
+    public static readonly Get = 'GET'
+    public static readonly Session: TenantSession = { id: 's1', tenantId: 't1', principalId: 'p1', email: 'o@acme.test', expiresAt: '2099-01-01T00:00:00Z' }
+
+    public static Env(name: string, type: EnvType): EnvironmentRecord
+    {
+        return {
+            name, type, template: Template.DevBlank, environmentId: 'eid-' + name, tenantId: 't1', hiveId: 'h1', hostPort: 8101,
+            containerName: 'c-' + name, volumeName: 'v-' + name, bundleDir: '/b/' + name, createdAt: '2026-01-01T00:00:00Z', status: EnvStatus.Running
+        }
+    }
+
+    public static readonly Graphs = { List: async () => [] } as unknown as IGraphService
+
+    public static Build(dir: string, graphs: TenantGraphAccess | undefined): TenantPlane
+    {
+        const stub = {} as unknown as never
+        const service = { List: () => [GraphPlane.Env('dev1', EnvType.Development), GraphPlane.Env('rt1', EnvType.Runtime)] } as unknown as IEnvironmentService
+        const directory = { GetTenant: () => undefined, ListHives: () => [] } as unknown as ITenantDirectory
+        const registry = new TenantAdminClientRegistry(join(dir, 'tenant-admin-clients.json'))
+        return ControlPlaneServer.BuildTenantPlane(dir, stub, directory, false, service, stub, stub, stub, randomBytes(32), registry, 168,
+            undefined, undefined, false, false, undefined, undefined, undefined, graphs)
+    }
+
+    public static async Send(plane: TenantPlane, path: string): Promise<ResRecorder>
+    {
+        const req = Object.assign(Readable.from([]), { method: GraphPlane.Get, headers: {} })
+        const res = new ResRecorder()
+        await plane.api.Handle(req as unknown as IncomingMessage, res as unknown as ServerResponse, path, GraphPlane.Session)
+        return res
+    }
+}
+
+describe('ControlPlaneServer graph wiring', () =>
+{
+    it('names the tenant graph audit file in the data root', () =>
+    {
+        assert.equal(ControlPlaneServer.TenantGraphAuditFile, 'tenant-graph-audit.json')
+    })
+
+    it('BuildTenantPlane with graph access routes the graph paths; without it they stay 404', async () =>
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'tenant-plane-compose-'))
+        try
+        {
+            const access = new TenantGraphAccess(GraphPlane.Graphs, new AuditRegistry(join(dir, ControlPlaneServer.TenantGraphAuditFile)))
+            const wired = await GraphPlane.Send(GraphPlane.Build(dir, access), GraphPlane.DevGraphs)
+            assert.equal(wired.status, 200)
+            assert.deepEqual(wired.Json(), [])
+            const unwired = await GraphPlane.Send(GraphPlane.Build(dir, undefined), GraphPlane.DevGraphs)
+            assert.equal(unwired.status, 404)
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    })
+
+    it('a non-Development environment answers 400 through the composed stack', async () =>
+    {
+        const dir = mkdtempSync(join(tmpdir(), 'tenant-plane-compose-'))
+        try
+        {
+            const access = new TenantGraphAccess(GraphPlane.Graphs, new AuditRegistry(join(dir, ControlPlaneServer.TenantGraphAuditFile)))
+            const res = await GraphPlane.Send(GraphPlane.Build(dir, access), GraphPlane.RuntimeGraphs)
+            assert.equal(res.status, 400)
+            assert.match(res.body, new RegExp(TenantGraphAccess.NotDevelopmentMessage.replace('.', '\.')))
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
     })
 })

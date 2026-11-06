@@ -13,6 +13,8 @@ import { InClusterEnvironmentRuntime } from './in-cluster-environment-runtime.js
 import { EnvironmentPlacement } from './environment-placement.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvironmentService } from './environment-service.js'
+import { GraphService } from './graph-service.js'
+import { TenantGraphAccess } from './tenant-api/tenant-graph-access.js'
 import type { IEnvironmentReach } from './environment-endpoints.js'
 import { HiveHealthProducer } from './hive-health-producer.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
@@ -84,6 +86,8 @@ export type TenantAdminComposition = {
     readonly advert: ConsoleAdvertSender | undefined
     /** The desktop relay's audit (`<dataRoot>/tenant-desktop-audit.json`), loaded before the plane is built. */
     readonly desktopAudit: AuditRegistry
+    /** The graph routes' audit (`<dataRoot>/tenant-graph-audit.json`), loaded before the plane is built. */
+    readonly graphAudit: AuditRegistry
 }
 
 /**
@@ -293,16 +297,21 @@ export class TenantAdminServer
         const reach = inCluster === undefined ? undefined : new InClusterEnvironmentReach(orchestrators.For(TenantAdminServer.FirstHiveOf(directory)).Kubectl)
         // No PlatformImageSigner here, deliberately: the platform signing key's private half never ships into a hive, so
         // the in-hive tenant admin cannot sign. It runs only images the platform signed (its hive's verification decides).
-        const service = new EnvironmentService(registry, new PortAllocator(ControlPlaneServer.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()), dataRoot, new AdminProxy(new WsAdminConnector()), directory, idpService, conn => new IdpAdminClient(conn), undefined, reach)
+        const proxy = new AdminProxy(new WsAdminConnector())
+        const service = new EnvironmentService(registry, new PortAllocator(ControlPlaneServer.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), undefined, reach)
         const tenant = directory.Tenant
         const emailDomains = await ConsoleEmailDomainStore.Open(join(dataRoot, ConsoleEmailDomainStore.FileName), tenant.id, tenant.emailDomains)
         const desktopAudit = new AuditRegistry(join(dataRoot, ControlPlaneServer.DesktopAuditFile))
         await desktopAudit.Load()
+        const graphAudit = new AuditRegistry(join(dataRoot, ControlPlaneServer.TenantGraphAuditFile))
+        await graphAudit.Load()
+        // Graphs live in the environments, so outside a pod (no reach) the routes answer 503 instead of calling out.
+        const graphs = new TenantGraphAccess(reach === undefined ? undefined : new GraphService(registry, proxy, service), graphAudit)
         // The desktop surface is always served; the relay only when this console can reach its environments (in a pod).
         const relay = reach === undefined ? undefined : { endpoints: reach, audit: desktopAudit }
         const plane = ControlPlaneServer.BuildTenantPlane(
             dataRoot, idpService, directory, cfg.secureCookie, service, this.rollout, orchestrators, placement,
-            masterKey, adminClients, cfg.secretTtlHours, undefined, undefined, cfg.trustedProxy, true, relay, emailDomains, tenant.id)
+            masterKey, adminClients, cfg.secretTtlHours, undefined, undefined, cfg.trustedProxy, true, relay, emailDomains, tenant.id, graphs)
         const resolver = new TenantHostResolver(cfg.baseDomain, cfg.scheme, directory, cfg.externalPort, TenantAdminServer.ConsoleAliasOf(cfg, directory))
         const staticRoot = join(dirname(fileURLToPath(import.meta.url)), ControlPlaneServer.ParentSegment, ControlPlaneServer.TenantPortalSegment, ControlPlaneServer.DistSegment)
         const monitor = cfg.probeMs > 0
@@ -315,7 +324,7 @@ export class TenantAdminServer
             ? undefined
             : new ConsoleOwnerResetFollower(plane.principals, tenant, join(dataRoot, ConsoleOwnerResetFollower.FileName))
         const advert = TenantAdminServer.AdvertSenderOf(env, cfg, tenant, emailDomains, log, follower)
-        return { directory, rollout: this.rollout, plane, host, monitor, config: cfg, reach, emailDomains, advert, desktopAudit }
+        return { directory, rollout: this.rollout, plane, host, monitor, config: cfg, reach, emailDomains, advert, desktopAudit, graphAudit }
     }
 
     /** Composes, binds the tenant listener, then starts the advert (its first send awaited; a failure is logged, never thrown). */
