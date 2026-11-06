@@ -112,6 +112,11 @@ class GraphFixture
     public static readonly DeleteCall = 'delete:'
     public static readonly ContributeCall = 'contribute:'
     public static readonly SolutionId = 'sol-1'
+    public static readonly NotFoundMessage = 'Graph not found: sales'
+    public static readonly PackageId = 'p'
+    public static readonly PackageVersion = '1.0.0'
+    public static readonly InternalMessage = 'internal error'
+    public static readonly SecretDetail = 'secret detail'
     public static readonly OutsideScopeText = "outside this credential's scope"
     public static readonly UnavailableText = 'graph service is not available'
     public static readonly NotDevelopmentText = 'operation requires a development tenant'
@@ -328,7 +333,7 @@ test('graph failures answer their typed code with the unchanged message', async 
         let error = await GraphFixture.ErrorOf(client.GetGraph(ref))
         assert.equal(error.code, GraphErrorCode.NotFound)
         assert.equal(error.code, -32040)
-        assert.equal(error.message, 'Graph not found: sales')
+        assert.equal(error.message, GraphFixture.NotFoundMessage)
         fixture.Service.Failure = new GraphExistsError(GraphFixture.GraphName)
         error = await GraphFixture.ErrorOf(client.CreateGraph({ graphName: GraphFixture.GraphName, description: GraphFixture.Description }))
         assert.equal(error.code, -32041)
@@ -341,7 +346,7 @@ test('graph failures answer their typed code with the unchanged message', async 
         fixture.Service.Failure = new GraphPackageSegmentError()
         error = await GraphFixture.ErrorOf(client.ContributeGraph(contribute))
         assert.equal(error.code, -32044)
-        fixture.Service.Failure = new GraphPackageMissingError({ id: 'p', version: '1.0.0' })
+        fixture.Service.Failure = new GraphPackageMissingError({ id: GraphFixture.PackageId, version: GraphFixture.PackageVersion })
         error = await GraphFixture.ErrorOf(client.ExportGraph(ref))
         assert.equal(error.code, -32045)
         assert.equal(error.message, fixture.Service.Failure.message)
@@ -353,10 +358,10 @@ test('a non-graph failure still answers -32603 internal error', async () =>
     const fixture = new GraphFixture()
     await fixture.With(TenantPurpose.Development, async client =>
     {
-        fixture.Service.Failure = new Error('secret detail')
+        fixture.Service.Failure = new Error(GraphFixture.SecretDetail)
         const error = await GraphFixture.ErrorOf(client.GetGraph({ graphName: GraphFixture.GraphName }))
         assert.equal(error.code, ErrorCodes.InternalError)
-        assert.equal(error.message, 'internal error')
+        assert.equal(error.message, GraphFixture.InternalMessage)
     })
 })
 

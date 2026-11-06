@@ -36,7 +36,7 @@ import { AdminEnums, AdminEnumError } from './admin-enums.js'
 import { TenantPurpose } from '../tenancy/tenant-purpose.js'
 import type { IDevGraphService } from './graphs/dev-graph-service.js'
 import { GraphErrorCodes } from './graphs/graph-error-codes.js'
-import { NoEnvironmentGraphError,type IEnvironmentGraphHost } from './graphs/environment-graph.js'
+import { NoEnvironmentGraphError, type IEnvironmentGraphHost } from './graphs/environment-graph.js'
 import type { PragmaticAppsRegistry } from './apps/pragmatic-apps-registry.js'
 import { CypherLimits } from '../config/cypher-limits.js'
 import { PagingLimits } from '../config/paging-limits.js'
@@ -334,7 +334,12 @@ export class ServerConnectionHandler
         const fail = (error: unknown): never =>
         {
             this.inFlight--
-            throw error instanceof ResponseError ? error : GraphErrorCodes.ToResponseError(error) ?? new ResponseError(ErrorCodes.InternalError, ServerConnectionHandler.GenericInternalMessage)
+            if (error instanceof ResponseError)
+            {
+                throw error
+            }
+            const graphError = GraphErrorCodes.ToResponseError(error)
+            throw graphError ?? new ResponseError(ErrorCodes.InternalError, ServerConnectionHandler.GenericInternalMessage)
         }
         try
         {
