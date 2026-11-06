@@ -229,6 +229,7 @@ describe('DesktopTenantMatcher', () =>
         adverts.Records.set('acme', MatcherFixture.Advert({ emailDomains: ['acme.test'] }))
         approvals.Approved.set('acme', ['acme.test'])
         assert.deepEqual(Summary(await matcher.Match('  Carl@ACME.test ', MatcherFixture.Plane)), [{ id: 'acme', consoleUrl: MatcherFixture.Console, match: DiscoveryMatch.Domain }])
+        assert.deepEqual((await matcher.Match('Carl@acme.test', MatcherFixture.Plane)).map(d => d.inHive), [true])
     })
 
     it('an advertised domain the operator has not approved does not match', async () =>
