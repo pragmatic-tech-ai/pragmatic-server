@@ -30,6 +30,8 @@ import { ConsoleAdvertReceiver } from './console-advert-receiver.js'
 import { ConsoleOwnerResets } from './console-owner-resets.js'
 import { ConsoleDomainApprovals } from './console-domain-approvals.js'
 import { PlatformEmailDomains } from './platform-email-domains.js'
+import { DomainVerificationRechecker } from './domain-verification-rechecker.js'
+import { DomainTxtVerifier, NodeTxtResolver } from './txt-resolver.js'
 import type { ITenantEmailDomains } from './tenant-api/tenant-email-domains.js'
 import { DevCertificateAuthority } from './dev-certificate-authority.js'
 import { InHiveIdpAdmin } from './in-hive-idp-admin.js'
@@ -282,7 +284,10 @@ export class ControlPlaneServer
             new PlatformConsoleImageApproval(signing.PlatformSigner, HiveOrchestratorFactory.VerifierFor(dataRoot)),
             new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)), agentChannelUrl, new SystemInstallClock(), adverts, ownerResets)
         // One email-domain service for the operator routes and the control-plane tenant plane, over the shared adverts and approvals.
-        const emailDomains = new PlatformEmailDomains(directory, adverts, approvals)
+        const domainVerifier = new DomainTxtVerifier(new NodeTxtResolver())
+        const emailDomains = new PlatformEmailDomains(directory, adverts, approvals, domainVerifier)
+        // Daily DNS re-check of verified domains (after approvals.Load; its interval timer is unref'd, so no shutdown hook).
+        new DomainVerificationRechecker(approvals, domainVerifier).Start()
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery, consoleInstaller, adverts, approvals, emailDomains)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
