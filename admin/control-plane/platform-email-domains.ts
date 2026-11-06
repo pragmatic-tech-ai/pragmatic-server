@@ -216,7 +216,7 @@ export class PlatformEmailDomains implements ITenantEmailDomains
     {
         const inHive = this.IsInHive(tenant.id)
         const domains = [...this.ClaimedDomainsOf(tenant)].sort()
-        const effective = new Set(ConsoleDomainApprovals.EffectiveDomains(domains, this.ApprovedFor(tenant.id)))
+        const effective = new Set(ConsoleDomainApprovals.EffectiveDomainsLegacy(domains, this.ApprovedFor(tenant.id)))
         return { domains, editable: !inHive, inHive, pending: domains.filter(d => !effective.has(d)) }
     }
 

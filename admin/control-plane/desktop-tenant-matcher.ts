@@ -172,7 +172,7 @@ export class DesktopTenantMatcher
         {
             return []
         }
-        return ConsoleDomainApprovals.EffectiveDomains(claimed, this.approvals.ApprovedFor(tenantId))
+        return ConsoleDomainApprovals.EffectiveDomainsLegacy(claimed, this.approvals.ApprovedFor(tenantId))
     }
 
     /**

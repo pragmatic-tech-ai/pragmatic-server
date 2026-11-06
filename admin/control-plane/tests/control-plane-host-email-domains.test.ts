@@ -272,12 +272,13 @@ describe('ControlPlaneHost tenant email domains', () =>
         assert.deepEqual(approvals.ApprovedFor('acme'), [])
     })
 
-    it('revoking a never-approved domain is 200 and changes nothing', async () =>
+    it('revoking a never-approved domain is 200, stores a revoke and leaves approvals unchanged', async () =>
     {
         await approvals.Approve('acme', 'acme.test')
         const r = await Send.Request(host, 'POST', AcmePath + '/revoke', { domain: 'shared.test' })
         assert.equal(r.status, 200)
         assert.deepEqual(approvals.ApprovedFor('acme'), ['acme.test'])
+        assert.deepEqual(approvals.RevokedFor('acme'), ['shared.test'])
     })
 
     it('revoke clears a stored approval the policy now refuses', async () =>

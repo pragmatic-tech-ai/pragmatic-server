@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConsoleAdvertRegistry } from '../console-advert-registry.js'
 import type { ConsoleAdvertRecord } from '../console-advert-registry.js'
-import { ConsoleDomainApprovals } from '../console-domain-approvals.js'
+import { ConsoleDomainApprovals, type DomainStanding } from '../console-domain-approvals.js'
 
 const FpA = 'a'.repeat(64)
 const FpB = 'b'.repeat(64)
@@ -33,6 +33,12 @@ class RegistryFixture
     public static Advert(over: Partial<Omit<ConsoleAdvertRecord, 'id' | 'firstReportedAt'>> = {}): Omit<ConsoleAdvertRecord, 'id' | 'firstReportedAt'>
     {
         return { tenantId: 'acme', hiveId: 'h1', consoleUrl: 'https://console-acme.localtest.me', fingerprints: [FpA], emailDomains: ['acme.test'], reportedAt: '2026-11-04T10:00:00.000Z', ...over }
+    }
+
+    /** A standing holding only operator approvals. */
+    public static Approved(approved: readonly string[]): DomainStanding
+    {
+        return { approved, revoked: [], verified: [] }
     }
 }
 
@@ -151,7 +157,8 @@ test('operator approvals are separate from adverts, survive re-adverts and reloa
         assert.deepEqual(again.ApprovedFor('acme'), ['eu.acme.test'])
         await again.Revoke('acme', 'eu.acme.test')
         assert.deepEqual(again.ApprovedFor('acme'), [])
-        assert.equal(again.List().length, 0)
+        assert.deepEqual(again.RevokedFor('acme'), ['acme.test', 'eu.acme.test', 'never.test'])
+        assert.equal(again.List().length, 1)
         await again.Approve('acme', 'acme.test')
         await again.ForgetTenant('acme')
         assert.deepEqual(again.ApprovedFor('acme'), [])
@@ -183,9 +190,9 @@ test('ApproveAll adds several domains in one write, normalised, deduped and sort
 
 test('EffectiveDomains is advertised intersect approved', () =>
 {
-    assert.deepEqual(ConsoleDomainApprovals.EffectiveDomains(['b.test', 'a.test', 'c.test', 'a.test'], ['a.test', 'c.test', 'z.test']), ['a.test', 'c.test'])
-    assert.deepEqual(ConsoleDomainApprovals.EffectiveDomains(['a.test'], []), [])
-    assert.deepEqual(ConsoleDomainApprovals.EffectiveDomains([], ['a.test']), [])
+    assert.deepEqual(ConsoleDomainApprovals.EffectiveDomains(['b.test', 'a.test', 'c.test', 'a.test'], RegistryFixture.Approved(['a.test', 'c.test', 'z.test']), new Set()), ['a.test', 'c.test'])
+    assert.deepEqual(ConsoleDomainApprovals.EffectiveDomains(['a.test'], RegistryFixture.Approved([]), new Set()), [])
+    assert.deepEqual(ConsoleDomainApprovals.EffectiveDomains([], RegistryFixture.Approved(['a.test']), new Set()), [])
 })
 
 test('IsStale treats an unparseable reportedAt as stale', () =>
@@ -195,5 +202,5 @@ test('IsStale treats an unparseable reportedAt as stale', () =>
 
 test('EffectiveDomains normalises both sides before intersecting', () =>
 {
-    assert.deepEqual(ConsoleDomainApprovals.EffectiveDomains([' Acme.TEST', 'b.test.'], ['acme.test.', 'B.TEST', 'z.test']), ['acme.test', 'b.test'])
+    assert.deepEqual(ConsoleDomainApprovals.EffectiveDomains([' Acme.TEST', 'b.test.'], RegistryFixture.Approved(['acme.test.', 'B.TEST', 'z.test']), new Set()), ['acme.test', 'b.test'])
 })

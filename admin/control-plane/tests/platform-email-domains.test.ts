@@ -194,7 +194,7 @@ describe('PlatformEmailDomains', () =>
         assert.deepEqual(f.approvals.ApprovedFor('acme'), [])
     })
 
-    it('Revoke of a never-approved domain changes nothing', async () =>
+    it('Revoke of a never-approved domain stores a revoke and leaves approvals unchanged', async () =>
     {
         await f.Advertise(['acme.test', 'two.test'])
         await f.domains.Approve('acme', 'acme.test')
@@ -202,6 +202,8 @@ describe('PlatformEmailDomains', () =>
         await f.domains.Revoke('beta', 'beta.test')
         assert.deepEqual(f.approvals.ApprovedFor('acme'), ['acme.test'])
         assert.deepEqual(f.approvals.ApprovedFor('beta'), [])
+        assert.deepEqual(f.approvals.RevokedFor('acme'), ['two.test'])
+        assert.deepEqual(f.approvals.RevokedFor('beta'), ['beta.test'])
     })
 
     it('Revoke clears a stored approval the policy now refuses', async () =>
