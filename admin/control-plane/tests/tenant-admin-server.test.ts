@@ -132,6 +132,18 @@ class Names
     public static readonly AuditPath = 'acme-dev'
     public static readonly EmptyJson = 'null'
     public static readonly Unauthorized = 401
+    public static readonly Post = 'POST'
+    public static readonly GraphEnvName = 'dev1'
+    public static readonly GraphEnvType = 'development'
+    public static readonly GraphEnvTemplate = 'dev-blank'
+    public static readonly GraphEnvId = 'eid-dev1'
+    public static readonly GraphEnvPort = 8101
+    public static readonly GraphEnvContainer = 'c-dev1'
+    public static readonly GraphEnvVolume = 'v-dev1'
+    public static readonly GraphEnvBundle = '/b/dev1'
+    public static readonly GraphEnvStatus = 'running'
+    public static readonly GraphsPath = '/tenant-api/environments/dev1/graphs'
+    public static readonly GraphName = 'sales'
 }
 
 /**
@@ -725,20 +737,21 @@ describe('TenantAdminServer console advert', () =>
     {
         writeConsoleSeed()
         const record = {
-            name: 'dev1', type: 'development', template: 'dev-blank', environmentId: 'eid-dev1', tenantId: Names.TenantId, hiveId: Names.HiveId, hostPort: 8101,
-            containerName: 'c-dev1', volumeName: 'v-dev1', bundleDir: '/b/dev1', createdAt: Names.Created, status: 'running',
+            name: Names.GraphEnvName, type: Names.GraphEnvType, template: Names.GraphEnvTemplate, environmentId: Names.GraphEnvId, tenantId: Names.TenantId,
+            hiveId: Names.HiveId, hostPort: Names.GraphEnvPort, containerName: Names.GraphEnvContainer, volumeName: Names.GraphEnvVolume,
+            bundleDir: Names.GraphEnvBundle, createdAt: Names.Created, status: Names.GraphEnvStatus,
         }
-        writeFileSync(join(root, ControlPlaneServer.RegistryFile), JSON.stringify({ environments: { dev1: record } }))
+        writeFileSync(join(root, ControlPlaneServer.RegistryFile), JSON.stringify({ environments: { [Names.GraphEnvName]: record } }))
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
         const composition = await server.Compose({}, undefined, () => undefined)
         assert.equal(composition.reach, undefined)
-        const graphsPath = '/tenant-api/environments/dev1/graphs'
-        const get = await handle(composition, Names.Get, undefined, graphsPath)
+        const get = await handle(composition, Names.Get, undefined, Names.GraphsPath)
         assert.equal(get.status, Names.Unavailable)
         assert.deepEqual(get.body, { error: TenantGraphAccess.UnreachableMessage })
-        const post = await handle(composition, 'POST', { name: 'sales' }, graphsPath)
+        assert.equal(composition.graphAudit.List().length, 0, 'a read is not audited')
+        const post = await handle(composition, Names.Post, { name: Names.GraphName }, Names.GraphsPath)
         assert.equal(post.status, Names.Unavailable)
-        const file = join(root, 'tenant-graph-audit.json')
+        const file = join(root, ControlPlaneServer.TenantGraphAuditFile)
         assert.ok(existsSync(file))
         const reloaded = new AuditRegistry(file)
         await reloaded.Load()

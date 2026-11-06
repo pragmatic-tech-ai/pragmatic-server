@@ -2,13 +2,13 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Readable } from 'node:stream'
 import { ControlPlaneServer } from '../server.js'
 import { TenantAdminClientRegistry } from '../tenant-auth/tenant-admin-client-record.js'
 import { DesktopRelay } from '../tenant-auth/desktop-relay.js'
-import type { IncomingMessage, ServerResponse } from 'node:http'
-import { Readable } from 'node:stream'
 import { AuditRegistry } from '../audit-record.js'
 import type { IEnvironmentService, IGraphService } from '../control-plane-host.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
@@ -316,7 +316,7 @@ describe('ControlPlaneServer graph wiring', () =>
             const access = new TenantGraphAccess(GraphPlane.Graphs, new AuditRegistry(join(dir, ControlPlaneServer.TenantGraphAuditFile)))
             const res = await GraphPlane.Send(GraphPlane.Build(dir, access), GraphPlane.RuntimeGraphs)
             assert.equal(res.status, 400)
-            assert.match(res.body, new RegExp(TenantGraphAccess.NotDevelopmentMessage.replace('.', '\.')))
+            assert.deepEqual(res.Json(), { error: TenantGraphAccess.NotDevelopmentMessage })
         }
         finally
         {
