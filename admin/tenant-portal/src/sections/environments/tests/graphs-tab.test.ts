@@ -12,6 +12,7 @@ import { SectionsFixture } from './sections-fixture.js'
 const NoEnvironments = { envs: false, adopt: true, access: true, settings: true }
 const UnreachableSentence = 'This console cannot reach its environments, so graphs are unavailable here.'
 const ExistsSentence = 'A graph with that name already exists in this environment.'
+const NotFoundSentence = 'That graph does not exist in this environment.'
 
 class GraphsFixture
 {
@@ -176,6 +177,67 @@ describe('Graphs tab', () =>
         await Tick.Settle()
         assert.deepEqual(api.Calls.find(c => c[0] === 'DeleteGraph'), ['DeleteGraph', 'dev1', 'sales'])
         assert.deepEqual(tab.Rows.ToArray().map(r => r.Name), ['ops'])
+    })
+
+    it("keeps the confirm open with the route's sentence when a delete is refused", async () =>
+    {
+        const api = GraphsFixture.Development('dev1', [GraphsFixture.Graph('sales', 1)])
+        const f = new SectionsFixture(api)
+        const page = await GraphsFixture.Detail(f, 'dev1')
+        const tab = page.GraphsTab
+        api.FailOn.set('DeleteGraph', new TenantApiError(404, NotFoundSentence))
+        tab.Rows.ToArray()[0]!.DeleteCommand.Execute()
+        await Tick.Settle()
+        const confirm = f.Dialogs.Last
+        assert.ok(confirm instanceof ConfirmDialogViewModel)
+        await confirm.Confirm()
+        await Tick.Settle()
+        assert.equal(confirm.ErrorText, NotFoundSentence)
+        assert.equal(f.Dialogs.IsOpen, true)
+        assert.deepEqual(tab.Rows.ToArray().map(r => r.Name), ['sales'])
+    })
+
+    it('creates nothing when New graph is cancelled', async () =>
+    {
+        const api = GraphsFixture.Development('dev1', [GraphsFixture.Graph('sales', 1)])
+        const f = new SectionsFixture(api)
+        const page = await GraphsFixture.Detail(f, 'dev1')
+        page.GraphsTab.NewGraphCommand.Execute()
+        await Tick.Settle()
+        const dialog = f.Dialogs.Last
+        assert.ok(dialog instanceof CreateGraphDialogViewModel)
+        dialog.Name = 'fresh'
+        dialog.Cancel()
+        await Tick.Settle()
+        assert.equal(f.Dialogs.IsOpen, false)
+        assert.equal(api.Count('CreateGraph'), 0)
+        assert.deepEqual(page.GraphsTab.Rows.ToArray().map(r => r.Name), ['sales'])
+    })
+
+    it('reloads the graphs with the detail, and shows fresh rows after Runtime and back to Development', async () =>
+    {
+        const api = GraphsFixture.Development('dev1', [GraphsFixture.Graph('sales', 1)])
+        const page = await GraphsFixture.Detail(new SectionsFixture(api), 'dev1')
+        const tab = page.GraphsTab
+        assert.deepEqual(tab.Rows.ToArray().map(r => r.PackagesText), ['1 package'])
+        api.Graphs.get('dev1')![0]!.packageCount = 4
+        await page.Refresh()
+        await Tick.Settle()
+        assert.deepEqual(tab.Rows.ToArray().map(r => r.PackagesText), ['4 packages'])
+
+        api.Environments[0]!.type = EnvType.Runtime
+        await page.Refresh()
+        await Tick.Settle()
+        assert.equal(tab.Environment, undefined)
+        assert.equal(tab.Rows.Count, 0)
+
+        api.Graphs.set('dev1', [GraphsFixture.Graph('ops', 2)])
+        api.Environments[0]!.type = EnvType.Development
+        await page.Refresh()
+        await Tick.Settle()
+        assert.equal(tab.Environment, 'dev1')
+        assert.deepEqual(tab.Rows.ToArray().map(r => r.Name), ['ops'])
+        assert.deepEqual(tab.Rows.ToArray().map(r => r.PackagesText), ['2 packages'])
     })
 
     it('disables New graph and Delete without the Environments permission', async () =>

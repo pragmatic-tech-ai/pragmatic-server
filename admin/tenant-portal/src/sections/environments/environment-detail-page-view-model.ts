@@ -566,8 +566,10 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
         this.ApplyGraphsTab(environment.Dto.type === EnvType.Development)
     }
 
-    // A Development environment offers the Graphs tab (pointed at it); any
-    // other drops it, leaving Graphs for Application when it was selected.
+    // A Development environment offers the Graphs tab, pointed at it and
+    // reloaded with the page (package counts move as Plexus contributes).
+    // Any other type drops the tab and its rows, leaving Graphs for
+    // Application when it was selected.
     private ApplyGraphsTab(development: boolean): void
     {
         const label = EnvironmentDetailPageViewModel.GraphsTabLabel
@@ -577,7 +579,7 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
             {
                 this.tabLabels.Add(label)
             }
-            void this.graphsTab.UseEnvironment(this.name)
+            void (this.graphsTab.Environment === this.name ? this.graphsTab.Refresh() : this.graphsTab.UseEnvironment(this.name))
             return
         }
         if (this.tab === EnvironmentDetailTab.Graphs)
@@ -585,6 +587,7 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
             this.SelectTab(EnvironmentDetailTab.Application)
         }
         this.tabLabels.Remove(label)
+        void this.graphsTab.UseEnvironment(undefined)
     }
 
     private RebuildActivity(): void
