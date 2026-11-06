@@ -150,7 +150,7 @@ export class FakeTenantApi
     public ProfileDto: TenantProfileDto | undefined
     public EmailDomains: EmailDomainsDto = { domains: ['acme.test'], editable: true, inHive: false, pending: [] }
     public OnVerifyEmailDomain: ((domain: string) => void) | undefined
-    public IssuedTokenValue ='fixture-issued-token'
+    public IssuedTokenValue = 'fixture-issued-token'
     public Failure: Error | undefined
     public readonly FailOn = new Map<string, Error>()
     public readonly Calls: Array<[string, ...unknown[]]> = []
@@ -246,7 +246,8 @@ export class FakeTenantApi
         const approved = new Set(previous.domains.filter(d => !previous.pending.includes(d)))
         const next = domains.map(d => d.toLowerCase())
         const pending = previous.inHive ? [] : next.filter(d => !approved.has(d)).sort()
-        this.EmailDomains = { domains: next, editable: previous.editable, inHive: previous.inHive, pending }
+        const surviving = (previous.verifications ?? []).filter(v => next.includes(v.domain))
+        this.EmailDomains = { domains: next, editable: previous.editable, inHive: previous.inHive, pending, verifications: surviving }
         return this.CopyEmailDomains()
     }
 

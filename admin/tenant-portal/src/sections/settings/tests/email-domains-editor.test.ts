@@ -252,6 +252,23 @@ describe('EmailDomainsEditorViewModel', () =>
         assert.equal(editor.VerifyNoticeText, '')
     })
 
+    it('a save keeps the verification rows of the domains that survive', async () =>
+    {
+        const api = new FakeTenantApi()
+        api.EmailDomains = {
+            domains: ['acme.test', 'beta.test'], editable: true, inHive: false, pending: [],
+            verifications: [
+                Fixture.Verification('acme.test', DomainApprovalState.Verified, true),
+                Fixture.Verification('beta.test', DomainApprovalState.Pending, false),
+            ],
+        }
+        const editor = await Fixture.Loaded(api)
+        editor.DomainsText = 'acme.test'
+        await editor.Save()
+        assert.deepEqual(editor.Verifications.ToArray().map(r => r.Domain), ['acme.test'])
+        assert.equal(editor.Verifications.ToArray()[0]!.StatusLabel, 'Verified')
+    })
+
     it('a refusal shows its sentence; a 401 expires the session', async () =>
     {
         const api = new FakeTenantApi()
