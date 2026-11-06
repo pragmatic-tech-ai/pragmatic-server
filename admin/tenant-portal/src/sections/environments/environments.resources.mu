@@ -13,12 +13,18 @@
 // for MuralBase items, and the rows are Observables). The detail's activity
 // list reuses ActivityRowTemplate (overview resources). Tabs are a
 // SegmentedButton over the page's TabLabels, each tab shown by its flag.
+// A Development environment's Graphs tab is GraphsTabViewModel, shown
+// through a ContentControl; CreateGraphDialogViewModel renders in the
+// DialogService surface like Create environment.
 
 import EnvironmentsPageViewModel from "./environments-page-view-model.js"
 import EnvironmentTableRowViewModel from "./environments-page-view-model.js"
 import EnvironmentDetailPageViewModel from "./environment-detail-page-view-model.js"
 import EnvironmentPillViewModel from "./environment-pill-view-model.js"
 import CreateEnvironmentDialogViewModel from "./create-environment-dialog-view-model.js"
+import GraphsTabViewModel from "./graphs-tab-view-model.js"
+import GraphRowViewModel from "./graphs-tab-view-model.js"
+import CreateGraphDialogViewModel from "./create-graph-dialog-view-model.js"
 
 resources EnvironmentsResources {
     // A status or health pill, toned by what it says.
@@ -321,6 +327,9 @@ resources EnvironmentsResources {
                             }
                         }
                     }
+
+                    // Graphs (Development environments only).
+                    ContentControl [ Content = $GraphsTab, Visibility = $IsGraphsTab << ToVisibility ]
                 }
             }
         }
@@ -348,6 +357,102 @@ resources EnvironmentsResources {
                 }
                 Button [ Variant = Primary, Command = $ConfirmCommand ] {
                     TextBlock [ Text = "Create environment" ]
+                }
+            }
+        }
+    }
+
+    // The Graphs tab: the graphs Plexus contributes to this environment.
+    DataTemplate [ DataType = GraphsTabViewModel ] {
+        DockPanel {
+            DockPanel [ DockPanel.Dock = Top, Margin = (0,0,0,12) ] {
+                Button [ DockPanel.Dock = Right, Variant = Primary, Command = $NewGraphCommand, VerticalAlignment = Top ] {
+                    TextBlock [ Text = "New graph" ]
+                }
+                TextBlock [ Text = "Graphs hold what Plexus contributes to this environment.",
+                            Style = @UiCaption, Foreground = @Fg2, TextWrapping = Wrap, VerticalAlignment = Center ]
+            }
+            TextBlock [ DockPanel.Dock = Top, Text = "Loading graphs...", Foreground = @Fg2,
+                        Visibility = $IsLoading << ToVisibility ]
+            TextBlock [ DockPanel.Dock = Top, Text = "No graphs in this environment yet.", Foreground = @Fg2,
+                        Visibility = $IsEmpty << ToVisibility ]
+            StackPanel [ DockPanel.Dock = Top, Orientation = Vertical, Visibility = $IsError << ToVisibility ] {
+                TextBlock [ Text = "Could not load the graphs.", Foreground = @StateDangerInk ]
+                TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap ]
+            }
+            StackPanel [ DockPanel.Dock = Top, Orientation = Vertical, Visibility = $IsDenied << ToVisibility ] {
+                TextBlock [ Text = "You don't have access to these graphs", Style = @UiLabel, Foreground = @Fg0 ]
+                TextBlock [ Text = $ErrorText, Foreground = @Fg2, TextWrapping = Wrap ]
+            }
+            TextBlock [ DockPanel.Dock = Top, Text = $DeniedReason, Style = @UiCaption, Foreground = @StateWarningInk,
+                        Margin = (0,0,0,8), Visibility = $DeniedReason << ToVisibility ]
+            TextBlock [ DockPanel.Dock = Top, Text = $CommandErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap,
+                        Margin = (0,0,0,8), Visibility = $CommandErrorText << ToVisibility ]
+
+            StackPanel [ Orientation = Vertical, Visibility = $IsPopulated << ToVisibility ] {
+                Grid [ Style = @TenantTableColumns ] {
+                    ColumnDefinitions {
+                        ColumnDefinition [ Width = GridLength.Star ]
+                        ColumnDefinition [ Width = GridLength.Star ]
+                        ColumnDefinition [ Width = GridLength.Star ]
+                        ColumnDefinition [ Width = GridLength.Star ]
+                        ColumnDefinition [ Width = GridLength.Star ]
+                    }
+                    TextBlock [ Grid.Column = 0, Text = "Name", Style = @TenantTableHeader ]
+                    TextBlock [ Grid.Column = 1, Text = "Description", Style = @TenantTableHeader ]
+                    TextBlock [ Grid.Column = 2, Text = "Packages", Style = @TenantTableHeader ]
+                    TextBlock [ Grid.Column = 3, Text = "Created", Style = @TenantTableHeader ]
+                    TextBlock [ Grid.Column = 4, Text = "", Style = @TenantTableHeader ]
+                }
+                ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $Rows,
+                          ItemTemplate = @GraphRowTemplate ]
+            }
+        }
+    }
+
+    // A graphs-table row with its Delete.
+    DataTemplate x:key="GraphRowTemplate" [ DataType = GraphRowViewModel ] {
+        Grid [ Style = @TenantTableColumns ] {
+            ColumnDefinitions {
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+            }
+            TextBlock [ Grid.Column = 0, Text = $Name, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
+            TextBlock [ Grid.Column = 1, Text = $Description, Foreground = @Fg1, TextWrapping = Wrap, VerticalAlignment = Center ]
+            TextBlock [ Grid.Column = 2, Text = $PackagesText, Foreground = @Fg1, VerticalAlignment = Center ]
+            TextBlock [ Grid.Column = 3, Text = $CreatedText, Foreground = @Fg2, VerticalAlignment = Center ]
+            Button [ Grid.Column = 4, Variant = Secondary, Command = $DeleteCommand, HorizontalAlignment = Right, VerticalAlignment = Center ] {
+                TextBlock [ Text = "Delete" ]
+            }
+        }
+    }
+
+    // New graph.
+    DataTemplate [ DataType = CreateGraphDialogViewModel ] {
+        StackPanel [ Orientation = Vertical, Margin = (0,4,0,0) ] {
+            StackPanel [ Orientation = Horizontal, Margin = (0,0,0,12) ] {
+                TextBlock [ Text = "Creates a graph in", Foreground = @Fg2, Margin = (0,0,4,0) ]
+                TextBlock [ Text = $Environment, Foreground = @Fg0 ]
+            }
+            TextBlock [ Text = "Name", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
+            TextBox [ UsesNativeInput = true, Text = $Name, Placeholder = "e.g. sales", Margin = (0,0,0,4) ]
+            TextBlock [ Text = "Lowercase letters, digits and hyphens, starting with a letter or digit.", Style = @UiCaption,
+                        Foreground = @Fg2, Margin = (0,0,0,4) ]
+            TextBlock [ Text = $NameErrorText, Style = @UiCaption, Foreground = @StateDangerInk, Margin = (0,0,0,4),
+                        Visibility = $NameErrorText << ToVisibility ]
+            TextBlock [ Text = "Description", Style = @UiCaption, Foreground = @Fg2, Margin = (0,8,0,4) ]
+            TextBox [ UsesNativeInput = true, Text = $Description, Margin = (0,0,0,12) ]
+            TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,12),
+                        Visibility = $ErrorText << ToVisibility ]
+            StackPanel [ Orientation = Horizontal, HorizontalAlignment = Right ] {
+                Button [ Variant = Secondary, Command = $CancelCommand, Margin = (0,0,8,0) ] {
+                    TextBlock [ Text = "Cancel" ]
+                }
+                Button [ Variant = Primary, Command = $ConfirmCommand ] {
+                    TextBlock [ Text = "Create graph" ]
                 }
             }
         }

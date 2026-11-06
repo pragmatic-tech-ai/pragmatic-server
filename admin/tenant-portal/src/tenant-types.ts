@@ -72,6 +72,10 @@ export type EnvironmentDto = {
 
 export type CreateEnvironmentParams = { name: string; template: Template; type: EnvType }
 
+// A Development environment's graph, as GET .../graphs lists it.
+export type GraphDto = { name: string; description: string; createdAt: string; packageCount: number }
+export type CreateGraphParams = { name: string; description: string }
+
 export interface IEnvironmentsSource
 {
     ListEnvironments(): Promise<EnvironmentDto[]>

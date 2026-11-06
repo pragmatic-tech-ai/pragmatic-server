@@ -1,5 +1,5 @@
 import { TenantEventType } from './tenant-types.js'
-import type { AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, EmailDomainsDto, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IReleasesSource, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, PasswordChangedDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from './tenant-types.js'
+import type { AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, CreateGraphParams, EmailDomainsDto, EnvironmentDto, GrantMutationDto, GraphDto, HiveDto, HiveHealthDto, HiveRolloutDto, IReleasesSource, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, PasswordChangedDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from './tenant-types.js'
 
 // Thrown for non-2xx tenant-surface responses; Message carries the server's error text.
 export class TenantApiError extends Error
@@ -76,6 +76,7 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
     private static readonly LedgerLeaf = 'ledger'
     private static readonly TargetLeaf = 'target'
     private static readonly LogStreamLeaf = 'logs/stream'
+    private static readonly GraphsLeaf = '/graphs'
     private static readonly StartAction = 'start'
     private static readonly StopAction = 'stop'
     private static readonly RestartAction = 'restart'
@@ -284,6 +285,25 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
         await this.Send<unknown>(this.EnvRoute(env) + TenantApiClient.AdminSecurityModelLeaf, { method: TenantApiClient.MethodPut, body: JSON.stringify({ securityModel: model }) })
     }
 
+    // A Development environment's graphs. A refusal (Runtime environment, no reach, unknown environment) is a
+    // TenantApiError carrying the route's sentence.
+    public async ListGraphs(environment: string): Promise<GraphDto[]>
+    {
+        return await this.Send<GraphDto[]>(this.GraphsRoute(environment), undefined)
+    }
+
+    // POSTs a new graph; a name already used surfaces as TenantApiError with Status 409.
+    public async CreateGraph(environment: string, params: CreateGraphParams): Promise<GraphDto>
+    {
+        const body = { name: params.name, description: params.description }
+        return await this.Send<GraphDto>(this.GraphsRoute(environment), { method: TenantApiClient.MethodPost, body: JSON.stringify(body) })
+    }
+
+    public async DeleteGraph(environment: string, graph: string): Promise<void>
+    {
+        await this.Send<void>(this.GraphsRoute(environment) + TenantApiClient.PathSeparator + encodeURIComponent(graph), { method: TenantApiClient.MethodDelete })
+    }
+
     // Registers a handler on the shared events socket (opened lazily); returns an unsubscribe.
     public OnEvent(handler: (ev: TenantEvent) => void): () => void
     {
@@ -398,6 +418,11 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
     private EnvRoute(name: string): string
     {
         return TenantApiClient.EnvironmentsRoute + TenantApiClient.PathSeparator + encodeURIComponent(name)
+    }
+
+    private GraphsRoute(environment: string): string
+    {
+        return this.EnvRoute(environment) + TenantApiClient.GraphsLeaf
     }
 
     private async Action(name: string, action: string): Promise<EnvironmentDto>

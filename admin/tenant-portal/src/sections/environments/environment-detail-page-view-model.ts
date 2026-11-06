@@ -2,7 +2,7 @@ import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/run
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { ActivityLog } from '../../activity-log.js'
 import { EnvironmentRow } from '../../environment-row.js'
-import type { EnvironmentDto, HiveHealthDto, HiveRolloutDto, ManifestDto } from '../../tenant-types.js'
+import { EnvType, type EnvironmentDto, type HiveHealthDto, type HiveRolloutDto, type ManifestDto } from '../../tenant-types.js'
 import { AdminCapability } from '../../shell/admin-capability.js'
 import { ShownPage, type IShownPage } from '../../shell/shown-page.js'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
@@ -12,21 +12,25 @@ import { ActivityRows, type ActivityRowViewModel } from '../overview/activity-pa
 import { BestEffort } from './best-effort.js'
 import { EnvironmentPillViewModel } from './environment-pill-view-model.js'
 import type { EnvironmentsSectionService } from './environments-section-service.js'
+import { GraphsTabViewModel } from './graphs-tab-view-model.js'
 import { VersionOffer } from './version-offer.js'
 
-// The detail page's tabs, in order.
+// The detail page's tabs, in order. Graphs is offered for Development
+// environments only.
 export enum EnvironmentDetailTab
 {
     Application,
     Health,
     Access,
+    Graphs,
 }
 
 // One environment: its status and health, lifecycle commands (Start when
 // stopped; Stop, with a confirm, and Restart when running; Delete, typing
 // the name), and three tabs: Application & version (with the newer version
 // offered, when there is one), Health & activity (this environment's
-// observed events and its live logs) and Access (addresses).
+// observed events and its live logs) and Access (addresses). A Development
+// environment has a fourth, Graphs (what Plexus contributes to it).
 //
 // The log stream is open only while the logs panel is open AND the page is
 // on screen: leaving the page (Back, another section) closes it, coming back
@@ -38,6 +42,7 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
     public static readonly ApplicationTabLabel = 'Application & version'
     public static readonly HealthTabLabel = 'Health & activity'
     public static readonly AccessTabLabel = 'Access'
+    public static readonly GraphsTabLabel = 'Graphs'
     public static readonly DeleteConsequences: readonly string[] = [
         'The live URL stops serving immediately.',
         "The environment's database and files are deleted.",
@@ -52,6 +57,7 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
     private static readonly IsApplicationTabProperty = 'IsApplicationTab'
     private static readonly IsHealthTabProperty = 'IsHealthTab'
     private static readonly IsAccessTabProperty = 'IsAccessTab'
+    private static readonly IsGraphsTabProperty = 'IsGraphsTab'
     private static readonly ActivityRowsProperty = 'ActivityRows'
     private static readonly HasActivityProperty = 'HasActivity'
     private static readonly HasNoActivityProperty = 'HasNoActivity'
@@ -99,6 +105,7 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
     ]
 
     private readonly tabLabels = new ObservableCollection<string>()
+    private readonly graphsTab: GraphsTabViewModel
     private environment: EnvironmentRow | undefined
     private statusPill: EnvironmentPillViewModel | undefined
     private healthPill: EnvironmentPillViewModel | undefined
@@ -129,6 +136,7 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
         this.tabLabels.Add(D.ApplicationTabLabel)
         this.tabLabels.Add(D.HealthTabLabel)
         this.tabLabels.Add(D.AccessTabLabel)
+        this.graphsTab = new GraphsTabViewModel(session, section)
         const E = AdminCapability.Environments
         this.startCommand = this.MutatingCommand(E, () => this.Start(), () => this.CanStart)
         this.stopCommand = this.MutatingCommand(E, () => this.Stop(), () => this.IsRunning)
@@ -407,6 +415,18 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
         return this.tab === EnvironmentDetailTab.Access
     }
 
+    public get IsGraphsTab(): boolean
+    {
+        return this.tab === EnvironmentDetailTab.Graphs
+    }
+
+    // The Graphs tab; pointed at this environment only when it is a
+    // Development one.
+    public get GraphsTab(): GraphsTabViewModel
+    {
+        return this.graphsTab
+    }
+
     public get StartCommand(): RelayCommand
     {
         return this.startCommand
@@ -450,12 +470,13 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
             return
         }
         const D = EnvironmentDetailPageViewModel
-        const was = [this.SelectedTab, this.IsApplicationTab, this.IsHealthTab, this.IsAccessTab] as const
+        const was = [this.SelectedTab, this.IsApplicationTab, this.IsHealthTab, this.IsAccessTab, this.IsGraphsTab] as const
         this.tab = tab
         this.RaisePropertyChanged(D.SelectedTabProperty, was[0], this.SelectedTab)
         this.RaisePropertyChanged(D.IsApplicationTabProperty, was[1], this.IsApplicationTab)
         this.RaisePropertyChanged(D.IsHealthTabProperty, was[2], this.IsHealthTab)
         this.RaisePropertyChanged(D.IsAccessTabProperty, was[3], this.IsAccessTab)
+        this.RaisePropertyChanged(D.IsGraphsTabProperty, was[4], this.IsGraphsTab)
     }
 
     public OnShown(): void
@@ -542,6 +563,28 @@ export class EnvironmentDetailPageViewModel extends TenantPageViewModel implemen
             this.RaisePropertyChanged(property, undefined, (this as unknown as Record<string, unknown>)[property])
         }
         this.RaiseMutatingCommandsChanged()
+        this.ApplyGraphsTab(environment.Dto.type === EnvType.Development)
+    }
+
+    // A Development environment offers the Graphs tab (pointed at it); any
+    // other drops it, leaving Graphs for Application when it was selected.
+    private ApplyGraphsTab(development: boolean): void
+    {
+        const label = EnvironmentDetailPageViewModel.GraphsTabLabel
+        if (development)
+        {
+            if (this.tabLabels.IndexOf(label) < 0)
+            {
+                this.tabLabels.Add(label)
+            }
+            void this.graphsTab.UseEnvironment(this.name)
+            return
+        }
+        if (this.tab === EnvironmentDetailTab.Graphs)
+        {
+            this.SelectTab(EnvironmentDetailTab.Application)
+        }
+        this.tabLabels.Remove(label)
     }
 
     private RebuildActivity(): void

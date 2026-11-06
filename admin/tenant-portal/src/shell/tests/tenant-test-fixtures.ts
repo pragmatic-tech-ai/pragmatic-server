@@ -6,7 +6,7 @@ import { DialogService, type DialogOptions } from '@pragmatic-tech-ai/mural/fram
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import { TenantApiError, type TenantApiClient } from '../../tenant-api-client.js'
 import { EnvStatus, EnvType, Template } from '../../tenant-types.js'
-import type { AdminCapabilitiesDto, AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, EmailDomainsDto, EnvironmentDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, IssueTokenParams, ManifestDto, PasswordChangedDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from '../../tenant-types.js'
+import type { AdminCapabilitiesDto, AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, CreateGraphParams, EmailDomainsDto, EnvironmentDto, GrantMutationDto, GraphDto, HiveDto, HiveHealthDto, HiveRolloutDto, IssueTokenParams, ManifestDto, PasswordChangedDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from '../../tenant-types.js'
 import type { IPageReloader } from '../page-reloader.js'
 import { TenantSessionService } from '../tenant-session-service.js'
 
@@ -146,6 +146,7 @@ export class FakeTenantApi
     public Snapshots = new Map<string, AdminSnapshotDto>()
     public Tokens = new Map<string, ServiceTokenSummaryDto[]>()
     public SecurityModels = new Map<string, SecurityModelDto | null>()
+    public Graphs = new Map<string, GraphDto[]>()
     public ProfileDto: TenantProfileDto | undefined
     public EmailDomains: EmailDomainsDto = { domains: ['acme.test'], editable: true, inHive: false, pending: [] }
     public IssuedTokenValue = 'fixture-issued-token'
@@ -426,6 +427,36 @@ export class FakeTenantApi
     {
         await this.Enter('SetSecurityModel', env, model)
         this.SecurityModels.set(env, structuredClone(model))
+    }
+
+    // Recorded as ['ListGraphs', env]; answers copies of Graphs[env].
+    public async ListGraphs(env: string): Promise<GraphDto[]>
+    {
+        await this.Enter('ListGraphs', env)
+        return (this.Graphs.get(env) ?? []).map(g => ({ ...g }))
+    }
+
+    // Recorded as ['CreateGraph', env, params]; a name already listed answers the route's 409, else the graph is
+    // appended with no packages.
+    public async CreateGraph(env: string, params: CreateGraphParams): Promise<GraphDto>
+    {
+        await this.Enter('CreateGraph', env, params)
+        const list = this.Graphs.get(env) ?? []
+        if (list.some(g => g.name === params.name))
+        {
+            throw new TenantApiError(409, 'A graph with that name already exists in this environment.')
+        }
+        const graph: GraphDto = { name: params.name, description: params.description, createdAt: '2026-11-06T12:00:00.000Z', packageCount: 0 }
+        list.push(graph)
+        this.Graphs.set(env, list)
+        return { ...graph }
+    }
+
+    // Recorded as ['DeleteGraph', env, graph]; removes it.
+    public async DeleteGraph(env: string, graph: string): Promise<void>
+    {
+        await this.Enter('DeleteGraph', env, graph)
+        this.Graphs.set(env, (this.Graphs.get(env) ?? []).filter(g => g.name !== graph))
     }
 
     public OnEvent(handler: (ev: TenantEvent) => void): () => void
