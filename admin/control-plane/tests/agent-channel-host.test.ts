@@ -517,6 +517,18 @@ describe('AgentChannelHost', () =>
         assert.deepEqual(fake.Verified, [])
     })
 
+    it('another registered hive\'s valid bearer on this hive\'s verify-domain path is 401 and nothing is verified', async () =>
+    {
+        await directory.CreateTenant({ id: 't2', clientId: 'acme', displayName: 'T2' })
+        await directory.CreateHive({ id: 'other1', tenantId: 't2', displayName: 'O', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
+        const otherToken = await deployments.RegisterHive('other1')
+        const fake = new FakeDomains()
+        await UseDomains(fake)
+        const reply = await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + otherToken, { domain: VerifyDomainName })
+        assert.equal(reply.status, 401)
+        assert.deepEqual(fake.Verified, [])
+    })
+
     it('GET on verify-domain is 404, and so is a host without an advert receiver', async () =>
     {
         assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, VerifyPath, Harness.BearerPrefix + token)).status, 404)

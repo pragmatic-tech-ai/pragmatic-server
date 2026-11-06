@@ -298,6 +298,26 @@ test('without a verification source the outcome has no domainVerifications', asy
     })
 })
 
+test('a refused advert write (console removed mid-report) never asks for verification answers', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), 'advert-receiver-refused-'))
+    try
+    {
+        const hive = { id: 'h1', tenantId: 'acme', console: { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } } } as unknown as HiveRecord
+        const gone = { id: 'h1', tenantId: 'acme' } as unknown as HiveRecord
+        let reads = 0
+        const directory: IConsoleAdvertDirectory = { GetHive: () => (reads++ === 0 ? hive : gone) }
+        const domains = new FakeDomains()
+        const receiver = new ConsoleAdvertReceiver(directory, new ConsoleAdvertRegistry(join(dir, ConsoleAdvertRegistry.FileName)), () => new Date('2026-11-04T12:00:00.000Z'), undefined, domains)
+        await assert.rejects(() => receiver.Receive('h1', ReceiverFixture.Body()), ConsoleNotEnabledError)
+        assert.deepEqual(domains.Answered, [])
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
+
 test('VerifyDomain forwards the hive tenant and the domain only', async () =>
 {
     await DomainsReceiverFixture.Run(true, true, async (receiver, domains) =>
