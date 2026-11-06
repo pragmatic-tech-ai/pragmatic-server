@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { ApiError } from '../../../api-client.js'
 import { OperatorContext } from '../../../operator-context.js'
-import { EmailDomainSource, type TenantEmailDomainsDto } from '../../../portal-types.js'
+import { DomainApprovalState, EmailDomainSource, type EmailDomainApprovalDto, type TenantEmailDomainsDto } from '../../../portal-types.js'
 import { FakeControlPlane, PortalTestHost, TestRail, Tick } from '../../../shell/tests/portal-test-fixtures.js'
 import { TenantDetailPageViewModel } from '../tenant-detail-page-view-model.js'
 import { TenantEmailDomainsViewModel } from '../tenant-email-domains-view-model.js'
@@ -36,8 +36,8 @@ class DomainsFixture
         return this.Report({
             domains: ['acme.test', 'beta.test'], source: EmailDomainSource.Console, editable: false, reportedAt: '2026-11-04T10:30:00.000Z', sharedWith: ['t2'],
             approvals: [
-                { domain: 'acme.test', approved: true, claimed: true, sharedWith: [] },
-                { domain: 'beta.test', approved: false, claimed: true, sharedWith: ['t2'] },
+                DomainsFixture.Row('acme.test', DomainApprovalState.Approved),
+                DomainsFixture.Row('beta.test', DomainApprovalState.Pending, { sharedWith: ['t2'] }),
             ],
         })
     }
@@ -48,11 +48,25 @@ class DomainsFixture
         return this.Report({
             domains: ['acme.test', 'owner.test'],
             approvals: [
-                { domain: 'acme.test', approved: true, claimed: true, sharedWith: [] },
-                { domain: 'owner.test', approved: false, claimed: true, sharedWith: [] },
+                DomainsFixture.Row('acme.test', DomainApprovalState.Approved),
+                DomainsFixture.Row('owner.test', DomainApprovalState.Pending),
             ],
         })
     }
+
+    // One approval row in the given state; approved follows the state, claimed unless overridden.
+    public static Row(domain: string, state: DomainApprovalState, over: Partial<EmailDomainApprovalDto> = {}): EmailDomainApprovalDto
+    {
+        return { domain, approved: state === DomainApprovalState.Approved, claimed: true, sharedWith: [], state, verified: false, ...over }
+    }
+
+    // A claimed row carrying the TXT record to publish.
+    public static RecordRow(domain: string, state: DomainApprovalState, over: Partial<EmailDomainApprovalDto> = {}): EmailDomainApprovalDto
+    {
+        return DomainsFixture.Row(domain, state, { recordName: '_pragmatic-verification.' + domain, recordValue: DomainsFixture.RecordValue, ...over })
+    }
+
+    public static readonly RecordValue = 'pragmatic-domain-verification=Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4Zm9vYmFyYmF6cXV4AAA'
 
     public async Loaded(): Promise<TenantEmailDomainsViewModel>
     {
@@ -144,7 +158,7 @@ describe('Tenant email domains', () =>
         assert.equal(approved!.CanApprove, false)
         assert.equal(approved!.CanRevoke, true)
         assert.equal(pending!.ApproveCommand.CanExecute(), true)
-        assert.equal(pending!.RevokeCommand.CanExecute(), false)
+        assert.equal(pending!.RevokeCommand.CanExecute(), true)
         pending!.ApproveCommand.Execute()
         await Tick.Settle()
         assert.deepEqual(fx.Api.EmailDomainActions, ['Approve t1 beta.test'])
@@ -152,7 +166,7 @@ describe('Tenant email domains', () =>
         block.Approvals.Get(0)!.RevokeCommand.Execute()
         await Tick.Settle()
         assert.deepEqual(fx.Api.EmailDomainActions, ['Approve t1 beta.test', 'Revoke t1 acme.test'])
-        assert.deepEqual(block.Approvals.ToArray().map(r => r.StatusLabel), ['Pending', 'Approved'])
+        assert.deepEqual(block.Approvals.ToArray().map(r => r.StatusLabel), ['Revoked', 'Approved'])
     })
 
     it('a refused approval shows its sentence in the block', async () =>
@@ -172,7 +186,7 @@ describe('Tenant email domains', () =>
         // The console has since stopped reporting beta.test.
         fx.Api.EmailDomainReports.set('t1', {
             ...fx.Api.EmailDomainReports.get('t1')!, domains: ['acme.test'], sharedWith: [],
-            approvals: [{ domain: 'acme.test', approved: true, claimed: true, sharedWith: [] }],
+            approvals: [DomainsFixture.Row('acme.test', DomainApprovalState.Approved)],
         })
         fx.Api.EmailDomainsFailure = new ApiError(409, "beta.test is not among the email domains this tenant's console reports, so there is nothing to approve.")
         const reads = fx.Api.EmailDomainReads
@@ -209,7 +223,7 @@ describe('Tenant email domains', () =>
             'A domain sends people to this tenant only once it is approved. Domains you add here are approved on save; those the tenant Owner sets wait here for approval.')
         assert.deepEqual(block.Approvals.ToArray().map(r => [r.Domain, r.StatusLabel, r.CanApprove, r.CanRevoke]), [
             ['acme.test', 'Approved', false, true],
-            ['owner.test', 'Pending', true, false],
+            ['owner.test', 'Pending', true, true],
         ])
         await block.Approvals.Get(1)!.Approve()
         assert.deepEqual(fx.Api.EmailDomainActions, ['Approve t1 owner.test'])
@@ -242,7 +256,7 @@ describe('Tenant email domains', () =>
         const fx = new DomainsFixture().InHive()
         fx.Api.EmailDomainReports.set('t1', {
             ...fx.Api.EmailDomainReports.get('t1')!,
-            approvals: [...fx.Api.EmailDomainReports.get('t1')!.approvals, { domain: 'gone.test', approved: true, claimed: false, sharedWith: [] }],
+            approvals: [...fx.Api.EmailDomainReports.get('t1')!.approvals, DomainsFixture.Row('gone.test', DomainApprovalState.Approved, { claimed: false })],
         })
         const block = await fx.Loaded()
         const gone = block.Approvals.Get(2)!
@@ -300,6 +314,119 @@ describe('Tenant email domains', () =>
             await row.Approve()
             await row.Revoke()
         }
+        assert.deepEqual(fx.Api.EmailDomainActions, [])
+    })
+
+    it('the row labels follow the state', async () =>
+    {
+        const fx = new DomainsFixture().Report({
+            domains: ['a.test', 'v.test', 'c.test', 'r.test', 'p.test'],
+            approvals: [
+                DomainsFixture.Row('a.test', DomainApprovalState.Approved),
+                DomainsFixture.Row('v.test', DomainApprovalState.Verified, { verified: true }),
+                DomainsFixture.Row('c.test', DomainApprovalState.VerifiedContested, { verified: true, sharedWith: ['t2'] }),
+                DomainsFixture.Row('r.test', DomainApprovalState.Revoked),
+                DomainsFixture.Row('p.test', DomainApprovalState.Pending),
+                DomainsFixture.Row('gone.test', DomainApprovalState.Approved, { claimed: false }),
+            ],
+        })
+        const rows = (await fx.Loaded()).Approvals.ToArray()
+        assert.deepEqual(rows.map(r => r.StatusLabel), [
+            'Approved', 'Verified', 'Verified, contested - needs approval', 'Revoked', 'Pending', 'Approved, no longer claimed',
+        ])
+        assert.deepEqual(rows.map(r => r.VerificationLabel), ['Not verified', 'Verified', 'Verified', 'Not verified', 'Not verified', 'Not verified'])
+    })
+
+    it('a row shows the record to add and the last check', async () =>
+    {
+        const fx = new DomainsFixture().Report({
+            domains: ['p.test', 'q.test'],
+            approvals: [
+                DomainsFixture.RecordRow('p.test', DomainApprovalState.Pending, { lastCheckedAt: '2026-11-05T08:00:00.000Z' }),
+                DomainsFixture.Row('q.test', DomainApprovalState.Pending),
+            ],
+        })
+        const [withRecord, without] = (await fx.Loaded()).Approvals.ToArray()
+        assert.equal(withRecord!.HasRecord, true)
+        assert.equal(withRecord!.RecordName, '_pragmatic-verification.p.test')
+        assert.equal(withRecord!.RecordValue, DomainsFixture.RecordValue)
+        assert.equal(withRecord!.LastCheckedText, 'Last checked 2026-11-05 08:00')
+        assert.equal(without!.HasRecord, false)
+        assert.equal(without!.LastCheckedText, 'Not checked yet')
+        assert.equal(without!.CanVerify, false)
+    })
+
+    it('Approve is offered for Pending, contested and Revoked rows; Revoke for every row except Revoked', async () =>
+    {
+        const states = [DomainApprovalState.Approved, DomainApprovalState.Verified, DomainApprovalState.VerifiedContested, DomainApprovalState.Revoked, DomainApprovalState.Pending]
+        const fx = new DomainsFixture().Report({
+            domains: states.map(s => s + '.test'),
+            approvals: [...states.map(s => DomainsFixture.Row(s + '.test', s)), DomainsFixture.Row('gone.test', DomainApprovalState.Approved, { claimed: false })],
+        })
+        const rows = (await fx.Loaded()).Approvals.ToArray()
+        assert.deepEqual(rows.map(r => [r.Domain, r.CanApprove, r.CanRevoke]), [
+            ['approved.test', false, true],
+            ['verified.test', false, true],
+            ['verified-contested.test', true, true],
+            ['revoked.test', true, false],
+            ['pending.test', true, true],
+            ['gone.test', false, true],
+        ])
+    })
+
+    it('Verify calls the client and shows the refreshed row', async () =>
+    {
+        const fx = new DomainsFixture().Report({
+            domains: ['p.test'], approvals: [DomainsFixture.RecordRow('p.test', DomainApprovalState.Pending)],
+        })
+        fx.Api.EmailDomainsWithRecord.add('p.test')
+        const block = await fx.Loaded()
+        const row = block.Approvals.Get(0)!
+        assert.equal(row.CanVerify, true)
+        assert.equal(row.VerifyCommand.CanExecute(), true)
+        row.VerifyCommand.Execute()
+        await Tick.Settle()
+        assert.deepEqual(fx.Api.EmailDomainActions, ['Verify t1 p.test'])
+        const shown = block.Approvals.Get(0)!
+        assert.equal(shown.StatusLabel, 'Verified')
+        assert.equal(shown.VerificationLabel, 'Verified')
+        assert.equal(shown.LastCheckedText, 'Last checked 2026-11-06 09:15')
+        assert.equal(block.VerifyNoticeText, '')
+    })
+
+    it('a verify that finds no record shows the notice; a 429 or 503 shows the server sentence in ErrorText', async () =>
+    {
+        const fx = new DomainsFixture().Report({
+            domains: ['p.test'], approvals: [DomainsFixture.RecordRow('p.test', DomainApprovalState.Pending)],
+        })
+        const block = await fx.Loaded()
+        await block.Approvals.Get(0)!.Verify()
+        assert.equal(block.VerifyNoticeText, 'No matching TXT record was found yet. DNS changes can take a while to appear; try again later.')
+        assert.equal(block.NoticeText, '')
+        assert.equal(block.ErrorText, '')
+        fx.Api.EmailDomainsFailure = new ApiError(429, 'Too many lookups; try again in 15 minutes.')
+        await block.Approvals.Get(0)!.Verify()
+        assert.equal(block.VerifyNoticeText, '')
+        assert.equal(block.ErrorText, 'Too many lookups; try again in 15 minutes.')
+        fx.Api.EmailDomainsFailure = new ApiError(503, 'The DNS lookup failed; try again later.')
+        await block.Approvals.Get(0)!.Verify()
+        assert.equal(block.ErrorText, 'The DNS lookup failed; try again later.')
+        fx.Api.EmailDomainsFailure = undefined
+        fx.Api.EmailDomainsWithRecord.add('p.test')
+        await block.Approvals.Get(0)!.Verify()
+        assert.equal(block.VerifyNoticeText, '')
+        assert.equal(block.ErrorText, '')
+    })
+
+    it('a read-only operator gets no Verify', async () =>
+    {
+        const fx = new DomainsFixture(OperatorContext.ReadOnlyWireRole).Report({
+            domains: ['p.test'], approvals: [DomainsFixture.RecordRow('p.test', DomainApprovalState.Pending)],
+        })
+        const row = (await fx.Loaded()).Approvals.Get(0)!
+        assert.equal(row.CanVerify, false)
+        assert.equal(row.VerifyCommand.CanExecute(), false)
+        await row.Verify()
         assert.deepEqual(fx.Api.EmailDomainActions, [])
     })
 

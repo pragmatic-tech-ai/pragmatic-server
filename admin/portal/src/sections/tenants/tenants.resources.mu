@@ -226,6 +226,8 @@ resources TenantsResources {
 
                     TextBlock [ Text = $SharedWithText, Style = @UiCaption, Foreground = @StateWarningInk, TextWrapping = Wrap, Margin = (0,8,0,0),
                                 Visibility = $HasSharedWithLine << ToVisibility ]
+                    TextBlock [ Text = $VerifyNoticeText, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,8,0,0),
+                                Visibility = $VerifyNoticeText << ToVisibility ]
                     TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,8,0,0),
                                 Visibility = $ErrorText << ToVisibility ]
                 }
@@ -233,26 +235,42 @@ resources TenantsResources {
         }
     }
 
-    // One domain of a tenant: its approval and, for operators who may mutate,
-    // Approve or Revoke.
+    // One domain of a tenant: its state, whether its TXT record was seen and when
+    // it was last looked up, the record to add (a second line under the domain),
+    // and, for operators who may mutate, Approve, Revoke or Verify.
     DataTemplate x:key="EmailDomainApprovalRowTemplate" [ DataType = EmailDomainApprovalRowViewModel ] {
-        Grid [ Margin = (4,2,4,2) ] {
-            ColumnDefinitions {
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Auto ]
+        StackPanel [ Orientation = Vertical, Margin = (4,2,4,2) ] {
+            Grid {
+                ColumnDefinitions {
+                    ColumnDefinition [ Width = GridLength.Star ]
+                    ColumnDefinition [ Width = GridLength.Star ]
+                    ColumnDefinition [ Width = GridLength.Star ]
+                    ColumnDefinition [ Width = GridLength.Star ]
+                    ColumnDefinition [ Width = GridLength.Auto ]
+                }
+                TextBlock [ Grid.Column = 0, Text = $Domain, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
+                TextBlock [ Grid.Column = 1, Text = $StatusLabel, Foreground = @Fg1, VerticalAlignment = Center ]
+                StackPanel [ Grid.Column = 2, Orientation = Vertical, VerticalAlignment = Center ] {
+                    TextBlock [ Text = $VerificationLabel, Foreground = @Fg1 ]
+                    TextBlock [ Text = $LastCheckedText, Style = @UiCaption, Foreground = @Fg2 ]
+                }
+                TextBlock [ Grid.Column = 3, Text = $SharedWithText, Style = @UiCaption, Foreground = @StateWarningInk, TextWrapping = Wrap, VerticalAlignment = Center ]
+                StackPanel [ Grid.Column = 4, Orientation = Horizontal, VerticalAlignment = Center ] {
+                    Button [ Variant = Primary, Command = $ApproveCommand, Visibility = $CanApprove << ToVisibility ] {
+                        TextBlock [ Text = "Approve" ]
+                    }
+                    Button [ Variant = Secondary, Command = $VerifyCommand, Visibility = $CanVerify << ToVisibility ] {
+                        TextBlock [ Text = "Verify" ]
+                    }
+                    Button [ Variant = Secondary, Command = $RevokeCommand, Visibility = $CanRevoke << ToVisibility ] {
+                        TextBlock [ Text = "Revoke" ]
+                    }
+                }
             }
-            TextBlock [ Grid.Column = 0, Text = $Domain, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
-            TextBlock [ Grid.Column = 1, Text = $StatusLabel, Foreground = @Fg1, VerticalAlignment = Center ]
-            TextBlock [ Grid.Column = 2, Text = $SharedWithText, Style = @UiCaption, Foreground = @StateWarningInk, TextWrapping = Wrap, VerticalAlignment = Center ]
-            StackPanel [ Grid.Column = 3, Orientation = Horizontal, VerticalAlignment = Center ] {
-                Button [ Variant = Primary, Command = $ApproveCommand, Visibility = $CanApprove << ToVisibility ] {
-                    TextBlock [ Text = "Approve" ]
-                }
-                Button [ Variant = Secondary, Command = $RevokeCommand, Visibility = $CanRevoke << ToVisibility ] {
-                    TextBlock [ Text = "Revoke" ]
-                }
+            StackPanel [ Orientation = Horizontal, Margin = (0,2,0,0), Visibility = $HasRecord << ToVisibility ] {
+                TextBlock [ Text = "TXT", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,8,0) ]
+                TextBlock [ Text = $RecordName, Style = @Code, Foreground = @Fg1, Margin = (0,0,8,0) ]
+                TextBlock [ Text = $RecordValue, Style = @Code, Foreground = @Fg1 ]
             }
         }
     }

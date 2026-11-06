@@ -2,26 +2,41 @@ import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/run
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { ApiError } from '../../api-client.js'
 import { PortalDates } from '../../portal-dates.js'
-import { EmailDomainSource, type EmailDomainApprovalDto, type TenantEmailDomainsDto } from '../../portal-types.js'
+import { DomainApprovalState, EmailDomainSource, type EmailDomainApprovalDto, type TenantEmailDomainsDto } from '../../portal-types.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
 
-// One domain of a tenant: Approved, Pending, or Approved but no longer claimed (its console or record dropped it; an
-// operator revokes it so a later claim does not re-arm it), who else claims it, and Approve / Revoke (offered to
-// operators who may mutate; a domain both claimed and approved is matched in sign-in discovery).
+// One domain of a tenant: its state (Approved, Verified, Verified but contested, Revoked or Pending, or Approved but no
+// longer claimed: its console or record dropped it, and an operator revokes it so a later claim does not re-arm it),
+// whether its DNS TXT record was seen and when it was last looked up, the record to add, who else claims it, and
+// Approve / Revoke / Verify (offered to operators who may mutate). A claimed domain takes effect in sign-in discovery
+// once approved, or once verified with no other tenant claiming it; a revoke beats a verification.
 export class EmailDomainApprovalRowViewModel extends Observable
 {
     private static readonly ApprovedLabel = 'Approved'
+    private static readonly VerifiedLabel = 'Verified'
+    private static readonly VerifiedContestedLabel = 'Verified, contested - needs approval'
+    private static readonly RevokedLabel = 'Revoked'
     private static readonly PendingLabel = 'Pending'
     private static readonly NoLongerClaimedLabel = 'Approved, no longer claimed'
+    private static readonly NotVerifiedLabel = 'Not verified'
+    private static readonly LastCheckedPrefix = 'Last checked '
+    private static readonly NotCheckedLabel = 'Not checked yet'
+    private static readonly NoText = ''
+    // The states an Approve moves forward.
+    private static readonly ApprovableStates: ReadonlySet<DomainApprovalState> = new Set([
+        DomainApprovalState.Pending, DomainApprovalState.VerifiedContested, DomainApprovalState.Revoked,
+    ])
 
     private readonly approveCommand: RelayCommand
     private readonly revokeCommand: RelayCommand
+    private readonly verifyCommand: RelayCommand
 
     public constructor(private readonly owner: TenantEmailDomainsViewModel, private readonly approval: EmailDomainApprovalDto)
     {
         super()
         this.approveCommand = new RelayCommand(() => { void this.Approve() }, () => this.CanApprove && !this.owner.IsBusy)
         this.revokeCommand = new RelayCommand(() => { void this.Revoke() }, () => this.CanRevoke && !this.owner.IsBusy)
+        this.verifyCommand = new RelayCommand(() => { void this.Verify() }, () => this.CanVerify && !this.owner.IsBusy)
     }
 
     public get Domain(): string
@@ -37,11 +52,56 @@ export class EmailDomainApprovalRowViewModel extends Observable
     public get StatusLabel(): string
     {
         const R = EmailDomainApprovalRowViewModel
-        if (!this.approval.approved)
+        if (!this.approval.claimed && this.approval.approved)
         {
-            return R.PendingLabel
+            return R.NoLongerClaimedLabel
         }
-        return this.approval.claimed ? R.ApprovedLabel : R.NoLongerClaimedLabel
+        switch (this.approval.state)
+        {
+            case DomainApprovalState.Approved:
+                return R.ApprovedLabel
+            case DomainApprovalState.Verified:
+                return R.VerifiedLabel
+            case DomainApprovalState.VerifiedContested:
+                return R.VerifiedContestedLabel
+            case DomainApprovalState.Revoked:
+                return R.RevokedLabel
+            default:
+                return R.PendingLabel
+        }
+    }
+
+    // 'Verified' when the domain's TXT record was last seen, else 'Not verified'.
+    public get VerificationLabel(): string
+    {
+        const R = EmailDomainApprovalRowViewModel
+        return this.approval.verified ? R.VerifiedLabel : R.NotVerifiedLabel
+    }
+
+    // Whether there is a TXT record to show (only a claimed domain has one).
+    public get HasRecord(): boolean
+    {
+        return this.approval.recordName !== undefined && this.approval.recordValue !== undefined
+    }
+
+    // The TXT record name the tenant publishes; '' when there is none.
+    public get RecordName(): string
+    {
+        return this.approval.recordName ?? EmailDomainApprovalRowViewModel.NoText
+    }
+
+    // The TXT record value the tenant publishes (the token in it is public by design); '' when there is none.
+    public get RecordValue(): string
+    {
+        return this.approval.recordValue ?? EmailDomainApprovalRowViewModel.NoText
+    }
+
+    // 'Last checked <date>' or 'Not checked yet'.
+    public get LastCheckedText(): string
+    {
+        const R = EmailDomainApprovalRowViewModel
+        const checked = this.approval.lastCheckedAt
+        return checked === undefined ? R.NotCheckedLabel : R.LastCheckedPrefix + PortalDates.DateTimeLabel(checked)
     }
 
     // 'Also claimed by: a, b', or '' when no other tenant claims the domain.
@@ -50,16 +110,38 @@ export class EmailDomainApprovalRowViewModel extends Observable
         return TenantEmailDomainsViewModel.ClaimedByText(this.approval.sharedWith)
     }
 
-    // Whether Approve is offered: a pending domain the tenant claims, for an operator who may mutate.
+    // Whether Approve is offered: a claimed domain that is Pending, Verified but contested, or Revoked, for an operator
+    // who may mutate.
     public get CanApprove(): boolean
     {
-        return this.owner.CanWrite && !this.approval.approved && this.approval.claimed
+        return this.owner.CanWrite && this.approval.claimed && EmailDomainApprovalRowViewModel.ApprovableStates.has(this.approval.state)
     }
 
-    // Whether Revoke is offered: an approved domain, for an operator who may mutate.
+    // Whether Revoke is offered: any domain that is not already Revoked (a revoke beats a verification, so a contested or
+    // pending claim can be stopped too), for an operator who may mutate.
     public get CanRevoke(): boolean
     {
-        return this.owner.CanWrite && this.approval.approved
+        return this.owner.CanWrite && this.approval.state !== DomainApprovalState.Revoked
+    }
+
+    // Whether Verify is offered: a claimed domain with a TXT record to look up, for an operator who may mutate.
+    public get CanVerify(): boolean
+    {
+        return this.owner.CanWrite && this.approval.claimed && this.HasRecord
+    }
+
+    public get VerifyCommand(): RelayCommand
+    {
+        return this.verifyCommand
+    }
+
+    // Looks up the domain's TXT record now. Never throws: a refusal shows in the block's ErrorText.
+    public async Verify(): Promise<void>
+    {
+        if (this.verifyCommand.CanExecute())
+        {
+            await this.owner.VerifyDomain(this.approval.domain)
+        }
     }
 
     public get ApproveCommand(): RelayCommand
@@ -95,14 +177,16 @@ export class EmailDomainApprovalRowViewModel extends Observable
     {
         this.approveCommand.RaiseCanExecuteChanged()
         this.revokeCommand.RaiseCanExecuteChanged()
+        this.verifyCommand.RaiseCanExecuteChanged()
     }
 }
 
 // The tenant detail's Email domains block. A control-plane tenant's domains are edited here (one comma-separated
 // list, Save; the server approves the domains a save adds). An in-hive tenant's domains are the ones its console
 // reports, read-only here (the tenant Owner sets them in the console). Either way a domain takes effect in sign-in
-// discovery only once an operator approved it (a tenant Owner can set domains in either console), so each is listed
-// with Approved / Pending and Approve / Revoke. Read-only operators get no write action. A failed read never fails
+// discovery once an operator approved it, or once its DNS TXT record is verified and no other tenant claims it (a
+// tenant Owner can set domains in either console), so each is listed with its state, the TXT record to add, and
+// Approve / Revoke / Verify. Read-only operators get no write action. A failed read never fails
 // the page: a 404 (a control plane without the route) says the block is not available, any other failure shows its
 // sentence here.
 export class TenantEmailDomainsViewModel extends Observable
@@ -122,10 +206,11 @@ export class TenantEmailDomainsViewModel extends Observable
     private static readonly SavedLabel = 'Saved.'
     private static readonly UnavailableText = 'Email domains are not available here.'
     private static readonly NoText = ''
+    private static readonly NoRecordFoundText = 'No matching TXT record was found yet. DNS changes can take a while to appear; try again later.'
     // Every bound value a change can move, raised when it did.
     private static readonly BoundProperties: readonly string[] = [
         'DomainsText', 'DomainsLabel', 'IsEditable', 'IsReadOnly', 'IsInHive', 'IsAvailable', 'HasDomainsLabel', 'HasApprovals',
-        'ApprovalsCaption', 'SourceText', 'SharedWithText', 'HasSharedWithLine', 'NoticeText', 'ErrorText', 'SavedText', 'IsBusy',
+        'ApprovalsCaption', 'SourceText', 'SharedWithText', 'HasSharedWithLine', 'NoticeText', 'VerifyNoticeText', 'ErrorText', 'SavedText', 'IsBusy',
     ]
 
     private readonly approvals = new ObservableCollection<EmailDomainApprovalRowViewModel>()
@@ -138,6 +223,7 @@ export class TenantEmailDomainsViewModel extends Observable
     private busy = false
     private errorText = ''
     private savedText = ''
+    private verifyNoticeText = ''
     // Bumped by each Load: a read that lands after a newer one started is dropped.
     private generation = 0
 
@@ -261,7 +347,13 @@ export class TenantEmailDomainsViewModel extends Observable
         return this.unavailable ? TenantEmailDomainsViewModel.UnavailableText : TenantEmailDomainsViewModel.NoText
     }
 
-    // Why the last read, save, approval or revoke failed; '' otherwise.
+    // After a verify that found no matching TXT record: a sentence saying so, until the next action; '' otherwise.
+    public get VerifyNoticeText(): string
+    {
+        return this.verifyNoticeText
+    }
+
+    // Why the last read, save, approval, revoke or verify failed; '' otherwise.
     public get ErrorText(): string
     {
         return this.errorText
@@ -377,7 +469,17 @@ export class TenantEmailDomainsViewModel extends Observable
         await this.Act(() => this.session.Client.RevokeTenantEmailDomain(this.TenantId, domain))
     }
 
-    private async Act(action: () => Promise<TenantEmailDomainsDto>): Promise<void>
+    // Looks up one domain's TXT record now. A lookup that still finds no record says so in VerifyNoticeText. Never throws.
+    public async VerifyDomain(domain: string): Promise<void>
+    {
+        await this.Act(() => this.session.Client.VerifyTenantEmailDomain(this.TenantId, domain), report =>
+        {
+            const row = report.approvals.find(a => a.domain === domain)
+            this.verifyNoticeText = row !== undefined && !row.verified ? TenantEmailDomainsViewModel.NoRecordFoundText : TenantEmailDomainsViewModel.NoText
+        })
+    }
+
+    private async Act(action: () => Promise<TenantEmailDomainsDto>, afterShow?: (report: TenantEmailDomainsDto) => void): Promise<void>
     {
         if (!this.CanWrite || this.busy)
         {
@@ -386,7 +488,11 @@ export class TenantEmailDomainsViewModel extends Observable
         const done = await this.Request(async () =>
         {
             const report = await action()
-            this.Change(() => { this.Show(report) })
+            this.Change(() =>
+            {
+                this.Show(report)
+                afterShow?.(report)
+            })
         })
         // An expired session leaves no sentence and needs no reload.
         if (!done && this.errorText.length > 0)
@@ -410,6 +516,7 @@ export class TenantEmailDomainsViewModel extends Observable
             this.busy = true
             this.errorText = TenantEmailDomainsViewModel.NoText
             this.savedText = TenantEmailDomainsViewModel.NoText
+            this.verifyNoticeText = TenantEmailDomainsViewModel.NoText
         })
         try
         {

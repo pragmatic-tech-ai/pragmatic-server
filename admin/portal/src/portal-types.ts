@@ -235,15 +235,39 @@ export enum EmailDomainSource
     Console = 'console',
 }
 
+// Where a claimed email domain stands with the platform; values match the server wire strings.
+export enum DomainApprovalState
+{
+    Approved = 'approved',
+    Verified = 'verified',
+    VerifiedContested = 'verified-contested',
+    Revoked = 'revoked',
+    Pending = 'pending',
+}
+
 // One domain of a tenant as the operator reviews it: whether an operator approved it, whether the tenant still claims it
-// (false: an approved domain its console or record no longer lists, kept so it can be revoked), and which other tenants
-// claim it too.
-export type EmailDomainApprovalDto = { domain: string; approved: boolean; claimed: boolean; sharedWith: string[] }
+// (false: an approved domain its console or record no longer lists, kept so it can be revoked), which other tenants
+// claim it too, and where it stands (state). verified: its DNS TXT record was last seen; lastCheckedAt: when it was last
+// looked up. recordName / recordValue: the TXT record the tenant publishes to prove it controls the domain (the token in
+// it is public by design).
+export type EmailDomainApprovalDto =
+{
+    domain: string
+    approved: boolean
+    claimed: boolean
+    sharedWith: string[]
+    state: DomainApprovalState
+    verified: boolean
+    lastCheckedAt?: string
+    recordName?: string
+    recordValue?: string
+}
 
 // A tenant's email domains as the operator sees them (the email-domains route's reply). editable: false for an
 // in-hive tenant, whose Owner sets them in its console. sharedWith: sorted ids of the other tenants claiming any of
 // these domains. approvals: every tenant, one entry per claimed domain in domains order, then each approved domain no
-// longer claimed; a domain matches in sign-in discovery only while it is both claimed and approved.
+// longer claimed; a domain takes effect in sign-in discovery while it is claimed and either operator-approved or
+// verified by its DNS TXT record with no other tenant claiming it (an operator's revoke beats a verification).
 export type TenantEmailDomainsDto =
 {
     tenantId: string

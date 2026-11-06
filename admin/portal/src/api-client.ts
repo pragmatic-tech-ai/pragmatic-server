@@ -83,6 +83,7 @@ export class ControlPlaneClient
     private static readonly EmailDomainsSegment = 'email-domains'
     private static readonly ApproveSegment = 'approve'
     private static readonly RevokeSegment = 'revoke'
+    private static readonly VerifySegment = 'verify'
     private static readonly DomainsKey = 'domains'
     private static readonly DomainKey = 'domain'
     private static readonly NoQuery = ''
@@ -184,6 +185,13 @@ export class ControlPlaneClient
     public async RevokeTenantEmailDomain(tenantId: string, domain: string): Promise<TenantEmailDomainsDto>
     {
         return await this.Send<TenantEmailDomainsDto>(this.TenantEmailDomainActionRoute(tenantId, ControlPlaneClient.RevokeSegment), this.PostBody({ [ControlPlaneClient.DomainKey]: domain }))
+    }
+
+    // Looks up the domain's DNS TXT record now; the reply is the fresh report. A 429 (too many lookups) or 503 (the lookup
+    // failed) carries the server's sentence.
+    public async VerifyTenantEmailDomain(tenantId: string, domain: string): Promise<TenantEmailDomainsDto>
+    {
+        return await this.Send<TenantEmailDomainsDto>(this.TenantEmailDomainActionRoute(tenantId, ControlPlaneClient.VerifySegment), this.PostBody({ [ControlPlaneClient.DomainKey]: domain }))
     }
 
     private TenantEmailDomainsRoute(tenantId: string): string

@@ -7,7 +7,7 @@ import { DialogService, type DialogOptions } from '@pragmatic-tech-ai/mural/fram
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import { ApiError, type ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
-import { AgentInstallState, AgentInstallStep, ConsoleInstallState, ConsoleInstallStep, EmailDomainSource, type AgentInstallStatusDto, type ConsoleInstallStatusDto, type TenantEmailDomainsDto } from '../../portal-types.js'
+import { AgentInstallState, AgentInstallStep, ConsoleInstallState, ConsoleInstallStep, DomainApprovalState, EmailDomainSource, type AgentInstallStatusDto, type ConsoleInstallStatusDto, type TenantEmailDomainsDto } from '../../portal-types.js'
 import type { ConsoleRemovalDto, HiveConsoleSpecDto, HiveDeleteOutcomeDto, InHiveOwnerPasswordDto, OwnerPasswordResetDto, PasswordChangedDto } from '../../portal-types.js'
 import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveBootstrapDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, ProvisionInputDto, ProvisionResultDto, SelectionDto, TenantDto } from '../../portal-types.js'
 import { DownloadService } from '../download-service.js'
@@ -297,6 +297,9 @@ export class FakeControlPlane
     public readonly EmailDomainActions: string[] = []
     public EmailDomainsReadFailure: Error | undefined
     public EmailDomainsFailure: Error | undefined
+    // Domains whose TXT record a Verify finds.
+    public readonly EmailDomainsWithRecord = new Set<string>()
+    public static readonly VerifyCheckedAt = '2026-11-06T09:15:00.000Z'
     public EmailDomainReads = 0
     // What a hive delete replies.
     public DeleteOutcome: HiveDeleteOutcomeDto = { ok: true, retained: [] }
@@ -744,7 +747,8 @@ export class FakeControlPlane
             ...previous, domains: [...domains],
             approvals: domains.map(domain => ({
                 domain, approved: previous.domains.includes(domain) ? previous.approvals.some(a => a.domain === domain && a.approved) : true,
-                claimed: true, sharedWith: [],
+                claimed: true, sharedWith: [], verified: false,
+                state: previous.domains.includes(domain) ? (previous.approvals.find(a => a.domain === domain)?.state ?? DomainApprovalState.Approved) : DomainApprovalState.Approved,
             })),
         }
         this.EmailDomainReports.set(tenantId, report)
@@ -766,7 +770,25 @@ export class FakeControlPlane
         this.ThrowIfEmailDomainsFailing()
         this.EmailDomainActions.push((approved ? 'Approve ' : 'Revoke ') + tenantId + ' ' + domain)
         const report = this.EmailDomainReport(tenantId)
-        const next = { ...report, approvals: report.approvals.map(a => a.domain === domain ? { ...a, approved } : a) }
+        const state = approved ? DomainApprovalState.Approved : DomainApprovalState.Revoked
+        const next = { ...report, approvals: report.approvals.map(a => a.domain === domain ? { ...a, approved, state } : a) }
+        this.EmailDomainReports.set(tenantId, next)
+        return FakeControlPlane.CopyReport(next)
+    }
+
+    // Like the server's verify: records the check, and a domain listed in EmailDomainsWithRecord is found verified.
+    public async VerifyTenantEmailDomain(tenantId: string, domain: string): Promise<TenantEmailDomainsDto>
+    {
+        this.ThrowIfEmailDomainsFailing()
+        this.EmailDomainActions.push('Verify ' + tenantId + ' ' + domain)
+        const report = this.EmailDomainReport(tenantId)
+        const found = this.EmailDomainsWithRecord.has(domain)
+        const next = {
+            ...report,
+            approvals: report.approvals.map(a => a.domain === domain
+                ? { ...a, verified: found, lastCheckedAt: FakeControlPlane.VerifyCheckedAt, state: found && a.state === DomainApprovalState.Pending ? DomainApprovalState.Verified : a.state }
+                : a),
+        }
         this.EmailDomainReports.set(tenantId, next)
         return FakeControlPlane.CopyReport(next)
     }
