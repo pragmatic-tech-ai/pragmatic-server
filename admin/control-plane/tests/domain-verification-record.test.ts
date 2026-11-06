@@ -1,8 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DomainApprovalState, DomainVerificationRecord } from '../domain-verification-record.js'
+import { InvalidEmailDomainError } from '../email-domain-policy.js'
 
 const Token = 'A'.repeat(42) + '_'
+const Mine = 'mine' + 'm'.repeat(39)
+const Other = 'other' + 'o'.repeat(38)
 
 test('NameFor normalises case and one trailing dot', () =>
 {
@@ -25,28 +28,44 @@ test('NewToken is 43 base64url chars and differs per call', () =>
 
 test('Matches joins chunks of one record', () =>
 {
-    assert.equal(DomainVerificationRecord.Matches([['pragmatic-domain-verification=ab', 'cd']], 'abcd'), true)
+    const chunks = ['pragmatic-domain-verification=' + Mine.slice(0, 20), Mine.slice(20)]
+    assert.equal(DomainVerificationRecord.Matches([chunks], Mine), true)
 })
 
 test('Matches any of several records', () =>
 {
     const spf = ['v=spf1 -all']
-    const other = ['pragmatic-domain-verification=other']
-    const mine = ['pragmatic-domain-verification=mine']
-    assert.equal(DomainVerificationRecord.Matches([spf, other, mine], 'mine'), true)
-    assert.equal(DomainVerificationRecord.Matches([spf, other], 'mine'), false)
+    const other = ['pragmatic-domain-verification=' + Other]
+    const mine = ['pragmatic-domain-verification=' + Mine]
+    assert.equal(DomainVerificationRecord.Matches([spf, other, mine], Mine), true)
+    assert.equal(DomainVerificationRecord.Matches([spf, other], Mine), false)
 })
 
 test('Matches trims surrounding whitespace but is exact otherwise', () =>
 {
-    assert.equal(DomainVerificationRecord.Matches([[' pragmatic-domain-verification=mine ']], 'mine'), true)
-    assert.equal(DomainVerificationRecord.Matches([['pragmatic-domain-verification=MINE']], 'mine'), false)
-    assert.equal(DomainVerificationRecord.Matches([['pragmatic-domain-verification=mine2']], 'mine'), false)
+    assert.equal(DomainVerificationRecord.Matches([[' pragmatic-domain-verification=' + Mine + ' ']], Mine), true)
+    assert.equal(DomainVerificationRecord.Matches([['pragmatic-domain-verification=' + Mine.toUpperCase()]], Mine), false)
+    assert.equal(DomainVerificationRecord.Matches([['pragmatic-domain-verification=' + Mine + '2']], Mine), false)
 })
 
 test('Matches reads no records as no match', () =>
 {
-    assert.equal(DomainVerificationRecord.Matches([], 'mine'), false)
+    assert.equal(DomainVerificationRecord.Matches([], Mine), false)
+})
+
+test('Matches never matches a token outside TokenPattern, even against its own value', () =>
+{
+    assert.equal(DomainVerificationRecord.Matches([['pragmatic-domain-verification=']], ''), false)
+    assert.equal(DomainVerificationRecord.Matches([['pragmatic-domain-verification=short']], 'short'), false)
+    assert.equal(DomainVerificationRecord.Matches([['pragmatic-domain-verification=' + Mine + '=']], Mine + '='), false)
+})
+
+test('NameFor refuses a malformed domain with InvalidEmailDomainError', () =>
+{
+    for (const domain of ['', '.', 'acme..test', 'acme test', 'acme.test/x', '-acme.test'])
+    {
+        assert.throws(() => DomainVerificationRecord.NameFor(domain), InvalidEmailDomainError, JSON.stringify(domain))
+    }
 })
 
 test('ViewOf adds the record name and value', () =>

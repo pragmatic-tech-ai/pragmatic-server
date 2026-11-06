@@ -59,6 +59,12 @@ test('NodeTxtResolver answers Found with the records', async () =>
     assert.equal(backend.cancels, 0)
 })
 
+test('an empty record list reads as NoRecord', async () =>
+{
+    const lookup = await new NodeTxtResolver(() => new FakeBackend(async () => []), Deadline).ResolveTxt('x.acme.test')
+    assert.deepEqual(lookup, { status: TxtLookupStatus.NoRecord, records: [] })
+})
+
 test('ENODATA and ENOTFOUND read as NoRecord', async () =>
 {
     for (const code of ['ENODATA', 'ENOTFOUND'])
@@ -74,6 +80,16 @@ test('ETIMEOUT, ESERVFAIL and unknown errors read as Failed', async () =>
     {
         const lookup = await new NodeTxtResolver(() => FakeBackend.Rejecting(code), Deadline).ResolveTxt('x.acme.test')
         assert.deepEqual(lookup, { status: TxtLookupStatus.Failed, records: [] }, String(code))
+    }
+})
+
+test('a rejection without a code (a string, null) reads as Failed', async () =>
+{
+    for (const reason of ['ENODATA', null])
+    {
+        const backend = new FakeBackend(() => Promise.reject(reason))
+        const lookup = await new NodeTxtResolver(() => backend, Deadline).ResolveTxt('x.acme.test')
+        assert.deepEqual(lookup, { status: TxtLookupStatus.Failed, records: [] }, String(reason))
     }
 })
 
@@ -135,12 +151,25 @@ test('DomainTxtVerifier maps Found+match to Verified, Found without match to Mis
         [{ status: TxtLookupStatus.Found, records: [['v=spf1 -all'], ['pragmatic-domain-verification=' + Token]] }, DomainCheck.Verified],
         [{ status: TxtLookupStatus.Found, records: [['pragmatic-domain-verification=other']] }, DomainCheck.Mismatch],
         [{ status: TxtLookupStatus.NoRecord, records: [] }, DomainCheck.Absent],
+        [{ status: TxtLookupStatus.Found, records: [] }, DomainCheck.Absent],
         [{ status: TxtLookupStatus.Failed, records: [] }, DomainCheck.Failed],
     ]
     for (const [lookup, expected] of cases)
     {
         const resolver = new FakeTxtResolver(lookup)
-        assert.equal(await new DomainTxtVerifier(resolver).Check('Acme.TEST.', Token), expected, lookup.status)
+        assert.equal(await new DomainTxtVerifier(resolver).Check('Acme.TEST.', Token), expected, JSON.stringify(lookup))
         assert.deepEqual(resolver.queried, ['_pragmatic-verification.acme.test'])
+    }
+})
+
+test('DomainTxtVerifier answers Failed without a lookup for a token outside TokenPattern or a malformed domain', async () =>
+{
+    const bare: TxtLookup = { status: TxtLookupStatus.Found, records: [['pragmatic-domain-verification=']] }
+    const cases: [string, string][] = [['acme.test', ''], ['acme.test', 'short'], ['acme.test', Token + '='], ['acme..test', Token], ['', Token]]
+    for (const [domain, token] of cases)
+    {
+        const resolver = new FakeTxtResolver(bare)
+        assert.equal(await new DomainTxtVerifier(resolver).Check(domain, token), DomainCheck.Failed, JSON.stringify([domain, token]))
+        assert.deepEqual(resolver.queried, [])
     }
 })

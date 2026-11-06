@@ -1,5 +1,6 @@
 import { Resolver } from 'node:dns/promises'
 import { DomainVerificationRecord } from './domain-verification-record.js'
+import { InvalidEmailDomainError } from './email-domain-policy.js'
 
 /** How one TXT lookup ended: records found, the name has no TXT record, or the lookup could not be completed. */
 export enum TxtLookupStatus
@@ -60,7 +61,9 @@ export class NodeTxtResolver implements ITxtResolver
         }
         // Both handlers are attached up front, so a lookup abandoned at the deadline (late ECANCELLED) is never unhandled.
         const lookup = pending.then(
-            records => NodeTxtResolver.LookupOf(TxtLookupStatus.Found, records),
+            records => records.length === 0
+                ? NodeTxtResolver.LookupOf(TxtLookupStatus.NoRecord)
+                : NodeTxtResolver.LookupOf(TxtLookupStatus.Found, records),
             (error: unknown) => NodeTxtResolver.LookupOf(NodeTxtResolver.StatusOf(error)),
         )
         let timer: NodeJS.Timeout | undefined
@@ -125,18 +128,47 @@ export class DomainTxtVerifier
     {
     }
 
-    /** Looks up `_pragmatic-verification.<normalised domain>` and compares every record against `token`'s value. */
+    /**
+     * Looks up `_pragmatic-verification.<normalised domain>` and compares every record against `token`'s value. A token outside
+     * TokenPattern or a domain NameFor refuses answers Failed without any lookup: Failed never verifies and never unverifies a
+     * stored entry. A lookup with no records (NoRecord, or Found with an empty list) answers Absent.
+     */
     public async Check(domain: string, token: string): Promise<DomainCheck>
     {
-        const lookup = await this.resolver.ResolveTxt(DomainVerificationRecord.NameFor(domain))
+        const name = DomainTxtVerifier.NameOrUndefined(domain)
+        if (name === undefined || !DomainVerificationRecord.IsToken(token))
+        {
+            return DomainCheck.Failed
+        }
+        const lookup = await this.resolver.ResolveTxt(name)
         switch (lookup.status)
         {
             case TxtLookupStatus.Found:
+                if (lookup.records.length === 0)
+                {
+                    return DomainCheck.Absent
+                }
                 return DomainVerificationRecord.Matches(lookup.records, token) ? DomainCheck.Verified : DomainCheck.Mismatch
             case TxtLookupStatus.NoRecord:
                 return DomainCheck.Absent
             default:
                 return DomainCheck.Failed
+        }
+    }
+
+    private static NameOrUndefined(domain: string): string | undefined
+    {
+        try
+        {
+            return DomainVerificationRecord.NameFor(domain)
+        }
+        catch (error)
+        {
+            if (error instanceof InvalidEmailDomainError)
+            {
+                return undefined
+            }
+            throw error
         }
     }
 }

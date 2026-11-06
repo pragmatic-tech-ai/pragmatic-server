@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { EmailDomainPolicy } from './email-domain-policy.js'
+import { EmailDomainPolicy, InvalidEmailDomainError } from './email-domain-policy.js'
 
 /** Where a claimed email domain stands with the platform; the string values travel on the wire and are mirrored by both portals. */
 export enum DomainApprovalState
@@ -38,10 +38,25 @@ export class DomainVerificationRecord
         return randomBytes(DomainVerificationRecord.TokenBytes).toString(DomainVerificationRecord.TokenEncoding)
     }
 
-    /** The TXT record name for `domain`, normalised (trimmed, lowercased, one trailing dot dropped) first. */
+    /**
+     * The TXT record name for `domain`, normalised (trimmed, lowercased, one trailing dot dropped) first. Throws
+     * InvalidEmailDomainError when the normalised domain fails EmailDomainPolicy.CheckSyntax, so no malformed name is ever queried.
+     */
     public static NameFor(domain: string): string
     {
-        return DomainVerificationRecord.NamePrefix + EmailDomainPolicy.Normalise(domain)
+        const normalised = EmailDomainPolicy.Normalise(domain)
+        const refusal = EmailDomainPolicy.CheckSyntax(normalised)
+        if (refusal !== undefined)
+        {
+            throw new InvalidEmailDomainError(refusal)
+        }
+        return DomainVerificationRecord.NamePrefix + normalised
+    }
+
+    /** True when `token` has the shape NewToken issues (TokenPattern). */
+    public static IsToken(token: string): boolean
+    {
+        return DomainVerificationRecord.TokenPattern.test(token)
     }
 
     /** The TXT record value that carries `token`. */
@@ -52,15 +67,20 @@ export class DomainVerificationRecord
 
     /**
      * True when any one record, its character-strings joined and surrounding whitespace trimmed, is exactly our value. Other
-     * records at the name (SPF, another tenant's token) are ignored; comparison is case-sensitive.
+     * records at the name (SPF, another tenant's token) are ignored; comparison is case-sensitive. A token outside TokenPattern
+     * (empty included) never matches, so a bare or forged record cannot verify against a bad token.
      */
     public static Matches(records: readonly (readonly string[])[], token: string): boolean
     {
+        if (!DomainVerificationRecord.IsToken(token))
+        {
+            return false
+        }
         const expected = DomainVerificationRecord.ValueFor(token)
         return records.some(chunks => chunks.join('').trim() === expected)
     }
 
-    /** The answer plus the record the tenant has to publish. */
+    /** The answer plus the record the tenant has to publish; throws like NameFor on a malformed domain. */
     public static ViewOf(answer: DomainVerificationAnswer): DomainVerificationView
     {
         return {
@@ -86,7 +106,7 @@ export class DomainVerificationRecord
         {
             return undefined
         }
-        if (typeof token !== 'string' || !DomainVerificationRecord.TokenPattern.test(token))
+        if (typeof token !== 'string' || !DomainVerificationRecord.IsToken(token))
         {
             return undefined
         }
