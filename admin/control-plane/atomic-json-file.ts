@@ -2,16 +2,21 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, open, rename, unlink } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-/** `mode` is the temp file's permission bits (omitted: the platform default); `fsync` flushes the temp file before the rename. */
-export type AtomicWriteOptions = { readonly mode?: number; readonly fsync?: boolean }
+/**
+ * `mode` is the temp file's permission bits (omitted: the platform default); `fsync` flushes the temp file before the
+ * rename; `onDirectorySyncFailure` is told of a failed parent-directory sync after the rename (omitted: it is ignored).
+ */
+export type AtomicWriteOptions = { readonly mode?: number; readonly fsync?: boolean; readonly onDirectorySyncFailure?: (err: unknown) => void }
 
 /**
  * Writes a file atomically (JSON via Write, any text via WriteText): the parent directory is created, the text goes to a
  * uniquely named temp file next to the target (`<path>.<uuid>.tmp`), which is then renamed over it. Any failure after the
  * temp file was opened removes it and rethrows the ORIGINAL error (a close failure never replaces it). With `fsync: true`
  * the temp file is synced before the rename and, on POSIX only, the parent directory is synced after it, so the rename
- * itself survives a crash (directory fsync is unsupported on Windows and is skipped there). Node built-ins only, so the
- * in-hive console's dependency-light code may use it.
+ * itself survives a crash (directory fsync is unsupported on Windows and is skipped there). The directory sync is best
+ * effort: once the rename succeeded the new content is already in place, so a failed directory sync never rejects the
+ * write. It goes to `onDirectorySyncFailure` when one is given (a throwing callback is ignored) and is ignored otherwise.
+ * Node built-ins only, so the in-hive console's dependency-light code may use it.
  */
 export class AtomicJsonFile
 {
@@ -60,7 +65,30 @@ export class AtomicJsonFile
         }
         if (options?.fsync === true && process.platform !== AtomicJsonFile.WindowsPlatform)
         {
-            await AtomicJsonFile.SyncDirectory(dirname(path))
+            await AtomicJsonFile.SyncDirectoryBestEffort(dirname(path), options.onDirectorySyncFailure)
+        }
+    }
+
+    /**
+     * Runs `sync` (the real directory fsync by default) on `directory` and never rejects: a failure goes to `onFailure` when
+     * given (a throwing `onFailure` is ignored) and is ignored otherwise. `sync` is a seam for tests on every platform.
+     */
+    public static async SyncDirectoryBestEffort(directory: string, onFailure: ((err: unknown) => void) | undefined, sync: (directory: string) => Promise<void> = AtomicJsonFile.SyncDirectory): Promise<void>
+    {
+        try
+        {
+            await sync(directory)
+        }
+        catch (err)
+        {
+            try
+            {
+                onFailure?.(err)
+            }
+            catch
+            {
+                // The write already landed; a failing report must not turn it into a rejection.
+            }
         }
     }
 

@@ -18,14 +18,20 @@ class Names
     public static readonly ProbeName = 'probe.txt'
     public static readonly OldText = 'old contents'
     public static readonly CloseFailure = 'close failed'
+    public static readonly IoErrorCode = 'EIO'
 }
 
 type SyncObservation = { readonly directory: boolean; readonly tempExists: boolean; readonly target: string | undefined }
 
 class SyncSpy
 {
-    /** Spies FileHandle.prototype.sync (the real sync still runs), recording what the disk looked like at each call. */
-    public static async Run(dir: string, path: string, body: () => Promise<void>): Promise<SyncObservation[]>
+    public static readonly DirectoryFailure = Object.assign(new Error(Names.Failure), { code: Names.IoErrorCode })
+
+    /**
+     * Spies FileHandle.prototype.sync (the real sync still runs), recording what the disk looked like at each call. With
+     * `failDirectory` a directory's sync throws `DirectoryFailure` instead (after being recorded).
+     */
+    public static async Run(dir: string, path: string, body: () => Promise<void>, failDirectory: boolean = false): Promise<SyncObservation[]>
     {
         const probe = await open(join(dir, Names.ProbeName), 'w')
         const proto = Object.getPrototypeOf(probe) as { sync: (this: { fd: number }) => Promise<void> }
@@ -34,11 +40,16 @@ class SyncSpy
         const seen: SyncObservation[] = []
         const spy = mock.method(proto, 'sync', async function (this: { fd: number })
         {
+            const directory = fstatSync(this.fd).isDirectory()
             seen.push({
-                directory: fstatSync(this.fd).isDirectory(),
+                directory,
                 tempExists: readdirSync(dir).some(n => n.endsWith('.tmp')),
                 target: existsSync(path) ? readFileSync(path, Names.Utf8) : undefined
             })
+            if (directory && failDirectory)
+            {
+                throw SyncSpy.DirectoryFailure
+            }
             return original.call(this)
         })
         try
@@ -118,6 +129,36 @@ describe('AtomicJsonFile', () =>
         assert.equal(directory.length, 1)
         assert.equal(directory[0].tempExists, false)
         assert.equal(directory[0].target, Names.RawText)
+    })
+
+    it('a failed directory sync after the rename resolves, handing the error to onDirectorySyncFailure once', { skip: process.platform === 'win32' }, async () =>
+    {
+        const path = join(dir, Names.FileName)
+        writeFileSync(path, Names.OldText)
+        const failures: unknown[] = []
+        const seen = await SyncSpy.Run(dir, path, () => AtomicJsonFile.WriteText(path, Names.RawText, { fsync: true, onDirectorySyncFailure: err => failures.push(err) }), true)
+        assert.equal(seen.filter(s => s.directory).length, 1)
+        assert.deepEqual(failures, [SyncSpy.DirectoryFailure])
+        assert.equal(readFileSync(path, Names.Utf8), Names.RawText)
+        assert.deepEqual(readdirSync(dir).sort(), [Names.FileName, Names.ProbeName].sort())
+        // Without a callback the failure is ignored.
+        await SyncSpy.Run(dir, path, () => AtomicJsonFile.WriteText(path, Names.OldText, { fsync: true }), true)
+        assert.equal(readFileSync(path, Names.Utf8), Names.OldText)
+    })
+
+    it('SyncDirectoryBestEffort never rejects: a failure goes to the callback once, or is ignored without one', async () =>
+    {
+        const failures: unknown[] = []
+        const failing = async (): Promise<void> => { throw SyncSpy.DirectoryFailure }
+        await AtomicJsonFile.SyncDirectoryBestEffort(dir, err => failures.push(err), failing)
+        assert.equal(failures.length, 1)
+        assert.equal(failures[0], SyncSpy.DirectoryFailure)
+        await AtomicJsonFile.SyncDirectoryBestEffort(dir, undefined, failing)
+        await AtomicJsonFile.SyncDirectoryBestEffort(dir, () => { throw new Error(Names.CloseFailure) }, failing)
+        const synced: string[] = []
+        await AtomicJsonFile.SyncDirectoryBestEffort(dir, err => failures.push(err), async d => { synced.push(d) })
+        assert.deepEqual(synced, [dir])
+        assert.equal(failures.length, 1)
     })
 
     it('mode sets the file mode', { skip: process.platform === 'win32' }, async () =>

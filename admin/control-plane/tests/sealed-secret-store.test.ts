@@ -4,6 +4,8 @@ import { mkdtemp, open, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { randomBytes } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fstatSync } from 'node:fs'
+import { AtomicJsonFile, type AtomicWriteOptions } from '../atomic-json-file.js'
 import { SealedSecretStore, SealedSecretUnreadableError, SealedSecretFileError } from '../sealed-secret-store.js'
 
 class SealedFixture
@@ -12,6 +14,19 @@ class SealedFixture
     public static readonly Encoding = 'utf8'
     public static readonly Redacted = '"[SealedSecretStore: values redacted]"'
     public static readonly Ref = 'a/b'
+    public static readonly DirectorySyncLog = '[sealed-secrets] the sealed file is saved, but its directory could not be synced:'
+    public static readonly SyncFailureName = 'SyncFailure'
+    public static readonly SecretText = 'EIO at /secret/path'
+
+    /** A directory-sync error with its own name, so the test can tell the name from the message. */
+    public static readonly SyncFailure = class SyncFailure extends Error
+    {
+        public constructor(message: string)
+        {
+            super(message)
+            this.name = SealedFixture.SyncFailureName
+        }
+    }
 
     public static async WithDir(body: (file: string) => Promise<void>): Promise<void>
     {
@@ -193,6 +208,75 @@ test('every Put syncs the temp file to disk (fsync is passed)', async () =>
         finally
         {
             sync.mock.restore()
+        }
+    })
+})
+
+test('a directory sync failure after the rename still resolves the Put and logs its sentence and error name once', async () =>
+{
+    await SealedFixture.WithDir(async file =>
+    {
+        const logged: unknown[][] = []
+        const log = mock.method(console, 'error', (...args: unknown[]) => { logged.push(args) })
+        // Drives the store's own callback on every platform (the real directory sync runs on POSIX only).
+        const original = AtomicJsonFile.Write
+        const write = mock.method(AtomicJsonFile, 'Write', async (path: string, value: unknown, indent?: number, options?: AtomicWriteOptions) =>
+        {
+            await original.call(AtomicJsonFile, path, value, indent, { ...options, onDirectorySyncFailure: undefined })
+            assert.equal(options?.fsync, true)
+            options?.onDirectorySyncFailure?.(new SealedFixture.SyncFailure(SealedFixture.SecretText))
+        })
+        try
+        {
+            const key = randomBytes(32)
+            const value = randomBytes(8)
+            const store = await SealedSecretStore.Open(file, key)
+            await store.Put(SealedFixture.Ref, value)
+            assert.deepEqual(await store.Get(SealedFixture.Ref), value, 'memory follows the disk')
+            assert.deepEqual(await (await SealedSecretStore.Open(file, key)).Get(SealedFixture.Ref), value)
+            assert.equal(logged.length, 1)
+            assert.deepEqual(logged[0], [SealedFixture.DirectorySyncLog, SealedFixture.SyncFailureName])
+            assert.ok(!JSON.stringify(logged).includes(SealedFixture.SecretText))
+        }
+        finally
+        {
+            write.mock.restore()
+            log.mock.restore()
+        }
+    })
+})
+
+test('a real failing directory sync on POSIX resolves the Put and logs once', { skip: process.platform === 'win32' }, async () =>
+{
+    await SealedFixture.WithDir(async file =>
+    {
+        const probe = await open(`${file}.probe`, 'w')
+        const proto = Object.getPrototypeOf(probe) as { sync: (this: { fd: number }) => Promise<void> }
+        await probe.close()
+        const original = proto.sync
+        const sync = mock.method(proto, 'sync', async function (this: { fd: number })
+        {
+            if (fstatSync(this.fd).isDirectory())
+            {
+                throw new SealedFixture.SyncFailure(SealedFixture.SecretText)
+            }
+            return original.call(this)
+        })
+        const logged: unknown[][] = []
+        const log = mock.method(console, 'error', (...args: unknown[]) => { logged.push(args) })
+        try
+        {
+            const key = randomBytes(32)
+            const value = randomBytes(8)
+            const store = await SealedSecretStore.Open(file, key)
+            await store.Put(SealedFixture.Ref, value)
+            assert.deepEqual(await store.Get(SealedFixture.Ref), value)
+            assert.deepEqual(logged, [[SealedFixture.DirectorySyncLog, SealedFixture.SyncFailureName]])
+        }
+        finally
+        {
+            sync.mock.restore()
+            log.mock.restore()
         }
     })
 })

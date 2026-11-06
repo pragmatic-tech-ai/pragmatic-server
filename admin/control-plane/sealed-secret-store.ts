@@ -29,7 +29,9 @@ export class SealedSecretFileError extends Error
 /**
  * Byte secrets sealed with the master key (AES-256-GCM via EncryptedSecretStore) and persisted
  * as { "sealed": { "<ref>": "<blob>" } }. Get/Put/Delete run one at a time through a SerialRuns, so
- * concurrent callers never interleave or share a temp file. Values never appear in errors or JSON.
+ * concurrent callers never interleave or share a temp file. Values never appear in errors or JSON. Writes are fsynced; a
+ * parent-directory sync that fails after the rename landed does not fail the Put/Delete (the new content is in place, so
+ * memory follows the disk) and is logged as a fixed sentence plus the error's name.
  */
 export class SealedSecretStore
 {
@@ -43,6 +45,8 @@ export class SealedSecretStore
     private static readonly Separator = '\u0000'
     private static readonly BadRefText = 'A sealed secret reference is invalid.'
     private static readonly Redacted = '[SealedSecretStore: values redacted]'
+    private static readonly DirectorySyncFailedLog = '[sealed-secrets] the sealed file is saved, but its directory could not be synced:'
+    private static readonly UnknownErrorName = 'unknown error'
 
     private readonly runs = new SerialRuns()
 
@@ -171,6 +175,13 @@ export class SealedSecretStore
     private Persist(entries: Map<string, string>): Promise<void>
     {
         const body = { [SealedSecretStore.RootKey]: Object.fromEntries(entries) }
-        return AtomicJsonFile.Write(this.filePath, body, SealedSecretStore.JsonIndent, { mode: SealedSecretStore.FileMode, fsync: true })
+        return AtomicJsonFile.Write(this.filePath, body, SealedSecretStore.JsonIndent,
+            { mode: SealedSecretStore.FileMode, fsync: true, onDirectorySyncFailure: err => SealedSecretStore.ReportDirectorySyncFailure(err) })
+    }
+
+    /** The sealed file is already in place (the rename landed), so the write still succeeds; only the sentence and the error's name are logged. */
+    private static ReportDirectorySyncFailure(err: unknown): void
+    {
+        console.error(SealedSecretStore.DirectorySyncFailedLog, err instanceof Error ? err.name : SealedSecretStore.UnknownErrorName)
     }
 }
