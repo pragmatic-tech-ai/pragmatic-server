@@ -19,7 +19,11 @@ import { AdminProxyError, AdminProxyErrorKind } from '../admin-proxy.js'
 import { CreateFailedError, EnvironmentExistsError, EnvironmentNotDevelopmentError, EnvironmentNotFoundError, EnvironmentNotRuntimeError } from '../environment-service.js'
 import { EnvType, Template } from '../environment-record.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
+import { TenantGraphAccess } from './tenant-graph-access.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, IssueTokenParams, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+
+/** A graph request's final status and the graph name its audit note carries ('' when a POST body had no usable name). */
+type GraphOutcome = { status: number; graph: string }
 
 /** The lifecycle action a tenant may request against its own environment; the values byte-match the URL path segments. */
 export enum TenantEnvAction
@@ -91,6 +95,12 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly EnvCredentialPathPattern = new RegExp(
         '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.EnvironmentsSegment + '/([^/]+)/(' +
         TenantApiEndpoint.MakerTokenLeaf + '|' + TenantApiEndpoint.AppReaderLeaf + ')$')
+    private static readonly GraphsSegment = 'graphs'
+    /** Matches .../environments/NAME/graphs[/GRAPH]; a GRAPH holding a raw '/' never matches, so it cannot reach another route. */
+    private static readonly GraphsPathPattern = new RegExp(
+        '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.EnvironmentsSegment + '/([^/]+)/' + TenantApiEndpoint.GraphsSegment + '(?:/([^/]+))?$')
+    private static readonly DescriptionKey = 'description'
+    private static readonly GraphFailedLogPrefix = '[tenant-api] graph operation failed:'
     private static readonly MethodGet = 'GET'
     private static readonly MethodPost = 'POST'
     private static readonly MethodPut = 'PUT'
@@ -162,7 +172,9 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         orchestrators: HiveOrchestratorFactory,
         placement: EnvironmentPlacement,
         /** The tenant's email domains (GET/PUT /tenant-api/settings/email-domains); undefined leaves those paths unrouted (404). */
-        private readonly emailDomains?: ITenantEmailDomains)
+        private readonly emailDomains?: ITenantEmailDomains,
+        /** The graph routes (.../environments/NAME/graphs[/GRAPH]); undefined leaves those paths unrouted (404). */
+        private readonly graphs?: TenantGraphAccess)
     {
         this.health = new HiveHealthProducer(service, orchestrators, placement)
     }
@@ -249,6 +261,11 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             {
                 return await this.RouteEnvDelete(res, dm, session)
             }
+        }
+        const gm = this.graphs === undefined ? null : TenantApiEndpoint.GraphsPathPattern.exec(path)
+        if (gm !== null && this.graphs !== undefined)
+        {
+            return await this.RouteGraphs(req, res, method, gm, path, session, this.graphs)
         }
         const adm = TenantApiEndpoint.AdminPathPattern.exec(path)
         if (adm !== null)
@@ -846,6 +863,109 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         await this.service.AdminSetConfig(name, config)
         this.WriteJson(res, TenantApiEndpoint.StatusOk, { [TenantApiEndpoint.OkKey]: true })
         return true
+    }
+
+    /**
+     * GET lists, POST creates, DELETE .../GRAPH deletes the graphs of the tenant's own Development environment. In this
+     * order: ownership (404, never 403, not audited), the method/path shape and the graph segment's decoding (404, not
+     * audited), the envs capability (403), a Development environment (400), reach (503), the POST body (400), then the
+     * call. Every POST or DELETE past the shape check is audited once with its final status, after the answer is written.
+     */
+    private async RouteGraphs(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray, path: string, session: TenantSession, graphs: TenantGraphAccess): Promise<boolean>
+    {
+        const M = TenantApiEndpoint
+        const rec = this.OwnedEnv(m[1] as string, session)
+        if (rec === undefined)
+        {
+            this.WriteNotFound(res)
+            return true
+        }
+        const rawGraph = m[2]
+        const list = method === M.MethodGet && rawGraph === undefined
+        const create = method === M.MethodPost && rawGraph === undefined
+        const remove = method === M.MethodDelete && rawGraph !== undefined
+        const graph = rawGraph === undefined ? M.NoDetail : M.Decode(rawGraph)
+        if ((!list && !create && !remove) || graph === undefined)
+        {
+            this.WriteNotFound(res)
+            return true
+        }
+        const outcome = await this.AnswerGraph(req, res, method, session, rec, graph, graphs)
+        if (!list)
+        {
+            await graphs.Record(session, method, path, outcome.status, rec.name, outcome.graph)
+        }
+        return true
+    }
+
+    /** Runs a shaped graph request from the capability check on; writes the answer and returns its status and the graph name to note. */
+    private async AnswerGraph(req: IncomingMessage, res: ServerResponse, method: string, session: TenantSession, rec: EnvironmentRecord, graph: string, graphs: TenantGraphAccess): Promise<GraphOutcome>
+    {
+        const M = TenantApiEndpoint
+        if (!this.RequireCapability(res, session, M.EnvsCapability))
+        {
+            return { status: M.StatusForbidden, graph }
+        }
+        if (rec.type !== EnvType.Development)
+        {
+            return this.WriteGraphError(res, M.StatusBadRequest, TenantGraphAccess.NotDevelopmentMessage, graph)
+        }
+        const service = graphs.Service
+        if (service === undefined)
+        {
+            return this.WriteGraphError(res, M.StatusUnavailable, TenantGraphAccess.UnreachableMessage, graph)
+        }
+        let name = graph
+        let description = M.NoDetail
+        if (method === M.MethodPost)
+        {
+            const body = await this.ReadObject(req, res)
+            if (body === undefined)
+            {
+                return { status: M.StatusBadRequest, graph }
+            }
+            const rawName = body[M.NameKey]
+            const rawDescription = body[M.DescriptionKey] ?? M.NoDetail
+            name = M.NonEmpty(rawName) ? rawName as string : M.NoDetail
+            if (name.length === 0 || typeof rawDescription !== 'string')
+            {
+                return this.WriteGraphError(res, M.StatusBadRequest, TenantGraphAccess.FieldsMessage, name)
+            }
+            description = rawDescription
+        }
+        try
+        {
+            if (method === M.MethodGet)
+            {
+                this.WriteJson(res, M.StatusOk, [...await service.List(rec.name)])
+                return { status: M.StatusOk, graph: name }
+            }
+            if (method === M.MethodPost)
+            {
+                this.WriteJson(res, M.StatusCreated, await service.Create(rec.name, name, description))
+                return { status: M.StatusCreated, graph: name }
+            }
+            await service.Delete(rec.name, name)
+            res.writeHead(M.StatusNoContent)
+            res.end()
+            return { status: M.StatusNoContent, graph: name }
+        }
+        catch (err)
+        {
+            const status = TenantGraphAccess.StatusOf(err)
+            if (status === M.StatusInternal)
+            {
+                // Only the error's name: messages from lower layers are not vetted for secret material.
+                console.error(M.GraphFailedLogPrefix, err instanceof Error ? err.name : typeof err)
+            }
+            return this.WriteGraphError(res, status, TenantGraphAccess.MessageOf(err), name)
+        }
+    }
+
+    private WriteGraphError(res: ServerResponse, status: number, message: string, graph: string): GraphOutcome
+    {
+        this.WriteJson(res, status, { [TenantApiEndpoint.ErrorKey]: message })
+        return { status, graph }
     }
 
     /** POST maker-token (201 + the once-only token DTO) and POST app-reader-grant (200 { ok }, no secret) on the tenant's own environment. Both routes require the envs capability after the ownership check (403 generic otherwise). */

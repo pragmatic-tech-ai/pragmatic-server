@@ -13,6 +13,7 @@ import { DesktopAction, DesktopTargetVerdict, type DesktopTargets } from './desk
 import type { DesktopAuthGate } from './desktop-auth-gate.js'
 import type { IDesktopSessionConnections } from './desktop-endpoint.js'
 import type { IPrincipalConnections } from './tenant-principal-sessions.js'
+import { TenantAuditEntry } from './tenant-audit-entry.js'
 import { TenantClientAddress } from './tenant-client-address.js'
 import type { TenantSession } from './tenant-session.js'
 
@@ -158,9 +159,7 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
     private static readonly EnvironmentParam = 'environment'
     private static readonly ActionParam = 'action'
     private static readonly UpstreamQuery = '/?environment='
-    private static readonly ActorSeparator = '/'
     private static readonly NoValue = ''
-    private static readonly MaxAuditField = 128
     private static readonly StatusUnauthorized = 401
     private static readonly StatusBadRequest = 400
     private static readonly StatusForbidden = 403
@@ -246,7 +245,7 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
             await this.Refuse(req, socket, DesktopRelay.StatusUnauthorized, AuditRegistry.AnonymousActor, rawAction, rawEnv)
             return
         }
-        const actor = DesktopRelay.ActorOf(session)
+        const actor = TenantAuditEntry.ActorOf(session)
         const action = DesktopRelay.ActionOf(rawAction)
         if (action === undefined || rawEnv === DesktopRelay.NoValue)
         {
@@ -384,15 +383,8 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
 
     private async AppendAudit(actor: string, method: string, path: string, status: number, note: string | undefined): Promise<void>
     {
-        const entry = { actor, method: DesktopRelay.Clip(method), path: DesktopRelay.Clip(path), status, at: new Date().toISOString() }
-        try
-        {
-            await this.audit.Append(note === undefined ? entry : { ...entry, note: DesktopRelay.Clip(note) })
-        }
-        catch
-        {
-            // The relay's outcome does not depend on the audit write.
-        }
+        // The relay's outcome does not depend on the audit write.
+        await TenantAuditEntry.AppendBestEffort(this.audit, note === undefined ? { actor, method, path, status } : { actor, method, path, status, note })
     }
 
     /** Leases the env's address, mints the action's credential, dials onward, and only then completes the client upgrade. */
@@ -550,16 +542,6 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
     private static ActionOf(raw: string): DesktopAction | undefined
     {
         return (Object.values(DesktopAction) as string[]).includes(raw) ? raw as DesktopAction : undefined
-    }
-
-    private static ActorOf(session: TenantSession): string
-    {
-        return session.tenantId + DesktopRelay.ActorSeparator + (session.email ?? session.principalId)
-    }
-
-    private static Clip(text: string): string
-    {
-        return text.length > DesktopRelay.MaxAuditField ? text.slice(0, DesktopRelay.MaxAuditField) : text
     }
 }
 
