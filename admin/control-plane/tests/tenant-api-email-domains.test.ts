@@ -225,6 +225,27 @@ describe('TenantApiEndpoint email domains', () =>
         assert.deepEqual(store.VerifiedDomains, [])
     })
 
+    it('a verify body over the 16 KiB cap is 400 and the store is not called', async () =>
+    {
+        const store = new FakeEmailDomains()
+        const body = { domain: 'acme.test', padding: 'x'.repeat(16384) }
+        assert.ok(Buffer.byteLength(JSON.stringify(body)) > 16384)
+        const r = await Fixtures.Send(Fixtures.Build(store), Fixtures.OwnerId, 'POST', body, Fixtures.VerifyPath)
+        assert.equal(r.status, 400)
+        assert.equal(typeof r.json.error, 'string')
+        assert.deepEqual(store.Asked, [])
+        assert.deepEqual(store.VerifiedDomains, [])
+    })
+
+    it('without an email-domain store POST verify answers the same 404 as GET and PUT', async () =>
+    {
+        const endpoint = Fixtures.Build(undefined)
+        const verify = await Fixtures.Send(endpoint, Fixtures.OwnerId, 'POST', { domain: 'acme.test' }, Fixtures.VerifyPath)
+        const put = await Fixtures.Send(endpoint, Fixtures.OwnerId, 'PUT', { domains: [] })
+        assert.equal(put.status, 404)
+        assert.deepEqual(verify, put)
+    })
+
     it('each store error maps to its status with its sentence (400, 409, 429, 503)', async () =>
     {
         const cases: Array<[Error, number]> = [
