@@ -594,7 +594,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         const M = TenantApiEndpoint
         if (method === M.MethodGet)
         {
-            this.WriteEmailDomains(res, session, store.For(session.tenantId))
+            this.WriteEmailDomains(res, session, await store.For(session.tenantId))
             return true
         }
         if (method !== M.MethodPut)
@@ -647,7 +647,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
 
     /**
      * The view as the caller may use it: editable only when the store allows it and the caller holds the settings capability;
-     * `pending` lists the domains still waiting for the platform operator's approval.
+     * `pending` lists the domains not in effect yet (neither approved nor verified and uncontested, or revoked).
      */
     private WriteEmailDomains(res: ServerResponse, session: TenantSession, view: TenantEmailDomainsView): void
     {

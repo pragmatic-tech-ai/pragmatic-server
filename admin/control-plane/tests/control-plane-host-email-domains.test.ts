@@ -19,7 +19,8 @@ import { HiveBackend, InfraMode } from '../platform-records.js'
 import { IngressTlsSource } from '../ingress-tls.js'
 import { ConsoleAdvertRegistry } from '../console-advert-registry.js'
 import { ConsoleDomainApprovals } from '../console-domain-approvals.js'
-import { EmailDomainSource, PlatformEmailDomains, type TenantEmailDomainsReport } from '../platform-email-domains.js'
+import { DomainApprovalState, DomainVerificationRecord } from '../domain-verification-record.js'
+import { EmailDomainSource, PlatformEmailDomains, type EmailDomainApproval, type TenantEmailDomainsReport } from '../platform-email-domains.js'
 
 type Reply = { status: number; body: string }
 
@@ -80,6 +81,26 @@ class Send
     {
         return (JSON.parse(r.body) as { error: string }).error
     }
+
+    /** The report with each row's recordValue checked by shape and dropped, so the rest compares exactly. */
+    public static Shaped(r: Reply): Omit<TenantEmailDomainsReport, 'approvals'> & { approvals: Array<Omit<EmailDomainApproval, 'recordValue'>> }
+    {
+        const report = Send.Report(r)
+        return { ...report, approvals: report.approvals.map(row => Send.ShapedRow(row)) }
+    }
+
+    /** The expected row of a claimed domain that has a token and was never checked. */
+    public static Row(domain: string, approved: boolean, state: DomainApprovalState, sharedWith: string[] = []): Omit<EmailDomainApproval, 'recordValue'>
+    {
+        return { domain, approved, claimed: true, sharedWith, state, verified: false, recordName: DomainVerificationRecord.NamePrefix + domain }
+    }
+
+    private static ShapedRow(row: EmailDomainApproval): Omit<EmailDomainApproval, 'recordValue'>
+    {
+        const { recordValue, ...rest } = row
+        assert.match(recordValue ?? '', new RegExp('^' + DomainVerificationRecord.ValuePrefix + DomainVerificationRecord.TokenPattern.source.slice(1)))
+        return rest
+    }
 }
 
 describe('ControlPlaneHost tenant email domains', () =>
@@ -138,9 +159,9 @@ describe('ControlPlaneHost tenant email domains', () =>
         await directory.SetTenantEmailDomains('beta', ['beta.test'])
         const r = await Send.Request(host, 'GET', BetaPath)
         assert.equal(r.status, 200)
-        assert.deepEqual(Send.Report(r), {
+        assert.deepEqual(Send.Shaped(r), {
             tenantId: 'beta', domains: ['beta.test'], source: EmailDomainSource.Tenant, editable: true, sharedWith: [],
-            approvals: [{ domain: 'beta.test', approved: false, claimed: true, sharedWith: [] }],
+            approvals: [Send.Row('beta.test', false, DomainApprovalState.Pending)],
         })
     })
 
@@ -148,9 +169,9 @@ describe('ControlPlaneHost tenant email domains', () =>
     {
         const r = await Send.Request(host, 'PUT', BetaPath, { domains: ['Beta.test', 'shared.test'] })
         assert.equal(r.status, 200)
-        assert.deepEqual(Send.Report(r), {
+        assert.deepEqual(Send.Shaped(r), {
             tenantId: 'beta', domains: ['beta.test', 'shared.test'], source: EmailDomainSource.Tenant, editable: true, sharedWith: ['acme'],
-            approvals: [{ domain: 'beta.test', approved: true, claimed: true, sharedWith: [] }, { domain: 'shared.test', approved: true, claimed: true, sharedWith: ['acme'] }],
+            approvals: [Send.Row('beta.test', true, DomainApprovalState.Approved), Send.Row('shared.test', true, DomainApprovalState.Approved, ['acme'])],
         })
         assert.deepEqual(directory.GetTenant('beta')?.emailDomains, ['beta.test', 'shared.test'])
         assert.deepEqual(approvals.ApprovedFor('beta'), ['beta.test', 'shared.test'])
@@ -173,10 +194,10 @@ describe('ControlPlaneHost tenant email domains', () =>
     {
         await domains.Set('beta', ['beta.test'])
         const before = await Send.Request(host, 'GET', BetaPath)
-        assert.deepEqual(Send.Report(before).approvals, [{ domain: 'beta.test', approved: false, claimed: true, sharedWith: [] }])
+        assert.deepEqual(Send.Shaped(before).approvals, [Send.Row('beta.test', false, DomainApprovalState.Pending)])
         const approved = await Send.Request(host, 'POST', BetaPath + '/approve', { domain: 'Beta.TEST' })
         assert.equal(approved.status, 200)
-        assert.deepEqual(Send.Report(approved).approvals, [{ domain: 'beta.test', approved: true, claimed: true, sharedWith: [] }])
+        assert.deepEqual(Send.Shaped(approved).approvals, [Send.Row('beta.test', true, DomainApprovalState.Approved)])
         assert.deepEqual(approvals.ApprovedFor('beta'), ['beta.test'])
     })
 
@@ -249,10 +270,10 @@ describe('ControlPlaneHost tenant email domains', () =>
         await approvals.Approve('acme', 'acme.test')
         const r = await Send.Request(host, 'GET', AcmePath)
         assert.equal(r.status, 200)
-        assert.deepEqual(Send.Report(r), {
+        assert.deepEqual(Send.Shaped(r), {
             tenantId: 'acme', domains: ['acme.test', 'shared.test'], source: EmailDomainSource.Console, editable: false, reportedAt: '2026-11-04T10:00:00.000Z',
             sharedWith: ['beta'],
-            approvals: [{ domain: 'acme.test', approved: true, claimed: true, sharedWith: [] }, { domain: 'shared.test', approved: false, claimed: true, sharedWith: ['beta'] }],
+            approvals: [Send.Row('acme.test', true, DomainApprovalState.Approved), Send.Row('shared.test', false, DomainApprovalState.Pending, ['beta'])],
         })
     })
 

@@ -22,10 +22,16 @@ class FakeEmailDomains implements ITenantEmailDomains
     {
     }
 
-    public For(tenantId: string): TenantEmailDomainsView
+    public async For(tenantId: string): Promise<TenantEmailDomainsView>
     {
         this.Asked.push(tenantId)
-        return { domains: [...this.domains], editable: this.editable, inHive: this.inHive, pending: [...this.pending] }
+        return { domains: [...this.domains], editable: this.editable, inHive: this.inHive, pending: [...this.pending], verifications: [] }
+    }
+
+    public async Verify(tenantId: string, _domain: string): Promise<TenantEmailDomainsView>
+    {
+        this.Asked.push(tenantId)
+        return await this.For(tenantId)
     }
 
     public async Set(tenantId: string, domains: unknown): Promise<TenantEmailDomainsView>
@@ -36,7 +42,7 @@ class FakeEmailDomains implements ITenantEmailDomains
             throw new EmailDomainsNotEditableError('This tenant\'s console runs in its hive; its email domains are set there by the tenant Owner.')
         }
         this.domains = EmailDomainPolicy.Parse(domains)
-        return this.For(tenantId)
+        return await this.For(tenantId)
     }
 }
 

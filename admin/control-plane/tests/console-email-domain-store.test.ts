@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConsoleEmailDomainStore } from '../console-email-domain-store.js'
 import { InvalidEmailDomainError } from '../email-domain-policy.js'
-import { EmailDomainsNotEditableError } from '../tenant-api/tenant-email-domains.js'
+import { DomainVerificationUnavailableError, EmailDomainsNotEditableError } from '../tenant-api/tenant-email-domains.js'
 
 class Names
 {
@@ -39,7 +39,7 @@ describe('ConsoleEmailDomainStore', () =>
     {
         const store = await ConsoleEmailDomainStore.Open(file, Names.TenantId, [' ACME.test. ', Names.PublicMail])
         assert.deepEqual(store.Domains, [Names.SeedDomain], 'normalised, the refused seed entry dropped')
-        assert.deepEqual(store.For(Names.TenantId), { domains: [Names.SeedDomain], editable: true, inHive: true, pending: [] })
+        assert.deepEqual(await store.For(Names.TenantId), { domains: [Names.SeedDomain], editable: true, inHive: true, pending: [], verifications: [] })
         assert.equal(existsSync(file), false)
         assert.deepEqual(readdirSync(root), [])
     })
@@ -54,7 +54,7 @@ describe('ConsoleEmailDomainStore', () =>
     {
         const store = await ConsoleEmailDomainStore.Open(file, Names.TenantId, [Names.SeedDomain])
         const view = await store.Set(Names.TenantId, [Names.NewDomain])
-        assert.deepEqual(view, { domains: [Names.NewDomain], editable: true, inHive: true, pending: [] })
+        assert.deepEqual(view, { domains: [Names.NewDomain], editable: true, inHive: true, pending: [], verifications: [] })
         assert.deepEqual(JSON.parse(readFileSync(file, Names.Utf8)), { domains: [Names.NewDomain] })
         const reopened = await ConsoleEmailDomainStore.Open(file, Names.TenantId, [Names.SeedDomain])
         assert.deepEqual(reopened.Domains, [Names.NewDomain])
@@ -97,7 +97,7 @@ describe('ConsoleEmailDomainStore', () =>
     {
         const store = await ConsoleEmailDomainStore.Open(file, Names.TenantId, [Names.SeedDomain])
         await assert.rejects(() => store.Set(Names.OtherTenantId, [Names.NewDomain]), EmailDomainsNotEditableError)
-        assert.deepEqual(store.For(Names.OtherTenantId), { domains: [], editable: false, inHive: true, pending: [] })
+        assert.deepEqual(await store.For(Names.OtherTenantId), { domains: [], editable: false, inHive: true, pending: [], verifications: [] })
         assert.deepEqual(store.Domains, [Names.SeedDomain])
         assert.equal(existsSync(file), false)
     })
@@ -110,6 +110,14 @@ describe('ConsoleEmailDomainStore', () =>
         await assert.rejects(() => store.Set(Names.TenantId, [Names.NewDomain, Names.PublicMail]), InvalidEmailDomainError)
         assert.deepEqual(store.Domains, [Names.SeedDomain])
         assert.equal(changes, 0)
+        assert.equal(existsSync(file), false)
+    })
+
+    it('Verify is not available on the console yet and writes nothing', async () =>
+    {
+        const store = await ConsoleEmailDomainStore.Open(file, Names.TenantId, [Names.SeedDomain])
+        await assert.rejects(() => store.Verify(Names.TenantId, Names.SeedDomain),
+            (e: Error) => e instanceof DomainVerificationUnavailableError && e.message === 'Domain verification is not available on this console.')
         assert.equal(existsSync(file), false)
     })
 

@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import { AtomicJsonFile } from './atomic-json-file.js'
 import { EmailDomainPolicy } from './email-domain-policy.js'
-import { EmailDomainsNotEditableError, type ITenantEmailDomains, type TenantEmailDomainsView } from './tenant-api/tenant-email-domains.js'
+import { DomainVerificationUnavailableError, EmailDomainsNotEditableError, type ITenantEmailDomains, type TenantEmailDomainsView } from './tenant-api/tenant-email-domains.js'
 
 /**
  * The in-hive console's own email domains, kept in `<dataRoot>/email-domains.json` (`{ "domains": string[] }`). Until the
@@ -19,6 +19,7 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
     private static readonly JsonIndent = 2
     private static readonly MalformedPrefix = 'Invalid email domains file (expected { "domains": string[] }): '
     private static readonly NotEditableMessage = 'This console sets only its own tenant\'s email domains.'
+    private static readonly VerifyUnavailableMessage = 'Domain verification is not available on this console.'
 
     public readonly Changed = new Signal<readonly string[]>()
     private domains: readonly string[]
@@ -57,14 +58,20 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
     }
 
     /**
-     * Own tenant -> its domains, editable; any other id -> nothing, not editable. `pending` is always empty: the operator's approvals
-     * live on the control plane and are not visible here, so the view says only `inHive` (each domain needs that approval).
+     * Own tenant -> its domains, editable; any other id -> nothing, not editable. `pending` and `verifications` are empty: the
+     * domains' standing lives on the control plane and is not known here yet, so the view says only `inHive`.
      */
-    public For(tenantId: string): TenantEmailDomainsView
+    public async For(tenantId: string): Promise<TenantEmailDomainsView>
     {
         return tenantId === this.tenantId
-            ? { domains: [...this.domains], editable: true, inHive: true, pending: [] }
-            : { domains: [], editable: false, inHive: true, pending: [] }
+            ? { domains: [...this.domains], editable: true, inHive: true, pending: [], verifications: [] }
+            : { domains: [], editable: false, inHive: true, pending: [], verifications: [] }
+    }
+
+    /** Verification runs on the control plane, which this console cannot reach for it yet: always DomainVerificationUnavailableError. */
+    public async Verify(_tenantId: string, _domain: string): Promise<TenantEmailDomainsView>
+    {
+        throw new DomainVerificationUnavailableError(ConsoleEmailDomainStore.VerifyUnavailableMessage)
     }
 
     /** Throws EmailDomainsNotEditableError (another tenant) or InvalidEmailDomainError (before anything is written). */
@@ -78,7 +85,7 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
         const run = this.writes.then(() => this.Apply(parsed))
         this.writes = run.catch(() => undefined)
         await run
-        return { domains: [...parsed], editable: true, inHive: true, pending: [] }
+        return { domains: [...parsed], editable: true, inHive: true, pending: [], verifications: [] }
     }
 
     private static DomainsIn(text: string, filePath: string): string[]

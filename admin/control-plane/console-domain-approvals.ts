@@ -194,16 +194,6 @@ export class ConsoleDomainApprovals extends JsonRecordStore<ConsoleDomainApprova
             .filter(d => ConsoleDomainApprovals.EffectiveStates.has(ConsoleDomainApprovals.StateIn(normalised, d, contested.has(d))))
     }
 
-    /**
-     * Temporary bridge: claimed INTERSECT approved, the rule before DNS verification. Kept only until the matcher and
-     * PlatformEmailDomains move onto EffectiveDomains; deleted with the last caller.
-     */
-    public static EffectiveDomainsLegacy(claimed: readonly string[], approved: readonly string[]): string[]
-    {
-        const allowed = new Set(EmailDomainPolicy.Distinct(approved))
-        return EmailDomainPolicy.Distinct(claimed).filter(d => allowed.has(d))
-    }
-
     /** The tenant's record (a copy), or an empty one not yet stored. */
     private RecordOf(tenantId: string): ConsoleDomainApprovalRecord
     {

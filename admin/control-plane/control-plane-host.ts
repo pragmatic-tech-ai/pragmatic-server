@@ -1730,7 +1730,7 @@ export class ControlPlaneHost
                 this.auditNotes.set(res, C.DomainNotePrefix + noted)
             }
         }
-        const report = domains.Report(id)
+        const report = await domains.Report(id)
         if (report === undefined)
         {
             PlaneHttp.WriteNotFound(res)

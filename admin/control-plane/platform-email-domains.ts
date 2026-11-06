@@ -1,10 +1,17 @@
+import { AuditThrottle } from './audit-throttle.js'
 import { ConsoleAdvertRegistry, type ConsoleAdvertRecord, type IConsoleAdvertLookup } from './console-advert-registry.js'
-import { ConsoleDomainApprovals } from './console-domain-approvals.js'
+import { ConsoleDomainApprovals, type DomainStanding } from './console-domain-approvals.js'
+import { DomainClaims } from './domain-claims.js'
+import { DomainVerificationRecord, type DomainApprovalState, type DomainVerificationAnswer, type DomainVerificationView } from './domain-verification-record.js'
 import { EmailDomainPolicy, InvalidEmailDomainError } from './email-domain-policy.js'
 import { HiveConsoleSpecs } from './hive-console-spec.js'
 import { UnknownTenantError, type PlatformDirectory } from './platform-directory.js'
 import type { TenantRecord } from './platform-records.js'
-import { EmailDomainsNotEditableError, type ITenantEmailDomains, type TenantEmailDomainsView } from './tenant-api/tenant-email-domains.js'
+import {
+    DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerifyThrottledError, EmailDomainsNotEditableError, type ITenantEmailDomains,
+    type TenantEmailDomainsView,
+} from './tenant-api/tenant-email-domains.js'
+import { DomainCheck, type DomainTxtVerifier } from './txt-resolver.js'
 
 /** Where a tenant's email domains come from: its platform record (control-plane tenant) or its in-hive console's advert. */
 export enum EmailDomainSource
@@ -16,9 +23,20 @@ export enum EmailDomainSource
 /**
  * One domain of a tenant as the operator reviews it: whether an operator approved it, whether the tenant still claims it (its
  * advert or record lists it; an approved domain no longer claimed is kept listed so it can be revoked before a later claim
- * re-arms it), and which other tenants claim it too.
+ * re-arms it), which other tenants claim it too, its state (ConsoleDomainApprovals.StateOf) and whether its TXT record was seen
+ * at the last check. `recordName` / `recordValue` (the TXT record to publish) are present when a token was issued for it.
  */
-export type EmailDomainApproval = { domain: string; approved: boolean; claimed: boolean; sharedWith: string[] }
+export type EmailDomainApproval = {
+    domain: string
+    approved: boolean
+    claimed: boolean
+    sharedWith: string[]
+    state: DomainApprovalState
+    verified: boolean
+    lastCheckedAt?: string
+    recordName?: string
+    recordValue?: string
+}
 
 /**
  * The operator's view of a tenant's email domains. `sharedWith` = sorted ids of the other tenants claiming any of these domains.
@@ -59,11 +77,12 @@ export class EmailDomainApprovalRefusedError extends Error
  * `email-domains.json` on the console's retained data volume, so a reinstall brings them back in its first advert (and those an
  * operator approved before match again at once, since approvals are kept per tenant). Accepted.
  *
- * Nobody's claim alone redirects an address: a claimed domain matches in discovery only once an operator approved it
- * (ConsoleDomainApprovals, the one store for both kinds of tenant; Approve / Revoke here). The domains an operator's save adds
- * to the record are approved on save; those the tenant Owner sets (in the console or on the tenant plane) wait for approval. "Claimed" domains,
- * used for `sharedWith` and the approval check, are a tenant's record domains (control-plane tenant) or all its advertised
- * domains (in-hive tenant), approved or not, so an operator sees a conflict before approving.
+ * Nobody's claim alone redirects an address. A claimed domain matches in discovery once an operator approved it, or once its DNS
+ * TXT record is verified (VerifyDomain) and no other tenant claims it; an operator's revoke beats both until the operator approves
+ * it again (ConsoleDomainApprovals.EffectiveDomains over ConsoleDomainApprovals, the one store for both kinds of tenant). The
+ * domains an operator's save adds to the record are approved on save; those the tenant Owner sets (in the console or on the
+ * tenant plane) wait for approval or verification. Which tenant claims what comes from one DomainClaims per public call, so the
+ * claimed check, `sharedWith` and "contested" of one answer always agree; an operator sees a conflict before approving.
  */
 export class PlatformEmailDomains implements ITenantEmailDomains
 {
@@ -71,11 +90,26 @@ export class PlatformEmailDomains implements ITenantEmailDomains
     private static readonly ApprovalsUnavailableMessage = 'Email domain approval is not available on this control plane.'
     private static readonly NotAdvertisedSuffix = " is not among the email domains this tenant's console reports, so there is nothing to approve."
     private static readonly NotInRecordSuffix = " is not among this tenant's email domains, so there is nothing to approve."
+    private static readonly NotClaimedSuffix = " is not among this tenant's email domains, so there is nothing to verify."
+    private static readonly VerificationUnavailableMessage = 'DNS verification is not available on this control plane.'
+    private static readonly ThrottledMessage = 'Too many verification attempts for this tenant. Try again in a few minutes.'
+    private static readonly LookupIncompletePrefix = 'The DNS lookup for '
+    private static readonly LookupIncompleteSuffix = ' did not complete. Try again later.'
+    /** Verification lookups per tenant: 10 in a 15-minute window, then a 15-minute lockout. */
+    private static readonly VerifyMaxHits = 10
+    private static readonly VerifyWindowMs = 15 * 60 * 1000
+    private static readonly VerifyLockoutMs = 15 * 60 * 1000
+    private static readonly NoStanding: DomainStanding = { approved: [], revoked: [], verified: [] }
 
     public constructor(
         private readonly directory: PlatformDirectory,
         private readonly adverts: IConsoleAdvertLookup | undefined,
-        private readonly approvals?: ConsoleDomainApprovals)
+        private readonly approvals?: ConsoleDomainApprovals,
+        private readonly verifier?: DomainTxtVerifier,
+        private readonly throttle: AuditThrottle = new AuditThrottle({
+            maxHits: PlatformEmailDomains.VerifyMaxHits, windowMs: PlatformEmailDomains.VerifyWindowMs, lockoutMs: PlatformEmailDomains.VerifyLockoutMs,
+        }),
+        private readonly now: () => Date = () => new Date())
     {
     }
 
@@ -85,23 +119,23 @@ export class PlatformEmailDomains implements ITenantEmailDomains
         return HiveConsoleSpecs.ConsoleHiveOf(this.directory.ListHives(tenantId)) !== undefined
     }
 
-    /** undefined for an unknown tenant. */
-    public Report(tenantId: string): TenantEmailDomainsReport | undefined
+    /** undefined for an unknown tenant. Issues a verification token for each claimed domain that has none first. */
+    public async Report(tenantId: string): Promise<TenantEmailDomainsReport | undefined>
     {
-        const tenant = this.directory.GetTenant(tenantId)
-        if (tenant === undefined)
+        if (this.directory.GetTenant(tenantId) === undefined)
         {
             return undefined
         }
-        const claims = this.ClaimsOfOthers(tenantId)
-        const domains = [...this.ClaimedDomainsOf(tenant)].sort()
-        const approved = this.ApprovedFor(tenantId)
+        const claims = this.Claims()
+        const domains = [...claims.ClaimedBy(tenantId)]
+        await this.EnsureTokens(tenantId, domains)
+        const standing = this.StandingOf(tenantId)
         const claimed = new Set(domains)
         const approvals: EmailDomainApproval[] = [
-            ...domains.map(domain => ({ domain, approved: approved.includes(domain), claimed: true, sharedWith: PlatformEmailDomains.SharedWith([domain], claims) })),
-            ...approved.filter(d => !claimed.has(d)).map(domain => ({ domain, approved: true, claimed: false, sharedWith: PlatformEmailDomains.SharedWith([domain], claims) })),
+            ...domains.map(domain => this.RowOf(tenantId, domain, true, standing, claims)),
+            ...standing.approved.filter(d => !claimed.has(d)).map(domain => this.RowOf(tenantId, domain, false, standing, claims)),
         ]
-        const sharedWith = PlatformEmailDomains.SharedWith(domains, claims)
+        const sharedWith = [...new Set(domains.flatMap(d => claims.OthersClaiming(tenantId, d)))].sort()
         if (!this.IsInHive(tenantId))
         {
             return { tenantId, domains, source: EmailDomainSource.Tenant, editable: true, sharedWith, approvals }
@@ -115,20 +149,104 @@ export class PlatformEmailDomains implements ITenantEmailDomains
         return report
     }
 
-    public For(tenantId: string): TenantEmailDomainsView
+    /** The tenant plane's view; issues a verification token for each claimed domain that has none first. */
+    public async For(tenantId: string): Promise<TenantEmailDomainsView>
     {
-        const tenant = this.directory.GetTenant(tenantId)
-        if (tenant === undefined)
+        if (this.directory.GetTenant(tenantId) === undefined)
         {
-            return { domains: [], editable: false, inHive: false, pending: [] }
+            return { domains: [], editable: false, inHive: false, pending: [], verifications: [] }
         }
-        return this.ViewOf(tenant)
+        return await this.ViewOf(tenantId)
     }
 
-    /** The tenant Owner's write (the tenant plane): the record changes, and each domain not yet approved waits for an operator. */
+    /** The tenant Owner's write (the tenant plane): the record changes, and each new domain waits for approval or verification. */
     public async Set(tenantId: string, domains: unknown): Promise<TenantEmailDomainsView>
     {
-        return this.ViewOf(await this.WriteRecord(tenantId, domains))
+        await this.WriteRecord(tenantId, domains)
+        return await this.ViewOf(tenantId)
+    }
+
+    /** VerifyDomain, then the updated tenant view; throws like VerifyDomain. */
+    public async Verify(tenantId: string, domain: string): Promise<TenantEmailDomainsView>
+    {
+        await this.VerifyDomain(tenantId, domain)
+        return await this.For(tenantId)
+    }
+
+    /**
+     * Looks up one claimed domain's TXT record now and stores the result. Throws UnknownTenantError, InvalidEmailDomainError (not
+     * a well-formed name), DomainNotClaimedError, DomainVerificationUnavailableError (no verifier or approval store, or the lookup
+     * did not complete: nothing is stored then) or DomainVerifyThrottledError (more than VerifyMaxHits lookups for this tenant in
+     * the window; refused before any lookup). The token is always the stored one, never a client's.
+     */
+    public async VerifyDomain(tenantId: string, domain: string): Promise<DomainVerificationAnswer>
+    {
+        const P = PlatformEmailDomains
+        this.KnownTenant(tenantId)
+        const normalised = EmailDomainPolicy.Normalise(domain)
+        const refusal = EmailDomainPolicy.CheckSyntax(normalised)
+        if (refusal !== undefined)
+        {
+            throw new InvalidEmailDomainError(refusal)
+        }
+        const claims = this.Claims()
+        if (!claims.ClaimedBy(tenantId).includes(normalised))
+        {
+            throw new DomainNotClaimedError(normalised + P.NotClaimedSuffix)
+        }
+        if (this.verifier === undefined || this.approvals === undefined)
+        {
+            throw new DomainVerificationUnavailableError(P.VerificationUnavailableMessage)
+        }
+        // AuditThrottle locks inside RecordHit once hits exceed maxHits, so checking again after the hit admits exactly
+        // VerifyMaxHits lookups per window.
+        if (!this.throttle.CheckAllowed(tenantId).allowed)
+        {
+            throw new DomainVerifyThrottledError(P.ThrottledMessage)
+        }
+        this.throttle.RecordHit(tenantId)
+        if (!this.throttle.CheckAllowed(tenantId).allowed)
+        {
+            throw new DomainVerifyThrottledError(P.ThrottledMessage)
+        }
+        await this.approvals.EnsureTokens(tenantId, [normalised])
+        const token = this.approvals.VerificationOf(tenantId, normalised)?.token
+        if (token === undefined)
+        {
+            throw new UnknownTenantError(tenantId)
+        }
+        const check = await this.verifier.Check(normalised, token)
+        if (check === DomainCheck.Failed)
+        {
+            throw new DomainVerificationUnavailableError(P.LookupIncompletePrefix + DomainVerificationRecord.NameFor(normalised) + P.LookupIncompleteSuffix)
+        }
+        await this.approvals.RecordCheck(tenantId, normalised, check === DomainCheck.Verified, this.now().toISOString())
+        const answer = this.AnswerOf(tenantId, normalised, this.StandingOf(tenantId), claims.OthersClaiming(tenantId, normalised).length > 0)
+        if (answer === undefined)
+        {
+            // Only ForgetTenant drops the entry between the check and here: the tenant is gone.
+            throw new UnknownTenantError(tenantId)
+        }
+        return answer
+    }
+
+    /**
+     * Issues a token for each of `domains` (normalised) that has none and answers one entry per domain, in the given order, with
+     * its state against the current claims. None without an approval store (there are no tokens then).
+     */
+    public async AnswersFor(tenantId: string, domains: readonly string[]): Promise<DomainVerificationAnswer[]>
+    {
+        if (this.approvals === undefined)
+        {
+            return []
+        }
+        const normalised = domains.map(d => EmailDomainPolicy.Normalise(d))
+        await this.approvals.EnsureTokens(tenantId, normalised)
+        const claims = this.Claims()
+        const standing = this.StandingOf(tenantId)
+        return normalised
+            .map(d => this.AnswerOf(tenantId, d, standing, claims.OthersClaiming(tenantId, d).length > 0))
+            .filter((a): a is DomainVerificationAnswer => a !== undefined)
     }
 
     /**
@@ -156,14 +274,14 @@ export class PlatformEmailDomains implements ITenantEmailDomains
      */
     public async Approve(tenantId: string, domain: string): Promise<string>
     {
-        const tenant = this.KnownTenant(tenantId)
+        this.KnownTenant(tenantId)
         const normalised = EmailDomainPolicy.Normalise(domain)
         const refusal = EmailDomainPolicy.Check(normalised)
         if (refusal !== undefined)
         {
             throw new InvalidEmailDomainError(refusal)
         }
-        if (!this.ClaimedDomainsOf(tenant).includes(normalised))
+        if (!this.Claims().ClaimedBy(tenantId).includes(normalised))
         {
             const suffix = this.IsInHive(tenantId) ? PlatformEmailDomains.NotAdvertisedSuffix : PlatformEmailDomains.NotInRecordSuffix
             throw new EmailDomainApprovalRefusedError(normalised + suffix)
@@ -213,17 +331,81 @@ export class PlatformEmailDomains implements ITenantEmailDomains
         return await this.directory.SetTenantEmailDomains(tenantId, domains)
     }
 
-    private ViewOf(tenant: TenantRecord): TenantEmailDomainsView
+    /** The view of a known tenant; `pending` = its claimed domains not effective (ConsoleDomainApprovals.EffectiveDomains). */
+    private async ViewOf(tenantId: string): Promise<TenantEmailDomainsView>
     {
-        const inHive = this.IsInHive(tenant.id)
-        const domains = [...this.ClaimedDomainsOf(tenant)].sort()
-        const effective = new Set(ConsoleDomainApprovals.EffectiveDomainsLegacy(domains, this.ApprovedFor(tenant.id)))
-        return { domains, editable: !inHive, inHive, pending: domains.filter(d => !effective.has(d)) }
+        const claims = this.Claims()
+        const inHive = this.IsInHive(tenantId)
+        const domains = [...claims.ClaimedBy(tenantId)]
+        await this.EnsureTokens(tenantId, domains)
+        const standing = this.StandingOf(tenantId)
+        const contested = claims.ContestedFor(tenantId)
+        const effective = new Set(ConsoleDomainApprovals.EffectiveDomains(domains, standing, contested))
+        const verifications: DomainVerificationView[] = []
+        for (const domain of domains)
+        {
+            const answer = this.AnswerOf(tenantId, domain, standing, contested.has(domain))
+            if (answer !== undefined)
+            {
+                verifications.push(DomainVerificationRecord.ViewOf(answer))
+            }
+        }
+        return { domains, editable: !inHive, inHive, pending: domains.filter(d => !effective.has(d)), verifications }
     }
 
-    private ApprovedFor(tenantId: string): readonly string[]
+    /** One operator row; the record fields only when a token was issued for the domain. */
+    private RowOf(tenantId: string, domain: string, claimed: boolean, standing: DomainStanding, claims: DomainClaims): EmailDomainApproval
     {
-        return this.approvals?.ApprovedFor(tenantId) ?? []
+        const sharedWith = claims.OthersClaiming(tenantId, domain)
+        const entry = this.approvals?.VerificationOf(tenantId, domain)
+        const row: EmailDomainApproval = {
+            domain, approved: standing.approved.includes(domain), claimed, sharedWith,
+            state: ConsoleDomainApprovals.StateOf(standing, domain, sharedWith.length > 0), verified: entry?.verified ?? false,
+        }
+        if (entry === undefined)
+        {
+            return row
+        }
+        if (entry.lastCheckedAt !== undefined)
+        {
+            row.lastCheckedAt = entry.lastCheckedAt
+        }
+        row.recordName = DomainVerificationRecord.NameFor(domain)
+        row.recordValue = DomainVerificationRecord.ValueFor(entry.token)
+        return row
+    }
+
+    /** The domain's verification answer, or undefined when no token was issued for it. */
+    private AnswerOf(tenantId: string, domain: string, standing: DomainStanding, contested: boolean): DomainVerificationAnswer | undefined
+    {
+        const entry = this.approvals?.VerificationOf(tenantId, domain)
+        if (entry === undefined)
+        {
+            return undefined
+        }
+        const answer: DomainVerificationAnswer = { domain, token: entry.token, verified: entry.verified, state: ConsoleDomainApprovals.StateOf(standing, domain, contested) }
+        if (entry.lastCheckedAt !== undefined)
+        {
+            answer.lastCheckedAt = entry.lastCheckedAt
+        }
+        return answer
+    }
+
+    /** Issues the missing tokens; nothing without an approval store. */
+    private async EnsureTokens(tenantId: string, domains: readonly string[]): Promise<void>
+    {
+        await this.approvals?.EnsureTokens(tenantId, domains)
+    }
+
+    private StandingOf(tenantId: string): DomainStanding
+    {
+        return this.approvals?.StandingOf(tenantId) ?? PlatformEmailDomains.NoStanding
+    }
+
+    /** Every tenant's claim, read now: one per public call so all of that call's answers agree. */
+    private Claims(): DomainClaims
+    {
+        return DomainClaims.Collect(this.directory, this.adverts)
     }
 
     private ApprovalStore(): ConsoleDomainApprovals
@@ -238,36 +420,6 @@ export class PlatformEmailDomains implements ITenantEmailDomains
     private AdvertOf(tenantId: string): ConsoleAdvertRecord | undefined
     {
         return this.adverts === undefined ? undefined : ConsoleAdvertRegistry.UsableFor(this.adverts, tenantId, this.directory.ListHives(tenantId))
-    }
-
-    /** The domains a tenant claims: its usable advert's (in-hive, approved or not) or its record's (control-plane tenant). */
-    private ClaimedDomainsOf(tenant: TenantRecord): readonly string[]
-    {
-        if (this.IsInHive(tenant.id))
-        {
-            return this.AdvertOf(tenant.id)?.emailDomains ?? []
-        }
-        return PlatformEmailDomains.RecordDomainsOf(tenant)
-    }
-
-    /** Every other tenant's claimed domains, keyed by tenant id. */
-    private ClaimsOfOthers(tenantId: string): ReadonlyMap<string, ReadonlySet<string>>
-    {
-        const claims = new Map<string, ReadonlySet<string>>()
-        for (const other of this.directory.ListTenants())
-        {
-            if (other.id !== tenantId)
-            {
-                claims.set(other.id, new Set(this.ClaimedDomainsOf(other)))
-            }
-        }
-        return claims
-    }
-
-    /** Sorted ids of the tenants in `claims` claiming any of `domains`. */
-    private static SharedWith(domains: readonly string[], claims: ReadonlyMap<string, ReadonlySet<string>>): string[]
-    {
-        return [...claims].filter(([, claimed]) => domains.some(d => claimed.has(d))).map(([id]) => id).sort()
     }
 
     private static RecordDomainsOf(tenant: TenantRecord): string[]

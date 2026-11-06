@@ -224,7 +224,8 @@ describe('ControlPlaneServer.ComposeTenantPlane', () =>
         try
         {
             const registry = new TenantAdminClientRegistry(join(dir, 'tenant-admin-clients.json'))
-            const store = { For: () => ({ domains: [], editable: false, inHive: false, pending: [] }), Set: async () => ({ domains: [], editable: false, inHive: false, pending: [] }) }
+            const view = { domains: [], editable: false, inHive: false, pending: [], verifications: [] }
+            const store = { For: async () => view, Set: async () => view, Verify: async () => view }
             const wired = ControlPlaneServer.ComposeTenantPlane(env, dir, stub, stub, false, stub, stub, stub, stub, randomBytes(32), registry, 168,
                 undefined, undefined, undefined, store)
             assert.equal(storeOf(wired), store)
