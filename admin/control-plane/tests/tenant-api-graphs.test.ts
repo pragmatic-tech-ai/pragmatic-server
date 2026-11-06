@@ -6,12 +6,14 @@ import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { afterEach, beforeEach, describe, it, mock } from 'node:test'
 import { AuditRegistry, type AuditRecord } from '../audit-record.js'
-import { AdminProxyError, AdminProxyErrorKind } from '../admin-proxy.js'
-import type { GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { AdminProxy, AdminProxyError, AdminProxyErrorKind, type AdminConnectInfo, type IAdminAccess, type IAdminConnection, type IAdminConnector } from '../admin-proxy.js'
+import { ResponseError, type GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { GraphDto, IEnvironmentService, IGraphService, PromotionResultDto } from '../control-plane-host.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
+import { EnvironmentUnreachableError } from '../environment-endpoints.js'
 import { EnvironmentNotDevelopmentError, EnvironmentNotFoundError } from '../environment-service.js'
-import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from '../graph-service.js'
+import { GraphErrorCode } from '../graph-error-code.js'
+import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError, GraphService } from '../graph-service.js'
 import { TenantAdminCapabilities } from '../tenant-api/tenant-admin-capabilities.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
@@ -79,6 +81,34 @@ class FakeGraphs implements IGraphService
     }
 }
 
+/** An environment-server connection whose graph writes reject with `FailWith`, the JSON-RPC answer the wire would carry. */
+class RejectingAdminConnector implements IAdminConnector
+{
+    public FailWith: Error = new Error('unset')
+    public Disposed = 0
+
+    public async Open(): Promise<IAdminConnection>
+    {
+        const reject = async (): Promise<never> => { throw this.FailWith }
+        return {
+            CreateGraph: reject,
+            DeleteGraph: reject,
+            Dispose: () => { this.Disposed++ },
+        } as unknown as IAdminConnection
+    }
+}
+
+/** Leases fixed connect info, the way EnvironmentService.WithAdmin hands it to the op. */
+class FixedAdminAccess implements IAdminAccess
+{
+    private static readonly Info: AdminConnectInfo = { httpUrl: 'http://env', wsUrl: 'ws://env', tenant: 'eid-dev1', email: 'admin@env', password: 'unused' }
+
+    public WithAdmin<T>(_name: string, op: (info: AdminConnectInfo) => Promise<T>): Promise<T>
+    {
+        return op(FixedAdminAccess.Info)
+    }
+}
+
 class Fixtures
 {
     public static readonly Base = '/tenant-api/environments/'
@@ -123,6 +153,12 @@ class Fixtures
         const res = new ResRecorder()
         assert.equal(await endpoint.Handle(Fixtures.Req(method, raw), res as unknown as ServerResponse, path, Fixtures.Session), true)
         return res
+    }
+
+    /** A dial refused at the TCP level before any admin call, the way fetch wraps the socket error as `cause`. */
+    public static TransportError(): Error
+    {
+        return new Error('fetch failed', { cause: Object.assign(new Error('connect refused 10.0.0.1'), { code: 'ECONNREFUSED' }) })
     }
 
     public static async Audit(file: string): Promise<readonly AuditRecord[]>
@@ -298,6 +334,8 @@ describe('TenantApiEndpoint graph routes', () =>
             [new GraphNotFoundError('sales'), 404, TenantGraphAccess.NotFoundMessage],
             [new GraphNameInvalidError('sales'), 400, TenantGraphAccess.NameInvalidMessage],
             [new AdminProxyError(AdminProxyErrorKind.Connect), 503, TenantGraphAccess.ConnectMessage],
+            [new EnvironmentUnreachableError(), 503, TenantGraphAccess.ConnectMessage],
+            [Fixtures.TransportError(), 503, TenantGraphAccess.ConnectMessage],
             [new Error('secret host 10.0.0.1'), 500, TenantGraphAccess.FailedMessage],
             [new EnvironmentNotFoundError('dev1'), 404, 'Not found'],
             [new EnvironmentNotDevelopmentError('dev1'), 400, TenantGraphAccess.NotDevelopmentMessage],
@@ -326,6 +364,30 @@ describe('TenantApiEndpoint graph routes', () =>
         const entries = await Fixtures.Audit(auditFile)
         assert.deepEqual(entries.map(e => [e.method, e.status]).sort(), expected.sort())
         assert.ok(entries.every(e => e.note === 'environment=dev1 graph=sales'))
+    })
+
+    it('a graph code on the wire reaches the route through the real AdminProxy and GraphService', async () =>
+    {
+        const connector = new RejectingAdminConnector()
+        const environments = { Get: (name: string) => Fixtures.Envs.find(e => e.name === name) }
+        const service = new GraphService(environments, new AdminProxy(connector), new FixedAdminAccess())
+        const wired = Fixtures.Endpoint(new TenantGraphAccess(service, audit))
+        const cases: ReadonlyArray<[GraphErrorCode, string, string, string | undefined, number, string]> = [
+            [GraphErrorCode.NotFound, 'DELETE', Fixtures.DevGraphs + '/sales', undefined, 404, TenantGraphAccess.NotFoundMessage],
+            [GraphErrorCode.Exists, 'POST', Fixtures.DevGraphs, '{"name":"sales"}', 409, TenantGraphAccess.ExistsMessage],
+            [GraphErrorCode.NameInvalid, 'POST', Fixtures.DevGraphs, '{"name":"sales"}', 400, TenantGraphAccess.NameInvalidMessage],
+        ]
+        for (const [code, method, path, raw, status, message] of cases)
+        {
+            connector.FailWith = new ResponseError(code, 'Graph failure for sales at 10.0.0.1')
+            const res = await Fixtures.Send(wired, method, path, raw)
+            assert.equal(res.status, status, String(code))
+            assert.deepEqual(res.Json(), { error: message }, String(code))
+            assert.ok(!res.body.includes('10.0.0.1'))
+        }
+        assert.equal(connector.Disposed, cases.length)
+        const entries = await Fixtures.Audit(auditFile)
+        assert.deepEqual(entries.map(e => [e.method, e.status]).sort(), cases.map(c => [c[1], c[4]]).sort())
     })
 
     it('a malformed or encoded graph segment never reaches another route', async () =>

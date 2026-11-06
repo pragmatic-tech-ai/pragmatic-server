@@ -1,9 +1,11 @@
 import type { AuditRegistry } from '../audit-record.js'
 import { AdminProxyError, AdminProxyErrorKind } from '../admin-proxy.js'
 import type { IGraphService } from '../control-plane-host.js'
+import { EnvironmentUnreachableError } from '../environment-endpoints.js'
 import { EnvironmentNotDevelopmentError, EnvironmentNotFoundError } from '../environment-service.js'
 import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from '../graph-service.js'
 import { PlaneHttp } from '../plane-http.js'
+import { TransportFailure } from '../transport-failure.js'
 import { TenantAuditEntry } from '../tenant-auth/tenant-audit-entry.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
 
@@ -106,10 +108,23 @@ export class TenantGraphAccess
         {
             return GraphFailureKind.NotDevelopment
         }
-        if (err instanceof AdminProxyError && err.Kind === AdminProxyErrorKind.Connect)
+        if (TenantGraphAccess.IsUnreachable(err))
         {
             return GraphFailureKind.Unreachable
         }
         return GraphFailureKind.Failed
+    }
+
+    /**
+     * The environment could not be reached: the admin dial failed, or a failure before it (the environment has no
+     * reachable endpoint, or its lease dial failed at the TCP level).
+     */
+    private static IsUnreachable(err: unknown): boolean
+    {
+        if (err instanceof AdminProxyError)
+        {
+            return err.Kind === AdminProxyErrorKind.Connect || err.IsTransport
+        }
+        return err instanceof EnvironmentUnreachableError || TransportFailure.Is(err)
     }
 }
