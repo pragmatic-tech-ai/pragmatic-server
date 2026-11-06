@@ -27,18 +27,13 @@ export class DomainVerificationRowViewModel extends Observable
     public constructor(private readonly owner: EmailDomainsEditorViewModel, private readonly verification: DomainVerificationDto)
     {
         super()
-        this.verifyCommand = new RelayCommand(() => { void this.owner.VerifyDomain(this.verification.domain) }, () => this.CanVerify && !this.owner.IsVerifying)
+        this.verifyCommand = new RelayCommand(() => { void this.owner.VerifyDomain(this.verification.domain) },
+            () => this.CanVerify && !this.owner.IsVerifying && !this.owner.IsSaving)
     }
 
     public get Domain(): string
     {
         return this.verification.domain
-    }
-
-    // Whether the TXT record was last seen.
-    public get IsVerified(): boolean
-    {
-        return this.verification.verified
     }
 
     // The domain's state in words: Approved, Verified, Verified but contested, Revoked or Pending.
@@ -186,8 +181,8 @@ export class EmailDomainsEditorViewModel extends Observable
         return this.inHive
     }
 
-    // The operator-approval sentence: naming the domains still pending (the control plane knows them), or the general
-    // sentence in an in-hive console (which cannot see the operator's approvals); '' when every domain is approved.
+    // The not-in-effect sentence: naming the domains not in effect yet where the server knows them, else the general
+    // sentence in an in-hive console; '' when every domain is in effect.
     public get ApprovalText(): string
     {
         const E = EmailDomainsEditorViewModel
@@ -257,7 +252,13 @@ export class EmailDomainsEditorViewModel extends Observable
 
     private get CanSave(): boolean
     {
-        return this.editable && !this.saving && !EmailDomainsEditorViewModel.SameList(this.Parsed(), this.domains)
+        return this.editable && !this.saving && !this.verifying && this.IsDirty
+    }
+
+    // Whether the typed list differs from the last-saved one.
+    private get IsDirty(): boolean
+    {
+        return !EmailDomainsEditorViewModel.SameList(this.Parsed(), this.domains)
     }
 
     // Shows what the server reported. `canChangeSettings` is the profile's settings capability.
@@ -342,10 +343,11 @@ export class EmailDomainsEditorViewModel extends Observable
     }
 
     // Checks the domain's DNS TXT record now. Never throws: a refusal shows its sentence in ErrorText, a 401 expires the
-    // session, and a domain still Not verified afterwards shows the no-record notice.
+    // session, and a domain still Not verified afterwards shows the no-record notice. Refused while a Save runs (and Save
+    // while a Verify runs), so their replies cannot land out of order; text the Owner typed but has not saved stays.
     public async VerifyDomain(domain: string): Promise<void>
     {
-        if (!this.canVerify || this.verifying)
+        if (!this.canVerify || this.verifying || this.saving)
         {
             return
         }
@@ -361,7 +363,7 @@ export class EmailDomainsEditorViewModel extends Observable
             const row = (reply.verifications ?? []).find(v => v.domain === domain)
             this.Change(() =>
             {
-                this.Show(reply)
+                this.ShowKeepingUnsaved(reply)
                 this.verifyNoticeText = row !== undefined && !row.verified ? EmailDomainsEditorViewModel.NoRecordNotice : EmailDomainsEditorViewModel.NoText
             })
         }
@@ -393,6 +395,18 @@ export class EmailDomainsEditorViewModel extends Observable
         for (const verification of dto.verifications ?? [])
         {
             this.verifications.Add(new DomainVerificationRowViewModel(this, verification))
+        }
+    }
+
+    // Shows a Verify reply: the server-owned parts (the saved list, the verifications, the pending domains and so the
+    // approval text), keeping the text the Owner typed when it differs from the last-saved list.
+    private ShowKeepingUnsaved(dto: EmailDomainsDto): void
+    {
+        const typed = this.IsDirty ? this.text : undefined
+        this.Show(dto)
+        if (typed !== undefined)
+        {
+            this.text = typed
         }
     }
 

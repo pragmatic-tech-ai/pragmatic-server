@@ -115,7 +115,7 @@ describe('EmailDomainsEditorViewModel', () =>
         assert.equal(editor.SaveCommand.CanExecute(undefined), false)
     })
 
-    it('an in-hive console, which cannot see approvals, always says a domain needs the operator\'s approval', async () =>
+    it('an in-hive console with nothing pending still shows the general sentence; a control-plane tenant shows none', async () =>
     {
         const api = new FakeTenantApi()
         const plain = await Fixture.Loaded(api)
@@ -250,6 +250,53 @@ describe('EmailDomainsEditorViewModel', () =>
         api.OnVerifyEmailDomain = () => { api.EmailDomains = { ...api.EmailDomains, verifications: [Fixture.Verification('acme.test', DomainApprovalState.Verified, true)] } }
         await editor.VerifyDomain('acme.test')
         assert.equal(editor.VerifyNoticeText, '')
+    })
+
+    it('Verify keeps the domains the Owner typed but has not saved, and shows the server\'s verification', async () =>
+    {
+        const api = new FakeTenantApi()
+        api.EmailDomains = {
+            domains: ['acme.test'], editable: true, inHive: false, pending: ['acme.test'],
+            verifications: [Fixture.Verification('acme.test', DomainApprovalState.Pending, false)],
+        }
+        const editor = await Fixture.Loaded(api)
+        api.OnVerifyEmailDomain = () =>
+        {
+            api.EmailDomains = { ...api.EmailDomains, pending: [], verifications: [Fixture.Verification('acme.test', DomainApprovalState.Verified, true)] }
+        }
+        editor.DomainsText = 'acme.test, beta.test'
+        await editor.VerifyDomain('acme.test')
+        assert.equal(editor.DomainsText, 'acme.test, beta.test')
+        assert.equal(editor.Verifications.ToArray()[0]!.StatusLabel, 'Verified')
+        assert.equal(editor.ApprovalText, '')
+        assert.equal(editor.SaveCommand.CanExecute(undefined), true, 'the typed list is still unsaved')
+        await editor.Save()
+        assert.deepEqual(api.Calls.filter(c => c[0] === 'SetEmailDomains'), [['SetEmailDomains', ['acme.test', 'beta.test']]])
+    })
+
+    it('Verify is refused while a Save runs, and Save while a Verify runs', async () =>
+    {
+        const api = new FakeTenantApi()
+        api.EmailDomains = {
+            domains: ['acme.test'], editable: true, inHive: false, pending: [],
+            verifications: [Fixture.Verification('acme.test', DomainApprovalState.Pending, false)],
+        }
+        const editor = await Fixture.Loaded(api)
+        editor.DomainsText = 'acme.test, beta.test'
+        const saving = editor.Save()
+        assert.equal(editor.Verifications.ToArray()[0]!.VerifyCommand.CanExecute(undefined), false)
+        await editor.VerifyDomain('acme.test')
+        await saving
+        assert.equal(api.Count('VerifyEmailDomain'), 0)
+        assert.equal(editor.Verifications.ToArray()[0]!.VerifyCommand.CanExecute(undefined), true)
+        api.Calls.length = 0
+        editor.DomainsText = 'acme.test'
+        const verifying = editor.VerifyDomain('acme.test')
+        assert.equal(editor.SaveCommand.CanExecute(undefined), false)
+        await editor.Save()
+        await verifying
+        assert.deepEqual(api.Calls, [['VerifyEmailDomain', 'acme.test']])
+        assert.equal(editor.SaveCommand.CanExecute(undefined), true)
     })
 
     it('a save keeps the verification rows of the domains that survive', async () =>

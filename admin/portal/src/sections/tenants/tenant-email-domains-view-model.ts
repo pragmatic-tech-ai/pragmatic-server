@@ -193,8 +193,8 @@ export class TenantEmailDomainsViewModel extends Observable
 {
     private static readonly ReportedCaption =
         'A domain takes effect once the platform operator approves it, or once its DNS TXT record is verified and no other tenant claims it.'
-    private static readonly ControlPlaneCaption =
-        'A domain takes effect once the platform operator approves it, or once its DNS TXT record is verified and no other tenant claims it. Domains you add here are approved on save; those the tenant Owner sets wait here for approval.'
+    private static readonly ControlPlaneCaption = TenantEmailDomainsViewModel.ReportedCaption +
+        ' Domains you add here are approved on save; those the tenant Owner sets wait here for approval.'
     private static readonly ApprovedOnSavePrefix = ' Approved on save: '
     private static readonly SentenceEnd = '.'
     private static readonly NoneDeclaredLabel = 'None declared.'
