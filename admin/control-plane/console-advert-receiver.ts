@@ -3,6 +3,8 @@ import type { ConsoleAdvertRecord, ConsoleAdvertRegistry } from './console-adver
 import { EmailDomainPolicy } from './email-domain-policy.js'
 import { HiveConsoleSpecs } from './hive-console-spec.js'
 import type { HiveRecord } from './platform-records.js'
+import type { DomainVerificationAnswer } from './domain-verification-record.js'
+import { DomainVerificationUnavailableError } from './tenant-api/tenant-email-domains.js'
 
 /** A console advert that is malformed or claims an address that is not this hive's console (maps to 400). */
 export class InvalidConsoleAdvertError extends Error
@@ -30,7 +32,14 @@ export class ConsoleNotEnabledError extends Error
 }
 
 /** A stored advert, the email domains refused from it, and the tenant's last operator Owner reset when there is one. */
-export type ConsoleAdvertOutcome = { record: ConsoleAdvertRecord; refusedEmailDomains: string[]; ownerResetAt?: string }
+export type ConsoleAdvertOutcome = { record: ConsoleAdvertRecord; refusedEmailDomains: string[]; ownerResetAt?: string; domainVerifications?: DomainVerificationAnswer[] }
+
+/** Where the receiver learns the DNS TXT verification state of a tenant's claimed domains (PlatformEmailDomains satisfies it). */
+export interface IConsoleDomainVerifications
+{
+    AnswersFor(tenantId: string, domains: readonly string[]): Promise<DomainVerificationAnswer[]>
+    VerifyDomain(tenantId: string, domain: string): Promise<DomainVerificationAnswer>
+}
 
 export interface IConsoleAdvertDirectory
 {
@@ -53,6 +62,8 @@ export class ConsoleAdvertReceiver
     private static readonly BadUrl = 'consoleUrl must be the https address of this hive console, with no path, query or port.'
     private static readonly BadFingerprints = 'fingerprints must be a list of at most 10000 SHA-256 hex digests.'
     private static readonly BadDomains = 'emailDomains must be a list of at most 20 domain names.'
+    public static readonly BadVerifyShape = 'The verify request must be a JSON object with domain.'
+    private static readonly VerificationUnavailable = 'Domain verification is not available.'
     private static readonly HttpsProtocol = 'https:'
     private static readonly RootPath = '/'
     private static readonly HttpsPrefix = 'https://'
@@ -62,7 +73,8 @@ export class ConsoleAdvertReceiver
         private readonly directory: IConsoleAdvertDirectory,
         private readonly store: ConsoleAdvertRegistry,
         private readonly now: () => Date = () => new Date(),
-        private readonly ownerResets?: IOwnerResetSource)
+        private readonly ownerResets?: IOwnerResetSource,
+        private readonly domains?: IConsoleDomainVerifications)
     {
     }
 
@@ -99,7 +111,30 @@ export class ConsoleAdvertReceiver
         {
             outcome.ownerResetAt = ownerResetAt
         }
+        if (this.domains !== undefined)
+        {
+            outcome.domainVerifications = await this.domains.AnswersFor(hive.tenantId, domains.accepted)
+        }
         return outcome
+    }
+
+    /** Verifies one of the tenant's claimed domains now; only the hive's tenant and the body's domain reach the verifier. */
+    public async VerifyDomain(hiveId: string, body: unknown): Promise<DomainVerificationAnswer>
+    {
+        const hive = this.directory.GetHive(hiveId)
+        if (hive === undefined || hive.console === undefined)
+        {
+            throw new ConsoleNotEnabledError()
+        }
+        if (typeof body !== 'object' || body === null || Array.isArray(body) || typeof (body as Record<string, unknown>).domain !== 'string')
+        {
+            throw new InvalidConsoleAdvertError(ConsoleAdvertReceiver.BadVerifyShape)
+        }
+        if (this.domains === undefined)
+        {
+            throw new DomainVerificationUnavailableError(ConsoleAdvertReceiver.VerificationUnavailable)
+        }
+        return await this.domains.VerifyDomain(hive.tenantId, (body as { domain: string }).domain)
     }
 
     /**

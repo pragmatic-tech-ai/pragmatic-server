@@ -329,7 +329,7 @@ export class ControlPlaneServer
         if (agentChannelPort !== ControlPlaneServer.AgentChannelDisabled)
         {
             const agentBind = ControlPlaneServer.ParseAgentChannelBind(process.env[ControlPlaneServer.AgentChannelBindEnvVar])
-            await new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, ownerResets)).Listen(agentChannelPort, agentBind)
+            await new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, ownerResets, emailDomains)).Listen(agentChannelPort, agentBind)
             console.log(ControlPlaneServer.AgentChannelListeningPrefix + agentBind + ControlPlaneServer.HostPortSeparator + String(agentChannelPort))
         }
         if (tenantStart !== undefined)

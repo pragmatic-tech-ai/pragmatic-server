@@ -4,16 +4,20 @@ import { PlaneHttp } from './plane-http.js'
 import type { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import { ConsoleAdvertReceiver, ConsoleNotEnabledError, InvalidConsoleAdvertError } from './console-advert-receiver.js'
 import { AdoptionLedgerDtoMapper } from './tenant-api/rollout-client.js'
+import { DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerifyThrottledError } from './tenant-api/tenant-email-domains.js'
+import { InvalidEmailDomainError } from './email-domain-policy.js'
+import type { DomainVerificationAnswer } from './domain-verification-record.js'
 import type { HiveHealthDto } from './hive-health-producer.js'
 import { AgentUnauthorizedError, BodyTooLargeError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestNotGatedError, ManifestWithdrawnError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from './rollout-errors.js'
 
-/** The dedicated public listener for the hive agent channel: seven bearer-authenticated routes (target, snapshot, adoptable, status, adopt, ledger, console), nothing else. The console route is mounted only when an advert receiver is given. */
+/** The dedicated public listener for the hive agent channel: eight bearer-authenticated routes (target, snapshot, adoptable, status, adopt, ledger, console, console/verify-domain), nothing else. The console routes are mounted only when an advert receiver is given. */
 export class AgentChannelHost
 {
     private static readonly AuthorizationHeader = 'authorization'
     private static readonly BearerPattern = /^Bearer (\S+)$/
-    private static readonly RoutePattern = /^\/agent\/hives\/([^/]+)\/(target|snapshot|adoptable|status|adopt|ledger|console)$/
+    private static readonly RoutePattern = /^\/agent\/hives\/([^/]+)\/(target|snapshot|adoptable|status|adopt|ledger|console|console\/verify-domain)$/
     private static readonly ConsoleSegment = 'console'
+    private static readonly VerifyDomainSegment = 'console/verify-domain'
     private static readonly TargetSegment = 'target'
     private static readonly SnapshotSegment = 'snapshot'
     private static readonly AdoptableSegment = 'adoptable'
@@ -31,13 +35,20 @@ export class AgentChannelHost
         [AgentChannelHost.StatusSegment, PlaneHttp.MethodGet],
         [AgentChannelHost.AdoptSegment, PlaneHttp.MethodPost],
         [AgentChannelHost.LedgerSegment, PlaneHttp.MethodGet],
-        [AgentChannelHost.ConsoleSegment, PlaneHttp.MethodPost]
+        [AgentChannelHost.ConsoleSegment, PlaneHttp.MethodPost],
+        [AgentChannelHost.VerifyDomainSegment, PlaneHttp.MethodPost]
     ])
     private static readonly StatusNoContent = 204
     private static readonly StatusBadRequest = 400
     private static readonly StatusUnauthorized = 401
     private static readonly StatusConflict = 409
     private static readonly StatusForbidden = 403
+    private static readonly StatusTooManyRequests = 429
+    private static readonly StatusUnavailable = 503
+    private static readonly InvalidDomainMessage = 'Invalid email domain'
+    private static readonly DomainNotClaimedMessage = 'Domain is not among the reported email domains'
+    private static readonly ThrottledMessage = 'Too many verification attempts'
+    private static readonly UnavailableMessage = 'Domain verification unavailable'
     private static readonly StatusTooLarge = 413
     private static readonly StatusInternal = 500
     private static readonly MaxBodyBytes = 1048576
@@ -158,15 +169,18 @@ export class AgentChannelHost
             case AgentChannelHost.ConsoleSegment:
                 await this.ReceiveConsoleAdvert(req, res, id)
                 return
+            case AgentChannelHost.VerifyDomainSegment:
+                await this.ReceiveVerifyDomain(req, res, id)
+                return
             default:
                 await this.ReceiveSnapshot(req, res, id)
         }
     }
 
-    /** Whether the route segment is served: every segment is, except console when no advert receiver was given. */
+    /** Whether the route segment is served: every segment is, except console and console/verify-domain when no advert receiver was given. */
     private IsMounted(segment: string): boolean
     {
-        return segment !== AgentChannelHost.ConsoleSegment || this.adverts !== undefined
+        return (segment !== AgentChannelHost.ConsoleSegment && segment !== AgentChannelHost.VerifyDomainSegment) || this.adverts !== undefined
     }
 
     /** The ?limit= of a ledger request, clamped to [0, DefaultLedgerLimit]; the default when absent or not a number. */
@@ -217,23 +231,39 @@ export class AgentChannelHost
     /** Stores the advert the hive's console reports and answers the email domains the control plane refused, plus the tenant's last operator Owner reset (ownerResetAt) when there is one; a body that is not JSON is reported with the receiver's shape sentence, never echoed. */
     private async ReceiveConsoleAdvert(req: IncomingMessage, res: ServerResponse, id: string): Promise<void>
     {
-        const raw = await this.ReadBody(req)
-        let body: unknown
-        try
-        {
-            body = JSON.parse(raw)
-        }
-        catch
-        {
-            throw new InvalidConsoleAdvertError(ConsoleAdvertReceiver.BadShape)
-        }
+        const body = AgentChannelHost.ParseConsoleJson(await this.ReadBody(req), ConsoleAdvertReceiver.BadShape)
         const outcome = await (this.adverts as ConsoleAdvertReceiver).Receive(id, body)
-        const answer: { refusedEmailDomains: string[]; ownerResetAt?: string } = { refusedEmailDomains: outcome.refusedEmailDomains }
+        const answer: { refusedEmailDomains: string[]; ownerResetAt?: string; domainVerifications?: DomainVerificationAnswer[] } = { refusedEmailDomains: outcome.refusedEmailDomains }
         if (outcome.ownerResetAt !== undefined)
         {
             answer.ownerResetAt = outcome.ownerResetAt
         }
+        if (outcome.domainVerifications !== undefined)
+        {
+            answer.domainVerifications = outcome.domainVerifications
+        }
         PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, answer)
+    }
+
+    /** Verifies one claimed domain for the hive's tenant and answers { verification }; a body that is not JSON is reported with the fixed verify sentence, never echoed. */
+    private async ReceiveVerifyDomain(req: IncomingMessage, res: ServerResponse, id: string): Promise<void>
+    {
+        const body = AgentChannelHost.ParseConsoleJson(await this.ReadBody(req), ConsoleAdvertReceiver.BadVerifyShape)
+        const verification = await (this.adverts as ConsoleAdvertReceiver).VerifyDomain(id, body)
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { verification })
+    }
+
+    /** The parsed JSON of a console-route body; a body that is not JSON raises the given fixed sentence as a 400. */
+    private static ParseConsoleJson(raw: string, badShape: string): unknown
+    {
+        try
+        {
+            return JSON.parse(raw)
+        }
+        catch
+        {
+            throw new InvalidConsoleAdvertError(badShape)
+        }
     }
 
     /** The version of a { version: non-empty string } body, or undefined when it is anything else. */
@@ -376,6 +406,27 @@ export class AgentChannelHost
         if (err instanceof ConsoleNotEnabledError)
         {
             PlaneHttp.WriteJson(res, AgentChannelHost.StatusConflict, { error: err.message })
+            return
+        }
+        // Verification refusals carry fixed text, never the inner message. UnknownTenantError is deliberately unmapped (a logged 500).
+        if (err instanceof InvalidEmailDomainError)
+        {
+            PlaneHttp.WriteJson(res, AgentChannelHost.StatusBadRequest, { error: AgentChannelHost.InvalidDomainMessage })
+            return
+        }
+        if (err instanceof DomainNotClaimedError)
+        {
+            PlaneHttp.WriteJson(res, AgentChannelHost.StatusConflict, { error: AgentChannelHost.DomainNotClaimedMessage })
+            return
+        }
+        if (err instanceof DomainVerifyThrottledError)
+        {
+            PlaneHttp.WriteJson(res, AgentChannelHost.StatusTooManyRequests, { error: AgentChannelHost.ThrottledMessage })
+            return
+        }
+        if (err instanceof DomainVerificationUnavailableError)
+        {
+            PlaneHttp.WriteJson(res, AgentChannelHost.StatusUnavailable, { error: AgentChannelHost.UnavailableMessage })
             return
         }
         // Intentionally route-agnostic: only the adopt route can raise a gating refusal or a release-policy refusal; the agent never learns which rule failed.

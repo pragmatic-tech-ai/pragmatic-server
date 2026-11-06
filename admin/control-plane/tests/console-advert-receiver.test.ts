@@ -4,7 +4,10 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConsoleAdvertReceiver, ConsoleNotEnabledError, InvalidConsoleAdvertError } from '../console-advert-receiver.js'
-import type { IConsoleAdvertDirectory, IOwnerResetSource } from '../console-advert-receiver.js'
+import type { IConsoleAdvertDirectory, IConsoleDomainVerifications, IOwnerResetSource } from '../console-advert-receiver.js'
+import type { DomainVerificationAnswer } from '../domain-verification-record.js'
+import { DomainApprovalState } from '../domain-verification-record.js'
+import { DomainVerificationUnavailableError } from '../tenant-api/tenant-email-domains.js'
 import { ConsoleAdvertRegistry } from '../console-advert-registry.js'
 import { IngressTlsSource } from '../ingress-tls.js'
 import type { HiveRecord } from '../platform-records.js'
@@ -230,4 +233,104 @@ test('the outcome carries the tenant last Owner reset, and none when there is no
     {
         await rm(dir, { recursive: true, force: true })
     }
+})
+
+/** Records what the receiver forwards and answers a fixed verification per domain. */
+class FakeDomains implements IConsoleDomainVerifications
+{
+    public readonly Answered: Array<{ tenantId: string; domains: readonly string[] }> = []
+    public readonly Verified: Array<{ tenantId: string; domain: string }> = []
+
+    public static AnswerOf(domain: string): DomainVerificationAnswer
+    {
+        return { domain, token: 'tok-' + domain, verified: false, state: DomainApprovalState.Pending }
+    }
+
+    public AnswersFor(tenantId: string, domains: readonly string[]): Promise<DomainVerificationAnswer[]>
+    {
+        this.Answered.push({ tenantId, domains })
+        return Promise.resolve(domains.map(d => FakeDomains.AnswerOf(d)))
+    }
+
+    public VerifyDomain(tenantId: string, domain: string): Promise<DomainVerificationAnswer>
+    {
+        this.Verified.push({ tenantId, domain })
+        return Promise.resolve(FakeDomains.AnswerOf(domain))
+    }
+}
+
+class DomainsReceiverFixture
+{
+    public static async Run(withConsole: boolean, withDomains: boolean, body: (receiver: ConsoleAdvertReceiver, domains: FakeDomains) => Promise<void>): Promise<void>
+    {
+        const dir = await mkdtemp(join(tmpdir(), 'advert-receiver-domains-'))
+        try
+        {
+            const hive = { id: 'h1', tenantId: 'acme', ...(withConsole ? { console: { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } } } : {}) } as unknown as HiveRecord
+            const directory: IConsoleAdvertDirectory = { GetHive: id => (id === 'h1' ? hive : undefined) }
+            const domains = new FakeDomains()
+            const receiver = new ConsoleAdvertReceiver(directory, new ConsoleAdvertRegistry(join(dir, ConsoleAdvertRegistry.FileName)), () => new Date('2026-11-04T12:00:00.000Z'), undefined,
+                withDomains ? domains : undefined)
+            await body(receiver, domains)
+        }
+        finally
+        {
+            await rm(dir, { recursive: true, force: true })
+        }
+    }
+}
+
+test('the outcome carries one verification answer per accepted domain, with tokens', async () =>
+{
+    await DomainsReceiverFixture.Run(true, true, async (receiver, domains) =>
+    {
+        const outcome = await receiver.Receive('h1', ReceiverFixture.Body({ emailDomains: ['acme.test', 'gmail.com', 'two.acme.test'] }))
+        assert.deepEqual(outcome.domainVerifications, [FakeDomains.AnswerOf('acme.test'), FakeDomains.AnswerOf('two.acme.test')])
+        assert.deepEqual(domains.Answered, [{ tenantId: 'acme', domains: ['acme.test', 'two.acme.test'] }])
+    })
+})
+
+test('without a verification source the outcome has no domainVerifications', async () =>
+{
+    await DomainsReceiverFixture.Run(true, false, async receiver =>
+    {
+        assert.equal('domainVerifications' in await receiver.Receive('h1', ReceiverFixture.Body()), false)
+    })
+})
+
+test('VerifyDomain forwards the hive tenant and the domain only', async () =>
+{
+    await DomainsReceiverFixture.Run(true, true, async (receiver, domains) =>
+    {
+        const answer = await receiver.VerifyDomain('h1', { domain: 'acme.test', token: 'forged', tenantId: 'other' })
+        assert.deepEqual(answer, FakeDomains.AnswerOf('acme.test'))
+        assert.deepEqual(domains.Verified, [{ tenantId: 'acme', domain: 'acme.test' }])
+    })
+})
+
+test('VerifyDomain refuses a hive without a console (409 error) and a malformed body', async () =>
+{
+    await DomainsReceiverFixture.Run(false, true, async (receiver, domains) =>
+    {
+        await assert.rejects(() => receiver.VerifyDomain('h1', { domain: 'acme.test' }), ConsoleNotEnabledError)
+        await assert.rejects(() => receiver.VerifyDomain('nope', { domain: 'acme.test' }), ConsoleNotEnabledError)
+        assert.deepEqual(domains.Verified, [])
+    })
+    await DomainsReceiverFixture.Run(true, true, async (receiver, domains) =>
+    {
+        const bodies: unknown[] = [undefined, null, [], 'x', {}, { domain: 5 }]
+        for (const body of bodies)
+        {
+            await assert.rejects(() => receiver.VerifyDomain('h1', body), InvalidConsoleAdvertError)
+        }
+        assert.deepEqual(domains.Verified, [])
+    })
+})
+
+test('VerifyDomain without a verification source is unavailable', async () =>
+{
+    await DomainsReceiverFixture.Run(true, false, async receiver =>
+    {
+        await assert.rejects(() => receiver.VerifyDomain('h1', { domain: 'acme.test' }), DomainVerificationUnavailableError)
+    })
 })

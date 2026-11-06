@@ -16,6 +16,11 @@ import type { PlatformDeploymentRegistry } from '../platform-deployment-registry
 import { RolloutFixture } from './rollout-fixture.js'
 import { ConsoleAdvertRegistry } from '../console-advert-registry.js'
 import { ConsoleAdvertReceiver } from '../console-advert-receiver.js'
+import type { IConsoleDomainVerifications } from '../console-advert-receiver.js'
+import { DomainApprovalState } from '../domain-verification-record.js'
+import type { DomainVerificationAnswer } from '../domain-verification-record.js'
+import { InvalidEmailDomainError } from '../email-domain-policy.js'
+import { DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerifyThrottledError } from '../tenant-api/tenant-email-domains.js'
 import { ConsoleOwnerResets } from '../console-owner-resets.js'
 import { IngressTlsSource } from '../ingress-tls.js'
 
@@ -55,6 +60,33 @@ class Harness
     }
 }
 
+/** A verification source that records calls and can be told to fail. */
+class FakeDomains implements IConsoleDomainVerifications
+{
+    public readonly Verified: Array<{ tenantId: string; domain: string }> = []
+    public Failure: Error | undefined
+
+    public static AnswerOf(domain: string): DomainVerificationAnswer
+    {
+        return { domain, token: 'tok-' + domain, verified: false, state: DomainApprovalState.Pending }
+    }
+
+    public AnswersFor(_tenantId: string, domains: readonly string[]): Promise<DomainVerificationAnswer[]>
+    {
+        return Promise.resolve(domains.map(d => FakeDomains.AnswerOf(d)))
+    }
+
+    public VerifyDomain(tenantId: string, domain: string): Promise<DomainVerificationAnswer>
+    {
+        if (this.Failure !== undefined)
+        {
+            return Promise.reject(this.Failure)
+        }
+        this.Verified.push({ tenantId, domain })
+        return Promise.resolve(FakeDomains.AnswerOf(domain))
+    }
+}
+
 describe('AgentChannelHost', () =>
 {
     const WrongToken = 'wrong-token-value'
@@ -72,6 +104,9 @@ describe('AgentChannelHost', () =>
     const AdoptPath = '/agent/hives/' + Harness.HiveId + '/adopt'
     const LedgerPath = '/agent/hives/' + Harness.HiveId + '/ledger'
     const ConsolePath = '/agent/hives/' + Harness.HiveId + '/console'
+    const VerifyPath = ConsolePath + '/verify-domain'
+    const VerifyDomainName = 'acme.com'
+    const InnerMessage = 'INNER-SECRET-TEXT'
     const ConsoleUrl = 'https://console-t1.localtest.me'
     const Fingerprint = 'a'.repeat(64)
     const Advert = { consoleUrl: ConsoleUrl, fingerprints: [Fingerprint], emailDomains: ['acme.com', 'gmail.com'] }
@@ -447,5 +482,90 @@ describe('AgentChannelHost', () =>
         const reply = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, big)
         assert.equal(reply.status, 413)
         assert.equal(adverts.ForTenant(TenantId), undefined)
+    })
+
+    /** Replaces the host with one whose receiver verifies through `domains`. */
+    const UseDomains = async (domains: IConsoleDomainVerifications): Promise<void> =>
+    {
+        await host.Close()
+        host = new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, undefined, domains))
+        await host.Listen(0, '127.0.0.1')
+    }
+
+    it('POST /agent/hives/h1/console/verify-domain with the hive bearer answers { verification }', async () =>
+    {
+        const fake = new FakeDomains()
+        await UseDomains(fake)
+        const reply = await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + token, { domain: VerifyDomainName })
+        assert.equal(reply.status, 200)
+        assert.deepEqual(JSON.parse(reply.body), { verification: FakeDomains.AnswerOf(VerifyDomainName) })
+        assert.deepEqual(fake.Verified, [{ tenantId: TenantId, domain: VerifyDomainName }])
+    })
+
+    it('a wrong bearer is 401 and nothing is verified', async () =>
+    {
+        const fake = new FakeDomains()
+        await UseDomains(fake)
+        const replies = [
+            await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, undefined, { domain: VerifyDomainName }),
+            await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + WrongToken, { domain: VerifyDomainName })
+        ]
+        for (const r of replies)
+        {
+            assert.equal(r.status, 401)
+        }
+        assert.deepEqual(fake.Verified, [])
+    })
+
+    it('GET on verify-domain is 404, and so is a host without an advert receiver', async () =>
+    {
+        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, VerifyPath, Harness.BearerPrefix + token)).status, 404)
+        const bare = new AgentChannelHost(deployments)
+        await bare.Listen(0, '127.0.0.1')
+        try
+        {
+            assert.equal((await Harness.Send(bare, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + token, { domain: VerifyDomainName })).status, 404)
+        }
+        finally
+        {
+            await bare.Close()
+        }
+    })
+
+    it('each verification error maps to its fixed text', async () =>
+    {
+        const cases: Array<{ error: Error; status: number; text: string }> = [
+            { error: new InvalidEmailDomainError(InnerMessage), status: 400, text: 'Invalid email domain' },
+            { error: new DomainNotClaimedError(InnerMessage), status: 409, text: 'Domain is not among the reported email domains' },
+            { error: new DomainVerifyThrottledError(InnerMessage), status: 429, text: 'Too many verification attempts' },
+            { error: new DomainVerificationUnavailableError(InnerMessage), status: 503, text: 'Domain verification unavailable' }
+        ]
+        for (const c of cases)
+        {
+            const fake = new FakeDomains()
+            fake.Failure = c.error
+            await UseDomains(fake)
+            const reply = await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + token, { domain: VerifyDomainName })
+            assert.equal(reply.status, c.status, c.error.name)
+            assert.deepEqual(JSON.parse(reply.body), { error: c.text })
+            assert.ok(!reply.body.includes(InnerMessage))
+        }
+    })
+
+    it('a malformed verify body is 400 with the fixed sentence', async () =>
+    {
+        await UseDomains(new FakeDomains())
+        const reply = await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + token, MalformedJson)
+        assert.equal(reply.status, 400)
+        assert.ok(!reply.body.includes('not json'))
+        assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + token, { domain: 5 })).status, 400)
+    })
+
+    it('the advert answer carries domainVerifications', async () =>
+    {
+        await UseDomains(new FakeDomains())
+        const reply = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)
+        assert.equal(reply.status, 200)
+        assert.deepEqual(JSON.parse(reply.body), { refusedEmailDomains: ['gmail.com'], domainVerifications: [FakeDomains.AnswerOf('acme.com')] })
     })
 })
