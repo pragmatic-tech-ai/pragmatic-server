@@ -18,7 +18,10 @@ export type ConsoleDomainApprovalRecord = {
     verifications?: Record<string, DomainVerificationEntry>
 }
 
-/** A tenant's approved, revoked and verified domains, each sorted and normalised: the input to StateOf / EffectiveDomains. */
+/**
+ * A tenant's approved, revoked and verified domains, each normalised, deduped and sorted (StandingOf guarantees it): the input to
+ * StateOf / EffectiveDomains, which bring any standing a caller builds into that shape before reading it.
+ */
 export type DomainStanding = { approved: readonly string[]; revoked: readonly string[]; verified: readonly string[] }
 
 /**
@@ -60,15 +63,18 @@ export class ConsoleDomainApprovals extends JsonRecordStore<ConsoleDomainApprova
         return entry === undefined ? undefined : { ...entry }
     }
 
-    /** The tenant's approvals, revokes and verified domains in one read. */
+    /**
+     * The tenant's approvals, revokes and verified domains in one read, each normalised, deduped and sorted even when the stored
+     * record is not (a hand-edited file), so StateOf and EffectiveDomains always read the one shape DomainStanding promises.
+     */
     public StandingOf(tenantId: string): DomainStanding
     {
         const record = this.Get(tenantId)
         const verifications = Object.entries(record?.verifications ?? {})
         return {
-            approved: [...(record?.domains ?? [])],
-            revoked: [...(record?.revoked ?? [])],
-            verified: verifications.filter(([, entry]) => entry.verified).map(([domain]) => domain).sort(),
+            approved: EmailDomainPolicy.Distinct(record?.domains ?? []),
+            revoked: EmailDomainPolicy.Distinct(record?.revoked ?? []),
+            verified: EmailDomainPolicy.Distinct(verifications.filter(([, entry]) => entry.verified).map(([domain]) => domain)),
         }
     }
 
@@ -82,8 +88,8 @@ export class ConsoleDomainApprovals extends JsonRecordStore<ConsoleDomainApprova
     public async ApproveAll(tenantId: string, domains: readonly string[]): Promise<void>
     {
         const record = this.RecordOf(tenantId)
-        const added = new Set(domains.map(d => EmailDomainPolicy.Normalise(d)))
-        const approved = ConsoleDomainApprovals.SortedSet([...record.domains, ...added])
+        const added = new Set(EmailDomainPolicy.Distinct(domains))
+        const approved = EmailDomainPolicy.Distinct([...record.domains, ...added])
         const revoked = (record.revoked ?? []).filter(d => !added.has(d))
         if (approved.length === record.domains.length && revoked.length === (record.revoked ?? []).length)
         {
@@ -105,7 +111,7 @@ export class ConsoleDomainApprovals extends JsonRecordStore<ConsoleDomainApprova
         {
             return
         }
-        await this.Put({ ...record, domains: record.domains.filter(d => d !== normalised), revoked: ConsoleDomainApprovals.SortedSet([...revoked, normalised]) })
+        await this.Put({ ...record, domains: record.domains.filter(d => d !== normalised), revoked: EmailDomainPolicy.Distinct([...revoked, normalised]) })
     }
 
     /** Issues a token for each domain (normalised) that has none, in one write; writes nothing when every domain has a token. */
@@ -173,20 +179,7 @@ export class ConsoleDomainApprovals extends JsonRecordStore<ConsoleDomainApprova
      */
     public static StateOf(standing: DomainStanding, domain: string, contested: boolean): DomainApprovalState
     {
-        const normalised = EmailDomainPolicy.Normalise(domain)
-        if (standing.revoked.includes(normalised))
-        {
-            return DomainApprovalState.Revoked
-        }
-        if (standing.approved.includes(normalised))
-        {
-            return DomainApprovalState.Approved
-        }
-        if (standing.verified.includes(normalised))
-        {
-            return contested ? DomainApprovalState.VerifiedContested : DomainApprovalState.Verified
-        }
-        return DomainApprovalState.Pending
+        return ConsoleDomainApprovals.StateIn(ConsoleDomainApprovals.Normalised(standing), EmailDomainPolicy.Normalise(domain), contested)
     }
 
     /**
@@ -196,13 +189,9 @@ export class ConsoleDomainApprovals extends JsonRecordStore<ConsoleDomainApprova
      */
     public static EffectiveDomains(claimed: readonly string[], standing: DomainStanding, contested: ReadonlySet<string>): string[]
     {
-        const normalised: DomainStanding = {
-            approved: standing.approved.map(d => EmailDomainPolicy.Normalise(d)),
-            revoked: standing.revoked.map(d => EmailDomainPolicy.Normalise(d)),
-            verified: standing.verified.map(d => EmailDomainPolicy.Normalise(d)),
-        }
-        return ConsoleDomainApprovals.SortedSet(claimed.map(d => EmailDomainPolicy.Normalise(d)))
-            .filter(d => ConsoleDomainApprovals.EffectiveStates.has(ConsoleDomainApprovals.StateOf(normalised, d, contested.has(d))))
+        const normalised = ConsoleDomainApprovals.Normalised(standing)
+        return EmailDomainPolicy.Distinct(claimed)
+            .filter(d => ConsoleDomainApprovals.EffectiveStates.has(ConsoleDomainApprovals.StateIn(normalised, d, contested.has(d))))
     }
 
     /**
@@ -211,8 +200,8 @@ export class ConsoleDomainApprovals extends JsonRecordStore<ConsoleDomainApprova
      */
     public static EffectiveDomainsLegacy(claimed: readonly string[], approved: readonly string[]): string[]
     {
-        const allowed = new Set(approved.map(d => EmailDomainPolicy.Normalise(d)))
-        return [...new Set(claimed.map(d => EmailDomainPolicy.Normalise(d)))].filter(d => allowed.has(d)).sort()
+        const allowed = new Set(EmailDomainPolicy.Distinct(approved))
+        return EmailDomainPolicy.Distinct(claimed).filter(d => allowed.has(d))
     }
 
     /** The tenant's record (a copy), or an empty one not yet stored. */
@@ -221,9 +210,32 @@ export class ConsoleDomainApprovals extends JsonRecordStore<ConsoleDomainApprova
         return this.Get(tenantId) ?? { id: tenantId, tenantId, domains: [] }
     }
 
-    private static SortedSet(domains: readonly string[]): string[]
+    /** The precedence table over a standing and domain already normalised. */
+    private static StateIn(standing: DomainStanding, domain: string, contested: boolean): DomainApprovalState
     {
-        return [...new Set(domains)].sort()
+        if (standing.revoked.includes(domain))
+        {
+            return DomainApprovalState.Revoked
+        }
+        if (standing.approved.includes(domain))
+        {
+            return DomainApprovalState.Approved
+        }
+        if (standing.verified.includes(domain))
+        {
+            return contested ? DomainApprovalState.VerifiedContested : DomainApprovalState.Verified
+        }
+        return DomainApprovalState.Pending
+    }
+
+    /** The standing in the one shape DomainStanding promises (normalised, deduped, sorted), whatever its caller passed. */
+    private static Normalised(standing: DomainStanding): DomainStanding
+    {
+        return {
+            approved: EmailDomainPolicy.Distinct(standing.approved),
+            revoked: EmailDomainPolicy.Distinct(standing.revoked),
+            verified: EmailDomainPolicy.Distinct(standing.verified),
+        }
     }
 
     /** Ordinal comparison, matching the default Array.sort used for every domain list here. */

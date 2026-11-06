@@ -138,7 +138,8 @@ export class EmailDomainPolicy
         return domain.length === 0 ? undefined : domain
     }
 
-    private static Distinct(values: readonly string[]): string[]
+    /** The values normalised (Normalise), deduped and sorted. */
+    public static Distinct(values: readonly string[]): string[]
     {
         return [...new Set(values.map(v => EmailDomainPolicy.Normalise(v)))].sort()
     }

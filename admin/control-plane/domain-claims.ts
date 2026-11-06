@@ -58,14 +58,9 @@ export class DomainClaims
     {
         if (HiveConsoleSpecs.ConsoleHiveOf(hives) === undefined)
         {
-            return DomainClaims.Normalised(tenant.emailDomains ?? DomainClaims.None)
+            return EmailDomainPolicy.Distinct(tenant.emailDomains ?? DomainClaims.None)
         }
         const advert = adverts === undefined ? undefined : ConsoleAdvertRegistry.UsableFor(adverts, tenant.id, hives)
-        return DomainClaims.Normalised(advert?.emailDomains ?? DomainClaims.None)
-    }
-
-    private static Normalised(domains: readonly string[]): readonly string[]
-    {
-        return [...new Set(domains.map(d => EmailDomainPolicy.Normalise(d)))].sort()
+        return EmailDomainPolicy.Distinct(advert?.emailDomains ?? DomainClaims.None)
     }
 }

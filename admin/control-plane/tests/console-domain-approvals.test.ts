@@ -185,6 +185,23 @@ test('a legacy record without revoked or verifications reads as empty', async ()
     })
 })
 
+test('StandingOf normalises, dedupes and sorts a hand-edited record, so StateOf and EffectiveDomains agree', async () =>
+{
+    await ApprovalsFixture.Run(async f =>
+    {
+        const token = DomainVerificationRecord.NewToken()
+        await f.approvals.Put({
+            id: 'acme', tenantId: 'acme', domains: ['Z.test', ' a.test.', 'A.TEST'], revoked: ['R.Test.', 'b.test'],
+            verifications: { 'V.Test.': { token, verified: true }, 'w.test': { token, verified: false } },
+        })
+        const standing = f.approvals.StandingOf('acme')
+        assert.deepEqual(standing, { approved: ['a.test', 'z.test'], revoked: ['b.test', 'r.test'], verified: ['v.test'] })
+        assert.equal(ConsoleDomainApprovals.StateOf(standing, 'r.test', false), DomainApprovalState.Revoked)
+        assert.equal(ConsoleDomainApprovals.StateOf(standing, 'v.test', false), DomainApprovalState.Verified)
+        assert.deepEqual(ConsoleDomainApprovals.EffectiveDomains(['a.test', 'r.test', 'v.test', 'z.test'], standing, new Set()), ['a.test', 'v.test', 'z.test'])
+    })
+})
+
 test('only ForgetTenant removes a record: revoking every approval keeps the revokes', async () =>
 {
     await ApprovalsFixture.Run(async f =>

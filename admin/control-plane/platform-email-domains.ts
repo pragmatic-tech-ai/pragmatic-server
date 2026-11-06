@@ -173,7 +173,8 @@ export class PlatformEmailDomains implements ITenantEmailDomains
     }
 
     /**
-     * Withdraws one domain's approval (a no-op when it was not approved) and answers it normalised. Allowed for any known tenant and
+     * Withdraws one domain's approval (if any), stores a revoke for it (which beats verification until an operator approves it
+     * again; stored even when it was never approved) and answers it normalised. Allowed for any known tenant and
      * checked for shape only (EmailDomainPolicy.CheckSyntax: a well-formed name of at most 253 characters, else
      * InvalidEmailDomainError), so a stored approval the policy has since come to refuse can still be cleared while arbitrary text
      * never reaches the audit note.
