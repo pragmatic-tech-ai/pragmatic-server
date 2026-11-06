@@ -35,6 +35,8 @@ import { AuditRegistry } from '../audit-record.js'
 import { TenantGraphAccess } from '../tenant-api/tenant-graph-access.js'
 import { NodeExecFile, NodeProcessSpawner } from '../kubectl.js'
 import { DesktopRelay } from '../tenant-auth/desktop-relay.js'
+import { DomainApprovalState, DomainVerificationRecord } from '../domain-verification-record.js'
+import { DomainVerificationUnavailableError } from '../tenant-api/tenant-email-domains.js'
 
 class FakeRolloutClient implements IRolloutClient
 {
@@ -149,6 +151,10 @@ class Names
     public static readonly GraphEnvStatus = 'running'
     public static readonly GraphsPath = '/tenant-api/environments/dev1/graphs'
     public static readonly GraphName = 'sales'
+    public static readonly VerifyPath = '/agent/hives/h1/console/verify-domain'
+    public static readonly EmailDomainsVerifyPath = '/tenant-api/settings/email-domains/verify'
+    public static readonly VerifyToken = 'A'.repeat(43)
+    public static readonly NoChannelMessage = 'Domain verification is not available on this console.'
 }
 
 /**
@@ -863,6 +869,32 @@ describe('TenantAdminServer console advert', () =>
         {
             await server.Close()
         }
+    })
+
+    it('Compose with full advert settings attaches the agent channel as the email domains\' verify channel', async () =>
+    {
+        writeConsoleSeed()
+        const verification = { domain: Names.EmailDomain, token: Names.VerifyToken, verified: true, state: DomainApprovalState.Verified }
+        answerBody = JSON.stringify({ verification })
+        const env = advertEnv(await listenChannel())
+        const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient())
+        const composition = await server.Compose(env, undefined, () => undefined)
+        assert.ok(composition.advert !== undefined)
+        const view = await composition.emailDomains.Verify(Names.TenantId, Names.EmailDomain)
+        assert.deepEqual(posts, [{ url: Names.VerifyPath, body: { domain: Names.EmailDomain } }], 'Verify reached the agent channel, not the no-channel sentence')
+        assert.deepEqual(view.verifications, [DomainVerificationRecord.ViewOf(verification)])
+        const routed = await handle(composition, Names.Post, { domain: Names.EmailDomain }, Names.EmailDomainsVerifyPath)
+        assert.equal(routed.status, Names.Ok)
+        assert.equal(posts.length, 2, 'the tenant-plane verify route goes through the same channel')
+    })
+
+    it('Compose without advert settings leaves Verify on the no-channel sentence', async () =>
+    {
+        writeConsoleSeed()
+        const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
+        const composition = await server.Compose({}, undefined, () => undefined)
+        await assert.rejects(() => composition.emailDomains.Verify(Names.TenantId, Names.EmailDomain),
+            (e: Error) => e instanceof DomainVerificationUnavailableError && e.message === Names.NoChannelMessage)
     })
 
     it('AdvertSenderOf hands each outcome to the registration it is given', async () =>

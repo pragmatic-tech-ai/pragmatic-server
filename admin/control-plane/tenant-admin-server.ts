@@ -205,7 +205,8 @@ export class TenantAdminServer
      * consoleHost, a ConsoleFingerprintKeys.KeyBytes key file and RolloutUrl / RolloutToken / RolloutHiveId are all present.
      * It dials home over the same agent channel, bearer and hive as the HTTP rollout client. consoleUrl = 'https://' + consoleHost.
      * Every 200 answer is handed to `follower` (the console's ConsoleOwnerResetFollower) when one is given, and every
-     * outcome to `registration` (the console's ConsoleRegistration) when one is given.
+     * outcome to `registration` (the console's ConsoleRegistration) when one is given. Building it attaches its transport as
+     * `domains`' verify channel (see SenderFrom).
      */
     public static AdvertSenderOf(env: NodeJS.ProcessEnv, cfg: TenantAdminConfig, tenant: TenantRecord, domains: ConsoleEmailDomainStore, log: (line: string) => void = TenantAdminServer.LogLine, follower?: IOwnerResetFollower, registration?: ConsoleRegistration): ConsoleAdvertSender | undefined
     {
@@ -248,9 +249,15 @@ export class TenantAdminServer
         return { url, token, hiveId, key, consoleUrl: S.ConsoleUrlScheme + cfg.consoleHost }
     }
 
+    /**
+     * The sender over one agent-channel transport, which is also attached as `domains`' verify channel, so a Verify on this
+     * console reaches the platform over the same channel, bearer and hive as the advert.
+     */
     private static SenderFrom(settings: AdvertSettings, tenant: TenantRecord, domains: ConsoleEmailDomainStore, log: (line: string) => void, follower?: IOwnerResetFollower, registration?: ConsoleRegistration): ConsoleAdvertSender
     {
-        return new ConsoleAdvertSender(new HttpConsoleAdvertTransport(settings.url, settings.token, settings.hiveId), new SeededConsoleAccounts(tenant), domains,
+        const transport = new HttpConsoleAdvertTransport(settings.url, settings.token, settings.hiveId)
+        domains.AttachVerifyChannel(transport)
+        return new ConsoleAdvertSender(transport, new SeededConsoleAccounts(tenant), domains,
             settings.key, settings.consoleUrl, new IntervalAdvertTimer(), log, follower, registration)
     }
 

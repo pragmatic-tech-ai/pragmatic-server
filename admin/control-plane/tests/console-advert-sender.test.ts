@@ -14,7 +14,9 @@ import {
 import { ConsoleFingerprint, type ConsoleAdvertAnswer, type ConsoleAdvertBody } from '../console-advert-contract.js'
 import { ConsoleEmailDomainStore } from '../console-email-domain-store.js'
 import { AdvertTrigger, ConsoleRegistration, ConsoleRegistrationState } from '../console-registration.js'
+import { DomainApprovalState, type DomainVerificationAnswer } from '../domain-verification-record.js'
 import type { TenantRecord } from '../platform-records.js'
+import { DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerifyThrottledError } from '../tenant-api/tenant-email-domains.js'
 
 class Names
 {
@@ -63,6 +65,34 @@ class Names
     public static readonly ResetAt = '2026-11-04T10:00:00.000Z'
     public static readonly MaxDomains = 20
     public static readonly MaxDomainLength = 253
+    public static readonly VerifyPath = '/agent/hives/acme-hive/console/verify-domain'
+    public static readonly VerifyToken = 'A'.repeat(43)
+    public static readonly CheckedAt = '2026-11-06T10:00:00.000Z'
+    public static readonly TooManyRequests = 429
+    public static readonly Unavailable = 503
+    public static readonly LeakBody = '{"error":"server text leak tok-123"}'
+    public static readonly LeakText = 'leak'
+    public static readonly UnknownField = 'dropped'
+    public static readonly NotListedMessage = 'The platform does not list acme.test for this console yet. Try again after the console reports its domains.'
+    public static readonly ThrottledMessage = 'Too many verification attempts. Try again in a few minutes.'
+    public static readonly PlatformUnavailableMessage = 'The platform could not check the domain. Try again later.'
+}
+
+/** Verification answers shaped as the platform sends them. */
+class Verifications
+{
+    public static Of(domain: string, state: DomainApprovalState = DomainApprovalState.Pending): DomainVerificationAnswer
+    {
+        return { domain, token: Names.VerifyToken, verified: false, state, lastCheckedAt: Names.CheckedAt }
+    }
+
+    /** A distinct domain of exactly 253 characters (four labels within 63, a non-numeric top label). */
+    public static MaximalDomain(i: number): string
+    {
+        const domain = String(i).padStart(2, '0') + 'a'.repeat(61) + '.' + 'b'.repeat(63) + '.' + 'c'.repeat(63) + '.' + 'd'.repeat(57) + '.com'
+        assert.equal(domain.length, Names.MaxDomainLength)
+        return domain
+    }
 }
 
 class RecordingTransport implements IConsoleAdvertTransport
@@ -477,6 +507,35 @@ describe('ConsoleAdvertSender', () =>
         s.Stop()
     })
 
+    it('the sender hands a 200 answer\'s verifications to the store', async () =>
+    {
+        const s = sender()
+        transport.answer = { domainVerifications: [Verifications.Of(Names.Domain, DomainApprovalState.VerifiedContested)] }
+        await s.Start()
+        const view = await store.For(Names.TenantId)
+        assert.deepEqual(view.verifications.map(v => [v.domain, v.state]), [[Names.Domain, DomainApprovalState.VerifiedContested]])
+        assert.deepEqual(view.pending, [Names.Domain])
+        transport.failWith = new Error(Names.SendFailed)
+        timer.Tick()
+        await s.Idle()
+        assert.equal((await store.For(Names.TenantId)).verifications.length, 1, 'a failed send keeps what was adopted')
+        transport.failWith = undefined
+        transport.answer = {}
+        timer.Tick()
+        await s.Idle()
+        assert.deepEqual((await store.For(Names.TenantId)).verifications, [], 'an answer without verifications adopts none')
+        s.Stop()
+    })
+
+    it('an answer that arrives after Stop is not adopted', async () =>
+    {
+        let s: ConsoleAdvertSender | undefined
+        const stopping: IConsoleAdvertTransport = { Send: async () => { s?.Stop(); return { domainVerifications: [Verifications.Of(Names.Domain)] } } }
+        s = new ConsoleAdvertSender(stopping, accounts, store, key, Names.ConsoleUrl, timer, line => lines.push(line))
+        await s.SendNow()
+        assert.deepEqual((await store.For(Names.TenantId)).verifications, [])
+    })
+
     describe('registration', () =>
     {
         let registration: ConsoleRegistration
@@ -715,6 +774,127 @@ describe('HttpConsoleAdvertTransport', () =>
         {
             assert.deepEqual(await new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId).Send(body), {}, answer.slice(0, 40))
         }
+    })
+
+    it('AnswerOf keeps well-formed domainVerifications and drops malformed entries', async () =>
+    {
+        const good = Verifications.Of(Names.Domain)
+        const unchecked: DomainVerificationAnswer = { domain: Names.OtherDomain, token: Names.VerifyToken, verified: true, state: DomainApprovalState.Approved }
+        const entries: unknown[] = [
+            good,
+            { ...good, token: 'short' },
+            { ...good, state: 'unknown' },
+            { ...good, domain: 'not a domain' },
+            { ...good, verified: 'yes' },
+            { ...good, lastCheckedAt: 'not a time' },
+            'acme.test',
+            null,
+            { ...unchecked, extra: Names.UnknownField },
+        ]
+        const many = Array.from({ length: Names.MaxDomains + 5 }, (_v, i) => Verifications.Of('d' + i + '.test'))
+        const answers = [
+            JSON.stringify({ ownerResetAt: Names.ResetAt, domainVerifications: entries }),
+            JSON.stringify({ domainVerifications: many }),
+            JSON.stringify({ domainVerifications: { [Names.Domain]: good } }),
+            JSON.stringify({ domainVerifications: [] }),
+        ]
+        let next = 0
+        const url = await listen(() => ({ status: Names.Ok, body: answers[next++] }))
+        const transport = new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId)
+        assert.deepEqual(await transport.Send(body), { ownerResetAt: Names.ResetAt, domainVerifications: [good, unchecked] })
+        assert.deepEqual(await transport.Send(body), { domainVerifications: many.slice(0, Names.MaxDomains) }, 'at most MaxDomains are kept')
+        assert.deepEqual(await transport.Send(body), {}, 'a non-array is not taken')
+        assert.deepEqual(await transport.Send(body), { domainVerifications: [] })
+    })
+
+    it('an answer of 20 maximal verifications fits MaxAnswerBytes and AnswerOf keeps all 20', async () =>
+    {
+        const maximal = Array.from({ length: Names.MaxDomains }, (_v, i) => Verifications.Of(Verifications.MaximalDomain(i), DomainApprovalState.VerifiedContested))
+        const answer = JSON.stringify({ refusedEmailDomains: [], ownerResetAt: Names.ResetAt, domainVerifications: maximal })
+        assert.ok(Buffer.byteLength(answer) <= HttpConsoleAdvertTransport.MaxAnswerBytes, String(Buffer.byteLength(answer)))
+        const url = await listen(() => ({ status: Names.Ok, body: answer }))
+        const taken = await new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId).Send(body)
+        assert.equal(taken.domainVerifications?.length, Names.MaxDomains)
+        assert.deepEqual(taken, { ownerResetAt: Names.ResetAt, domainVerifications: maximal })
+    })
+
+    it('VerifyDomain posts only { domain } with the bearer to the verify-domain path', async () =>
+    {
+        let seen: { method?: string; url?: string; authorization?: string; contentType?: string; body?: unknown } = {}
+        const verification = Verifications.Of(Names.Domain, DomainApprovalState.Verified)
+        const url = await listen((req, text) =>
+        {
+            seen = { method: req.method, url: req.url, authorization: req.headers.authorization, contentType: req.headers['content-type'], body: JSON.parse(text) }
+            return { status: Names.Ok, body: JSON.stringify({ verification: { ...verification, extra: Names.UnknownField } }) }
+        })
+        const deadline = new FakeDeadline()
+        const answer = await new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId, HttpConsoleAdvertTransport.RequestTimeoutMs, deadline).VerifyDomain(Names.Domain)
+        assert.deepEqual(answer, verification)
+        assert.equal(seen.method, Names.Post)
+        assert.equal(seen.url, Names.VerifyPath)
+        assert.equal(seen.authorization, Names.Bearer)
+        assert.equal(seen.contentType, Names.JsonType)
+        assert.deepEqual(seen.body, { domain: Names.Domain })
+        assert.deepEqual(deadline.Requested, [HttpConsoleAdvertTransport.RequestTimeoutMs], 'the same request timeout as the advert')
+    })
+
+    it('VerifyDomain maps 409, 429, 503, unreachable and malformed 200 to the fixed sentences', { timeout: Names.TestTimeoutMs }, async () =>
+    {
+        let answer: { status: number; body: string } | undefined
+        const url = await listen(() => answer)
+        const transport = new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId)
+        const expect = async (kind: new (message: string) => Error, message: string, label: string): Promise<void> =>
+        {
+            await assert.rejects(() => transport.VerifyDomain(Names.Domain), (err: unknown) =>
+            {
+                assert.ok(err instanceof kind, label)
+                assert.equal((err as Error).message, message, label)
+                assert.ok(!(err as Error).message.includes(Names.LeakText), label + ': never the server text')
+                assert.ok(!(err as Error).message.includes(Names.SecretToken), label + ': never the token')
+                assert.ok(!(err instanceof ConsoleAdvertUnavailableError), label + ': never an advert error, so never a registration outcome')
+                return true
+            })
+        }
+        answer = { status: Names.Conflict, body: Names.LeakBody }
+        await expect(DomainNotClaimedError, Names.NotListedMessage, '409')
+        answer = { status: Names.TooManyRequests, body: Names.LeakBody }
+        await expect(DomainVerifyThrottledError, Names.ThrottledMessage, '429')
+        for (const status of [Names.Unavailable, Names.BadRequest, Names.Unauthorized, Names.ServerError])
+        {
+            answer = { status, body: Names.LeakBody }
+            await expect(DomainVerificationUnavailableError, Names.PlatformUnavailableMessage, String(status))
+        }
+        const malformed = [
+            Names.LeakBody,
+            '{not json',
+            JSON.stringify({ verification: { ...Verifications.Of(Names.Domain), token: Names.LeakText } }),
+            JSON.stringify({ verification: Verifications.Of(Names.Domain), padding: 'x'.repeat(HttpConsoleAdvertTransport.MaxAnswerBytes) }),
+        ]
+        for (const text of malformed)
+        {
+            answer = { status: Names.Ok, body: text }
+            await expect(DomainVerificationUnavailableError, Names.PlatformUnavailableMessage, 'malformed 200 ' + text.slice(0, 30))
+        }
+        const s = server!
+        server = undefined
+        s.closeAllConnections()
+        await new Promise<void>(res => s.close(() => res()))
+        await expect(DomainVerificationUnavailableError, Names.PlatformUnavailableMessage, 'unreachable')
+    })
+
+    it('VerifyDomain that outlives its deadline is the unavailable sentence', { timeout: Names.TestTimeoutMs }, async () =>
+    {
+        const arrival = new Arrival()
+        const url = await listen(() =>
+        {
+            arrival.Mark()
+            return undefined
+        })
+        const deadline = new FakeDeadline()
+        const verifying = new HttpConsoleAdvertTransport(url, Names.Token, Names.HiveId, HttpConsoleAdvertTransport.RequestTimeoutMs, deadline).VerifyDomain(Names.Domain)
+        await arrival.Reached
+        deadline.Expire()
+        await assert.rejects(() => verifying, (err: unknown) => err instanceof DomainVerificationUnavailableError && err.message === Names.PlatformUnavailableMessage)
     })
 
     it('a 409 is ConsoleAdvertUnavailableError without the token', async () =>

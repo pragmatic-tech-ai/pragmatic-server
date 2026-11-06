@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
+import type { DomainVerificationAnswer } from './domain-verification-record.js'
 import { TenantAccountIndex } from './tenant-account-index.js'
 
 /** What an in-hive console tells the control plane about itself: where it is, who may find it, and which email domains it claims. */
@@ -8,9 +9,11 @@ export type ConsoleAdvertBody = { consoleUrl: string; fingerprints: string[]; em
 
 /**
  * What the console takes from the control plane's 200 advert answer: the time of the tenant's last operator Owner reset, when
- * there is one (the console then ends the Owner's sessions once per value). The answer's `refusedEmailDomains` is not taken.
+ * there is one (the console then ends the Owner's sessions once per value), and the verification of each accepted email domain
+ * (its TXT token, whether the record was last seen, and its state), which the console holds in memory and shows. The answer's
+ * `refusedEmailDomains` is not taken.
  */
-export type ConsoleAdvertAnswer = { ownerResetAt?: string }
+export type ConsoleAdvertAnswer = { ownerResetAt?: string; domainVerifications?: DomainVerificationAnswer[] }
 
 export class ConsoleAdvertLimits
 {

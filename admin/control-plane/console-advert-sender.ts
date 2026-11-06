@@ -1,8 +1,11 @@
 import { Disposable, Signal, type IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { ConsoleFingerprint, type ConsoleAdvertAnswer, type ConsoleAdvertBody } from './console-advert-contract.js'
-import type { ConsoleEmailDomainStore } from './console-email-domain-store.js'
+import { ConsoleEmailDomainStore, type IConsoleDomainVerifyChannel } from './console-email-domain-store.js'
 import { AdvertOutcome, AdvertTrigger, type ConsoleRegistration } from './console-registration.js'
+import { DomainVerificationRecord, type DomainVerificationAnswer } from './domain-verification-record.js'
+import { EmailDomainPolicy } from './email-domain-policy.js'
 import type { TenantRecord } from './platform-records.js'
+import { DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerifyThrottledError } from './tenant-api/tenant-email-domains.js'
 import { OwnerResetTime } from './tenant-owner.js'
 
 /** The console's sign-in accounts, as account emails; `Changed` fires whenever that list may have changed. */
@@ -93,25 +96,41 @@ export class WallClockDeadline implements IRequestDeadline
 /**
  * POSTs the advert to `<baseUrl>/agent/hives/<hiveId>/console` with the hive's agent bearer (only in the Authorization header).
  * The answer's body is never read into an error or a log: a failed answer's body is drained, and of a 200 answer at most
- * MaxAnswerBytes are read, keeping only `ownerResetAt` when it is a string Date.parse accepts (a malformed, oversized or
- * reset-less answer yields {}). The control plane's `refusedEmailDomains` is ignored because the console validates with the
+ * MaxAnswerBytes are read, keeping `ownerResetAt` when it is a string Date.parse accepts and, when `domainVerifications` is an
+ * array, its entries DomainVerificationRecord.ParseAnswer accepts (at most EmailDomainPolicy.MaxDomains); a malformed or
+ * oversized answer yields {}. The control plane's `refusedEmailDomains` is ignored because the console validates with the
  * same EmailDomainPolicy. A request that outlives `timeoutMs`, or is aborted by the caller, reads as unreachable, so a hung
  * control plane cannot hold the sender's one in-flight send for ever.
+ *
+ * It is also the console's verify channel: VerifyDomain POSTs `{ domain }` to `.../console/verify-domain` the same way and maps
+ * every answer to a fixed console sentence (never the server's text). Its failures are verify errors, never advert errors, so
+ * they never reach the registration.
  */
-export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport
+export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport, IConsoleDomainVerifyChannel
 {
     public static readonly RequestTimeoutMs = 30000
     /**
-     * The most of a 200 answer read; a longer answer is dropped as malformed. The largest legitimate answer is
-     * `{"refusedEmailDomains":[...],"ownerResetAt":"<24-char ISO>"}` with all EmailDomainPolicy.MaxDomains (20) domains refused
-     * at the 253-character DNS maximum: 20 x (253 + 3 for quotes and comma) + about 70 for the keys and the time, roughly
-     * 5.2 KB. 16 KiB covers that three times over while still bounding what a hostile answer can make the console buffer.
+     * The most of a 200 answer read; a longer answer is dropped as malformed. The receiver refuses an advert of more than
+     * EmailDomainPolicy.MaxDomains (20) raw domains, so refused plus accepted domains are at most 20 together. The largest
+     * legitimate answer is therefore 20 accepted domains at the 253-character DNS maximum, each with a full verification answer
+     * (253 + the 43-character token + about 110 for the keys, the longest state and lastCheckedAt, about 409 bytes), plus the
+     * keys and ownerResetAt: roughly 8.3 KB. 32 KiB leaves about four times that as headroom while still bounding what a
+     * hostile answer can make the console buffer. A verify answer (one verification) is far below it.
      */
-    public static readonly MaxAnswerBytes = 16384
+    public static readonly MaxAnswerBytes = 32768
     private static readonly OwnerResetKey = 'ownerResetAt'
+    private static readonly DomainVerificationsKey = 'domainVerifications'
+    private static readonly VerificationKey = 'verification'
     private static readonly Utf8 = 'utf8'
     private static readonly AgentPrefix = '/agent/hives/'
     private static readonly ConsoleSegment = '/console'
+    private static readonly VerifyDomainSegment = '/console/verify-domain'
+    private static readonly StatusOk = 200
+    private static readonly StatusConflict = 409
+    private static readonly StatusTooManyRequests = 429
+    private static readonly NotListedPrefix = 'The platform does not list '
+    private static readonly NotListedSuffix = ' for this console yet. Try again after the console reports its domains.'
+    private static readonly ThrottledMessage = 'Too many verification attempts. Try again in a few minutes.'
     private static readonly AuthorizationHeader = 'Authorization'
     private static readonly BearerPrefix = 'Bearer '
     private static readonly ContentTypeHeader = 'Content-Type'
@@ -133,18 +152,8 @@ export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport
     public async Send(body: ConsoleAdvertBody, signal?: AbortSignal): Promise<ConsoleAdvertAnswer>
     {
         const T = HttpConsoleAdvertTransport
-        const timeout = this.deadline.SignalAfter(this.timeoutMs)
-        let response: Response
-        try
-        {
-            response = await fetch(this.baseUrl + T.AgentPrefix + encodeURIComponent(this.hiveId) + T.ConsoleSegment, {
-                method: T.MethodPost,
-                headers: { [T.AuthorizationHeader]: T.BearerPrefix + this.bearerToken, [T.ContentTypeHeader]: T.JsonType },
-                body: JSON.stringify(body),
-                signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
-            })
-        }
-        catch
+        const response = await this.Post(T.ConsoleSegment, body, signal)
+        if (response === undefined)
         {
             throw new ConsoleAdvertUnavailableError(T.UnreachableMessage)
         }
@@ -160,12 +169,97 @@ export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport
         return T.AnswerOf(await T.BoundedText(response))
     }
 
-    /** { ownerResetAt } when `text` is a JSON object whose ownerResetAt is a string Date.parse accepts; otherwise {}. */
+    /**
+     * Asks the platform to check `domain` (the console's normalised value) now and answers its verification. Throws
+     * DomainNotClaimedError (409), DomainVerifyThrottledError (429) or DomainVerificationUnavailableError (any other status, an
+     * unreachable or timed-out platform, or a 200 whose `verification` ParseAnswer refuses); each carries a fixed sentence.
+     */
+    public async VerifyDomain(domain: string): Promise<DomainVerificationAnswer>
+    {
+        const T = HttpConsoleAdvertTransport
+        const response = await this.Post(T.VerifyDomainSegment, { domain })
+        if (response === undefined)
+        {
+            throw new DomainVerificationUnavailableError(ConsoleEmailDomainStore.PlatformUnavailableMessage)
+        }
+        if (response.status !== T.StatusOk)
+        {
+            await T.Drain(response)
+            if (response.status === T.StatusConflict)
+            {
+                throw new DomainNotClaimedError(T.NotListedPrefix + domain + T.NotListedSuffix)
+            }
+            if (response.status === T.StatusTooManyRequests)
+            {
+                throw new DomainVerifyThrottledError(T.ThrottledMessage)
+            }
+            throw new DomainVerificationUnavailableError(ConsoleEmailDomainStore.PlatformUnavailableMessage)
+        }
+        const parsed = T.ObjectOf(await T.BoundedText(response))
+        const verification = parsed === undefined ? undefined : DomainVerificationRecord.ParseAnswer(parsed[T.VerificationKey])
+        if (verification === undefined)
+        {
+            throw new DomainVerificationUnavailableError(ConsoleEmailDomainStore.PlatformUnavailableMessage)
+        }
+        return verification
+    }
+
+    /** POSTs `body` as JSON to `<baseUrl>/agent/hives/<hiveId><segment>` with the bearer and the deadline; undefined when the request fails or is aborted. */
+    private async Post(segment: string, body: unknown, signal?: AbortSignal): Promise<Response | undefined>
+    {
+        const T = HttpConsoleAdvertTransport
+        const timeout = this.deadline.SignalAfter(this.timeoutMs)
+        try
+        {
+            return await fetch(this.baseUrl + T.AgentPrefix + encodeURIComponent(this.hiveId) + segment, {
+                method: T.MethodPost,
+                headers: { [T.AuthorizationHeader]: T.BearerPrefix + this.bearerToken, [T.ContentTypeHeader]: T.JsonType },
+                body: JSON.stringify(body),
+                signal: signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
+            })
+        }
+        catch
+        {
+            return undefined
+        }
+    }
+
+    /**
+     * What the console takes from a 200 advert answer's `text`: ownerResetAt when it is a string Date.parse accepts, and
+     * domainVerifications when it is an array (its entries ParseAnswer accepts, at most EmailDomainPolicy.MaxDomains). Text that
+     * is missing, oversized or not a JSON object yields {}.
+     */
     private static AnswerOf(text: string | undefined): ConsoleAdvertAnswer
+    {
+        const T = HttpConsoleAdvertTransport
+        const parsed = T.ObjectOf(text)
+        if (parsed === undefined)
+        {
+            return {}
+        }
+        const answer: ConsoleAdvertAnswer = {}
+        const resetAt = parsed[T.OwnerResetKey]
+        if (OwnerResetTime.IsWellFormed(resetAt))
+        {
+            answer.ownerResetAt = resetAt
+        }
+        const verifications = parsed[T.DomainVerificationsKey]
+        if (Array.isArray(verifications))
+        {
+            answer.domainVerifications = verifications
+                .map(v => DomainVerificationRecord.ParseAnswer(v))
+                .filter((v): v is DomainVerificationAnswer => v !== undefined)
+                .slice(0, EmailDomainPolicy.MaxDomains)
+        }
+        return answer
+    }
+
+    /** The JSON object `text` holds; undefined when the text is missing, not JSON, or not a (non-array) object. */
+    private static ObjectOf(text: string | undefined): Record<string, unknown> | undefined
     {
         if (text === undefined)
         {
-            return {}
+            return undefined
         }
         let parsed: unknown
         try
@@ -174,14 +268,13 @@ export class HttpConsoleAdvertTransport implements IConsoleAdvertTransport
         }
         catch
         {
-            return {}
+            return undefined
         }
         if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
         {
-            return {}
+            return undefined
         }
-        const value = (parsed as Record<string, unknown>)[HttpConsoleAdvertTransport.OwnerResetKey]
-        return OwnerResetTime.IsWellFormed(value) ? { ownerResetAt: value } : {}
+        return parsed as Record<string, unknown>
     }
 
     /** The answer's text when it fits MaxAnswerBytes; undefined when it is longer (the rest is not read) or its read fails. */
@@ -249,7 +342,9 @@ export class IntervalAdvertTimer implements IAdvertTimer
  * email domains it claims: once at start, every IntervalMs, and at once on an account or domain change. A failed send is
  * logged (a fixed sentence or the error's name, never a body, token or email) and the next tick or change retries. Every 200
  * answer is handed to the Owner-reset follower (when one is given), so an operator Owner reset ends the Owner's sessions here
- * within one interval; the follower's failure is logged by error name only and never fails the advert. Each send's outcome
+ * within one interval; the follower's failure is logged by error name only and never fails the advert. Every 200 answer's
+ * domain verifications (none when it carries none) are handed to the domain store first, so the console shows the platform's
+ * state as of the last answer. Neither happens once the sender has stopped. Each send's outcome
  * (Accepted, Refused on ConsoleAdvertRefusedError, Transient on any other failure) is handed to the registration (when one is
  * given) with the send's trigger; a queued send that merged a timer tick counts as a Timer send.
  */
@@ -386,6 +481,10 @@ export class ConsoleAdvertSender
             this.sending = undefined
         }
         await this.Observe(AdvertOutcome.Accepted, trigger)
+        if (!this.stopped)
+        {
+            this.domains.AdoptVerifications(answer.domainVerifications ?? [])
+        }
         await this.Follow(answer)
     }
 
