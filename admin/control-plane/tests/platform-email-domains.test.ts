@@ -542,4 +542,13 @@ describe('PlatformEmailDomains', () =>
         await f.domains.VerifyDomain('acme', 'shared.test')
         assert.equal((await f.domains.AnswersFor('acme', ['shared.test']))[0]?.state, DomainApprovalState.VerifiedContested)
     })
+
+    it('AnswersFor refuses an unknown tenant and a malformed domain and writes nothing', async () =>
+    {
+        await f.Advertise(['acme.test'])
+        await assert.rejects(f.domains.AnswersFor('nope', ['acme.test']), UnknownTenantError)
+        await assert.rejects(f.domains.AnswersFor('acme', ['acme.test', 'not a domain']), InvalidEmailDomainError)
+        assert.equal(f.approvals.Get('nope'), undefined)
+        assert.equal(f.approvals.Get('acme'), undefined)
+    })
 })

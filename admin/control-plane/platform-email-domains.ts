@@ -183,12 +183,7 @@ export class PlatformEmailDomains implements ITenantEmailDomains
     {
         const P = PlatformEmailDomains
         this.KnownTenant(tenantId)
-        const normalised = EmailDomainPolicy.Normalise(domain)
-        const refusal = EmailDomainPolicy.CheckSyntax(normalised)
-        if (refusal !== undefined)
-        {
-            throw new InvalidEmailDomainError(refusal)
-        }
+        const normalised = P.WellFormed(domain)
         const claims = this.Claims()
         if (!claims.ClaimedBy(tenantId).includes(normalised))
         {
@@ -213,6 +208,7 @@ export class PlatformEmailDomains implements ITenantEmailDomains
         const token = this.approvals.VerificationOf(tenantId, normalised)?.token
         if (token === undefined)
         {
+            // Only a concurrent ForgetTenant drops the token EnsureTokens just issued: the tenant is gone.
             throw new UnknownTenantError(tenantId)
         }
         const check = await this.verifier.Check(normalised, token)
@@ -232,15 +228,17 @@ export class PlatformEmailDomains implements ITenantEmailDomains
 
     /**
      * Issues a token for each of `domains` (normalised) that has none and answers one entry per domain, in the given order, with
-     * its state against the current claims. None without an approval store (there are no tokens then).
+     * its state against the current claims. None without an approval store (there are no tokens then). Throws UnknownTenantError
+     * or InvalidEmailDomainError (any domain that is not a well-formed name) before anything is written.
      */
     public async AnswersFor(tenantId: string, domains: readonly string[]): Promise<DomainVerificationAnswer[]>
     {
+        this.KnownTenant(tenantId)
+        const normalised = domains.map(d => PlatformEmailDomains.WellFormed(d))
         if (this.approvals === undefined)
         {
             return []
         }
-        const normalised = domains.map(d => EmailDomainPolicy.Normalise(d))
         await this.approvals.EnsureTokens(tenantId, normalised)
         const claims = this.Claims()
         const standing = this.StandingOf(tenantId)
@@ -300,12 +298,7 @@ export class PlatformEmailDomains implements ITenantEmailDomains
     public async Revoke(tenantId: string, domain: string): Promise<string>
     {
         this.KnownTenant(tenantId)
-        const normalised = EmailDomainPolicy.Normalise(domain)
-        const refusal = EmailDomainPolicy.CheckSyntax(normalised)
-        if (refusal !== undefined)
-        {
-            throw new InvalidEmailDomainError(refusal)
-        }
+        const normalised = PlatformEmailDomains.WellFormed(domain)
         await this.ApprovalStore().Revoke(tenantId, normalised)
         return normalised
     }
@@ -420,6 +413,18 @@ export class PlatformEmailDomains implements ITenantEmailDomains
     private AdvertOf(tenantId: string): ConsoleAdvertRecord | undefined
     {
         return this.adverts === undefined ? undefined : ConsoleAdvertRegistry.UsableFor(this.adverts, tenantId, this.directory.ListHives(tenantId))
+    }
+
+    /** The domain normalised; throws InvalidEmailDomainError when it is not a well-formed name (EmailDomainPolicy.CheckSyntax). */
+    private static WellFormed(domain: string): string
+    {
+        const normalised = EmailDomainPolicy.Normalise(domain)
+        const refusal = EmailDomainPolicy.CheckSyntax(normalised)
+        if (refusal !== undefined)
+        {
+            throw new InvalidEmailDomainError(refusal)
+        }
+        return normalised
     }
 
     private static RecordDomainsOf(tenant: TenantRecord): string[]
