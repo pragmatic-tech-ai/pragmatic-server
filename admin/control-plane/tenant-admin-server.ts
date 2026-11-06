@@ -72,6 +72,15 @@ export type TenantAdminConfig = {
     readonly ingressTls: IngressTls | undefined
 }
 
+/** Everything the console advert sender needs, once every setting is present and the key file is good. */
+type AdvertSettings = {
+    readonly url: string
+    readonly token: string
+    readonly hiveId: string
+    readonly key: Buffer
+    readonly consoleUrl: string
+}
+
 export type TenantAdminComposition = {
     readonly directory: SeededTenantDirectory
     readonly rollout: IRolloutClient
@@ -91,7 +100,8 @@ export type TenantAdminComposition = {
     readonly graphAudit: AuditRegistry
     /**
      * Whether the platform still takes this console's adverts (`<dataRoot>/console-registration.json`): the advert sender
-     * feeds it, and the host refuses the desktop surface and the relay while it is Refused.
+     * feeds it, and the host refuses the desktop surface and the relay while it is Refused. Without an advert sender it opens
+     * Registered regardless of the file and does not gate the host (nothing could ever restore Registered).
      */
     readonly registration: ConsoleRegistration
 }
@@ -124,6 +134,8 @@ export class TenantAdminServer
     private static readonly NoIdentityMessage = 'The seed names no hive for the in-cluster console.'
     private static readonly ConsoleUrlScheme = 'https://'
     private static readonly AdvertOffPrefix = '[console-advert] off: '
+    /** Logged once at Compose when there is no advert sender, so the registration cannot gate the desktop. */
+    public static readonly RegistrationGateOffLine = '[console-registration] gate off: the advert is not configured, so the registration never refuses the desktop'
     private static readonly NotSetSuffix = ' is not set'
     private static readonly BadKeyInfix = ' does not name a readable key file of '
     private static readonly BytesSuffix = ' bytes'
@@ -197,6 +209,13 @@ export class TenantAdminServer
      */
     public static AdvertSenderOf(env: NodeJS.ProcessEnv, cfg: TenantAdminConfig, tenant: TenantRecord, domains: ConsoleEmailDomainStore, log: (line: string) => void = TenantAdminServer.LogLine, follower?: IOwnerResetFollower, registration?: ConsoleRegistration): ConsoleAdvertSender | undefined
     {
+        const settings = TenantAdminServer.AdvertSettingsOf(env, cfg, log)
+        return settings === undefined ? undefined : TenantAdminServer.SenderFrom(settings, tenant, domains, log, follower, registration)
+    }
+
+    /** The advert's settings, or undefined after one log line naming the first missing or bad one (never a value). */
+    private static AdvertSettingsOf(env: NodeJS.ProcessEnv, cfg: TenantAdminConfig, log: (line: string) => void): AdvertSettings | undefined
+    {
         const S = TenantAdminServer
         const url = S.OptionalOf(env, TenantAdminEnv.RolloutUrl)
         const token = S.OptionalOf(env, TenantAdminEnv.RolloutToken)
@@ -226,8 +245,29 @@ export class TenantAdminServer
         {
             return S.AdvertOff(log, TenantAdminEnv.FingerprintKeyFile + S.BadKeyInfix + ConsoleFingerprintKeys.KeyBytes + S.BytesSuffix)
         }
-        return new ConsoleAdvertSender(new HttpConsoleAdvertTransport(url, token, hiveId), new SeededConsoleAccounts(tenant), domains, key,
-            S.ConsoleUrlScheme + cfg.consoleHost, new IntervalAdvertTimer(), log, follower, registration)
+        return { url, token, hiveId, key, consoleUrl: S.ConsoleUrlScheme + cfg.consoleHost }
+    }
+
+    private static SenderFrom(settings: AdvertSettings, tenant: TenantRecord, domains: ConsoleEmailDomainStore, log: (line: string) => void, follower?: IOwnerResetFollower, registration?: ConsoleRegistration): ConsoleAdvertSender
+    {
+        return new ConsoleAdvertSender(new HttpConsoleAdvertTransport(settings.url, settings.token, settings.hiveId), new SeededConsoleAccounts(tenant), domains,
+            settings.key, settings.consoleUrl, new IntervalAdvertTimer(), log, follower, registration)
+    }
+
+    /**
+     * The console's registration and whether it gates the host. Only an advert answer can restore Registered, so without
+     * an advert sender a saved Refused state could never clear: the registration then opens Registered without reading the
+     * file (which is left alone), does not gate the desktop, and one fixed line says so.
+     */
+    private static async RegistrationOf(dataRoot: string, advertConfigured: boolean, log: (line: string) => void): Promise<ConsoleRegistration>
+    {
+        if (advertConfigured)
+        {
+            // Never throws: a missing or bad file opens Registered, so the desktop is never locked out by it.
+            return ConsoleRegistration.Open(join(dataRoot, ConsoleRegistration.FileName), log)
+        }
+        log(TenantAdminServer.RegistrationGateOffLine)
+        return ConsoleRegistration.OpenRegistered(join(dataRoot, ConsoleRegistration.FileName), log)
     }
 
     /**
@@ -278,7 +318,7 @@ export class TenantAdminServer
     /**
      * Builds the whole tenant plane over this process's own data root without binding anything: seeded directory,
      * stores, services, plane (with the desktop surface; its relay only in a pod), host, health monitor, the console's email
-     * domains, the desktop audit, the console registration (gating the host) and (in a configured console) its advert sender.
+     * domains, the desktop audit, the console registration (gating the host only when there is an advert sender) and (in a configured console) its advert sender.
      */
     public async Compose(env: NodeJS.ProcessEnv = process.env, serviceAccountRoot?: string, log: (line: string) => void = TenantAdminServer.LogLine): Promise<TenantAdminComposition>
     {
@@ -324,15 +364,16 @@ export class TenantAdminServer
         const monitor = cfg.probeMs > 0
             ? new TenantHealthMonitor(directory, new HiveHealthProducer(service, orchestrators, placement), plane.events, cfg.probeMs, cfg.probeTimeoutMs, service)
             : undefined
-        // Never throws: a missing or bad file opens Registered, so the desktop is never locked out by it.
-        const registration = await ConsoleRegistration.Open(join(dataRoot, ConsoleRegistration.FileName), log)
-        const host = new TenantPlaneHost(plane, resolver, staticRoot, service, monitor, registration)
+        const advertSettings = TenantAdminServer.AdvertSettingsOf(env, cfg, log)
+        const registration = await TenantAdminServer.RegistrationOf(dataRoot, advertSettings !== undefined, log)
+        // No advert sender, no gate: nothing could ever lift a refusal.
+        const host = new TenantPlaneHost(plane, resolver, staticRoot, service, monitor, advertSettings === undefined ? undefined : registration)
         // An operator Owner reset reaches this console in the advert answer; the follower then ends the Owner's sessions, sockets
         // and relays (the host has attached both to plane.principals above).
         const follower = plane.principals === undefined
             ? undefined
             : new ConsoleOwnerResetFollower(plane.principals, tenant, join(dataRoot, ConsoleOwnerResetFollower.FileName))
-        const advert = TenantAdminServer.AdvertSenderOf(env, cfg, tenant, emailDomains, log, follower, registration)
+        const advert = advertSettings === undefined ? undefined : TenantAdminServer.SenderFrom(advertSettings, tenant, emailDomains, log, follower, registration)
         return { directory, rollout: this.rollout, plane, host, monitor, config: cfg, reach, emailDomains, advert, desktopAudit, graphAudit, registration }
     }
 

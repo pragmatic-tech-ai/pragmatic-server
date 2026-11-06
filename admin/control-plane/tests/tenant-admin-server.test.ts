@@ -122,6 +122,9 @@ class Names
     public static readonly CloseEvent = 'close'
     public static readonly ConsolePath = '/desktop/console'
     public static readonly TargetsPath = '/desktop/targets'
+    public static readonly MissingSettingCase = 'missing setting'
+    public static readonly BadKeyFileCase = 'bad key file'
+    public static readonly RefusedFileBody = JSON.stringify({ state: 'refused' })
     public static readonly DesktopAuditFile = 'tenant-desktop-audit.json'
     public static readonly ServiceHostVar = 'KUBERNETES_SERVICE_HOST'
     public static readonly ServiceHost = '10.0.0.1'
@@ -732,7 +735,8 @@ describe('TenantAdminServer console advert', () =>
         assert.deepEqual(composition.emailDomains.Domains, [Names.EmailDomain])
         assert.equal(existsSync(join(root, ConsoleEmailDomainStore.FileName)), false)
         assert.equal(composition.advert, undefined, 'no advert outside a configured console')
-        assert.equal(lines.length, 1)
+        assert.equal(lines.length, 2, 'the advert-off line and the gate-off line')
+        assert.equal(lines[1], TenantAdminServer.RegistrationGateOffLine)
     })
 
     it('a console outside a pod answers 503 on the graph routes and audits to tenant-graph-audit.json', async () =>
@@ -779,13 +783,17 @@ describe('TenantAdminServer console advert', () =>
         assert.deepEqual(await handle(composition, Names.Get), { status: Names.Ok, body: { domains: [Names.EmailDomain], editable: true, inHive: true, pending: [] } })
     })
 
-    it('Compose opens the console registration from the data root and passes it to the host', async () =>
+    it('Compose opens the console registration from the data root and passes it to the host when the advert is configured', async () =>
     {
         writeConsoleSeed()
         writeFileSync(join(root, ConsoleRegistration.FileName), JSON.stringify({ state: 'refused' }))
-        const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
-        const composition = await server.Compose({}, undefined, () => undefined)
+        const env = advertEnv()
+        const lines: string[] = []
+        const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient())
+        const composition = await server.Compose(env, undefined, line => lines.push(line))
+        assert.ok(composition.advert !== undefined)
         assert.equal(composition.registration.IsRefused, true)
+        assert.deepEqual(lines, [])
         await composition.host.Listen(0, Names.DefaultBind)
         try
         {
@@ -799,6 +807,44 @@ describe('TenantAdminServer console advert', () =>
             await composition.host.Close()
         }
     })
+
+    for (const broken of [Names.MissingSettingCase, Names.BadKeyFileCase])
+    {
+        it(`Compose turns the registration gate off when there is no advert sender (${broken}): a saved Refused state leaves /desktop/* served`, async () =>
+        {
+            writeConsoleSeed()
+            writeFileSync(join(root, ConsoleRegistration.FileName), Names.RefusedFileBody)
+            const env = advertEnv()
+            if (broken === Names.BadKeyFileCase)
+            {
+                writeFileSync(keyFile, randomBytes(Names.KeyBytes - 1))
+            }
+            else
+            {
+                delete env[TenantAdminEnv.RolloutHiveId]
+            }
+            const lines: string[] = []
+            const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient())
+            const composition = await server.Compose(env, undefined, line => lines.push(line))
+            assert.equal(composition.advert, undefined)
+            assert.equal(composition.registration.IsRefused, false)
+            assert.deepEqual(lines.filter(l => l === TenantAdminServer.RegistrationGateOffLine), [TenantAdminServer.RegistrationGateOffLine])
+            assert.equal(lines.length, 2, 'the advert-off line and the gate-off line')
+            await composition.host.Listen(0, Names.DefaultBind)
+            try
+            {
+                const { port } = composition.host.Address()
+                const answer = await fetch(`http://${Names.DefaultBind}:${port}${Names.TargetsPath}`)
+                assert.equal(answer.status, Names.Unauthorized)
+                assert.notDeepEqual(await answer.json(), ConsoleRegistration.RefusedBody)
+            }
+            finally
+            {
+                await composition.host.Close()
+            }
+            assert.equal(readFileSync(join(root, ConsoleRegistration.FileName), Names.Utf8), Names.RefusedFileBody, 'the saved file is left alone')
+        })
+    }
 
     it('Compose passes the registration to the advert sender: a 200 answer restores a Refused console', async () =>
     {

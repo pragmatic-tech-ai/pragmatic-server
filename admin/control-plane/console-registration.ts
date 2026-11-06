@@ -113,6 +113,15 @@ export class ConsoleRegistration
         return new ConsoleRegistration(path, ConsoleRegistration.StateIn(text), log)
     }
 
+    /**
+     * Opens Registered without reading the file, for a console with no advert sender: only an advert answer could ever
+     * restore Registered there, so a saved refusal must not be honoured. Writes nothing until an observation changes the state.
+     */
+    public static OpenRegistered(path: string, log: (line: string) => void = line => console.error(line)): ConsoleRegistration
+    {
+        return new ConsoleRegistration(path, ConsoleRegistrationState.Registered, log)
+    }
+
     public get State(): ConsoleRegistrationState
     {
         return this.state

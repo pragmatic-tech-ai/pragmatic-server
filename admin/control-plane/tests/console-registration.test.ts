@@ -74,6 +74,15 @@ describe('ConsoleRegistration', () =>
         assert.equal((await ConsoleRegistration.Open(path)).State, ConsoleRegistrationState.Registered, 'an unreadable path')
     })
 
+    it('OpenRegistered opens Registered over a saved Refused file without reading or writing it', () =>
+    {
+        writeFileSync(path, Names.RefusedFile, Names.Utf8)
+        const opened = ConsoleRegistration.OpenRegistered(path)
+        assert.equal(opened.State, ConsoleRegistrationState.Registered)
+        assert.equal(opened.IsRefused, false)
+        assert.equal(readFileSync(path, Names.Utf8), Names.RefusedFile)
+    })
+
     it('two consecutive timer refusals make it Refused, signalled once and persisted', async () =>
     {
         const registration = await ConsoleRegistration.Open(path)
