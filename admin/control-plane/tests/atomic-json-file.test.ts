@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
-import { afterEach, beforeEach, describe, it } from 'node:test'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { afterEach, beforeEach, describe, it, mock } from 'node:test'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { open } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AtomicJsonFile, SerialRuns } from '../atomic-json-file.js'
@@ -13,6 +14,8 @@ class Names
     public static readonly FileName = 'f.json'
     public static readonly Utf8 = 'utf8'
     public static readonly Failure = 'boom'
+    public static readonly RawText = 'not json, kept as given\n'
+    public static readonly ProbeName = 'probe.txt'
 }
 
 describe('AtomicJsonFile', () =>
@@ -39,6 +42,61 @@ describe('AtomicJsonFile', () =>
         mkdirSync(join(path, Names.Nested), { recursive: true })
         await assert.rejects(AtomicJsonFile.Write(path, { k: 'v' }))
         assert.deepEqual(readdirSync(dir), [Names.FileName])
+    })
+
+    it('WriteText writes the text as given', async () =>
+    {
+        const path = join(dir, Names.Nested, Names.FileName)
+        await AtomicJsonFile.WriteText(path, Names.RawText)
+        assert.equal(readFileSync(path, Names.Utf8), Names.RawText)
+        assert.deepEqual(readdirSync(join(dir, Names.Nested)), [Names.FileName])
+    })
+
+    it('fsync: true syncs the temp file before the rename; omitted, it does not', async () =>
+    {
+        const probe = await open(join(dir, Names.ProbeName), 'w')
+        const proto = Object.getPrototypeOf(probe) as { sync: () => Promise<void> }
+        await probe.close()
+        const sync = mock.method(proto, 'sync')
+        try
+        {
+            const path = join(dir, Names.FileName)
+            await AtomicJsonFile.WriteText(path, Names.RawText)
+            assert.equal(sync.mock.callCount(), 0)
+            await AtomicJsonFile.WriteText(path, Names.RawText, { fsync: true })
+            assert.equal(sync.mock.callCount(), 1)
+            await AtomicJsonFile.Write(path, { k: 'v' }, undefined, { fsync: true })
+            assert.equal(sync.mock.callCount(), 2)
+        }
+        finally
+        {
+            sync.mock.restore()
+        }
+        assert.deepEqual(readdirSync(dir).sort(), [Names.FileName, Names.ProbeName].sort())
+    })
+
+    it('mode sets the file mode', { skip: process.platform === 'win32' }, async () =>
+    {
+        const path = join(dir, Names.FileName)
+        await AtomicJsonFile.Write(path, { k: 'v' }, undefined, { mode: 0o600 })
+        assert.equal(statSync(path).mode & 0o777, 0o600)
+    })
+
+    it('a failed write after open removes its temp file', async () =>
+    {
+        const probe = await open(join(dir, Names.ProbeName), 'w')
+        const proto = Object.getPrototypeOf(probe) as { writeFile: () => Promise<void> }
+        await probe.close()
+        const failing = mock.method(proto, 'writeFile', async () => { throw new Error(Names.Failure) })
+        try
+        {
+            await assert.rejects(AtomicJsonFile.WriteText(join(dir, Names.FileName), Names.RawText), new RegExp(Names.Failure))
+        }
+        finally
+        {
+            failing.mock.restore()
+        }
+        assert.deepEqual(readdirSync(dir), [Names.ProbeName])
     })
 })
 

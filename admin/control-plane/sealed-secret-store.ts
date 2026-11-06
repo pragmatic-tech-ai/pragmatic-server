@@ -1,7 +1,6 @@
-import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises'
-import { dirname } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import { EncryptedSecretStore } from '@pragmatic-tech-ai/todl-identity-local'
+import { AtomicJsonFile, SerialRuns } from './atomic-json-file.js'
 
 export class SealedSecretUnreadableError extends Error
 {
@@ -36,7 +35,6 @@ export class SealedSecretStore
 {
     public static readonly FileName = 'sealed-secrets.json'
     private static readonly RootKey = 'sealed'
-    private static readonly TempSuffix = '.tmp'
     private static readonly Encoding = 'utf8'
     private static readonly ValueEncoding = 'base64'
     private static readonly NotFoundCode = 'ENOENT'
@@ -46,7 +44,7 @@ export class SealedSecretStore
     private static readonly BadRefText = 'A sealed secret reference is invalid.'
     private static readonly Redacted = '[SealedSecretStore: values redacted]'
 
-    private chain: Promise<void> = Promise.resolve()
+    private readonly writes = new SerialRuns()
 
     private constructor(
         private readonly filePath: string,
@@ -119,7 +117,7 @@ export class SealedSecretStore
     public Get(ref: string): Promise<Buffer | undefined>
     {
         SealedSecretStore.CheckRef(ref)
-        return this.Enqueue(async () =>
+        return this.writes.Run(async () =>
         {
             if (!this.entries.has(ref))
             {
@@ -138,7 +136,7 @@ export class SealedSecretStore
     public Put(ref: string, value: Buffer): Promise<void>
     {
         SealedSecretStore.CheckRef(ref)
-        return this.Enqueue(async () =>
+        return this.writes.Run(async () =>
         {
             const next = new Map(this.entries)
             const plain = `${ref}${SealedSecretStore.Separator}${value.toString(SealedSecretStore.ValueEncoding)}`
@@ -151,7 +149,7 @@ export class SealedSecretStore
     public Delete(ref: string): Promise<void>
     {
         SealedSecretStore.CheckRef(ref)
-        return this.Enqueue(async () =>
+        return this.writes.Run(async () =>
         {
             const next = new Map(this.entries)
             next.delete(ref)
@@ -170,36 +168,9 @@ export class SealedSecretStore
         return SealedSecretStore.Redacted
     }
 
-    private Enqueue<T>(work: () => Promise<T>): Promise<T>
+    private Persist(entries: Map<string, string>): Promise<void>
     {
-        const run = this.chain.then(work)
-        this.chain = run.then(() => undefined, () => undefined)
-        return run
-    }
-
-    private async Persist(entries: Map<string, string>): Promise<void>
-    {
-        const body = JSON.stringify({ [SealedSecretStore.RootKey]: Object.fromEntries(entries) }, null, SealedSecretStore.JsonIndent)
-        await mkdir(dirname(this.filePath), { recursive: true })
-        const temp = `${this.filePath}.${randomUUID()}${SealedSecretStore.TempSuffix}`
-        try
-        {
-            const handle = await open(temp, 'w', SealedSecretStore.FileMode)
-            try
-            {
-                await handle.writeFile(body, SealedSecretStore.Encoding)
-                await handle.sync()
-            }
-            finally
-            {
-                await handle.close()
-            }
-            await rename(temp, this.filePath)
-        }
-        catch (err)
-        {
-            await unlink(temp).catch(() => undefined)
-            throw err
-        }
+        const body = { [SealedSecretStore.RootKey]: Object.fromEntries(entries) }
+        return AtomicJsonFile.Write(this.filePath, body, SealedSecretStore.JsonIndent, { mode: SealedSecretStore.FileMode, fsync: true })
     }
 }

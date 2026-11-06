@@ -1,6 +1,6 @@
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { AtomicJsonFile } from './atomic-json-file.js'
 
 /** Signatures per image digest, one per signing key ref: two keys signing the same digest never displace each other. */
 export interface ISignatureStore
@@ -35,7 +35,6 @@ type SignatureEntry = string | Record<string, string>
 export class FileSignatureStore implements ISignatureStore
 {
     private static readonly Encoding = 'utf8'
-    private static readonly TempSuffix = '.tmp'
     private static readonly NotFoundCode = 'ENOENT'
     private static readonly JsonIndent = 2
     // Holds a pre-keyed entry's signature once that digest gets a keyed one; never a valid key ref (refs are non-empty).
@@ -155,19 +154,8 @@ export class FileSignatureStore implements ISignatureStore
         return parsed as Record<string, SignatureEntry>
     }
 
-    private async persist(map: Record<string, SignatureEntry>): Promise<void>
+    private persist(map: Record<string, SignatureEntry>): Promise<void>
     {
-        await mkdir(dirname(this.filePath), { recursive: true })
-        const temp = `${this.filePath}.${randomUUID()}${FileSignatureStore.TempSuffix}`
-        await writeFile(temp, JSON.stringify(map, null, FileSignatureStore.JsonIndent), FileSignatureStore.Encoding)
-        try
-        {
-            await rename(temp, this.filePath)
-        }
-        catch (err)
-        {
-            await unlink(temp).catch(() => undefined)
-            throw err
-        }
+        return AtomicJsonFile.Write(this.filePath, map, FileSignatureStore.JsonIndent)
     }
 }

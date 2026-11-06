@@ -1,11 +1,9 @@
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { AtomicJsonFile } from './atomic-json-file.js'
 
 export abstract class JsonRecordStore<TRecord extends { id: string }>
 {
     private static readonly Encoding = 'utf8'
-    private static readonly TempSuffix = '.tmp'
     private static readonly NotFoundCode = 'ENOENT'
     private static readonly JsonIndent = 2
 
@@ -130,20 +128,9 @@ export abstract class JsonRecordStore<TRecord extends { id: string }>
     }
 
     /** The single file-write primitive (temp + rename); overridable for observation. */
-    protected async WriteText(text: string): Promise<void>
+    protected WriteText(text: string): Promise<void>
     {
-        await mkdir(dirname(this.filePath), { recursive: true })
-        const temp = `${this.filePath}.${randomUUID()}${JsonRecordStore.TempSuffix}`
-        await writeFile(temp, text, JsonRecordStore.Encoding)
-        try
-        {
-            await rename(temp, this.filePath)
-        }
-        catch (err)
-        {
-            await unlink(temp).catch(() => undefined)
-            throw err
-        }
+        return AtomicJsonFile.WriteText(this.filePath, text)
     }
 
     private async persist(): Promise<void>

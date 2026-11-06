@@ -4,9 +4,9 @@
 // Only the literal persisted FIELD `tenantId` -> `environmentId` changes. Directory names, JSON map keys and
 // secret-ref strings are keyed by the id VALUE and are untouched. The bundle's tenant-config.json carries
 // the id only as a map key (no literal tenantId field), so it needs no migration.
-import { readFile, rename, writeFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { AtomicJsonFile } from './atomic-json-file.js'
 
 export class EnvironmentIdMigrator
 {
@@ -15,7 +15,6 @@ export class EnvironmentIdMigrator
     private static readonly LegacyField = 'tenantId'
     private static readonly NewField = 'environmentId'
     private static readonly Encoding = 'utf8'
-    private static readonly TempSuffix = '.tmp'
     private static readonly NotFoundCode = 'ENOENT'
     private static readonly JsonIndent = 2
 
@@ -53,9 +52,7 @@ export class EnvironmentIdMigrator
         }
         if (changed > 0)
         {
-            const temp = `${path}.${randomUUID()}${EnvironmentIdMigrator.TempSuffix}`
-            await writeFile(temp, JSON.stringify(parsed, null, EnvironmentIdMigrator.JsonIndent), EnvironmentIdMigrator.Encoding)
-            await rename(temp, path)
+            await AtomicJsonFile.Write(path, parsed, EnvironmentIdMigrator.JsonIndent)
         }
         return { changed }
     }

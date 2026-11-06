@@ -1,7 +1,6 @@
-import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
+import { AtomicJsonFile } from './atomic-json-file.js'
 import { EmailDomainPolicy } from './email-domain-policy.js'
 import { EmailDomainsNotEditableError, type ITenantEmailDomains, type TenantEmailDomainsView } from './tenant-api/tenant-email-domains.js'
 
@@ -17,7 +16,6 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
     private static readonly DomainsKey = 'domains'
     private static readonly Utf8 = 'utf8'
     private static readonly NotFoundCode = 'ENOENT'
-    private static readonly TempSuffix = '.tmp'
     private static readonly JsonIndent = 2
     private static readonly MalformedPrefix = 'Invalid email domains file (expected { "domains": string[] }): '
     private static readonly NotEditableMessage = 'This console sets only its own tenant\'s email domains.'
@@ -121,19 +119,8 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
         this.Changed.emit(domains)
     }
 
-    private async Write(domains: readonly string[]): Promise<void>
+    private Write(domains: readonly string[]): Promise<void>
     {
-        await mkdir(dirname(this.filePath), { recursive: true })
-        const temp = `${this.filePath}.${randomUUID()}${ConsoleEmailDomainStore.TempSuffix}`
-        await writeFile(temp, JSON.stringify({ [ConsoleEmailDomainStore.DomainsKey]: domains }, null, ConsoleEmailDomainStore.JsonIndent), ConsoleEmailDomainStore.Utf8)
-        try
-        {
-            await rename(temp, this.filePath)
-        }
-        catch (err)
-        {
-            await unlink(temp).catch(() => undefined)
-            throw err
-        }
+        return AtomicJsonFile.Write(this.filePath, { [ConsoleEmailDomainStore.DomainsKey]: domains }, ConsoleEmailDomainStore.JsonIndent)
     }
 }
