@@ -15,6 +15,7 @@ export class TenantEmailDomainsLimits
     /** 20 domains of up to 253 characters each do not fit the planes' default 4 KiB body cap. */
     public static readonly MaxBodyBytes = 16384
     public static readonly DomainsRequiredMessage = 'domains (array of domain names) is required'
+    public static readonly DomainRequiredMessage = 'domain (an email domain name) is required'
 }
 
 /** The store cannot change this tenant's email domains (they are set elsewhere); the message is one plain sentence (maps to 409). */

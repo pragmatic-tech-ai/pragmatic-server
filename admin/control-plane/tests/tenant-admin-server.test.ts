@@ -771,7 +771,7 @@ describe('TenantAdminServer console advert', () =>
         writeConsoleSeed()
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
         const composition = await server.Compose({}, undefined, () => undefined)
-        assert.deepEqual(await handle(composition, Names.Get), { status: Names.Ok, body: { domains: [Names.EmailDomain], editable: true, inHive: true, pending: [] } })
+        assert.deepEqual(await handle(composition, Names.Get), { status: Names.Ok, body: { domains: [Names.EmailDomain], editable: true, inHive: true, pending: [], verifications: [] } })
     })
 
     it('Compose serves the desktop surface and its lookup, keeping the email-domain route', async () =>
@@ -780,7 +780,7 @@ describe('TenantAdminServer console advert', () =>
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
         const composition = await server.Compose({}, undefined, () => undefined)
         assert.deepEqual(await DesktopProbe.Get(composition, Names.ConsolePath), { handled: true, status: Names.Ok, body: { tenantId: Names.TenantId, tenantName: Names.TenantName } })
-        assert.deepEqual(await handle(composition, Names.Get), { status: Names.Ok, body: { domains: [Names.EmailDomain], editable: true, inHive: true, pending: [] } })
+        assert.deepEqual(await handle(composition, Names.Get), { status: Names.Ok, body: { domains: [Names.EmailDomain], editable: true, inHive: true, pending: [], verifications: [] } })
     })
 
     it('Compose opens the console registration from the data root and passes it to the host when the advert is configured', async () =>
@@ -891,7 +891,7 @@ describe('TenantAdminServer console advert', () =>
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
         const composition = await server.Compose({}, undefined, () => undefined)
         const answer = await handle(composition, Names.Put, { domains: [Names.NewEmailDomain] })
-        assert.deepEqual(answer, { status: Names.Ok, body: { domains: [Names.NewEmailDomain], editable: true, inHive: true, pending: [] } })
+        assert.deepEqual(answer, { status: Names.Ok, body: { domains: [Names.NewEmailDomain], editable: true, inHive: true, pending: [], verifications: [] } })
         assert.deepEqual(composition.emailDomains.Domains, [Names.NewEmailDomain])
         assert.deepEqual(JSON.parse(readFileSync(join(root, ConsoleEmailDomainStore.FileName), Names.Utf8)), { domains: [Names.NewEmailDomain] })
         assert.deepEqual(composition.directory.Tenant.emailDomains, [Names.EmailDomain], 'the seeded record is untouched')

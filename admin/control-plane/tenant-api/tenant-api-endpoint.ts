@@ -9,7 +9,7 @@ import type { EnvironmentPlacement } from '../environment-placement.js'
 import type { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { RolloutAdoptionRefusedError, RolloutUnavailableError, type IRolloutClient } from './rollout-client.js'
 import type { ITenantDirectory } from './tenant-directory.js'
-import { EmailDomainsNotEditableError, TenantEmailDomainsLimits, type ITenantEmailDomains, type TenantEmailDomainsView } from './tenant-email-domains.js'
+import { DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerifyThrottledError, EmailDomainsNotEditableError, TenantEmailDomainsLimits, type ITenantEmailDomains, type TenantEmailDomainsView } from './tenant-email-domains.js'
 import { InvalidEmailDomainError } from '../email-domain-policy.js'
 import type { EnvironmentRecord } from '../environment-record.js'
 import { ChannelNotSubscribedError, ManifestNotGatedError, ManifestWithdrawnError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from '../rollout-errors.js'
@@ -79,6 +79,9 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     /** GET reads, PUT (Owner only) replaces the tenant's email domains; a route only when the endpoint has an email-domain store. */
     private static readonly EmailDomainsPath = TenantApiEndpoint.Prefix + TenantApiEndpoint.SettingsSegment + '/' + TenantApiEndpoint.EmailDomainsSegment
     private static readonly DomainsKey = 'domains'
+    /** POST (Owner only) checks one claimed domain's DNS TXT record now. */
+    private static readonly EmailDomainsVerifyPath = TenantApiEndpoint.EmailDomainsPath + '/verify'
+    private static readonly DomainKey = 'domain'
     private static readonly SnapshotLeaf = 'snapshot'
     private static readonly AccountsLeaf = 'accounts'
     private static readonly GrantsLeaf = 'grants'
@@ -125,6 +128,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly StatusForbidden = 403
     private static readonly ForbiddenMessage = 'forbidden'
     private static readonly StatusConflict = 409
+    private static readonly StatusTooManyRequests = 429
     private static readonly StatusInternal = 500
     private static readonly StatusUnavailable = 503
     private static readonly NotFoundMessage = PlaneHttp.NotFoundMessage
@@ -199,6 +203,10 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         if (path === TenantApiEndpoint.EmailDomainsPath && this.emailDomains !== undefined)
         {
             return await this.RouteEmailDomains(req, res, method, session, this.emailDomains)
+        }
+        if (path === TenantApiEndpoint.EmailDomainsVerifyPath && this.emailDomains !== undefined)
+        {
+            return await this.RouteEmailDomainsVerify(req, res, method, session, this.emailDomains)
         }
         if (method === TenantApiEndpoint.MethodGet)
         {
@@ -646,14 +654,91 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     }
 
     /**
+     * POST /tenant-api/settings/email-domains/verify for the session's own tenant (never an id from the request): the Owner (settings
+     * capability, else 403) names one claimed domain in a `{ domain }` body within the 16 KiB cap, and the store checks its DNS TXT
+     * record now. Answers the updated view (200), or the store's refusal as 400 / 409 / 429 / 503 with its sentence.
+     */
+    private async RouteEmailDomainsVerify(req: IncomingMessage, res: ServerResponse, method: string, session: TenantSession, store: ITenantEmailDomains): Promise<boolean>
+    {
+        const M = TenantApiEndpoint
+        if (method !== M.MethodPost)
+        {
+            this.WriteNotFound(res)
+            return true
+        }
+        if (!this.RequireCapability(res, session, M.SettingsCapability))
+        {
+            return true
+        }
+        const raw = await M.ReadBody(req, TenantEmailDomainsLimits.MaxBodyBytes)
+        let body: unknown
+        try
+        {
+            body = JSON.parse(raw)
+        }
+        catch
+        {
+            this.WriteJson(res, M.StatusBadRequest, { [M.ErrorKey]: M.BadJsonMessage })
+            return true
+        }
+        const domain = body === null || typeof body !== 'object' || Array.isArray(body) ? undefined : (body as Record<string, unknown>)[M.DomainKey]
+        if (typeof domain !== 'string')
+        {
+            this.WriteJson(res, M.StatusBadRequest, { [M.ErrorKey]: TenantEmailDomainsLimits.DomainRequiredMessage })
+            return true
+        }
+        let view: TenantEmailDomainsView
+        try
+        {
+            view = await store.Verify(session.tenantId, domain)
+        }
+        catch (err)
+        {
+            const status = M.VerifyErrorStatus(err)
+            if (status === undefined)
+            {
+                throw err
+            }
+            this.WriteJson(res, status, { [M.ErrorKey]: (err as Error).message })
+            return true
+        }
+        this.WriteEmailDomains(res, session, view)
+        return true
+    }
+
+    /** The HTTP status a store's verify refusal maps to, or undefined when the error is not one of its refusals. */
+    private static VerifyErrorStatus(err: unknown): number | undefined
+    {
+        if (err instanceof InvalidEmailDomainError)
+        {
+            return TenantApiEndpoint.StatusBadRequest
+        }
+        if (err instanceof DomainNotClaimedError || err instanceof EmailDomainsNotEditableError)
+        {
+            return TenantApiEndpoint.StatusConflict
+        }
+        if (err instanceof DomainVerifyThrottledError)
+        {
+            return TenantApiEndpoint.StatusTooManyRequests
+        }
+        if (err instanceof DomainVerificationUnavailableError)
+        {
+            return TenantApiEndpoint.StatusUnavailable
+        }
+        return undefined
+    }
+
+    /**
      * The view as the caller may use it: editable only when the store allows it and the caller holds the settings capability;
-     * `pending` lists the domains not in effect yet (neither approved nor verified and uncontested, or revoked).
+     * `pending` lists the domains not in effect yet (neither approved nor verified and uncontested, or revoked); `verifications`
+     * carries each claimed domain's TXT record and state.
      */
     private WriteEmailDomains(res: ServerResponse, session: TenantSession, view: TenantEmailDomainsView): void
     {
         const caps = TenantAdminCapabilities.For(session, this.directory.GetTenant(session.tenantId)).capabilities
         this.WriteJson(res, TenantApiEndpoint.StatusOk, {
             domains: view.domains, editable: view.editable && caps[TenantApiEndpoint.SettingsCapability], inHive: view.inHive, pending: view.pending,
+            verifications: view.verifications,
         })
     }
 
