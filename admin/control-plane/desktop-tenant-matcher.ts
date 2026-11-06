@@ -2,6 +2,8 @@ import { ConsoleFingerprint } from './console-advert-contract.js'
 import { ConsoleAdvertRegistry } from './console-advert-registry.js'
 import type { ConsoleAdvertRecord, IConsoleAdvertLookup } from './console-advert-registry.js'
 import { ConsoleDomainApprovals } from './console-domain-approvals.js'
+import type { DomainStanding } from './console-domain-approvals.js'
+import { DomainClaims } from './domain-claims.js'
 import { EmailDomainPolicy } from './email-domain-policy.js'
 import { HiveConsoleSpecs } from './hive-console-spec.js'
 import type { TenantRecord } from './platform-records.js'
@@ -20,10 +22,10 @@ export interface IFingerprintKeySource
     Get(hiveId: string): Promise<Buffer | undefined>
 }
 
-/** The operator-approved email domains per tenant (ConsoleDomainApprovals satisfies it). */
+/** The approved, revoked and verified email domains per tenant (ConsoleDomainApprovals satisfies it). */
 export interface IDomainApprovalSource
 {
-    ApprovedFor(tenantId: string): readonly string[]
+    StandingOf(tenantId: string): DomainStanding
 }
 
 export enum DiscoveryMatch
@@ -40,10 +42,12 @@ type TenantPlacement = { inHive: boolean; advert: ConsoleAdvertRecord | undefine
 /**
  * Decides which tenants an email belongs to for desktop discovery. Three tiers are unioned, one entry per tenant
  * (an account match wins over a domain match):
- * - an in-hive console's usable advert: its fingerprints (account) and its advertised domains that an operator approved (domain);
+ * - an in-hive console's usable advert: its fingerprints (account) and its advertised domains that count (domain);
  * - the platform's TenantAccountIndex (account); an in-hive tenant is skipped until its console has advertised;
- * - a control-plane tenant record's emailDomains that an operator approved (domain); an in-hive tenant's record domains are ignored.
- * Both domain tiers are claimed INTERSECT approved (ConsoleDomainApprovals.EffectiveDomains), so nobody's claim alone redirects an address.
+ * - a control-plane tenant record's emailDomains that count (domain); an in-hive tenant's record domains are ignored.
+ * Both domain tiers use ConsoleDomainApprovals.EffectiveDomains: a domain counts when it is claimed AND (operator-approved, OR
+ * verified and not contested by another tenant's claim) AND not revoked, so a claim alone never redirects an address. Contention is
+ * read afresh on every Match (DomainClaims), so a verified domain enters or leaves discovery as other tenants' claims change.
  * An in-hive tenant points at its advertised console; every other tenant points at the tenant plane. Domains match
  * exactly (no parent-domain matching). Stale adverts are used as they are.
  */
@@ -71,16 +75,17 @@ export class DesktopTenantMatcher
         const domain = EmailDomainPolicy.DomainOf(email)
         const found = new Map<string, DiscoveredTenant>()
         const placements = new Map<string, TenantPlacement>()
-        await this.MatchAdverts(email, domain, found, placements)
+        const claims = DomainClaims.Collect(this.directory, this.adverts)
+        await this.MatchAdverts(email, domain, claims, found, placements)
         this.MatchIndex(email, tenantPlaneUrl, found, placements)
         if (domain !== undefined)
         {
-            this.MatchRecordDomains(domain, tenantPlaneUrl, found, placements)
+            this.MatchRecordDomains(domain, tenantPlaneUrl, claims, found, placements)
         }
         return [...found.values()].sort(DesktopTenantMatcher.Compare)
     }
 
-    private async MatchAdverts(email: string, domain: string | undefined, found: Map<string, DiscoveredTenant>, placements: Map<string, TenantPlacement>): Promise<void>
+    private async MatchAdverts(email: string, domain: string | undefined, claims: DomainClaims, found: Map<string, DiscoveredTenant>, placements: Map<string, TenantPlacement>): Promise<void>
     {
         if (this.adverts === undefined)
         {
@@ -104,7 +109,7 @@ export class DesktopTenantMatcher
                 DesktopTenantMatcher.Add(found, { tenant, consoleUrl: advert.consoleUrl, match: DiscoveryMatch.Account })
                 continue
             }
-            if (domain !== undefined && this.EffectiveDomainsOf(advert.tenantId, advert.emailDomains).includes(domain))
+            if (domain !== undefined && this.EffectiveDomainsOf(advert.tenantId, advert.emailDomains, claims).includes(domain))
             {
                 DesktopTenantMatcher.Add(found, { tenant, consoleUrl: advert.consoleUrl, match: DiscoveryMatch.Domain })
             }
@@ -129,11 +134,11 @@ export class DesktopTenantMatcher
         }
     }
 
-    private MatchRecordDomains(domain: string, tenantPlaneUrl: string, found: Map<string, DiscoveredTenant>, placements: Map<string, TenantPlacement>): void
+    private MatchRecordDomains(domain: string, tenantPlaneUrl: string, claims: DomainClaims, found: Map<string, DiscoveredTenant>, placements: Map<string, TenantPlacement>): void
     {
         for (const tenant of this.directory.ListTenants())
         {
-            if (!this.EffectiveDomainsOf(tenant.id, tenant.emailDomains ?? []).includes(domain))
+            if (!this.EffectiveDomainsOf(tenant.id, tenant.emailDomains ?? [], claims).includes(domain))
             {
                 continue
             }
@@ -163,16 +168,16 @@ export class DesktopTenantMatcher
     }
 
     /**
-     * The claimed domains (an advert's or a control-plane record's) an operator approved for the tenant; with no approval source
-     * no domain counts.
+     * The claimed domains (an advert's or a control-plane record's) that count for the tenant under the effective rule; with no
+     * approval source no domain counts.
      */
-    private EffectiveDomainsOf(tenantId: string, claimed: readonly string[]): readonly string[]
+    private EffectiveDomainsOf(tenantId: string, claimed: readonly string[], claims: DomainClaims): readonly string[]
     {
         if (this.approvals === undefined)
         {
             return []
         }
-        return ConsoleDomainApprovals.EffectiveDomainsLegacy(claimed, this.approvals.ApprovedFor(tenantId))
+        return ConsoleDomainApprovals.EffectiveDomains(claimed, this.approvals.StandingOf(tenantId), claims.ContestedFor(tenantId))
     }
 
     /**

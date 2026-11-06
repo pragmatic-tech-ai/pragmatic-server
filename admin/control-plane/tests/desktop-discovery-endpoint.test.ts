@@ -136,7 +136,7 @@ describe('DesktopDiscoveryEndpoint', () =>
         approved: ReadonlyMap<string, readonly string[]> = new Map()): Promise<void>
     {
         const endpoint = new DesktopDiscoveryEndpoint(index, new FakeDirectory(tenants, hives), url, DesktopDiscoveryEndpoint.NewThrottle(), new FakeAdverts(adverts),
-            undefined, { ApprovedFor: tenantId => approved.get(tenantId) ?? [] })
+            undefined, { StandingOf: tenantId => ({ approved: approved.get(tenantId) ?? [], revoked: [], verified: [] }) })
         server = createServer((req, res) =>
         {
             void endpoint.Handle(req, res)

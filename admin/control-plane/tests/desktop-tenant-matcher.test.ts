@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConsoleFingerprint } from '../console-advert-contract.js'
+import type { DomainStanding } from '../console-domain-approvals.js'
 import type { ConsoleAdvertRecord, IConsoleAdvertLookup } from '../console-advert-registry.js'
 import { DesktopTenantMatcher, DiscoveryMatch } from '../desktop-tenant-matcher.js'
 import type { IDiscoveryDirectory, IDomainApprovalSource, IFingerprintKeySource } from '../desktop-tenant-matcher.js'
@@ -77,10 +78,12 @@ class MatcherKeys implements IFingerprintKeySource
 class MatcherApprovals implements IDomainApprovalSource
 {
     public readonly Approved = new Map<string, string[]>()
+    public readonly Revoked = new Map<string, string[]>()
+    public readonly Verified = new Map<string, string[]>()
 
-    public ApprovedFor(tenantId: string): readonly string[]
+    public StandingOf(tenantId: string): DomainStanding
     {
-        return this.Approved.get(tenantId) ?? []
+        return { approved: this.Approved.get(tenantId) ?? [], revoked: this.Revoked.get(tenantId) ?? [], verified: this.Verified.get(tenantId) ?? [] }
     }
 }
 
@@ -353,6 +356,66 @@ describe('DesktopTenantMatcher', () =>
         await index.Record('acme', 'owner', MatcherFixture.Ann)
         const bare = new DesktopTenantMatcher(index, directory)
         assert.deepEqual(await bare.Match(MatcherFixture.Ann, MatcherFixture.Plane), [])
+    })
+
+    it('a verified, uncontested domain matches without an operator approval', async () =>
+    {
+        directory.Tenants.set('beta', MatcherFixture.Tenant('beta', 'Beta', ['beta.test']))
+        approvals.Verified.set('beta', ['beta.test'])
+        assert.deepEqual(Summary(await matcher.Match('carl@beta.test', MatcherFixture.Plane)), [{ id: 'beta', consoleUrl: MatcherFixture.Plane, match: DiscoveryMatch.Domain }])
+    })
+
+    it('a verified domain another tenant also claims does not match until an operator approves it', async () =>
+    {
+        directory.Tenants.set('beta', MatcherFixture.Tenant('beta', 'Beta', ['shared.test']))
+        directory.Tenants.set('gamma', MatcherFixture.Tenant('gamma', 'Gamma', ['shared.test']))
+        approvals.Verified.set('beta', ['shared.test'])
+        assert.deepEqual(await matcher.Match('carl@shared.test', MatcherFixture.Plane), [])
+        approvals.Approved.set('beta', ['shared.test'])
+        assert.deepEqual(Summary(await matcher.Match('carl@shared.test', MatcherFixture.Plane)), [{ id: 'beta', consoleUrl: MatcherFixture.Plane, match: DiscoveryMatch.Domain }])
+    })
+
+    it('a contested verified domain matches as soon as the other tenant drops its claim', async () =>
+    {
+        directory.Tenants.set('beta', MatcherFixture.Tenant('beta', 'Beta', ['shared.test']))
+        directory.Tenants.set('gamma', MatcherFixture.Tenant('gamma', 'Gamma', ['shared.test']))
+        approvals.Verified.set('beta', ['shared.test'])
+        assert.deepEqual(await matcher.Match('carl@shared.test', MatcherFixture.Plane), [])
+        directory.Tenants.set('gamma', MatcherFixture.Tenant('gamma', 'Gamma', []))
+        assert.deepEqual(Summary(await matcher.Match('carl@shared.test', MatcherFixture.Plane)), [{ id: 'beta', consoleUrl: MatcherFixture.Plane, match: DiscoveryMatch.Domain }])
+    })
+
+    it('it leaves discovery again when another tenant claims it', async () =>
+    {
+        directory.Tenants.set('beta', MatcherFixture.Tenant('beta', 'Beta', ['shared.test']))
+        directory.Tenants.set('gamma', MatcherFixture.Tenant('gamma', 'Gamma', []))
+        approvals.Verified.set('beta', ['shared.test'])
+        assert.equal((await matcher.Match('carl@shared.test', MatcherFixture.Plane)).length, 1)
+        directory.Tenants.set('gamma', MatcherFixture.Tenant('gamma', 'Gamma', ['shared.test']))
+        assert.deepEqual(await matcher.Match('carl@shared.test', MatcherFixture.Plane), [])
+    })
+
+    it('a revoked verified domain does not match', async () =>
+    {
+        directory.Tenants.set('beta', MatcherFixture.Tenant('beta', 'Beta', ['beta.test']))
+        approvals.Verified.set('beta', ['beta.test'])
+        approvals.Revoked.set('beta', ['beta.test'])
+        assert.deepEqual(await matcher.Match('carl@beta.test', MatcherFixture.Plane), [])
+    })
+
+    it('an operator-approved contested domain still matches', async () =>
+    {
+        directory.Tenants.set('beta', MatcherFixture.Tenant('beta', 'Beta', ['shared.test']))
+        directory.Tenants.set('gamma', MatcherFixture.Tenant('gamma', 'Gamma', ['shared.test']))
+        approvals.Approved.set('beta', ['shared.test'])
+        assert.deepEqual(Summary(await matcher.Match('carl@shared.test', MatcherFixture.Plane)), [{ id: 'beta', consoleUrl: MatcherFixture.Plane, match: DiscoveryMatch.Domain }])
+    })
+
+    it('an in-hive tenant\'s verified advert domain matches, pointing at its console', async () =>
+    {
+        adverts.Records.set('acme', MatcherFixture.Advert({ emailDomains: ['acme.test'] }))
+        approvals.Verified.set('acme', ['acme.test'])
+        assert.deepEqual(Summary(await matcher.Match('carl@acme.test', MatcherFixture.Plane)), [{ id: 'acme', consoleUrl: MatcherFixture.Console, match: DiscoveryMatch.Domain }])
     })
 
     it('drops index ids the directory does not know', async () =>
