@@ -16,9 +16,55 @@ class FakeProbe implements IContainerProbe
     }
 }
 
+/** Records each WriteFile's start and end; the write that runs after Hold() waits until Release(). */
+class HeldWriteRegistry extends EnvironmentRegistry
+{
+    public readonly Events: string[] = []
+    private held: Promise<void> | null = null
+    private release: () => void = () => undefined
+    private writeCount = 0
+
+    public Hold(): void
+    {
+        this.held = new Promise<void>(resolve => { this.release = resolve })
+    }
+
+    public Release(): void
+    {
+        this.release()
+    }
+
+    public get Started(): number
+    {
+        return this.Events.filter(e => e.startsWith(RegistryFixture.StartTag)).length
+    }
+
+    protected override async WriteFile(body: object): Promise<void>
+    {
+        const n = ++this.writeCount
+        this.Events.push(`${RegistryFixture.StartTag}${n}`)
+        const held = this.held
+        this.held = null
+        if (held !== null)
+        {
+            await held
+        }
+        await super.WriteFile(body)
+        this.Events.push(`${RegistryFixture.EndTag}${n}`)
+    }
+}
+
 class RegistryFixture
 {
     public static readonly Encoding = 'utf8'
+    public static readonly StartTag = 'start'
+    public static readonly EndTag = 'end'
+
+    /** Lets every pending promise continuation run. */
+    public static Settle(): Promise<void>
+    {
+        return new Promise(resolve => setImmediate(resolve))
+    }
 
     public static Record(name: string, port: number, status: EnvStatus): EnvironmentRecord
     {
@@ -153,6 +199,32 @@ test('a record with an explicit type round-trips through persist/Load', async ()
         const second = new EnvironmentRegistry(file, probe)
         await second.Load()
         assert.equal(second.Get('rt')!.type, EnvType.Runtime)
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
+
+test('concurrent Puts are written one at a time and the file ends with every record', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), 'envreg-'))
+    const file = join(dir, 'envs.json')
+    try
+    {
+        const probe = new FakeProbe()
+        const reg = new HeldWriteRegistry(file, probe)
+        reg.Hold()
+        const putA = reg.Put(RegistryFixture.Record('a', 8081, EnvStatus.Running))
+        const putB = reg.Put(RegistryFixture.Record('b', 8082, EnvStatus.Running))
+        await RegistryFixture.Settle()
+        assert.equal(reg.Started, 1)
+        reg.Release()
+        await Promise.all([putA, putB])
+        assert.deepEqual(reg.Events, ['start1', 'end1', 'start2', 'end2'])
+        const reopened = new EnvironmentRegistry(file, probe)
+        await reopened.Load()
+        assert.deepEqual(reopened.List().map(r => r.name).sort(), ['a', 'b'])
     }
     finally
     {

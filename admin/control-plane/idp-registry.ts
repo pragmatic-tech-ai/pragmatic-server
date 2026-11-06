@@ -1,17 +1,16 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { AtomicJsonFile, SerialRuns } from './atomic-json-file.js'
 import type { IdpRecord } from './idp-record.js'
 
 export class IdpRegistry
 {
     private static readonly Encoding = 'utf8'
-    private static readonly TempSuffix = '.tmp'
     private static readonly RootKey = 'idps'
     private static readonly NotFoundCode = 'ENOENT'
     private static readonly JsonIndent = 2
 
     private readonly records = new Map<string, IdpRecord>()
+    private readonly writes = new SerialRuns()
 
     public constructor(private readonly filePath: string)
     {
@@ -63,12 +62,20 @@ export class IdpRegistry
         await this.persist()
     }
 
-    private async persist(): Promise<void>
+    /** Writes run one at a time; each snapshots the records when it starts, so a later write carries every earlier change. */
+    private persist(): Promise<void>
     {
-        await mkdir(dirname(this.filePath), { recursive: true })
-        const body = { [IdpRegistry.RootKey]: Object.fromEntries(this.records) }
-        const temp = `${this.filePath}.${randomUUID()}${IdpRegistry.TempSuffix}`
-        await writeFile(temp, JSON.stringify(body, null, IdpRegistry.JsonIndent), IdpRegistry.Encoding)
-        await rename(temp, this.filePath)
+        return this.writes.Run(() => this.WriteFile(this.Body()))
+    }
+
+    /** Writes the file atomically; overridable so a test can hold a write. */
+    protected WriteFile(body: object): Promise<void>
+    {
+        return AtomicJsonFile.Write(this.filePath, body, IdpRegistry.JsonIndent)
+    }
+
+    private Body(): object
+    {
+        return { [IdpRegistry.RootKey]: Object.fromEntries(this.records) }
     }
 }

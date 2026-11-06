@@ -1,6 +1,5 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
-import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { AtomicJsonFile, SerialRuns } from './atomic-json-file.js'
 import { EnvStatus, EnvType, type EnvironmentRecord, type IContainerProbe } from './environment-record.js'
 
 type PersistedEnvironmentRecord = Omit<EnvironmentRecord, 'type'> & { type?: EnvType }
@@ -8,13 +7,13 @@ type PersistedEnvironmentRecord = Omit<EnvironmentRecord, 'type'> & { type?: Env
 export class EnvironmentRegistry
 {
     private static readonly Encoding = 'utf8'
-    private static readonly TempSuffix = '.tmp'
     private static readonly RootKey = 'environments'
     private static readonly NotFoundCode = 'ENOENT'
     private static readonly JsonIndent = 2
     private static readonly NoContainerName = ''
 
     private readonly records = new Map<string, EnvironmentRecord>()
+    private readonly writes = new SerialRuns()
 
     public constructor(private readonly filePath: string, private readonly probe: IContainerProbe)
     {
@@ -81,12 +80,20 @@ export class EnvironmentRegistry
         await this.persist()
     }
 
-    private async persist(): Promise<void>
+    /** Writes run one at a time; each snapshots the records when it starts, so a later write carries every earlier change. */
+    private persist(): Promise<void>
     {
-        await mkdir(dirname(this.filePath), { recursive: true })
-        const body = { [EnvironmentRegistry.RootKey]: Object.fromEntries(this.records) }
-        const temp = `${this.filePath}.${randomUUID()}${EnvironmentRegistry.TempSuffix}`
-        await writeFile(temp, JSON.stringify(body, null, EnvironmentRegistry.JsonIndent), EnvironmentRegistry.Encoding)
-        await rename(temp, this.filePath)
+        return this.writes.Run(() => this.WriteFile(this.Body()))
+    }
+
+    /** Writes the file atomically; overridable so a test can hold a write. */
+    protected WriteFile(body: object): Promise<void>
+    {
+        return AtomicJsonFile.Write(this.filePath, body, EnvironmentRegistry.JsonIndent)
+    }
+
+    private Body(): object
+    {
+        return { [EnvironmentRegistry.RootKey]: Object.fromEntries(this.records) }
     }
 }

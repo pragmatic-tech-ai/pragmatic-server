@@ -6,10 +6,56 @@ import { join } from 'node:path'
 import { IdpRegistry } from '../idp-registry.js'
 import { IdpStatus, type IdpRecord } from '../idp-record.js'
 
+/** Records each WriteFile's start and end; the write that runs after Hold() waits until Release(). */
+class HeldWriteIdpRegistry extends IdpRegistry
+{
+    public readonly Events: string[] = []
+    private held: Promise<void> | null = null
+    private release: () => void = () => undefined
+    private writeCount = 0
+
+    public Hold(): void
+    {
+        this.held = new Promise<void>(resolve => { this.release = resolve })
+    }
+
+    public Release(): void
+    {
+        this.release()
+    }
+
+    public get Started(): number
+    {
+        return this.Events.filter(e => e.startsWith(IdpRecordFixture.StartTag)).length
+    }
+
+    protected override async WriteFile(body: object): Promise<void>
+    {
+        const n = ++this.writeCount
+        this.Events.push(`${IdpRecordFixture.StartTag}${n}`)
+        const held = this.held
+        this.held = null
+        if (held !== null)
+        {
+            await held
+        }
+        await super.WriteFile(body)
+        this.Events.push(`${IdpRecordFixture.EndTag}${n}`)
+    }
+}
+
 class IdpRecordFixture
 {
     public static readonly FileName = 'idps.json'
     public static readonly TempPrefix = 'idp-registry-'
+    public static readonly StartTag = 'start'
+    public static readonly EndTag = 'end'
+
+    /** Lets every pending promise continuation run. */
+    public static Settle(): Promise<void>
+    {
+        return new Promise(resolve => setImmediate(resolve))
+    }
 
     public static Record(tenantId: string, port: number, status: IdpStatus = IdpStatus.Running): IdpRecord
     {
@@ -109,6 +155,32 @@ test('Load on a missing file leaves the registry empty without throwing', async 
         await registry.Load()
         assert.deepEqual(registry.List(), [])
         assert.equal(registry.Get('acme'), undefined)
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
+
+test('concurrent Put and Delete are serialised and the file ends in the last state', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), IdpRecordFixture.TempPrefix))
+    try
+    {
+        const path = join(dir, IdpRecordFixture.FileName)
+        const registry = new HeldWriteIdpRegistry(path)
+        await registry.Put(IdpRecordFixture.Record('x', 8443))
+        registry.Hold()
+        const putY = registry.Put(IdpRecordFixture.Record('y', 8444))
+        const deleteX = registry.Delete('x')
+        await IdpRecordFixture.Settle()
+        assert.equal(registry.Started, 2)
+        registry.Release()
+        await Promise.all([putY, deleteX])
+        assert.deepEqual(registry.Events, ['start1', 'end1', 'start2', 'end2', 'start3', 'end3'])
+        const reopened = new IdpRegistry(path)
+        await reopened.Load()
+        assert.deepEqual(reopened.List().map(r => r.tenantId), ['y'])
     }
     finally
     {

@@ -1,6 +1,6 @@
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { createHash, randomBytes } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { AtomicJsonFile, SerialRuns } from '../atomic-json-file.js'
 
 /**
  * A tenant-plane login session. The id handed to callers is the bearer token: never log it or put it in an error message
@@ -28,7 +28,8 @@ class RenewalRefused extends Error
  * the caller once (Issue, RotateFor) and never kept or written; Validate and Revoke hash the token presented. Sessions the
  * store returns carry the caller's token as their id, so the token-keyed socket bookkeeping above it is unchanged. A file
  * written before digests (no `tokenFormat` marker, raw tokens as keys) is migrated on load by hashing its keys and rewritten
- * at once (best effort: a failed write leaves it to the next change). Temp-write + atomic rename; a missing file is empty. Every change
+ * at once (best effort: a failed write leaves it to the next change); the first load, migration write included, runs on the
+ * change chain, so no change can start before it. Temp-write + atomic rename; a missing file is empty. Every change
  * is made on copies of the maps and persisted; changes run one at a time. Grants (Issue, RotateFor) are strict: only a
  * successful write swaps the copy into memory, so a failed write leaves memory and disk as they were. Revocations
  * (Revoke, RevokeAllFor, RevokeTenant) fail CLOSED: the copy is swapped into memory even when the write fails (the error is then
@@ -38,7 +39,6 @@ class RenewalRefused extends Error
 export class TenantSessionStore
 {
     private static readonly Encoding = 'utf8'
-    private static readonly TempSuffix = '.tmp'
     private static readonly NotFoundCode = 'ENOENT'
     private static readonly JsonIndent = 2
     private static readonly RootKey = 'sessions'
@@ -67,8 +67,8 @@ export class TenantSessionStore
     private sessions = new Map<string, TenantSession>()
     private resets = new Map<string, Map<string, string>>()
     private tenantResets = new Map<string, string>()
-    private loading: Promise<void> | null = null
-    private mutationChain: Promise<void> = Promise.resolve()
+    private loaded = false
+    private readonly mutations = new SerialRuns()
 
     public constructor(
         private readonly filePath: string,
@@ -271,13 +271,14 @@ export class TenantSessionStore
      * Runs one change: `change` edits copies of the sessions and resets maps (taken from memory, so they include any
      * revocation an earlier failed write already applied), the copies are persisted, and then they replace the live maps.
      * A failed write rejects; it leaves memory untouched unless `failClosed` (a revocation), in which case the copies
-     * replace the live maps anyway. Changes are serialised, so each one starts from the previous one's result.
+     * replace the live maps anyway. Changes are serialised, so each one starts from the previous one's result. The run is
+     * already on the chain, so it loads in place (LoadOnce) rather than queueing behind itself.
      */
     private Mutate<T>(change: (sessions: Map<string, TenantSession>, resets: Map<string, Map<string, string>>, tenantResets: Map<string, string>) => T, failClosed: boolean = false): Promise<T>
     {
-        const run = this.mutationChain.then(async () =>
+        return this.mutations.Run(async () =>
         {
-            await this.ensureLoaded()
+            await this.LoadOnce()
             const sessions = new Map<string, TenantSession>([...this.sessions].map(([id, session]) => [id, { ...session }] as [string, TenantSession]))
             const resets = new Map<string, Map<string, string>>([...this.resets].map(([tenantId, principals]) => [tenantId, new Map(principals)] as [string, Map<string, string>]))
             const tenantResets = new Map(this.tenantResets)
@@ -301,8 +302,6 @@ export class TenantSessionStore
             this.tenantResets = tenantResets
             return result
         })
-        this.mutationChain = run.then(() => undefined, () => undefined)
-        return run
     }
 
     /** Stamps the principal's reset time (now) and drops every one of its sessions from the given maps; returns how many. */
@@ -363,17 +362,25 @@ export class TenantSessionStore
         }
     }
 
-    private ensureLoaded(): Promise<void>
+    /** A read's first load runs on the change chain, so the legacy-migration write inside it is serialised and awaited. */
+    private async ensureLoaded(): Promise<void>
     {
-        if (this.loading === null)
+        if (this.loaded)
         {
-            this.loading = this.load().catch(err =>
-            {
-                this.loading = null
-                throw err
-            })
+            return
         }
-        return this.loading
+        await this.mutations.Run(() => this.LoadOnce())
+    }
+
+    /** Loads unless already loaded; called only on the change chain. A failed load leaves `loaded` false, so the next call retries. */
+    private async LoadOnce(): Promise<void>
+    {
+        if (this.loaded)
+        {
+            return
+        }
+        await this.load()
+        this.loaded = true
     }
 
     private async load(): Promise<void>
@@ -430,23 +437,12 @@ export class TenantSessionStore
 
     private async write(sessions: Map<string, TenantSession>, resets: Map<string, Map<string, string>>, tenantResets: Map<string, string>): Promise<void>
     {
-        await mkdir(dirname(this.filePath), { recursive: true })
         const body = {
             [TenantSessionStore.FormatKey]: TenantSessionStore.DigestFormat,
             [TenantSessionStore.RootKey]: Object.fromEntries(sessions),
             [TenantSessionStore.ResetsKey]: Object.fromEntries([...resets].map(([tenantId, principals]) => [tenantId, Object.fromEntries(principals)])),
             [TenantSessionStore.TenantResetsKey]: Object.fromEntries(tenantResets),
         }
-        const temp = `${this.filePath}.${randomUUID()}${TenantSessionStore.TempSuffix}`
-        await writeFile(temp, JSON.stringify(body, null, TenantSessionStore.JsonIndent), { encoding: TenantSessionStore.Encoding, mode: TenantSessionStore.FileMode })
-        try
-        {
-            await rename(temp, this.filePath)
-        }
-        catch (err)
-        {
-            await unlink(temp).catch(() => undefined)
-            throw err
-        }
+        await AtomicJsonFile.Write(this.filePath, body, TenantSessionStore.JsonIndent, { mode: TenantSessionStore.FileMode })
     }
 }
