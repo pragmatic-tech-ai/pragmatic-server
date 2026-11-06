@@ -418,6 +418,14 @@ describe('DesktopTenantMatcher', () =>
         assert.deepEqual(Summary(await matcher.Match('carl@acme.test', MatcherFixture.Plane)), [{ id: 'acme', consoleUrl: MatcherFixture.Console, match: DiscoveryMatch.Domain }])
     })
 
+    it('an in-hive tenant\'s verified advert domain another tenant\'s record also claims does not match', async () =>
+    {
+        adverts.Records.set('acme', MatcherFixture.Advert({ emailDomains: ['acme.test'] }))
+        approvals.Verified.set('acme', ['acme.test'])
+        directory.Tenants.set('beta', MatcherFixture.Tenant('beta', 'Beta', ['acme.test']))
+        assert.deepEqual(await matcher.Match('carl@acme.test', MatcherFixture.Plane), [])
+    })
+
     it('drops index ids the directory does not know', async () =>
     {
         await index.Record('gone', 'owner', MatcherFixture.Ann)

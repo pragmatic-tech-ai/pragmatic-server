@@ -42,7 +42,8 @@ type TenantPlacement = { inHive: boolean; advert: ConsoleAdvertRecord | undefine
 /**
  * Decides which tenants an email belongs to for desktop discovery. Three tiers are unioned, one entry per tenant
  * (an account match wins over a domain match):
- * - an in-hive console's usable advert: its fingerprints (account) and its advertised domains that count (domain);
+ * - an in-hive console's usable advert: its fingerprints (account) and its advertised domains that count (domain), i.e. claimed AND (operator-approved OR verified and
+ *   not contested) AND not revoked;
  * - the platform's TenantAccountIndex (account); an in-hive tenant is skipped until its console has advertised;
  * - a control-plane tenant record's emailDomains that count (domain); an in-hive tenant's record domains are ignored.
  * Both domain tiers use ConsoleDomainApprovals.EffectiveDomains: a domain counts when it is claimed AND (operator-approved, OR
