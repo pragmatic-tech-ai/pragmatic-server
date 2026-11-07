@@ -115,7 +115,7 @@ export class ConsoleRelayHoldSmoke
     private static readonly Labels = {
         EmailFile: 'owner email file is readable',
         PasswordFile: 'password file is readable',
-        Lookup:'console lookup (GET /desktop/console) answers 200 with a tenantId',
+        Lookup: 'console lookup (GET /desktop/console) answers 200 with a tenantId',
         Begin: 'begin returns 200 with an authorize URL',
         Browser: 'browser: IdP login form, then the loopback captured a code and state',
         Complete: 'complete returns 200 with a token',
@@ -260,7 +260,7 @@ export class ConsoleRelayHoldSmoke
             const captured = await this.DriveBrowser(authorizeUrl, loopback)
             const sentState = new URL(authorizeUrl).searchParams.get(S.StateKey)
             const matches = captured !== undefined && captured.path === S.CallbackPath && sentState !== null && captured.state === sentState
-            this.Expect(S.Labels.Browser, matches, captured === undefined ? S.CallbackTimedOut : S.CallbackMismatch)
+            this.Expect(S.Labels.Browser, matches, matches ? '' : (captured === undefined ? S.CallbackTimedOut : S.CallbackMismatch))
             if (captured === undefined || !matches)
             {
                 return undefined
