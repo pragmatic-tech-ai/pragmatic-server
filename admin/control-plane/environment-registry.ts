@@ -53,12 +53,15 @@ export class EnvironmentRegistry
         return this.records.get(name)
     }
 
-    /** True when any record belongs to the tenant (a platform-managed environment). */
+    /**
+     * True when the tenant owns a platform-managed environment that the desktop would list: any status but Failed. A delete
+     * removes the record outright, so there is no "being deleted" status to exclude.
+     */
     public HasEnvironmentsOf(tenantId: string): boolean
     {
         for (const record of this.records.values())
         {
-            if (record.tenantId === tenantId)
+            if (record.tenantId === tenantId && record.status !== EnvStatus.Failed)
             {
                 return true
             }

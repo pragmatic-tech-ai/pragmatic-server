@@ -234,3 +234,38 @@ test('HasEnvironmentsOf is true only for a tenant that owns a record', async () 
         await rm(dir, { recursive: true, force: true })
     }
 })
+
+test('HasEnvironmentsOf does not count a failed record', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), 'envreg-'))
+    try
+    {
+        const reg = new EnvironmentRegistry(join(dir, 'envs.json'), new FakeProbe())
+        await reg.Put({ ...RegistryFixture.Record('a', 8081, EnvStatus.Failed), tenantId: 't1' })
+        assert.equal(reg.HasEnvironmentsOf('t1'), false)
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
+
+test('HasEnvironmentsOf counts a running record beside a failed one, and a stopped or unknown one', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), 'envreg-'))
+    try
+    {
+        const reg = new EnvironmentRegistry(join(dir, 'envs.json'), new FakeProbe())
+        await reg.Put({ ...RegistryFixture.Record('a', 8081, EnvStatus.Failed), tenantId: 't1' })
+        await reg.Put({ ...RegistryFixture.Record('b', 8082, EnvStatus.Running), tenantId: 't1' })
+        await reg.Put({ ...RegistryFixture.Record('c', 8083, EnvStatus.Stopped), tenantId: 't2' })
+        await reg.Put({ ...RegistryFixture.Record('d', 8084, EnvStatus.Unknown), tenantId: 't3' })
+        assert.equal(reg.HasEnvironmentsOf('t1'), true)
+        assert.equal(reg.HasEnvironmentsOf('t2'), true)
+        assert.equal(reg.HasEnvironmentsOf('t3'), true)
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
+})
