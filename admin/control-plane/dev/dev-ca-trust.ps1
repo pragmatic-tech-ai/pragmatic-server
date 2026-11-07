@@ -1,5 +1,6 @@
-# Trust or remove the development console CA in the current user's root store (no elevation needed;
-# Windows shows its own confirmation dialog).
+# Trust or remove a development CA (the console's per-domain CA, or a local platform IdP's CA under
+# data/idp/<tenant>/tls/ca.crt) in the current user's root store (no elevation needed; Windows shows its own
+# confirmation dialog).
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File dev-ca-trust.ps1 -CaFile <path> -Install [-WhatIf]
 #   powershell -NoProfile -ExecutionPolicy Bypass -File dev-ca-trust.ps1 -CaFile <path> -Remove [-WhatIf]
@@ -8,7 +9,8 @@
 #
 # Exactly one of -Install, -Remove, -ShowThumbprint is required (otherwise exit status 2). -Thumbprint is an
 # alternative to -CaFile for -Remove only, for when the CA file is gone. -Install refuses any certificate that
-# is not a name-constrained CA (the development CA always is). -WhatIf reports what would happen and changes nothing.
+# is not a name-constrained CA (every development CA minted now is; a local IdP CA minted before the constraint
+# existed is refused until it is replaced, see README.md). -WhatIf reports what would happen and changes nothing.
 [CmdletBinding(SupportsShouldProcess)]
 param(
     [string]$CaFile,

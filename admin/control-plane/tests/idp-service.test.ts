@@ -9,7 +9,7 @@ import type { IIdpWorkloadDriver, IdpWorkloadRequest, IdpWorkloadResult } from '
 import { IdpStatus } from '../idp-record.js'
 import type { IdpRecord } from '../idp-record.js'
 import { IdpRegistry } from '../idp-registry.js'
-import type { IdpContainerEnv, IdpContainerSpec } from '../idp-container-env.js'
+import type { IdpContainerEnv, IdpContainerSpec, StaleImage } from '../idp-container-env.js'
 import type { PortAllocator } from '../port-allocator.js'
 
 class FakeContainers
@@ -19,12 +19,27 @@ class FakeContainers
     public FailHealthy = false
     public FailHealthyOnCalls: number[] = []
     public SeenToken = ''
+    public Stale: StaleImage | undefined
+    /** Images whose Up throws (a broken rebuild). */
+    public FailUpFor: string[] = []
+    /** The CA each WaitHealthy call trusted, in call order. */
+    public readonly HealthCas: Buffer[] = []
     private healthCallCount = 0
+
+    public async StaleImageOf(name: string, image: string): Promise<StaleImage | undefined>
+    {
+        this.Calls.push('StaleImageOf:' + name + '@' + image)
+        return this.Stale
+    }
 
     public async Up(spec: IdpContainerSpec): Promise<void>
     {
         this.Calls.push('Up')
         this.Specs.push(spec)
+        if (this.FailUpFor.includes(spec.image))
+        {
+            throw new Error('image does not start')
+        }
     }
 
     public async Down(name: string): Promise<void>
@@ -44,9 +59,10 @@ class FakeContainers
         this.SeenToken = readFileSync(join(dir, 'secrets', 'admin-token'), 'utf8')
     }
 
-    public async WaitHealthy(): Promise<void>
+    public async WaitHealthy(_port: number, ca: Buffer): Promise<void>
     {
         this.Calls.push('WaitHealthy')
+        this.HealthCas.push(ca)
         this.healthCallCount++
         if (this.FailHealthy || this.FailHealthyOnCalls.includes(this.healthCallCount))
         {
@@ -176,6 +192,173 @@ test('unhealthy reuse recovers in place on the same port and volume, never remov
         assert.equal(recovered.baseUrl, first.baseUrl)
         assert.equal(recovered.adminToken, first.adminToken)
         assert.ok(recovered.ca.equals(first.ca))
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('a healthy IdP on a rebuilt image is refreshed in place onto the current image, keeping port, volume and CA', async () =>
+{
+    const fx = new Fixture()
+    try
+    {
+        const first = await fx.Service.EnsureForTenant('t1', 'T')
+        fx.Containers.Stale = { running: 'sha256:old', current: 'sha256:new' }
+        const mark = fx.Containers.Calls.length
+        const refreshed = await fx.Service.EnsureForTenant('t1', 'T')
+        assert.deepEqual(fx.Containers.Calls.slice(mark), ['WaitHealthy', 'StaleImageOf:pragmatic-idp-t1@img:1', 'Down:pragmatic-idp-t1', 'SeedVolume:pragmatic-idp-data-t1', 'Up', 'WaitHealthy'])
+        const relaunch = fx.Containers.Specs[1]
+        assert.equal(relaunch.image, 'img:1')
+        assert.equal(relaunch.port, 12100)
+        assert.equal(relaunch.volumeName, 'pragmatic-idp-data-t1')
+        assert.equal(refreshed.baseUrl, first.baseUrl)
+        assert.ok(refreshed.ca.equals(first.ca))
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('a rebuilt image that cannot start brings the IdP back on the image it ran, and that build is not retried', async () =>
+{
+    const fx = new Fixture()
+    try
+    {
+        const first = await fx.Service.EnsureForTenant('t1', 'T')
+        fx.Containers.Stale = { running: 'sha256:old', current: 'sha256:new' }
+        fx.Containers.FailUpFor = ['img:1']
+        const kept = await fx.Service.EnsureForTenant('t1', 'T')
+        assert.deepEqual(fx.Containers.Specs.slice(1).map(s => s.image), ['img:1', 'sha256:old'])
+        assert.equal(kept.baseUrl, first.baseUrl)
+        assert.ok(!fx.Containers.Calls.some(c => c.startsWith('RemoveVolume')))
+        const ups = fx.Containers.Specs.length
+        await fx.Service.EnsureForTenant('t1', 'T')
+        assert.equal(fx.Containers.Specs.length, ups)
+        fx.Containers.Stale = { running: 'sha256:old', current: 'sha256:newer' }
+        fx.Containers.FailUpFor = []
+        await fx.Service.EnsureForTenant('t1', 'T')
+        assert.equal(fx.Containers.Specs.length, ups + 1)
+        assert.equal(fx.Containers.Specs[ups].image, 'img:1')
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('an IdP kept on its fallback build that later goes unhealthy is recovered on that build, not the refused one', async () =>
+{
+    const fx = new Fixture()
+    try
+    {
+        await fx.Service.EnsureForTenant('t1', 'T')
+        fx.Containers.Stale = { running: 'sha256:old', current: 'sha256:new' }
+        fx.Containers.FailUpFor = ['img:1']
+        await fx.Service.EnsureForTenant('t1', 'T')
+        const ups = fx.Containers.Specs.length
+        fx.Containers.FailHealthyOnCalls = [fx.Containers.HealthCas.length + 1]   // the next reuse probe misses
+        const recovered = await fx.Service.EnsureForTenant('t1', 'T')
+        assert.deepEqual(fx.Containers.Specs.slice(ups).map(s => s.image), ['sha256:old'])
+        assert.equal(recovered.baseUrl, 'https://host.docker.internal:12100')
+        assert.ok(!fx.Containers.Calls.some(c => c.startsWith('RemoveVolume')))
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('an unhealthy IdP whose fallback build is gone is recovered on the tag', async () =>
+{
+    const fx = new Fixture()
+    try
+    {
+        await fx.Service.EnsureForTenant('t1', 'T')
+        fx.Containers.Stale = { running: 'sha256:old', current: 'sha256:new' }
+        fx.Containers.FailUpFor = ['img:1']
+        await fx.Service.EnsureForTenant('t1', 'T')
+        const ups = fx.Containers.Specs.length
+        fx.Containers.FailUpFor = ['sha256:old']
+        fx.Containers.FailHealthyOnCalls = [fx.Containers.HealthCas.length + 1]
+        await fx.Service.EnsureForTenant('t1', 'T')
+        assert.deepEqual(fx.Containers.Specs.slice(ups).map(s => s.image), ['sha256:old', 'img:1'])
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('a rebuilt image that cannot start, with the old image gone too, rejects with the refresh failure and keeps the volume', async () =>
+{
+    const fx = new Fixture()
+    try
+    {
+        await fx.Service.EnsureForTenant('t1', 'T')
+        fx.Containers.Stale = { running: 'sha256:old', current: 'sha256:new' }
+        fx.Containers.FailUpFor = ['img:1', 'sha256:old']
+        await assert.rejects(fx.Service.EnsureForTenant('t1', 'T'), /recovery failed[\s\S]*image does not start/)
+        assert.ok(!fx.Containers.Calls.some(c => c.startsWith('RemoveVolume')))
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('a healthy IdP on the current image is reused after one image check', async () =>
+{
+    const fx = new Fixture()
+    try
+    {
+        await fx.Service.EnsureForTenant('t1', 'T')
+        await fx.Service.EnsureForTenant('t1', 'T')
+        assert.equal(fx.Containers.Calls.filter(c => c.startsWith('StaleImageOf')).length, 1)
+        assert.equal(fx.Containers.Calls.filter(c => c === 'Up').length, 1)
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('a reused IdP whose tls dir was deleted is recovered with a freshly minted CA that the health check trusts', async () =>
+{
+    const fx = new Fixture()
+    try
+    {
+        const first = await fx.Service.EnsureForTenant('t1', 'T')
+        rmSync(join(fx.Root, 'idp', 't1', 'tls'), { recursive: true, force: true })
+        const mark = fx.Containers.Calls.length
+        const recovered = await fx.Service.EnsureForTenant('t1', 'T')
+        assert.deepEqual(fx.Containers.Calls.slice(mark), ['Down:pragmatic-idp-t1', 'SeedVolume:pragmatic-idp-data-t1', 'Up', 'WaitHealthy'])
+        const minted = readFileSync(join(fx.Root, 'idp', 't1', 'tls', 'ca.crt'))
+        assert.ok(!recovered.ca.equals(first.ca))
+        assert.ok(recovered.ca.equals(minted))
+        assert.ok(fx.Containers.HealthCas[fx.Containers.HealthCas.length - 1].equals(minted))
+        assert.equal(recovered.baseUrl, first.baseUrl)
+        assert.equal(recovered.adminToken, first.adminToken)
+        assert.ok(!fx.Containers.Calls.some(c => c.startsWith('RemoveVolume')))
+    }
+    finally
+    {
+        fx.Dispose()
+    }
+})
+
+test('a tls dir missing only its CA file is not re-minted: recovery fails and keeps the volume', async () =>
+{
+    const fx = new Fixture()
+    try
+    {
+        await fx.Service.EnsureForTenant('t1', 'T')
+        rmSync(join(fx.Root, 'idp', 't1', 'tls', 'ca.crt'), { force: true })
+        await assert.rejects(fx.Service.EnsureForTenant('t1', 'T'), /recovery failed/)
+        assert.ok(!existsSync(join(fx.Root, 'idp', 't1', 'tls', 'ca.crt')))
+        assert.ok(!fx.Containers.Calls.some(c => c.startsWith('RemoveVolume')))
     }
     finally
     {

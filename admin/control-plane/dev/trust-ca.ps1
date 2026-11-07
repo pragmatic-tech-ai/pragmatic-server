@@ -1,15 +1,15 @@
-# Run ONCE, elevated (Administrator), to trust the local dev CAs so your browser accepts the dev TLS
+# Run ONCE, elevated (Administrator), to trust the local Caddy dev CA so your browser accepts the dev TLS
 # without warnings:  Right-click -> Run with PowerShell (as Admin), or:  powershell -ExecutionPolicy Bypass -File trust-ca.ps1
 #
 # Trusts:
 #   - certs\dev-ca.crt       the CA behind Caddy's *.lvh.me cert (the tenant admin panel at https://<tenant>.lvh.me)
-#   - certs\acme-idp-ca.crt  the acme tenant's IdP cert (the login redirect hits the IdP at https://host.docker.internal:<port>)
 #
-# Each tenant you provision gets its OWN IdP CA under data\idp\<tenant>\tls\ca.crt; copy it next to this script
-# (as <tenant>-idp-ca.crt) and re-run to trust it too.
+# Tenant IdP CAs are NOT trusted here. Each tenant's IdP has its own name-constrained CA under
+# data\idp\<tenant>\tls\ca.crt; trust it for your user with dev-ca-trust.ps1 (no elevation; it refuses any CA
+# that is not name-constrained). See README.md, "Local platform IdP certificates".
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$certs = @('certs\dev-ca.crt', 'certs\acme-idp-ca.crt')
+$certs = @('certs\dev-ca.crt')
 foreach ($rel in $certs)
 {
 	$path = Join-Path $here $rel

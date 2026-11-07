@@ -19,9 +19,12 @@ sessions, and the master key. Stop and restart anytime — state (and the IdP co
 
 ## First-time setup (once)
 
-1. **Trust the dev CAs** (needs Administrator — the one step the harness can't do for you):
-   open an elevated PowerShell and run `trust-ca.ps1`. It trusts the Caddy `*.lvh.me` CA and the acme IdP CA
-   so the browser accepts the dev TLS without warnings. Restart the browser afterward.
+1. **Trust the Caddy dev CA** (needs Administrator — the one step the harness can't do for you):
+   open an elevated PowerShell and run `trust-ca.ps1`. It trusts the Caddy `*.lvh.me` CA so the browser accepts
+   the tenant panel's TLS without warnings.
+2. **Trust the acme IdP CA** (no elevation) after `dev-seed.sh` has provisioned acme: run `dev-ca-trust.ps1`
+   with `-CaFile admin\control-plane\data\idp\acme\tls\ca.crt -Install` (see "Local platform IdP certificates").
+   Restart the browser afterward.
 
 ## Run
 
@@ -40,8 +43,8 @@ Log into the tenant panel at `https://acme.lvh.me` as `owner@acme.test` with tha
   (one shared secure-cookie flag drives both planes). They still work over the tenant panel's HTTPS. To make
   them `Secure`, front the operator plane with TLS too and set `PRAGMATIC_ADMIN_SECURE_COOKIE=true`.
 - TLS uses a local dev CA (not a public one); hence the one-time `trust-ca.ps1` step.
-- Each additional tenant gets its own IdP CA under `data/idp/<tenant>/tls/ca.crt` — trust it the same way
-  (copy it beside this README as `<tenant>-idp-ca.crt` and re-run `trust-ca.ps1`).
+- Each additional tenant gets its own IdP CA under `data/idp/<tenant>/tls/ca.crt`. It is name-constrained to
+  `host.docker.internal` and `127.0.0.1`, so trust it for your Windows user with `dev-ca-trust.ps1` (see below).
 
 ## Development console certificates
 
@@ -57,3 +60,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File admin\control-plane\dev\dev-
 Add `-WhatIf` to `-Install` or `-Remove` to see what would happen without changing the store. `-Install` refuses
 anything that is not a name-constrained CA. After the CA file is gone, remove it by thumbprint with
 `-Thumbprint <40 hex> -Remove`.
+
+## Local platform IdP certificates
+
+A tenant's local IdP container serves TLS signed by its own CA, `data/idp/<tenant>/tls/ca.crt`, name-constrained to
+`host.docker.internal` and `127.0.0.1`. Trust or remove it with the same `dev-ca-trust.ps1` commands as above.
+
+An IdP whose CA predates the name constraint is refused by `-Install`. To replace that CA, stop the control plane,
+delete the whole `data/idp/<tenant>/tls/` directory (only a missing directory is re-minted; a partly missing set of
+files still fails recovery, so a CA is never replaced by accident), and start it again. The next tenant sign-in or
+environment action recovers the IdP in place (same port and identity volume) with a new, constrained CA.
+Environments created before the swap still trust the old CA, so recreate them.
+
+An old CA that an earlier version of this guide had you trust machine-wide (a copy such as `certs\acme-idp-ca.crt`
+imported by `trust-ca.ps1`) is not in your user store, so `dev-ca-trust.ps1 -Remove` cannot reach it. Read its
+thumbprint with `dev-ca-trust.ps1 -CaFile <old ca.crt> -ShowThumbprint`, then remove it from an elevated PowerShell
+with `Remove-Item Cert:\LocalMachine\Root\<thumbprint>`.
+
+The server image can be rebuilt under the same tag. On the next tenant sign-in or environment action, the control
+plane compares the image a healthy IdP container runs with the image the tag now names, and recreates a stale
+container on the current image, on the same port and identity volume. This signs out anyone signed in to that IdP,
+because its sessions are held in memory. If the new image cannot come up, the container is brought back on the
+image it ran before and that sign-in or action still proceeds. That build is then left alone (a later recovery
+also uses the image it fell back to) until the tag names another build or the control plane restarts. The
+refusal is held in memory, and any failed start counts, including one slower than the health deadline.

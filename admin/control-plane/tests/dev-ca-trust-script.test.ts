@@ -1,10 +1,12 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { randomBytes, X509Certificate } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DevCa } from '../../../src/idp/dev-ca.js'
+import { IdpContainerEnv } from '../idp-container-env.js'
 import { SealedSecretStore } from '../sealed-secret-store.js'
 import { DevCertificateAuthority } from '../dev-certificate-authority.js'
 
@@ -154,6 +156,25 @@ describe('dev-ca-trust.ps1', { skip: process.platform !== 'win32' }, () =>
             assert.equal(r.stdout.includes(`would install: ${thumb}`), true)
             assert.equal(TrustScriptFixture.InStore(thumb), before)
         })
+    })
+
+    test('-Install -WhatIf accepts the local platform IdP CA and leaves the store untouched', async () =>
+    {
+        const dir = await mkdtemp(join(tmpdir(), TrustScriptFixture.Prefix))
+        try
+        {
+            const caFile = DevCa.EnsureAt(dir, IdpContainerEnv.ContainerHost).caFile
+            const thumb = new X509Certificate(await readFile(caFile)).fingerprint.replace(TrustScriptFixture.ColonPattern, '')
+            const before = TrustScriptFixture.InStore(thumb)
+            const r = TrustScriptFixture.Run(TrustScriptFixture.CaFileFlag, caFile, TrustScriptFixture.InstallFlag, TrustScriptFixture.WhatIfFlag)
+            assert.equal(r.status, 0, r.stderr)
+            assert.equal(r.stdout.includes(`would install: ${thumb}`), true)
+            assert.equal(TrustScriptFixture.InStore(thumb), before)
+        }
+        finally
+        {
+            await rm(dir, { recursive: true, force: true })
+        }
     })
 
     test('-Install refuses a plain non-CA certificate', async () =>

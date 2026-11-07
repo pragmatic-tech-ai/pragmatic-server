@@ -1,4 +1,5 @@
 import { test } from 'node:test'
+import { execFileSync } from 'node:child_process'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -172,7 +173,7 @@ test('a one-element list and a bare string mint equivalent single-SAN certs; eac
     }
 })
 
-test('a first host longer than the 64-character CN limit still mints: the CN is its first label, the SAN keeps the full name', () =>
+test('a first host longer than the 64-character CN limit still mints: the CN is the first host that fits, the SAN keeps the full name', () =>
 {
     const dir = mkdtempSync(join(tmpdir(), 'devca-'))
     try
@@ -183,9 +184,80 @@ test('a first host longer than the 64-character CN limit still mints: the CN is 
         const cert = new X509Certificate(readFileSync(f.certFile))
         assert.ok(cert.subjectAltName?.includes('DNS:' + host))
         assert.ok(cert.subjectAltName?.includes('DNS:idp-pragmatic-default.localtest.me'))
-        assert.ok(cert.subject.includes('CN=pragmatic-idp-pragmatic-default'))
+        assert.ok(cert.subject.includes('CN=idp-pragmatic-default.localtest.me'))
         assert.ok(!cert.subject.includes('CN=' + host))
         assert.ok(cert.checkHost(host) !== undefined)
+    }
+    finally
+    {
+        rmSync(dir, { recursive: true, force: true })
+    }
+})
+
+test('when no host fits the CN limit the CN is the first host\'s first label, and the chain still verifies', () =>
+{
+    const dir = mkdtempSync(join(tmpdir(), 'devca-'))
+    try
+    {
+        const host = 'pragmatic-idp-pragmatic-default.pragmatic-idp-pragmatic-default.svc.cluster.local'
+        const f = DevCa.EnsureAt(dir, [host])
+        const cert = new X509Certificate(readFileSync(f.certFile))
+        assert.ok(cert.subject.includes('CN=pragmatic-idp-pragmatic-default'))
+        assert.ok(cert.subjectAltName?.includes('DNS:' + host))
+        assert.match(OpensslProbe.Verify(f.caFile, f.certFile), /OK/)
+    }
+    finally
+    {
+        rmSync(dir, { recursive: true, force: true })
+    }
+})
+
+class OpensslProbe
+{
+    public static Extension(certFile: string, name: string): string
+    {
+        return execFileSync('openssl', ['x509', '-in', certFile, '-noout', '-ext', name], { encoding: 'utf8' })
+    }
+
+    /** `openssl verify` enforces the CA's name constraints against the leaf's SANs; throws when the chain is refused. */
+    public static Verify(caFile: string, certFile: string): string
+    {
+        return execFileSync('openssl', ['verify', '-CAfile', caFile, certFile], { encoding: 'utf8' })
+    }
+}
+
+test('the CA is a critical name-constrained CA limited to its hosts and the loopback IP', () =>
+{
+    const dir = mkdtempSync(join(tmpdir(), 'devca-'))
+    try
+    {
+        const f = DevCa.EnsureAt(dir, ['a.example', 'b.example'])
+        const ca = new X509Certificate(readFileSync(f.caFile))
+        assert.equal(ca.ca, true)
+        const constraints = OpensslProbe.Extension(f.caFile, 'nameConstraints')
+        assert.match(constraints, /Name Constraints: critical/)
+        assert.match(constraints, /DNS:a\.example/)
+        assert.match(constraints, /DNS:b\.example/)
+        assert.match(constraints, /IP:127\.0\.0\.1\/255\.255\.255\.255/)
+        assert.doesNotMatch(constraints, /Excluded/)
+        assert.match(OpensslProbe.Extension(f.caFile, 'basicConstraints'), /critical[\s\S]*CA:TRUE, pathlen:0/)
+        assert.match(OpensslProbe.Extension(f.caFile, 'keyUsage'), /critical[\s\S]*Certificate Sign, CRL Sign/)
+        assert.match(OpensslProbe.Verify(f.caFile, f.certFile), /OK/)
+    }
+    finally
+    {
+        rmSync(dir, { recursive: true, force: true })
+    }
+})
+
+test('the name-constrained chain still verifies for a host longer than the CN limit', () =>
+{
+    const dir = mkdtempSync(join(tmpdir(), 'devca-'))
+    try
+    {
+        const host = 'pragmatic-idp-pragmatic-default.pragmatic-idp-pragmatic-default.svc.cluster.local'
+        const f = DevCa.EnsureAt(dir, [host, 'idp-pragmatic-default.localtest.me'])
+        assert.match(OpensslProbe.Verify(f.caFile, f.certFile), /OK/)
     }
     finally
     {

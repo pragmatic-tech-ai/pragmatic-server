@@ -77,11 +77,18 @@ export class DevCa
     private static readonly SanSeparator = ','
     private static readonly SanSuffix = ',IP:127.0.0.1'
     private static readonly BasicConstraints = 'basicConstraints=CA:FALSE'
+    private static readonly FlagAddext = '-addext'
+    private static readonly CaBasicConstraints = 'basicConstraints=critical,CA:TRUE,pathlen:0'
+    private static readonly CaKeyUsage = 'keyUsage=critical,keyCertSign,cRLSign'
+    private static readonly NameConstraintsPrefix = 'nameConstraints=critical,'
+    private static readonly PermittedDnsPrefix = 'permitted;DNS:'
+    /** The one IP every server cert carries (SanSuffix), as the only permitted IP subtree. */
+    private static readonly PermittedLoopback = 'permitted;IP:127.0.0.1/255.255.255.255'
     private static readonly Eol = '\n'
     private static readonly KeyMode = 0o600
     private static readonly OpensslFailed = 'DevCa: failed to run openssl (is the openssl CLI installed and on PATH?): '
 
-    /** `host` is one DNS name, or a list (CN = the first, or its first label when longer than 64 characters; every one becomes a DNS SAN). A bare string behaves exactly as a one-element list. */
+    /** `host` is one DNS name, or a list (CN = the first host of at most 64 characters, or the first host's first label when none fits; every one becomes a DNS SAN and a permitted name of the CA). A bare string behaves exactly as a one-element list. */
     public static EnsureAt(dir: string, host: string | readonly string[], openssl: string = DevCa.Openssl): DevCaFiles
     {
         const hosts: readonly string[] = typeof host === 'string' ? [host] : host
@@ -155,9 +162,10 @@ export class DevCa
     {
         const p = (f: string): string => join(d, f)
         DevCa.Run(openssl, [DevCa.ReqCmd, DevCa.FlagX509, DevCa.FlagNewkey, DevCa.KeySpec, DevCa.FlagNodes, DevCa.FlagKeyout, p(DevCa.CaKeyFile),
-            DevCa.FlagOut, p(DevCa.CaCertFile), DevCa.FlagDays, DevCa.ValidDays, DevCa.FlagSubj, DevCa.CaSubject])
+            DevCa.FlagOut, p(DevCa.CaCertFile), DevCa.FlagDays, DevCa.ValidDays, DevCa.FlagSubj, DevCa.CaSubject,
+            DevCa.FlagAddext, DevCa.CaBasicConstraints, DevCa.FlagAddext, DevCa.CaKeyUsage, DevCa.FlagAddext, DevCa.NameConstraintsOf(hosts)])
         DevCa.Run(openssl, [DevCa.ReqCmd, DevCa.FlagNewkey, DevCa.KeySpec, DevCa.FlagNodes, DevCa.FlagKeyout, p(DevCa.ServerKeyFile),
-            DevCa.FlagOut, p(DevCa.ServerCsrFile), DevCa.FlagSubj, DevCa.SubjectPrefix + DevCa.CommonNameOf(hosts[0] as string)])
+            DevCa.FlagOut, p(DevCa.ServerCsrFile), DevCa.FlagSubj, DevCa.SubjectPrefix + DevCa.CommonNameOf(hosts)])
         writeFileSync(p(DevCa.ExtFile), DevCa.SanPrefix + hosts.map(h => DevCa.DnsPrefix + h).join(DevCa.SanSeparator) + DevCa.SanSuffix + DevCa.Eol + DevCa.BasicConstraints + DevCa.Eol)
         DevCa.Run(openssl, [DevCa.X509Cmd, DevCa.FlagReq, DevCa.FlagIn, p(DevCa.ServerCsrFile), DevCa.FlagCa, p(DevCa.CaCertFile),
             DevCa.FlagCaKey, p(DevCa.CaKeyFile), DevCa.FlagCaCreateSerial, DevCa.FlagOut, p(DevCa.ServerCertFile),
@@ -168,16 +176,27 @@ export class DevCa
     }
 
     /**
-     * The subject CN for the server cert: the first host when it fits X.509's 64-character CN limit, else its first DNS label (cut
-     * to the limit). Clients match the SAN list, which always carries every full host, so a shortened CN changes no verification.
+     * The CA may sign only for the hosts it was minted for (and the loopback IP), so trusting it in an OS store (dev-ca-trust.ps1
+     * refuses any CA without a critical name constraint) can never vouch for another site, even if its key leaked during the mint.
      */
-    private static CommonNameOf(host: string): string
+    private static NameConstraintsOf(hosts: readonly string[]): string
     {
-        if (host.length <= DevCa.MaxCommonNameLength)
+        return DevCa.NameConstraintsPrefix + [...hosts.map(h => DevCa.PermittedDnsPrefix + h), DevCa.PermittedLoopback].join(DevCa.SanSeparator)
+    }
+
+    /**
+     * The subject CN for the server cert: the first host that fits X.509's 64-character CN limit, so the CN is itself one of
+     * the CA's permitted names. Only when no host fits is it the first host's first DNS label (cut to the limit); clients match
+     * the SAN list, which always carries every full host, so that shortened CN changes no verification.
+     */
+    private static CommonNameOf(hosts: readonly string[]): string
+    {
+        const fitting = hosts.find(h => h.length <= DevCa.MaxCommonNameLength)
+        if (fitting !== undefined)
         {
-            return host
+            return fitting
         }
-        return (host.split(DevCa.LabelSeparator)[0] as string).slice(0, DevCa.MaxCommonNameLength)
+        return ((hosts[0] as string).split(DevCa.LabelSeparator)[0] as string).slice(0, DevCa.MaxCommonNameLength)
     }
 
     private static Run(openssl: string, args: string[]): void

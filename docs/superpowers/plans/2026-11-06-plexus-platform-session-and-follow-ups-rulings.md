@@ -41,10 +41,15 @@ Source: the SDD ledger. Each line: what was decided, why, and the cost if wrong.
 - Final gates: a pre-existing flaky protocol test ("OnBuildStateChanged ... survives reconnect", failing 5 of 5 on master too) slept a fixed 20 ms while the first notification takes 24-40 ms to arrive; it now waits for each notification (bounded), and the suite passes 114/114.
 - Teardown: graph, both environments, the console and its kept resources, ingress-nginx and the console dev CA were removed, and the temp credential files deleted.
 
-## Open follow-ups (asked of the user)
+## Follow-ups (built 2026-11-07, at the user's go)
 
-- The local platform IdP's dev CA is not name-constrained, so it cannot be trusted in Windows the safe way; a name-constrained CA would let the platform leg prove OS trust like the console.
-- A running local IdP container is reused even when the IdP image has been rebuilt; the reuse check could compare the container's image with the current one.
+- Built: `DevCa` mints a critical name-constrained CA (permitted DNS = the hosts it was minted for, plus IP 127.0.0.1/32; basicConstraints CA:TRUE pathlen:0, keyUsage keyCertSign,cRLSign), so `dev-ca-trust.ps1 -Install` accepts the local platform IdP CA. The server cert's CN is now the first host that fits 64 characters, so it is itself a permitted name.
+- Ruling: existing CAs are never rotated silently, because environment bundles pin the IdP CA. A deliberate replacement is deleting the tenant's whole `tls/` dir; in-place recovery then mints a new CA (a partly missing dir still fails) - cost if wrong: environments created before a deliberate swap must be recreated (documented).
+- Ruling: `trust-ca.ps1` no longer trusts a hand-copied IdP CA machine-wide; IdP CAs go through `dev-ca-trust.ps1` for the user only - cost if wrong: one extra no-elevation step in first-time setup.
+- Built: a healthy local IdP whose container image id differs from the id its tag now names is recreated on the current image (same port and identity volume). When the new build cannot start, the IdP comes back on the build it ran, and that refusal is remembered in memory (also used by later unhealthy recoveries) until the tag moves or the control plane restarts - cost if wrong: a slow-but-good build is skipped until the next rebuild or restart (documented).
+- Ruling: `idp-container-env.test.ts` was mixed (139 CRLF lines, one 14-line LF test); the editor rewrites a file in one line ending, so it is now all CRLF, the file's own convention. `git diff --ignore-cr-at-eol` shows additions only - cost if wrong: none.
+- Review: one Important and ten Minor findings, then three Minor after the fix round; all fixed. Gates: control plane 2373 pass / 0 fail, `src` 1647 / 0, both type checks clean.
+- Rule breach (verified harmless): one test block in `src/idp/tests/dev-ca.test.ts` was appended with a shell heredoc instead of the editor; the bytes were checked (ASCII, LF).
 
 ## Rule breaches (verified harmless)
 

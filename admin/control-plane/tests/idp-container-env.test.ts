@@ -138,6 +138,44 @@ test('Up propagates a docker failure with subcommand + stderr but not the argv',
     await assert.rejects(new IdpContainerEnv(exec).Up(Fixture.Spec), /daemon down/)
 })
 
+/** Answers `docker inspect` (the container's image id) and `docker image inspect` (the tag's current id); undefined = that call fails. */
+class ImageExec implements IDockerExec
+{
+    public readonly Calls: string[][] = []
+
+    public constructor(private readonly containerImage: string | undefined, private readonly currentImage: string | undefined)
+    {
+    }
+
+    public async Run(args: string[]): Promise<string>
+    {
+        this.Calls.push(args)
+        const reply = args[0] === 'image' ? this.currentImage : this.containerImage
+        if (reply === undefined)
+        {
+            throw new Error('docker inspect failed')
+        }
+        return reply + '\n'
+    }
+}
+
+test('StaleImageOf asks docker for the container\'s image id and the current id of the image tag', async () =>
+{
+    const exec = new ImageExec('sha256:aaa', 'sha256:aaa')
+    assert.equal(await new IdpContainerEnv(exec).StaleImageOf('pragmatic-idp-t1', 'img:1'), undefined)
+    assert.equal(exec.Calls.length, 2)
+    assert.ok(exec.Calls.some(c => JSON.stringify(c) === JSON.stringify(['inspect', '--type', 'container', '--format', '{{.Image}}', 'pragmatic-idp-t1'])))
+    assert.ok(exec.Calls.some(c => JSON.stringify(c) === JSON.stringify(['image', 'inspect', '--format', '{{.Id}}', 'img:1'])))
+})
+
+test('StaleImageOf answers both ids only when both are known and differ', async () =>
+{
+    assert.deepEqual(await new IdpContainerEnv(new ImageExec('sha256:old', 'sha256:new')).StaleImageOf('c', 'img:1'), { running: 'sha256:old', current: 'sha256:new' })
+    assert.equal(await new IdpContainerEnv(new ImageExec(undefined, 'sha256:new')).StaleImageOf('c', 'img:1'), undefined)
+    assert.equal(await new IdpContainerEnv(new ImageExec('sha256:old', undefined)).StaleImageOf('c', 'img:1'), undefined)
+    assert.equal(await new IdpContainerEnv(new ImageExec('', 'sha256:new')).StaleImageOf('c', 'img:1'), undefined)
+})
+
 test('SeedVolume runs a throwaway root container copying the host dir into the volume with open perms', async () =>
 {
     const exec = new FakeExec()

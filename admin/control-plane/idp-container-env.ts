@@ -11,6 +11,13 @@ export interface IdpContainerSpec
     image: string
 }
 
+/** A container's image id (`running`) beside the id its tag now names (`current`), when the two differ. */
+export interface StaleImage
+{
+    running: string
+    current: string
+}
+
 /** Seam over the docker CLI: runs one docker invocation and returns stdout. */
 export interface IDockerExec
 {
@@ -80,6 +87,13 @@ export class IdpContainerEnv
     private static readonly SeedMount = '/seed'
     private static readonly ReadOnly = ':ro'
     private static readonly DefaultSeedImage = 'pragmatic-server:dev'
+    private static readonly InspectCmd = 'inspect'
+    private static readonly ImageCmd = 'image'
+    private static readonly FormatFlag = '--format'
+    private static readonly TypeFlag = '--type'
+    private static readonly ContainerType = 'container'
+    private static readonly ContainerImageFormat = '{{.Image}}'
+    private static readonly ImageIdFormat = '{{.Id}}'
 
     private static readonly EnvPort = 'PRAGMATIC_IDP_PORT'
     private static readonly EnvBaseUrl = 'PRAGMATIC_IDP_BASE_URL'
@@ -162,6 +176,33 @@ export class IdpContainerEnv
     public async RemoveVolume(volumeName: string): Promise<void>
     {
         await this.Tolerate([IdpContainerEnv.VolumeCmd, IdpContainerEnv.RmCmd, IdpContainerEnv.ForceFlag, volumeName])
+    }
+
+    /**
+     * Both image ids when the container runs an older build than `image` now names (the tag was rebuilt since the container
+     * started). Undefined whenever either id is unknown (docker refused, the container or the tag is gone) or they match:
+     * a healthy IdP is never torn down on a guess.
+     */
+    public async StaleImageOf(containerName: string, image: string): Promise<StaleImage | undefined>
+    {
+        const [running, current] = await Promise.all([
+            this.IdOf([IdpContainerEnv.InspectCmd, IdpContainerEnv.TypeFlag, IdpContainerEnv.ContainerType, IdpContainerEnv.FormatFlag, IdpContainerEnv.ContainerImageFormat, containerName]),
+            this.IdOf([IdpContainerEnv.ImageCmd, IdpContainerEnv.InspectCmd, IdpContainerEnv.FormatFlag, IdpContainerEnv.ImageIdFormat, image])
+        ])
+        return running !== undefined && current !== undefined && running !== current ? { running, current } : undefined
+    }
+
+    private async IdOf(args: string[]): Promise<string | undefined>
+    {
+        try
+        {
+            const id = (await this.exec.Run(args)).trim()
+            return id.length > 0 ? id : undefined
+        }
+        catch
+        {
+            return undefined
+        }
     }
 
     /** Polls the IdP liveness endpoint over verified TLS (trusting only `ca`) until HTTP 200. */
