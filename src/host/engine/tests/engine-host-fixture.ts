@@ -1,7 +1,8 @@
 import { checkAgainst, toJSON, WikiOriginKind } from '@pragmatic-tech-ai/todl'
 import type { TodlDocument, WikiOrigin } from '@pragmatic-tech-ai/todl'
-import { Signal } from '@pragmatic-tech-ai/todl-runtime'
-import type { IStorage, StorageEntry } from '@pragmatic-tech-ai/todl-runtime'
+import { Disposable, Signal } from '@pragmatic-tech-ai/todl-runtime'
+import type { IDisposable, IStorage, StorageEntry } from '@pragmatic-tech-ai/todl-runtime'
+import type { IUpgradeTimer } from '../dev-graph-engine-host.js'
 import type { IDevLanguageService } from '../dev-language-service.js'
 import type { IDevSolution, IDevSolutionMember } from '../dev-solution.js'
 import { WriteFenceSlot } from '../server-model-workspace.js'
@@ -26,12 +27,68 @@ export class HeldFence implements IWriteFence
     }
 }
 
+/** A gate a test opens by hand. */
+export class ManualGate
+{
+    public readonly Promise: Promise<void>
+    private open: () => void = () => undefined
+
+    public constructor()
+    {
+        this.Promise = new Promise<void>(resolve => { this.open = resolve })
+    }
+
+    public Open(): void
+    {
+        this.open()
+    }
+}
+
+/** A timer seam the test elapses by hand: every started work stays pending until FireAll (or its handle's dispose). */
+export class ManualTimer implements IUpgradeTimer
+{
+    private readonly pending = new Set<() => void>()
+    private started: ManualGate = new ManualGate()
+
+    public get Pending(): number
+    {
+        return this.pending.size
+    }
+
+    public Start(_delayMs: number, work: () => void): IDisposable
+    {
+        this.pending.add(work)
+        this.started.Open()
+        return new Disposable(() => { this.pending.delete(work) })
+    }
+
+    /** Resolves once some work is pending (at once when one already is). */
+    public WhenStarted(): Promise<void>
+    {
+        if (this.pending.size > 0) return Promise.resolve()
+        this.started = new ManualGate()
+        return this.started.Promise
+    }
+
+    public FireAll(): void
+    {
+        const works = [...this.pending]
+        this.pending.clear()
+        for (const work of works) work()
+    }
+}
+
 /** An in-memory member storage rooted at `Root`. */
 export class MemoryStorage implements IStorage
 {
     private static readonly Separator = '/'
     private static readonly MissingPrefix = 'missing '
     public readonly Files = new Map<string, string>()
+    /** While set, every write waits for it before it lands (a slow, or hung, disk). */
+    public Hold: Promise<void> | undefined
+    /** Writes started (held ones included). */
+    public Started = 0
+    private writing = new ManualGate()
 
     public constructor(public readonly Root: string, files: Readonly<Record<string, string>> = {})
     {
@@ -52,7 +109,16 @@ export class MemoryStorage implements IStorage
 
     public async WriteText(path: string, content: string): Promise<void>
     {
+        this.Started += 1
+        this.writing.Open()
+        if (this.Hold !== undefined) await this.Hold
         this.Files.set(path, content)
+    }
+
+    /** Resolves once a write has started (at once when one already did). */
+    public WhenWriting(): Promise<void>
+    {
+        return this.writing.Promise
     }
 
     public async WriteBytes(path: string, bytes: Uint8Array): Promise<void>

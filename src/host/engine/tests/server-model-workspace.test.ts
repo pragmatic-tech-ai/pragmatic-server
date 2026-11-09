@@ -16,7 +16,8 @@ class NewFileWorkspace implements ITodlModelWorkspace
 {
     public static readonly Text = 'namespace shop { }\n'
 
-    public constructor(private readonly inner: ServerModelWorkspace, private readonly uri: string)
+    /** `uri` is emitted before the model's own files, `after` (when given) after them. */
+    public constructor(private readonly inner: ServerModelWorkspace, private readonly uri: string, private readonly after?: string)
     {
     }
 
@@ -26,13 +27,17 @@ class NewFileWorkspace implements ITodlModelWorkspace
         if (session === undefined) return undefined
         let emissions = 0
         const uri = this.uri
+        const after = this.after
         const draft = new Proxy(session.Draft, {
             get: (target, name) => (name === 'toTodlByFile'
                 ? () =>
                 {
                     const files = target.toTodlByFile()
                     emissions += 1
-                    return emissions === 1 ? files : new Map([[uri, NewFileWorkspace.Text], ...files])
+                    if (emissions === 1) return files
+                    const emitted = new Map([[uri, NewFileWorkspace.Text], ...files])
+                    if (after !== undefined) emitted.set(after, NewFileWorkspace.Text)
+                    return emitted
                 }
                 : NewFileWorkspace.Bound(target, name)),
         })
@@ -58,6 +63,9 @@ class WorkspaceFx
     public static readonly RenameAda = "MATCH (n:shop.Customer {name: 'Ada'}) SET n.name = 'Ann'"
     public static readonly Names = 'MATCH (n:shop.Customer) RETURN n.name AS name ORDER BY name'
     public static readonly NewFile = 'new.todl'
+    public static readonly LaterFile = 'later.todl'
+    public static readonly OutsideText = 'namespace shop { }\n// saved elsewhere\n'
+    public static readonly SiblingText = 'namespace shop { }\n// sibling\n'
     public static readonly Renamed = EngineHostFx.SourceA.replace('Ada', 'Renamed')
     public static readonly Unrestored = /could not be restored/
 
@@ -229,14 +237,73 @@ describe('ServerModelWorkspace', () =>
         assert.deepEqual(fx.Lang.Changes, [])
     })
 
-    test('a write of the text a file already holds is a no-op, even over another writer\'s change (same commit, other model)', async () =>
+    test('a write of the text a sibling session of the same writer already wrote is a no-op', async () =>
+    {
+        const fx = new EngineHostFx()
+        const shared = fx.ShareOneFile()
+        const workspace = WorkspaceFx.Workspace(fx)
+        const first = (await workspace.OpenDraft(EngineHostFx.ModelM))!
+        const second = (await workspace.OpenDraft(EngineHostFx.ModelN))!
+        await first.WriteFile(EngineHostFx.SharedFile, WorkspaceFx.SiblingText)
+        await second.WriteFile(EngineHostFx.SharedFile, WorkspaceFx.SiblingText)
+        assert.equal(shared.Files.get(EngineHostFx.SharedFile), WorkspaceFx.SiblingText)
+        assert.equal(fx.Lang.Changes.length, 1, 'the sibling write landed once; the second is a no-op')
+    })
+
+    test('identical text from an outside writer is never adopted: the write is refused as Stale (N1)', async () =>
     {
         const fx = new EngineHostFx()
         const session = (await WorkspaceFx.Workspace(fx).OpenDraft(EngineHostFx.ModelM))!
         fx.A.Files.set(EngineHostFx.File, WorkspaceFx.Renamed)
-        await session.WriteFile(EngineHostFx.File, WorkspaceFx.Renamed)
+        await assert.rejects(session.WriteFile(EngineHostFx.File, WorkspaceFx.Renamed), WorkspaceFx.IsStale)
         assert.equal(fx.A.Files.get(EngineHostFx.File), WorkspaceFx.Renamed)
-        assert.deepEqual(fx.Lang.Changes, [], 'nothing was written, so nothing is refreshed')
+        assert.deepEqual(fx.Lang.Changes, [])
+    })
+
+    test('an outside save of identical text in the commit window survives a later failing file (N1)', async () =>
+    {
+        // what the commit writes for the model file, from a run on an identical fixture
+        const probe = new EngineHostFx()
+        await WorkspaceFx.Run(probe, WorkspaceFx.RenameAda)
+        const committed = probe.A.Files.get(EngineHostFx.File)!
+        const fx = new EngineHostFx()
+        const engine = await WorkspaceFx.Open(fx, new NewFileWorkspace(WorkspaceFx.Workspace(fx), WorkspaceFx.NewFile, WorkspaceFx.LaterFile))
+        try
+        {
+            let landed = false
+            fx.Lang.OnIdle = () =>
+            {
+                if (landed) return
+                // the new file landed; an outside writer saves the model file with exactly the commit's text, and a
+                // later file of the commit is taken too, so that write would fail after the model file's
+                landed = true
+                fx.A.Files.set(EngineHostFx.File, committed)
+                fx.A.Files.set(WorkspaceFx.LaterFile, WorkspaceFx.OutsideText)
+            }
+            const failure = await WorkspaceFx.Failure(new Cypher.CypherEngine(engine).Execute(AccessScope.System, WorkspaceFx.RenameAda))
+            assert.ok(WorkspaceFx.Chain(failure).some(WorkspaceFx.IsStale), String(failure))
+            assert.ok(landed)
+            assert.equal(fx.A.Files.get(EngineHostFx.File), committed, 'the outside save survives the restore')
+            assert.equal(fx.A.Files.get(WorkspaceFx.LaterFile), WorkspaceFx.OutsideText)
+            assert.equal(fx.A.Files.has(WorkspaceFx.NewFile), false, 'what the commit itself wrote is restored')
+        }
+        finally
+        {
+            await engine.dispose()
+        }
+    })
+
+    test('two models deleting the same file in one writer: the second is refused as Stale, nothing torn', async () =>
+    {
+        const fx = new EngineHostFx()
+        const shared = fx.ShareOneFile()
+        const workspace = WorkspaceFx.Workspace(fx)
+        const first = (await workspace.OpenDraft(EngineHostFx.ModelM))!
+        const second = (await workspace.OpenDraft(EngineHostFx.ModelN))!
+        await first.DeleteFile(EngineHostFx.SharedFile)
+        await assert.rejects(second.DeleteFile(EngineHostFx.SharedFile), WorkspaceFx.IsStale)
+        assert.equal(shared.Files.has(EngineHostFx.SharedFile), false)
+        assert.equal(fx.Lang.Deletes.length, 1, 'the refused delete told the language service nothing')
     })
 
     test('a failed commit that had created a new file removes it again: no file storage did not hold is left', async () =>

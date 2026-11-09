@@ -876,9 +876,12 @@ export class PragmaticServer implements IEnvironmentGraphHost
         {
             throw new Error(PragmaticServer.DisposedMessage)
         }
-        const logger = this.options.logger ?? new NullLogger()
-        this.devEngine ??= new DevGraphEngineHost(async () => (await this.Manager()).ActiveSolution, () => this.SolutionLanguageService(), undefined,
-            new LoggerDevEngineDiagnostics(logger), new LoggerDevWriteDiagnostics(logger))
+        if (this.devEngine === undefined)
+        {
+            const logger = this.options.logger ?? new NullLogger()
+            this.devEngine = new DevGraphEngineHost(async () => (await this.Manager()).ActiveSolution, () => this.SolutionLanguageService(), undefined,
+                new LoggerDevEngineDiagnostics(logger), new LoggerDevWriteDiagnostics(logger))
+        }
         return this.devEngine
     }
 

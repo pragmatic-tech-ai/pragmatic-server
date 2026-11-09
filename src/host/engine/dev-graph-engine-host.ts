@@ -1,5 +1,5 @@
-import { GraphEngine, StorageKind } from '@pragmatic-tech-ai/graph'
-import type { ConnectorChangeSet, IConnectorTransaction, IGraphConnector, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
+import { CommitKind, GraphEngine, StorageKind, WriteOp } from '@pragmatic-tech-ai/graph'
+import type { BatchOp, ConnectorChangeSet, ICommitApplied, IConnectorTransaction, IGraphConnector, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { Severity } from '@pragmatic-tech-ai/todl'
 import type { Diagnostic, Repository } from '@pragmatic-tech-ai/todl'
 import { TodlFileConnector } from '@pragmatic-tech-ai/todl/engine'
@@ -64,6 +64,27 @@ export interface IUpgradeTimer
     Start(delayMs: number, work: () => void): IDisposable
 }
 
+/**
+ * A wait bounded by a timer seam: resolves true when `work` settles first, false when `ms` elapses first. A rejection of
+ * `work` counts as settled (the caller only waits for it to stop).
+ */
+export class BoundedWait
+{
+    public static Within(work: Promise<unknown>, ms: number, timer: IUpgradeTimer): Promise<boolean>
+    {
+        return new Promise<boolean>(resolve =>
+        {
+            const handle = timer.Start(ms, () => resolve(false))
+            const done = (): void =>
+            {
+                handle.dispose()
+                resolve(true)
+            }
+            work.then(done, done)
+        })
+    }
+}
+
 export class TimeoutUpgradeTimer implements IUpgradeTimer
 {
     public Start(delayMs: number, work: () => void): IDisposable
@@ -81,6 +102,11 @@ export interface IDevEngineDiagnostics
     UpgradeFailed(error: unknown): void
     /** A `Changed` subscriber threw (the upgrade itself applied; later upgrades are unaffected). */
     ChangedHandlerFailed(error: unknown): void
+    /**
+     * The engine's own connector writes did not settle within `DevGraphEngineHost.MaxSettleMs` (a hung connector call):
+     * the upgrade pass or the teardown stopped waiting and went on.
+     */
+    WritesUnsettled(): void
 }
 
 /** Reports each failure as one error on the server logger, by error name only (messages can carry paths). */
@@ -88,6 +114,7 @@ export class LoggerDevEngineDiagnostics implements IDevEngineDiagnostics
 {
     private static readonly Line = 'dev graph engine kept its previous version; the upgrade failed: '
     private static readonly HandlerLine = 'dev graph engine upgraded, but a Changed subscriber failed: '
+    private static readonly UnsettledLine = 'dev graph engine writes did not settle in time; the host went on without them'
     private static readonly UnknownName = 'UnknownError'
 
     public constructor(private readonly logger: ILogger = StructuredLogger.ToStdout())
@@ -102,6 +129,11 @@ export class LoggerDevEngineDiagnostics implements IDevEngineDiagnostics
     public ChangedHandlerFailed(error: unknown): void
     {
         this.logger.Error(LoggerDevEngineDiagnostics.HandlerLine + LoggerDevEngineDiagnostics.NameOf(error))
+    }
+
+    public WritesUnsettled(): void
+    {
+        this.logger.Error(LoggerDevEngineDiagnostics.UnsettledLine)
     }
 
     private static NameOf(error: unknown): string
@@ -191,11 +223,26 @@ export class EngineWriteTracker
     }
 
     /**
-     * The engine applied a commit (CommitApplied, after Finalize): every committed transaction leaves flight. Dev
-     * writes are serialized (DevCypherExecute's mutex), so the commit applied is the one those transactions belong to.
-     * Also called when the engine is disposed, so nothing waits on a Finalize that will never come.
+     * The engine applied a commit (CommitApplied, after Finalize). Only the committed transactions that belong to it
+     * leave flight: a connector is never told its commit number, so a transaction matches the applied commit when it
+     * is a Batch whose ops include one of the changes the transaction was given (a synthetic DETACH unlink matches the
+     * batch's DeleteNode of either end). An upgrade or schema change, or another batch such
+     * as an upgrade's seed commit, never ends a tracked transaction early (N3).
      */
-    public Finalized(): void
+    public Finalized(applied: ICommitApplied): void
+    {
+        if (applied.Kind !== CommitKind.Batch) return
+        const ops = new Set(applied.Batch.Ops().map(op => ChangeKey.Of(op)))
+        for (const transaction of [...this.finalizing])
+        {
+            if (!transaction.BelongsTo(ops)) continue
+            this.finalizing.delete(transaction)
+            transaction.End()
+        }
+    }
+
+    /** The engine is gone: no Finalize will come, so every committed transaction leaves flight. */
+    public Abandon(): void
     {
         const done = [...this.finalizing]
         this.finalizing.clear()
@@ -205,6 +252,33 @@ export class EngineWriteTracker
     public Track(connector: IGraphConnector): IGraphConnector
     {
         return new TrackedConnector(connector, this)
+    }
+}
+
+/** The identity of one batch op, as both the commit's batch and a connector change set carry it. */
+class ChangeKey
+{
+    private static readonly Separator = '\u0000'
+
+    public static Of(op: BatchOp): string
+    {
+        const parts: string[] = [String(op.Op)]
+        switch (op.Op)
+        {
+            case WriteOp.CreateNode:
+            case WriteOp.DeleteNode:
+            case WriteOp.SetOwner:
+                parts.push(op.PublicId)
+                break
+            case WriteOp.SetProperty:
+                parts.push(op.PublicId, op.Member, String(op.Value))
+                break
+            case WriteOp.Link:
+            case WriteOp.Unlink:
+                parts.push(op.From, op.Relationship, op.To)
+                break
+        }
+        return parts.join(ChangeKey.Separator)
     }
 }
 
@@ -235,6 +309,7 @@ class TrackedConnector implements IGraphConnector
 class TrackedTransaction implements IConnectorTransaction
 {
     private ended = false
+    private readonly keys = new Set<string>()
 
     public constructor(private readonly inner: IConnectorTransaction, private readonly tracker: EngineWriteTracker)
     {
@@ -242,7 +317,27 @@ class TrackedTransaction implements IConnectorTransaction
 
     public Apply(changes: ConnectorChangeSet): Promise<void>
     {
+        for (const change of changes.Changes)
+        {
+            this.keys.add(ChangeKey.Of(change))
+            if (change.Op === WriteOp.Unlink)
+            {
+                // a synthetic DETACH unlink is not a batch op: it belongs to the batch that deletes one of its ends
+                this.keys.add(ChangeKey.Of({ Op: WriteOp.DeleteNode, PublicId: change.From }))
+                this.keys.add(ChangeKey.Of({ Op: WriteOp.DeleteNode, PublicId: change.To }))
+            }
+        }
         return this.inner.Apply(changes)
+    }
+
+    /** True when the applied commit's ops (ChangeKey) include one of the changes this transaction was given. */
+    public BelongsTo(ops: ReadonlySet<string>): boolean
+    {
+        for (const key of this.keys)
+        {
+            if (ops.has(key)) return true
+        }
+        return false
     }
 
     /** A committed transaction stays in flight until the engine finalizes (EngineWriteTracker.Finalized); a failed one ends. */
@@ -326,7 +421,7 @@ class OpenedEngine implements IDisposable
         this.applied.dispose()
         await this.Engine.dispose()
         // no Finalize comes after the engine is gone: nothing may wait on one
-        this.writes.Finalized()
+        this.writes.Abandon()
     }
 }
 
@@ -349,6 +444,8 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
     public static readonly UpgradeDebounceMs = 150
     /** Bounds the connector phase of each write-through (the engine's PrepareTimeoutMs), explicitly rather than by default. */
     public static readonly PrepareTimeoutMs = 30000
+    /** How long the upgrade drain and the teardown wait for the engine's own writes to settle before going on (F-f). */
+    public static readonly MaxSettleMs = 2 * DevGraphEngineHost.PrepareTimeoutMs
     private static readonly DisposedMessage = 'The dev graph engine host has been disposed'
 
     public readonly Changed: ISignal<void>
@@ -369,6 +466,8 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         private readonly diagnostics: IDevEngineDiagnostics = new LoggerDevEngineDiagnostics(),
         private readonly writeDiagnostics: IDevWriteDiagnostics = new LoggerDevWriteDiagnostics(),
         private readonly prepareTimeoutMs: number = DevGraphEngineHost.PrepareTimeoutMs,
+        /** The timer seam bounding the settle waits ({@link DevGraphEngineHost.MaxSettleMs}). */
+        private readonly settleTimer: IUpgradeTimer = new TimeoutUpgradeTimer(),
     )
     {
         this.Changed = this.changed
@@ -418,6 +517,12 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         return this.writes.Settled()
     }
 
+    /** True once the engine has been asked to open (by a read, a query or a write); false before its first use. */
+    public get IsOpen(): boolean
+    {
+        return this.opening !== undefined
+    }
+
     public InstallWriteFence(fence: IWriteFence): IDisposable
     {
         return this.fences.Install(fence)
@@ -459,7 +564,7 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
                 Connectors: [connector],
                 PrepareTimeoutMs: this.prepareTimeoutMs,
             })
-            const applied = engine.CommitApplied.Subscribe(() => this.writes.Finalized())
+            const applied = engine.CommitApplied.Subscribe(commit => this.writes.Finalized(commit))
             return new OpenedEngine(engine, source, subscription, applied, this.writes, snapshot)
         }
         catch (error)
@@ -510,7 +615,12 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         let applied = false
         try
         {
-            await this.writes.Settled()
+            if (!(await BoundedWait.Within(this.writes.Settled(), DevGraphEngineHost.MaxSettleMs, this.settleTimer)))
+            {
+                // a hung connector call: report and go on; the next change retries once the writes settle
+                this.diagnostics.WritesUnsettled()
+                return
+            }
             const begun = this.writes.Begun
             const snapshot = await opened.Source.Current()
             if (!this.writes.Quiet(begun))
@@ -543,12 +653,20 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         }
     }
 
+    /** Bounded: a hung connector call never makes dispose hang (reported, the engine is disposed regardless). */
     private async Teardown(): Promise<void>
     {
         this.debounce?.dispose()
         this.debounce = undefined
         await this.draining
         const opened = await this.opening?.catch(() => undefined)
-        await opened?.dispose()
+        if (opened === undefined) return
+        if (!(await BoundedWait.Within(this.writes.Settled(), DevGraphEngineHost.MaxSettleMs, this.settleTimer))) this.diagnostics.WritesUnsettled()
+        const disposed = opened.dispose()
+        if (!(await BoundedWait.Within(disposed, DevGraphEngineHost.MaxSettleMs, this.settleTimer)))
+        {
+            this.diagnostics.WritesUnsettled()
+            this.writes.Abandon()
+        }
     }
 }

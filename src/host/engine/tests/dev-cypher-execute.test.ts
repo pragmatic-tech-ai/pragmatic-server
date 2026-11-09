@@ -29,7 +29,7 @@ import type { IDevEngineDiagnostics, IDevGraphEngine } from '../dev-graph-engine
 import type { DevSnapshot } from '../dev-snapshot-source.js'
 import type { IDevWriteDiagnostics, IWriteFence } from '../server-model-workspace.js'
 import { DevScopeFx } from './dev-scope-fixture.js'
-import { FakeLanguageService, FakeSolution, MemoryStorage } from './engine-host-fixture.js'
+import { FakeLanguageService, FakeSolution, ManualGate, ManualTimer, MemoryStorage } from './engine-host-fixture.js'
 
 // ── ported from host/tests/cypher-execute.test.ts (the legacy writer -> the dev engine) ──────────────
 
@@ -548,64 +548,36 @@ class ExecLanguageService extends FakeLanguageService
     }
 }
 
-/** A memory member whose N-th write (counted from the last reset) fails, and whose writes can be held open. */
+/** A memory member whose N-th write (counted from the last reset) fails. */
 class FailingStorage extends MemoryStorage
 {
     public static readonly DiskFull = 'disk full'
     public FailOnWriteNumber = 0
-    /** While set, every write waits for it before it lands (a slow disk). */
-    public Hold: Promise<void> | undefined
-    /** Writes started (held ones included). */
-    public Started = 0
     private writes = 0
 
     public override async WriteText(path: string, content: string): Promise<void>
     {
         this.writes += 1
-        this.Started += 1
         if (this.FailOnWriteNumber === this.writes) throw new Error(FailingStorage.DiskFull)
-        if (this.Hold !== undefined) await this.Hold
         await super.WriteText(path, content)
     }
 }
 
-/** A gate a test opens by hand. */
-class ManualGate
+/** Lets pending promise continuations and immediates run (no real-time wait). */
+class Turns
 {
-    public readonly Promise: Promise<void>
-    private open: () => void = () => undefined
+    private static readonly Count = 10
 
-    public constructor()
+    public static async Drain(): Promise<void>
     {
-        this.Promise = new Promise<void>(resolve => { this.open = resolve })
-    }
-
-    public Open(): void
-    {
-        this.open()
-    }
-}
-
-/** Real-time waits for the timeout test (the engine's write-through deadline is a real timer). */
-class Wait
-{
-    private static readonly PollMs = 5
-    private static readonly MaxPolls = 400
-
-    public static Ms(ms: number): Promise<void>
-    {
-        return new Promise<void>(resolve => setTimeout(resolve, ms))
-    }
-
-    public static async Until(condition: () => boolean): Promise<void>
-    {
-        for (let poll = 0; poll < Wait.MaxPolls && !condition(); poll++) await Wait.Ms(Wait.PollMs)
-        assert.ok(condition(), 'the condition never held')
+        for (let turn = 0; turn < Turns.Count; turn++) await new Promise<void>(resolve => setImmediate(resolve))
     }
 }
 
 class SilentEngineDiagnostics implements IDevEngineDiagnostics
 {
+    public static readonly Unsettled = 'writes unsettled'
+
     public readonly Failures: unknown[] = []
 
     public UpgradeFailed(error: unknown): void
@@ -616,6 +588,11 @@ class SilentEngineDiagnostics implements IDevEngineDiagnostics
     public ChangedHandlerFailed(error: unknown): void
     {
         this.Failures.push(error)
+    }
+
+    public WritesUnsettled(): void
+    {
+        this.Failures.push(SilentEngineDiagnostics.Unsettled)
     }
 }
 
@@ -636,6 +613,13 @@ class RecordingExecuteDiagnostics implements IDevExecuteDiagnostics
     public AfterCommitFailed(error: unknown): void
     {
         this.Failures.push(error)
+    }
+
+    public Unsettled = 0
+
+    public WritesUnsettled(): void
+    {
+        this.Unsettled += 1
     }
 }
 
@@ -796,6 +780,8 @@ interface IExecOptions
     readonly host?: IHostScript
     /** The engine's write-through deadline (default DevGraphEngineHost.PrepareTimeoutMs). */
     readonly prepareTimeoutMs?: number
+    /** The executor's settle-bound timer seam (default: real time, never elapsing in a test). */
+    readonly settleTimer?: ManualTimer
 }
 
 /**
@@ -827,7 +813,14 @@ class ExecFx
     public static readonly SourcesChanged = 'model sources changed during the write'
     public static readonly LeaseLost = 'the tenant write lease was lost before the write could persist'
     public static readonly ZeroCounts = { nodesCreated: 0, nodesDeleted: 0, relationshipsCreated: 0, relationshipsDeleted: 0, propertiesSet: 0 }
-    public static readonly ShortPrepareMs = 50
+    /**
+     * The engine's own write-through deadline (a real timer inside the graph engine, which has no timer seam): long
+     * enough for prepare, begin and apply, short enough to time out on the held file write. No test polls on it.
+     */
+    public static readonly ShortPrepareMs = 100
+    public static readonly WedgedReason = 'an earlier write is still persisting; retry later'
+    public static readonly CodeA = /code = "A"/
+    public static readonly FreshLabel = /fresh/
     private static readonly TimeoutMs = 5000
     private static readonly MaxVarLength = 8
 
@@ -858,7 +851,7 @@ class ExecFx
         fx.scopes = new DevAccessScopeSource(fx.Host, auth, options.model !== undefined, () => Promise.resolve(ExecFx.SolutionName), { ScopeDiagnostics: () => undefined })
         const scopes = fx.scopes
         fx.Scripted = options.host === undefined ? undefined : new ScriptedHost(fx.Host, options.host)
-        fx.Execute = new DevCypherExecute(fx.Scripted ?? fx.Host, () => Promise.resolve(scopes), () => Promise.resolve(fx.Lang.GraphRevision), options.lock, fx.ExecuteDiagnostics)
+        fx.Execute = new DevCypherExecute(fx.Scripted ?? fx.Host, () => Promise.resolve(scopes), () => Promise.resolve(fx.Lang.GraphRevision), options.lock, fx.ExecuteDiagnostics, options.settleTimer)
         return fx
     }
 
@@ -919,6 +912,36 @@ class ExecFx
     }
 }
 
+/** A schema file holding two model blocks (deferred 4): its text pieces and what the write-back must keep. */
+class TwoBlockFx
+{
+    public static readonly Schema = 'namespace acme { concept Order { total : string?; } '
+    public static readonly HeaderA = 'model A : acme {'
+    public static readonly HeaderB = 'model B : acme {'
+    public static readonly Text = TwoBlockFx.Schema + TwoBlockFx.HeaderA + ' Order o1 { total = "1"; } } ' + TwoBlockFx.HeaderB + ' Order o2 { total = "2"; } } }'
+    public static readonly ModelA = 'acme.A'
+    public static readonly Create = "CREATE (:Order {total: '3'})"
+    public static readonly CreatedTotal = 'total = "3"'
+    public static readonly O1Body = /Order o1 \{\s*total = "1";\s*\}/
+    public static readonly O2Body = /Order o2 \{\s*total = "2";\s*\}/
+    public static readonly O1 = /o1/
+    public static readonly O2 = /o2/
+    public static readonly CreatedBody = /Order \w+ \{\s*total = "3";\s*\}/
+    public static readonly CreatedAnywhere = /total = "3"/
+}
+
+/** The cross-model DETACH DELETE case (ruling F-a): what the other model's file must lose and keep. */
+class DetachFx
+{
+    public static readonly W1 = /w1/
+    public static readonly Reference = /buddy/
+    public static readonly O1 = /Widget o1/
+    public static readonly O1Label = /label = "other"/
+    public static readonly O1Unit = /owningBu = "sales"/
+    public static readonly OtherHeader = /model Other : acme/
+    public static readonly ReferenceRemoved = 'the dangling reference is removed from the other model\'s file'
+}
+
 describe('DevCypherExecute lease (ported from host/cypher/tests/dev-cypher-executor.test.ts)', () =>
 {
     test('a write holds the tenant lease across the whole write and releases it', async () =>
@@ -937,17 +960,19 @@ describe('DevCypherExecute lease (ported from host/cypher/tests/dev-cypher-execu
     {
         const lock = new ScriptedLock(false, true)
         const gate = new ManualGate()
-        await ExecFx.With({ lock, prepareTimeoutMs: ExecFx.ShortPrepareMs }, async fx =>
+        const timer = new ManualTimer()
+        await ExecFx.With({ lock, prepareTimeoutMs: ExecFx.ShortPrepareMs, settleTimer: timer }, async fx =>
         {
             const before = fx.File()
             fx.A.Hold = gate.Promise
             const first = fx.Run(ExecFx.Create)
-            await Wait.Until(() => fx.A.Started > 0)
-            await Wait.Ms(ExecFx.ShortPrepareMs * 4)
+            await fx.A.WhenWriting()
+            // the settle wait starts only once the write-through has given up (timed out) on the held file write
+            await timer.WhenStarted()
             assert.equal(lock.Released, 0, 'the write-through timed out, but its file write is still running: the lease is held')
             fx.A.Hold = undefined
             const second = fx.Run(ExecFx.SetMine)
-            await Wait.Ms(ExecFx.ShortPrepareMs)
+            await Turns.Drain()
             assert.equal(lock.Acquired, 1, 'the next execute has not started')
             const started = fx.A.Started
             gate.Open()
@@ -958,8 +983,39 @@ describe('DevCypherExecute lease (ported from host/cypher/tests/dev-cypher-execu
             assert.equal(applied.status, AppWriteStatus.Applied)
             assert.ok(fx.A.Started > started)
             assert.deepEqual([lock.Acquired, lock.Released], [2, 2])
-            assert.match(fx.File(), /code = "A"/)
-            assert.doesNotMatch(fx.File(), /fresh/)
+            assert.match(fx.File(), ExecFx.CodeA)
+            assert.doesNotMatch(fx.File(), ExecFx.FreshLabel)
+            assert.equal(fx.ExecuteDiagnostics.Unsettled, 0)
+        })
+    })
+
+    test('a connector call that outlives MaxSettleMs wedges the tenant: Failed at once, lease held, until it settles (F-f)', async () =>
+    {
+        const lock = new ScriptedLock(false, true)
+        const gate = new ManualGate()
+        const timer = new ManualTimer()
+        await ExecFx.With({ lock, prepareTimeoutMs: ExecFx.ShortPrepareMs, settleTimer: timer }, async fx =>
+        {
+            fx.A.Hold = gate.Promise
+            const first = fx.Run(ExecFx.Create)
+            await fx.A.WhenWriting()
+            await timer.WhenStarted()
+            // MaxSettleMs elapses with the file write still hung
+            timer.FireAll()
+            assert.equal((await first).status, AppWriteStatus.Failed)
+            assert.equal(fx.ExecuteDiagnostics.Unsettled, 1)
+            assert.equal(lock.Released, 0, 'the lease (and the fence) stay held while the writes are unsettled')
+            fx.A.Hold = undefined
+            const wedged = await fx.Run(ExecFx.SetMine)
+            assert.equal(wedged.status, AppWriteStatus.Failed)
+            assert.equal(wedged.reason, ExecFx.WedgedReason)
+            assert.equal(lock.Acquired, 1, 'a wedged tenant refuses before taking the lease')
+            gate.Open()
+            await fx.Execute.WhenUnwedged()
+            assert.equal(lock.Released, 1, 'the lease is released once the writes settle')
+            assert.equal((await fx.Run(ExecFx.SetMine)).status, AppWriteStatus.Applied)
+            assert.match(fx.File(), ExecFx.CodeA)
+            assert.doesNotMatch(fx.File(), ExecFx.FreshLabel)
         })
     })
 
@@ -1113,26 +1169,24 @@ describe('DevCypherExecute persist (ported from host/model/tests/dev-model-write
 
     test('a co-located file with schema and two model blocks keeps both blocks and its schema on write-back', async () =>
     {
-        const schema = 'namespace acme { concept Order { total : string?; } '
-        const twoModels = schema + 'model A : acme { Order o1 { total = "1"; } } model B : acme { Order o2 { total = "2"; } } }'
-        await ExecFx.With({ files: { [ExecFx.ModelFile]: ExecFx.Shop, [ExecFx.ExtraFile]: twoModels } }, async fx =>
+        await ExecFx.With({ files: { [ExecFx.ModelFile]: ExecFx.Shop, [ExecFx.ExtraFile]: TwoBlockFx.Text } }, async fx =>
         {
-            const result = await fx.Run("CREATE (:Order {total: '3'})", 'acme.A')
+            const result = await fx.Run(TwoBlockFx.Create, TwoBlockFx.ModelA)
             assert.equal(result.status, AppWriteStatus.Applied)
             const extra = fx.File(ExecFx.ExtraFile)
             // the schema segment is kept byte for byte, ahead of the first model block
-            assert.ok(extra.startsWith(schema + 'model A : acme {'), extra)
-            const blockA = extra.slice(extra.indexOf('model A : acme {'), extra.indexOf('model B : acme {'))
-            const blockB = extra.slice(extra.indexOf('model B : acme {'))
+            assert.ok(extra.startsWith(TwoBlockFx.Schema + TwoBlockFx.HeaderA), extra)
+            const blockA = extra.slice(extra.indexOf(TwoBlockFx.HeaderA), extra.indexOf(TwoBlockFx.HeaderB))
+            const blockB = extra.slice(extra.indexOf(TwoBlockFx.HeaderB))
             // o1 stays in A and o2 in B, each with its own total
-            assert.match(blockA, /Order o1 \{\s*total = "1";\s*\}/)
-            assert.match(blockB, /Order o2 \{\s*total = "2";\s*\}/)
-            assert.doesNotMatch(blockA, /o2/)
-            assert.doesNotMatch(blockB, /o1/)
+            assert.match(blockA, TwoBlockFx.O1Body)
+            assert.match(blockB, TwoBlockFx.O2Body)
+            assert.doesNotMatch(blockA, TwoBlockFx.O2)
+            assert.doesNotMatch(blockB, TwoBlockFx.O1)
             // the created instance lands in block A (the write's model), never in B
-            assert.match(blockA, /Order \w+ \{\s*total = "3";\s*\}/)
-            assert.doesNotMatch(blockB, /total = "3"/)
-            assert.equal(extra.split('total = "3"').length - 1, 1)
+            assert.match(blockA, TwoBlockFx.CreatedBody)
+            assert.doesNotMatch(blockB, TwoBlockFx.CreatedAnywhere)
+            assert.equal(extra.split(TwoBlockFx.CreatedTotal).length - 1, 1)
         })
     })
 })
@@ -1305,13 +1359,13 @@ describe('DevCypherExecute outcomes', () =>
                 const result = await fx.Run(ExecFx.DetachMine)
                 assert.equal(result.status, AppWriteStatus.Applied, JSON.stringify(result))
                 assert.equal(result.counts.nodesDeleted, 1)
-                assert.doesNotMatch(fx.File(), /w1/)
+                assert.doesNotMatch(fx.File(), DetachFx.W1)
                 const other = fx.File(ExecFx.OtherFile)
-                assert.doesNotMatch(other, /buddy/, 'the dangling reference is removed from the other model\'s file')
-                assert.match(other, /Widget o1/)
-                assert.match(other, /label = "other"/)
-                assert.match(other, /owningBu = "sales"/)
-                assert.match(other, /model Other : acme/)
+                assert.doesNotMatch(other, DetachFx.Reference, DetachFx.ReferenceRemoved)
+                assert.match(other, DetachFx.O1)
+                assert.match(other, DetachFx.O1Label)
+                assert.match(other, DetachFx.O1Unit)
+                assert.match(other, DetachFx.OtherHeader)
             })
         }
     })

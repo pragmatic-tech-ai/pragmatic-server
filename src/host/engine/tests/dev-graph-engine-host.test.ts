@@ -1,13 +1,13 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessScope, Cypher, GraphError, GraphErrorCode } from '@pragmatic-tech-ai/graph'
-import type { ConnectorChangeSet, GraphEngine, IConnectorTransaction, IGraphConnector } from '@pragmatic-tech-ai/graph'
+import { AccessScope, CommitKind, ConnectorChangeSet, Cypher, GraphError, GraphErrorCode, WriteOp } from '@pragmatic-tech-ai/graph'
+import type { BatchOp, GraphEngine, ICommitApplied, IConnectorTransaction, IGraphConnector } from '@pragmatic-tech-ai/graph'
 import { Disposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { DevGraphEngineHost, DevSnapshotCompileError, EngineWriteTracker } from '../dev-graph-engine-host.js'
 import type { IDevEngineDiagnostics, IUpgradeTimer } from '../dev-graph-engine-host.js'
 import { DevSnapshotSource } from '../dev-snapshot-source.js'
-import { EngineHostFx, HeldFence } from './engine-host-fixture.js'
+import { EngineHostFx, HeldFence, ManualGate, ManualTimer } from './engine-host-fixture.js'
 
 /** A debounce timer the test fires by hand: only the latest started work is pending. */
 class ManualUpgradeTimer implements IUpgradeTimer
@@ -53,6 +53,13 @@ class RecordingDiagnostics implements IDevEngineDiagnostics
     {
         this.HandlerFailures.push(error)
     }
+
+    public Unsettled = 0
+
+    public WritesUnsettled(): void
+    {
+        this.Unsettled += 1
+    }
 }
 
 /** A connector whose transactions do nothing: the tracker's bookkeeping alone is under test. */
@@ -63,6 +70,39 @@ class InertConnector implements IGraphConnector
     public async Begin(): Promise<IConnectorTransaction>
     {
         return { Apply: async (_changes: ConnectorChangeSet) => undefined, Commit: async () => undefined, Revert: async () => undefined }
+    }
+}
+
+/** Committed transactions and the CommitApplied payloads the tracker matches them against (N3). */
+class CommitFx
+{
+    public static readonly Node = 'shop.c1'
+    public static readonly Other = 'shop.c2'
+    public static readonly Member = 'name'
+    public static readonly Value = 'Ann'
+
+    public static Set(publicId: string): BatchOp
+    {
+        return { Op: WriteOp.SetProperty, PublicId: publicId, Member: CommitFx.Member, Value: CommitFx.Value }
+    }
+
+    public static Changes(op: BatchOp): ConnectorChangeSet
+    {
+        return new ConnectorChangeSet([{ ...op, Owner: '', Concept: '' }])
+    }
+
+    public static Applied(kind: CommitKind, ops: readonly BatchOp[]): ICommitApplied
+    {
+        return { Commit: 1n, Kind: kind, CatalogVersion: 1, Batch: { Ops: () => ops }, CreatedIds: [] } as unknown as ICommitApplied
+    }
+
+    /** A committed transaction given one SetProperty of `publicId`. */
+    public static async Committed(tracker: EngineWriteTracker, publicId: string = CommitFx.Node): Promise<IConnectorTransaction>
+    {
+        const transaction = await tracker.Track(new InertConnector()).Begin()
+        await transaction.Apply(CommitFx.Changes(CommitFx.Set(publicId)))
+        await transaction.Commit()
+        return transaction
     }
 }
 
@@ -96,7 +136,9 @@ class HostFx
     public readonly Fx = new EngineHostFx()
     public readonly Timer = new ManualUpgradeTimer()
     public readonly Diagnostics = new RecordingDiagnostics()
-    public readonly Host = new DevGraphEngineHost(this.Fx.Source, () => Promise.resolve(this.Fx.Lang), this.Timer, this.Diagnostics)
+    /** The settle-bound seam (DevGraphEngineHost.MaxSettleMs): elapsed by hand, never by real time. */
+    public readonly SettleTimer = new ManualTimer()
+    public readonly Host = new DevGraphEngineHost(this.Fx.Source, () => Promise.resolve(this.Fx.Lang), this.Timer, this.Diagnostics, undefined, undefined, this.SettleTimer)
     public Changes = 0
 
     public constructor()
@@ -381,6 +423,34 @@ describe('DevGraphEngineHost', () =>
         }
     })
 
+    test('a hung connector write never stalls the upgrade drain or dispose: each wait is bounded and reported (F-f)', async () =>
+    {
+        const h = new HostFx()
+        const gate = new ManualGate()
+        const engine = await h.Host.Engine()
+        h.Fx.A.Hold = gate.Promise
+        const write = new Cypher.CypherEngine(engine).Execute(AccessScope.System, HostFx.RenameAda).catch((error: unknown) => error)
+        await h.Fx.A.WhenWriting()
+        // an upgrade pass waits for the hung write only until the bound elapses, then reports and goes on
+        h.Save(HostFx.Cy)
+        h.Timer.Fire()
+        await h.SettleTimer.WhenStarted()
+        h.SettleTimer.FireAll()
+        await h.Host.WhenUpgraded()
+        assert.equal(h.Diagnostics.Unsettled, 1)
+        assert.equal(h.Changes, 0, 'nothing was upgraded over a write still in flight')
+        // dispose is bounded the same way: it completes although the write never returned
+        const disposed = h.Host.dispose()
+        while (!(await Settles.Yet(disposed)))
+        {
+            await h.SettleTimer.WhenStarted()
+            h.SettleTimer.FireAll()
+        }
+        assert.ok(h.Diagnostics.Unsettled >= 2)
+        gate.Open()
+        await write
+    })
+
     test('a real engine write leaves flight once the engine finalizes (CommitApplied), so WhenWritesSettled resolves', async () =>
     {
         const h = new HostFx()
@@ -399,38 +469,54 @@ describe('DevGraphEngineHost', () =>
 
 describe('EngineWriteTracker (M1: settle after the engine finalizes)', () =>
 {
-    test('a committed transaction stays in flight until Finalized', async () =>
+    test('a committed transaction stays in flight until its commit is applied', async () =>
     {
         const tracker = new EngineWriteTracker()
-        const transaction = await tracker.Track(new InertConnector()).Begin()
-        await transaction.Commit()
+        await CommitFx.Committed(tracker)
         assert.equal(await Settles.Yet(tracker.Settled()), false, 'the connector committed, the engine has not finalized')
         assert.equal(tracker.Quiet(tracker.Begun), false)
         const settled = tracker.Settled()
-        tracker.Finalized()
+        tracker.Finalized(CommitFx.Applied(CommitKind.Batch, [CommitFx.Set(CommitFx.Node)]))
         assert.equal(await Settles.Yet(settled), true)
         assert.equal(tracker.Quiet(tracker.Begun), true)
+    })
+
+    test('another commit (an upgrade, or a batch such as its seed commit) never ends a tracked transaction (N3)', async () =>
+    {
+        const tracker = new EngineWriteTracker()
+        await CommitFx.Committed(tracker)
+        tracker.Finalized(CommitFx.Applied(CommitKind.Upgrade, []))
+        tracker.Finalized(CommitFx.Applied(CommitKind.Batch, [CommitFx.Set(CommitFx.Other)]))
+        assert.equal(await Settles.Yet(tracker.Settled()), false)
+        tracker.Finalized(CommitFx.Applied(CommitKind.Batch, [CommitFx.Set(CommitFx.Other), CommitFx.Set(CommitFx.Node)]))
+        assert.equal(await Settles.Yet(tracker.Settled()), true)
     })
 
     test('a committed transaction reverted before Finalize (a failed Finalize or a timeout) leaves flight after its revert', async () =>
     {
         const tracker = new EngineWriteTracker()
-        const transaction = await tracker.Track(new InertConnector()).Begin()
-        await transaction.Commit()
+        const transaction = await CommitFx.Committed(tracker)
         await transaction.Revert()
         assert.equal(await Settles.Yet(tracker.Settled()), true)
-        // a later Finalized for another commit never exits twice
-        tracker.Finalized()
+        // a later commit naming the same change never exits twice
+        tracker.Finalized(CommitFx.Applied(CommitKind.Batch, [CommitFx.Set(CommitFx.Node)]))
         assert.equal(tracker.Quiet(tracker.Begun), true)
     })
 
-    test('a revert after Finalized compensates in flight and leaves again', async () =>
+    test('a revert after the commit was applied compensates in flight and leaves again', async () =>
     {
         const tracker = new EngineWriteTracker()
-        const transaction = await tracker.Track(new InertConnector()).Begin()
-        await transaction.Commit()
-        tracker.Finalized()
+        const transaction = await CommitFx.Committed(tracker)
+        tracker.Finalized(CommitFx.Applied(CommitKind.Batch, [CommitFx.Set(CommitFx.Node)]))
         await transaction.Revert()
         assert.equal(tracker.Quiet(tracker.Begun), true)
+    })
+
+    test('Abandon (the engine is gone) ends every committed transaction', async () =>
+    {
+        const tracker = new EngineWriteTracker()
+        await CommitFx.Committed(tracker)
+        tracker.Abandon()
+        assert.equal(await Settles.Yet(tracker.Settled()), true)
     })
 })

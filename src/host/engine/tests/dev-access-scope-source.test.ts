@@ -30,6 +30,10 @@ class SilentDiagnostics implements IDevEngineDiagnostics
     public ChangedHandlerFailed(): void
     {
     }
+
+    public WritesUnsettled(): void
+    {
+    }
 }
 
 class RecordingScopeDiagnostics implements IDevScopeDiagnostics

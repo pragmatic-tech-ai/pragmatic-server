@@ -4,6 +4,7 @@ import { AppWriteStatus, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pr
 import type { CypherExecuteResultDto, CypherQueryPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { EngineBridgeError, EngineBridgeErrorCode, TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
+import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
 import { AsyncMutex } from '../cypher/async-mutex.js'
@@ -15,7 +16,8 @@ import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
 import { AccessScopeConjunction } from './access-scope-conjunction.js'
 import type { IDevScopeSource } from './dev-access-scope-source.js'
 import { DevCypherQuery, DevCypherQueryError, DevCypherQueryErrorCode } from './dev-cypher-query.js'
-import type { IDevGraphEngine } from './dev-graph-engine-host.js'
+import { BoundedWait, DevGraphEngineHost, TimeoutUpgradeTimer } from './dev-graph-engine-host.js'
+import type { IDevGraphEngine, IUpgradeTimer } from './dev-graph-engine-host.js'
 import type { DevSnapshot } from './dev-snapshot-source.js'
 import { EngineSchemaCatalog } from './engine-schema-catalog.js'
 import type { IWriteFence } from './server-model-workspace.js'
@@ -97,12 +99,18 @@ export class DevWriteFailure
 export interface IDevExecuteDiagnostics
 {
     AfterCommitFailed(error: unknown): void
+    /**
+     * A write's connector writes did not settle within `DevCypherExecute.MaxSettleMs` (a hung connector call): the
+     * tenant is wedged (every execute is Failed) until they do; the lease stays held meanwhile.
+     */
+    WritesUnsettled(): void
 }
 
 /** Reports each after-commit failure as one warning on the server logger, by error name only (messages can carry paths). */
 export class LoggerDevExecuteDiagnostics implements IDevExecuteDiagnostics
 {
     private static readonly Line = 'dev cypher/execute committed, but reading its result or awaiting the upgrade failed: '
+    private static readonly UnsettledLine = 'dev cypher/execute: the write\'s file writes did not settle in time; dev writes are refused until they do'
     private static readonly UnknownName = 'UnknownError'
 
     public constructor(private readonly logger: ILogger = StructuredLogger.ToStdout())
@@ -112,6 +120,11 @@ export class LoggerDevExecuteDiagnostics implements IDevExecuteDiagnostics
     public AfterCommitFailed(error: unknown): void
     {
         this.logger.Warn(LoggerDevExecuteDiagnostics.Line + (error instanceof Error ? error.name : LoggerDevExecuteDiagnostics.UnknownName))
+    }
+
+    public WritesUnsettled(): void
+    {
+        this.logger.Error(LoggerDevExecuteDiagnostics.UnsettledLine)
     }
 }
 
@@ -229,6 +242,9 @@ class Attempt
 export class DevCypherExecute implements IDevCypherExecute
 {
     public static readonly MaxAttempts = 2
+    /** How long a write waits for its connector writes to settle before the tenant is wedged (ruling F-f). */
+    public static readonly MaxSettleMs = 2 * DevGraphEngineHost.PrepareTimeoutMs
+    private static readonly WedgedReason = 'an earlier write is still persisting; retry later'
     private static readonly MaxSettles = 5
     private static readonly ModelNotFoundMessage = `${InvalidParamsPrefix.Text}model not found`
     private static readonly RevisionReason = 'graph revision has advanced'
@@ -255,6 +271,8 @@ export class DevCypherExecute implements IDevCypherExecute
 
     private readonly mutex = new AsyncMutex()
     private readonly writeScopes = new ModelWriteScopes()
+    /** Set while an earlier write's connector writes outlived the settle bound: every Run is Failed until it clears. */
+    private wedged: Promise<void> | undefined
 
     public constructor(
         private readonly host: IDevGraphEngine,
@@ -262,6 +280,8 @@ export class DevCypherExecute implements IDevCypherExecute
         private readonly revision: () => Promise<number>,
         private readonly lock: IWriteLock = new InProcessWriteLock(),
         private readonly diagnostics: IDevExecuteDiagnostics = new LoggerDevExecuteDiagnostics(),
+        /** The timer seam bounding the settle wait ({@link DevCypherExecute.MaxSettleMs}). */
+        private readonly settleTimer: IUpgradeTimer = new TimeoutUpgradeTimer(),
     )
     {
     }
@@ -275,8 +295,16 @@ export class DevCypherExecute implements IDevCypherExecute
         return this.mutex.Run(() => this.Locked(context, modelId, request))
     }
 
+    /** Resolves once a wedge (an earlier write's unsettled connector writes) has cleared; at once when none. */
+    public WhenUnwedged(): Promise<void>
+    {
+        return this.wedged ?? Promise.resolve()
+    }
+
     private async Locked(context: AccessContext, modelId: string, request: DevCypherRequest): Promise<CypherExecuteResultDto>
     {
+        // wedged: an earlier write may still be writing files; refuse before taking the lease
+        if (this.wedged !== undefined) return CypherExecuteResultMapper.Refused(AppWriteStatus.Failed, await this.revision(), DevCypherExecute.WedgedReason)
         let lease: IWriteLease
         try
         {
@@ -296,18 +324,39 @@ export class DevCypherExecute implements IDevCypherExecute
         }
         finally
         {
-            try
-            {
-                // on every path: a write-through that timed out may still be writing files (and then reverting them);
-                // the next writer starts only once they settle, so the mutex and lease are released after
-                await this.host.WhenWritesSettled()
-            }
-            finally
+            // on every path: a write-through that timed out may still be writing files (and then reverting them); the
+            // next writer starts only once they settle, so the fence, lease and mutex are released after. Bounded
+            // (F-f): past MaxSettleMs the mutex is released but the tenant is wedged, keeping the lease and the fence
+            // until the writes settle in the background.
+            const settling = this.host.WhenWritesSettled()
+            if (await BoundedWait.Within(settling, DevCypherExecute.MaxSettleMs, this.settleTimer))
             {
                 installed.dispose()
                 await lease.Release()
             }
+            else
+            {
+                this.Wedge(settling, installed, lease)
+            }
         }
+    }
+
+    private Wedge(settling: Promise<void>, installed: IDisposable, lease: IWriteLease): void
+    {
+        this.diagnostics.WritesUnsettled()
+        const cleared = settling.catch(() => undefined).then(async () =>
+        {
+            try
+            {
+                installed.dispose()
+                await lease.Release()
+            }
+            finally
+            {
+                this.wedged = undefined
+            }
+        })
+        this.wedged = cleared.catch(() => undefined)
     }
 
     private async Leased(context: AccessContext, modelId: string, request: DevCypherRequest, fence: LeaseFence): Promise<CypherExecuteResultDto>

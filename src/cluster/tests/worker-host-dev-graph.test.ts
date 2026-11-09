@@ -10,6 +10,7 @@ import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { ErrorCodes, PragmaticClient, WsMessageSocket } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { MachineTls } from '../machine-tls.js'
 import type { MachineTlsRef } from '../machine-tls.js'
+import { DevGraphEngineHost } from '../../host/engine/dev-graph-engine-host.js'
 import { WorkerHost } from '../worker-host.js'
 import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
 import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
@@ -139,15 +140,16 @@ test('worker host serves dev graph endpoints', async () =>
             const server = await worker.RegistryForTest().ServerFor(DevWorkerFx.Tenant)
             const handlers = worker.HandlersForTest()
             assert.equal(handlers.length, 1)
+            const host = server.DevEngine() as DevGraphEngineHost
+            assert.equal(host.IsOpen, false, 'nothing has used the dev graph engine yet')
             assert.deepEqual(await client.ListGraphs(), [], 'the dev graph service is attached')
             await assert.rejects(client.CypherQuery(DevWorkerFx.UnknownLabel), (error: { code?: number }) => error.code === ErrorCodes.InvalidParams)
             const page = await client.CypherQuery(DevWorkerFx.Query)
             assert.deepEqual(page.columns, [DevWorkerFx.Column])
             assert.equal(page.items.length, 1)
             assert.match(JSON.stringify(page.items[0]), new RegExp(DevWorkerFx.Label))
-            // the query was served by the tenant's dev graph engine: it opened on that first use, at the saved snapshot
-            const engine = await server.DevEngine().Engine()
-            assert.equal(engine.SchemaVersion, (await server.DevEngine().Snapshot()).Description.Version, 'the dev graph engine served the query')
+            // the query was served by the tenant's attached dev graph engine: the query itself opened it (the test never did)
+            assert.equal(host.IsOpen, true, 'the dev cypher/query opened the attached dev graph engine')
         }
         finally
         {

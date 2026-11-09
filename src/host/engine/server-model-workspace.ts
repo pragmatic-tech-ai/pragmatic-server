@@ -41,11 +41,14 @@ export interface IWriteFence
 /**
  * The one write fence the workspace's draft sessions check: dev writes are serialized, so the writer holding the
  * write mutex installs its lease here for the length of its write (and disposes it after). None installed: every
- * draft session refuses to write (fail closed).
+ * draft session refuses to write (fail closed). While a fence is installed the slot also remembers what every session
+ * of that writer wrote (absolute uri -> text), so a session may skip a write a sibling session of the same commit
+ * already made; it is cleared when the fence is installed and when it is disposed.
  */
 export class WriteFenceSlot
 {
     private current: IWriteFence | undefined
+    private readonly written = new Map<string, string>()
 
     public get Current(): IWriteFence | undefined
     {
@@ -55,10 +58,27 @@ export class WriteFenceSlot
     public Install(fence: IWriteFence): IDisposable
     {
         this.current = fence
+        this.written.clear()
         return new Disposable(() =>
         {
-            if (this.current === fence) this.current = undefined
+            if (this.current !== fence) return
+            this.current = undefined
+            this.written.clear()
         })
+    }
+
+    /** A session of the installed writer wrote `text` to the file (undefined: it deleted the file). */
+    public Record(absoluteUri: string, text: string | undefined): void
+    {
+        if (this.current === undefined) return
+        if (text === undefined) this.written.delete(absoluteUri)
+        else this.written.set(absoluteUri, text)
+    }
+
+    /** True when a session of the installed writer last wrote exactly `text` to the file. */
+    public WroteByWriter(absoluteUri: string, text: string): boolean
+    {
+        return this.current !== undefined && this.written.get(absoluteUri) === text
     }
 }
 
@@ -116,17 +136,20 @@ class ServerDraftSession implements ITodlDraftSession
     public async WriteFile(uri: string, text: string): Promise<void>
     {
         await this.Fence()
-        if (await this.ReadFile(uri) === text)
+        const absolute = this.AbsoluteUri(uri)
+        if (this.fences.WroteByWriter(absolute, text) && await this.ReadFile(uri) === text)
         {
-            // another session of the same commit already wrote exactly this text (every model drafts over all of its
-            // member's files, so a delete's dangling-reference removal is emitted by both models): nothing to write
+            // a sibling session of the same commit already wrote exactly this text (every model drafts over all of
+            // its member's files, so a delete's dangling-reference removal is emitted by both models): nothing to
+            // write. Identical text from anyone else (an outside save) is not adopted: Guard refuses it as Stale.
             this.written.set(uri, text)
             return
         }
         await this.Guard(uri)
         await this.storage.WriteText(uri, text)
         this.written.set(uri, text)
-        await this.Refresh(() => this.languageService.DidChange(this.AbsoluteUri(uri), text))
+        this.fences.Record(absolute, text)
+        await this.Refresh(() => this.languageService.DidChange(absolute, text))
     }
 
     public async DeleteFile(uri: string): Promise<void>
@@ -135,7 +158,9 @@ class ServerDraftSession implements ITodlDraftSession
         await this.Guard(uri)
         if (await this.storage.Exists(uri)) await this.storage.Delete(uri)
         this.written.set(uri, undefined)
-        await this.Refresh(() => this.languageService.DidDelete(this.AbsoluteUri(uri)))
+        const absolute = this.AbsoluteUri(uri)
+        this.fences.Record(absolute, undefined)
+        await this.Refresh(() => this.languageService.DidDelete(absolute))
     }
 
     /**
