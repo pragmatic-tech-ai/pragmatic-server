@@ -1,5 +1,5 @@
 import { AccessDefault, AccessScope, And, FalsePredicate, TruePredicate } from '@pragmatic-tech-ai/graph'
-import type { IWriteRules, Predicate } from '@pragmatic-tech-ai/graph'
+import type { IReadOnlyMembers, IWriteRules, Predicate } from '@pragmatic-tech-ai/graph'
 import type { EngineSchemaCatalog } from './engine-schema-catalog.js'
 
 /** Folds conjunctions so a constant never leaves a needless tree (True is the identity, False absorbs). */
@@ -31,7 +31,8 @@ export enum WriteRule
 class WriteRulesDraft
 {
     public readonly Predicates = new Map<WriteRule, Predicate>()
-    public ReadOnly: Set<string> | undefined
+    private readOnlyCreate: Set<string> | undefined
+    private readOnlyUpdate: Set<string> | undefined
 
     public Add(rules: IWriteRules): void
     {
@@ -40,10 +41,15 @@ class WriteRulesDraft
             const predicate = rules[rule]
             if (predicate !== undefined) this.And(rule, predicate)
         }
-        for (const member of rules.ReadOnly ?? [])
+        for (const member of rules.ReadOnly?.Create ?? [])
         {
-            this.ReadOnly ??= new Set<string>()
-            this.ReadOnly.add(member)
+            this.readOnlyCreate ??= new Set<string>()
+            this.readOnlyCreate.add(member)
+        }
+        for (const member of rules.ReadOnly?.Update ?? [])
+        {
+            this.readOnlyUpdate ??= new Set<string>()
+            this.readOnlyUpdate.add(member)
         }
     }
 
@@ -58,14 +64,22 @@ class WriteRulesDraft
             Create: this.Predicates.get(WriteRule.Create),
             Update: this.Predicates.get(WriteRule.Update),
             Delete: this.Predicates.get(WriteRule.Delete),
-            ...(this.ReadOnly === undefined ? {} : { ReadOnly: this.ReadOnly }),
+            ...(this.readOnlyCreate === undefined && this.readOnlyUpdate === undefined ? {} : { ReadOnly: this.ReadOnlyMembers() }),
+        }
+    }
+
+    private ReadOnlyMembers(): IReadOnlyMembers
+    {
+        return {
+            ...(this.readOnlyCreate === undefined ? {} : { Create: this.readOnlyCreate }),
+            ...(this.readOnlyUpdate === undefined ? {} : { Update: this.readOnlyUpdate }),
         }
     }
 }
 
 /**
  * The AND of two access scopes over one engine schema, deny-wins: a node is visible (a write allowed) iff both scopes
- * admit it. Rows on the same key are ANDed, write rules are ANDed per operation, Hidden and ReadOnly are unioned, and
+ * admit it. Rows on the same key are ANDed, write rules are ANDed per operation, Hidden and ReadOnly (per operation) are unioned, and
  * the Default is Allow only when both are.
  *
  * A scope's Default only decides a node none of whose keys has an entry in that scope, but the combined scope sees

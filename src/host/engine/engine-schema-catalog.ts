@@ -1,5 +1,5 @@
-import { MemberKind } from '@pragmatic-tech-ai/graph'
-import type { IDefinitionDescription, ISchemaDescription } from '@pragmatic-tech-ai/graph'
+import { MemberKind, ValueType } from '@pragmatic-tech-ai/graph'
+import type { IDefinitionDescription, ISchemaDescription, MemberInput } from '@pragmatic-tech-ai/graph'
 
 /**
  * How the engine will see a schema description, read off the description itself (before the engine opens on it): the
@@ -10,7 +10,7 @@ import type { IDefinitionDescription, ISchemaDescription } from '@pragmatic-tech
 export class EngineSchemaCatalog
 {
     private readonly byName: ReadonlyMap<string, IDefinitionDescription>
-    private readonly members = new Map<string, ReadonlyMap<string, MemberKind>>()
+    private readonly members = new Map<string, ReadonlyMap<string, MemberInput>>()
     private readonly applicable = new Map<string, ReadonlySet<string>>()
 
     public constructor(public readonly Description: ISchemaDescription)
@@ -66,21 +66,29 @@ export class EngineSchemaCatalog
     /** Every effective member name of `concept` (properties and relationships). */
     public Members(concept: string): readonly string[]
     {
-        return [...this.MemberKinds(concept).keys()]
+        return [...this.EffectiveMembers(concept).keys()]
     }
 
     /** True iff `member` is an effective property (not a relationship) of `concept`. */
     public IsProperty(concept: string, member: string): boolean
     {
-        return this.MemberKinds(concept).get(member) === MemberKind.Property
+        return this.EffectiveMembers(concept).get(member)?.Kind === MemberKind.Property
     }
 
-    private MemberKinds(concept: string): ReadonlyMap<string, MemberKind>
+    /** The value type of an effective property of `concept` (String when the description leaves it unset); undefined when not a property. */
+    public PropertyType(concept: string, member: string): ValueType | undefined
+    {
+        const input = this.EffectiveMembers(concept).get(member)
+        if (input?.Kind !== MemberKind.Property) return undefined
+        return input.Type ?? ValueType.String
+    }
+
+    private EffectiveMembers(concept: string): ReadonlyMap<string, MemberInput>
     {
         let kinds = this.members.get(concept)
         if (kinds === undefined)
         {
-            const out = new Map<string, MemberKind>()
+            const out = new Map<string, MemberInput>()
             this.Collect(concept, out, new Set<string>())
             kinds = out
             this.members.set(concept, kinds)
@@ -89,14 +97,14 @@ export class EngineSchemaCatalog
     }
 
     /** Own members first, then aspects, then the parent chain; the first declaration of a name wins. */
-    private Collect(name: string, out: Map<string, MemberKind>, seen: Set<string>): void
+    private Collect(name: string, out: Map<string, MemberInput>, seen: Set<string>): void
     {
         const definition = this.byName.get(name)
         if (definition === undefined || seen.has(name)) return
         seen.add(name)
         for (const member of definition.Members)
         {
-            if (!out.has(member.Name)) out.set(member.Name, member.Kind)
+            if (!out.has(member.Name)) out.set(member.Name, member)
         }
         for (const aspect of definition.Aspects) this.Collect(aspect, out, seen)
         if (definition.Parent !== null) this.Collect(definition.Parent, out, seen)

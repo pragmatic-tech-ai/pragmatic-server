@@ -1,7 +1,7 @@
 import type { AccessContext, ITenantConfigStore, ISecurityModelConfig, Principal } from '@pragmatic-tech-ai/todl-identity'
 import { PrivilegeAction, AccessLevel } from '@pragmatic-tech-ai/todl-identity'
 import type { IInstanceFilter } from '@pragmatic-tech-ai/todl'
-import { AccessDepthEvaluator, AccessDepthInstanceFilter, AllowAllInstanceFilter, TenantSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
+import { AccessDepthEvaluator, AccessDepthInstanceFilter, AllowAllInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { FieldSecurityEvaluator, IMembership } from '@pragmatic-tech-ai/todl-identity-engine'
@@ -88,41 +88,21 @@ export class AllowAllWriteAuthorizerSource implements IWriteAuthorizerSource
     }
 }
 
-/** One tenant's parsed security model: the access-depth evaluator plus the ownership rules and hierarchy it decides with. */
-export interface ITenantSecurity
+/** One tenant's cached access evaluator and whether it came from a real SecurityModel (else DenyAll, fail-closed). */
+class TenantSecurity
 {
-    readonly Evaluator: AccessDepthEvaluator
-    /** The same model the evaluator was built from (its hierarchy, membership, ownership rules and field security). */
-    readonly Model: TenantSecurityModel
-    /** Each team's owning business unit (teams without one are absent): the units a team membership adds to a principal's reach. */
-    readonly TeamBusinessUnits: ReadonlyMap<string, string>
-    /** False when the tenant has no SecurityModel: the evaluator is DenyAll (fail-closed). */
-    readonly HasSecurityModel: boolean
-}
-
-class TenantSecurity implements ITenantSecurity
-{
-    private constructor(
-        public readonly Evaluator: AccessDepthEvaluator,
-        public readonly Model: TenantSecurityModel,
-        public readonly TeamBusinessUnits: ReadonlyMap<string, string>,
-        public readonly HasSecurityModel: boolean)
+    private constructor(public readonly Evaluator: AccessDepthEvaluator, public readonly HasSecurityModel: boolean)
     {
     }
 
     public static DenyAll(): TenantSecurity
     {
-        return new TenantSecurity(AccessDepthEvaluator.DenyAll(), TenantSecurityModel.Empty(), new Map(), false)
+        return new TenantSecurity(AccessDepthEvaluator.DenyAll(), false)
     }
 
     public static From(config: ISecurityModelConfig): TenantSecurity
     {
-        const teams = new Map<string, string>()
-        for (const team of config.teams)
-        {
-            if (team.owningBusinessUnit !== undefined) teams.set(team.id, team.owningBusinessUnit)
-        }
-        return new TenantSecurity(AccessDepthEvaluator.FromConfig(config), TenantSecurityModel.FromConfig(config), teams, true)
+        return new TenantSecurity(AccessDepthEvaluator.FromConfig(config), true)
     }
 }
 
@@ -210,12 +190,6 @@ export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthori
     public EvaluatorForContext(context: AccessContext): Promise<AccessDepthEvaluator>
     {
         return this.EvaluatorFor(context.Tenant.Id)
-    }
-
-    /** The context tenant's cached security model (evaluator, ownership rules, hierarchy). */
-    public SecurityFor(context: AccessContext): Promise<ITenantSecurity>
-    {
-        return this.SecurityOf(context.Tenant.Id)
     }
 
     public Invalidate(environmentId: string): void

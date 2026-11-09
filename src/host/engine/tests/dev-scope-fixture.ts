@@ -1,4 +1,4 @@
-import { AccessDefault, MemberKind, NodeEvaluator, ValueType } from '@pragmatic-tech-ai/graph'
+import { AccessDefault, And, ConceptIs, FalsePredicate, MemberKind, NodeEvaluator, Not, Or, TruePredicate, ValueType } from '@pragmatic-tech-ai/graph'
 import type { AccessScope, CellValue, IDefinitionDescription, ISchemaDescription, MemberInput, Predicate } from '@pragmatic-tech-ai/graph'
 import { AccessContext, AccessLevel, DelegationDepth, Grant, IdentityConfig, OwnershipSourceKind, Principal, PrincipalKind, PrivilegeAction, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
 import type { IFieldSecurityConfig, IPrivilegeConfig, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
@@ -35,6 +35,10 @@ export class DevScopeFx
     public static readonly Widget = 'acme.Widget'
     public static readonly Gizmo = 'acme.Gizmo'
     public static readonly Gadget = 'acme.Gadget'
+    /** A Gizmo subconcept (Widget > Gizmo > Gear). */
+    public static readonly Gear = 'acme.Gear'
+    /** Its owner field is an Int64 in the engine schema. */
+    public static readonly Counter = 'acme.Counter'
     public static readonly Element = 'todl.Element'
     public static readonly Term = 'todl.Term'
     public static readonly Owner = 'owner'
@@ -45,7 +49,7 @@ export class DevScopeFx
     public static readonly Profile = 'profile'
     private static readonly PackId = 'local'
 
-    public static Model(privileges: readonly IPrivilegeConfig[], fieldSecurity?: IFieldSecurityConfig): ISecurityModelConfig
+    public static Model(privileges: readonly IPrivilegeConfig[], fieldSecurity?: IFieldSecurityConfig, gizmoOwnership = true): ISecurityModelConfig
     {
         const fromField = (value: string): { kind: OwnershipSourceKind; value: string } => ({ kind: OwnershipSourceKind.FromField, value })
         return {
@@ -63,8 +67,10 @@ export class DevScopeFx
             ] },
             ownershipRules: [
                 { concept: DevScopeFx.Widget, owner: fromField(DevScopeFx.Owner), owningBusinessUnit: fromField(DevScopeFx.OwningBu) },
-                { concept: DevScopeFx.Gizmo, owner: fromField(DevScopeFx.Owner), owningBusinessUnit: fromField(DevScopeFx.OwningBu) },
+                ...(gizmoOwnership ? [{ concept: DevScopeFx.Gizmo, owner: fromField(DevScopeFx.Owner), owningBusinessUnit: fromField(DevScopeFx.OwningBu) }] : []),
                 { concept: DevScopeFx.Gadget, owningBusinessUnit: { kind: OwnershipSourceKind.Fixed, value: DevScopeFx.North } },
+                { concept: DevScopeFx.Gear, owner: fromField(DevScopeFx.Owner), owningBusinessUnit: fromField(DevScopeFx.OwningBu) },
+                { concept: DevScopeFx.Counter, owner: fromField(DevScopeFx.Owner), owningBusinessUnit: fromField(DevScopeFx.OwningBu) },
             ],
             roles: [{ id: DevScopeFx.Role, name: 'Role', privileges: [...privileges] }],
             roleAssignment: { claimsMapping: [], teamRoles: [], overrides: [{ principalId: DevScopeFx.P1, roles: [DevScopeFx.Role] }] },
@@ -78,11 +84,11 @@ export class DevScopeFx
     }
 
     /** Field security: `secured` fields, and p1's profile granting `grants`. */
-    public static Fields(secured: readonly string[], grants: readonly { field: string; read?: boolean; create?: boolean; update?: boolean }[]): IFieldSecurityConfig
+    public static Fields(secured: readonly string[], grants: readonly { field: string; read?: boolean; create?: boolean; update?: boolean }[], concept: string = DevScopeFx.Widget): IFieldSecurityConfig
     {
         return {
-            securedFields: secured.map(field => ({ concept: DevScopeFx.Widget, field })),
-            profiles: [{ id: DevScopeFx.Profile, name: 'Profile', grants: grants.map(grant => ({ concept: DevScopeFx.Widget, ...grant })) }],
+            securedFields: secured.map(field => ({ concept, field })),
+            profiles: [{ id: DevScopeFx.Profile, name: 'Profile', grants: grants.map(grant => ({ concept, ...grant })) }],
             profileAssignment: { claimsMapping: [], teamProfiles: [], overrides: [{ principalId: DevScopeFx.P1, profiles: [DevScopeFx.Profile] }] },
         }
     }
@@ -122,6 +128,8 @@ export class DevScopeFx
                 definition(DevScopeFx.Widget, DevScopeFx.Element, [prop(DevScopeFx.Owner), prop(DevScopeFx.OwningBu), prop(DevScopeFx.Secret), prop(DevScopeFx.Code)]),
                 definition(DevScopeFx.Gizmo, DevScopeFx.Widget, []),
                 definition(DevScopeFx.Gadget, DevScopeFx.Element, [prop(DevScopeFx.OwningBu)]),
+                definition(DevScopeFx.Gear, DevScopeFx.Gizmo, []),
+                definition(DevScopeFx.Counter, DevScopeFx.Element, [{ Name: DevScopeFx.Owner, Kind: MemberKind.Property, Type: ValueType.Int64, Nullable: true }, prop(DevScopeFx.OwningBu)]),
             ],
             Indexes: [],
             Seed: [],
@@ -143,6 +151,16 @@ export class DevScopeFx
         }
         if (predicates.length === 0) return scope.Default === AccessDefault.Allow
         const cells = new Map<string, CellValue>(Object.entries(values))
-        return predicates.every(predicate => NodeEvaluator.Matches(predicate, cells, 'n'))
+        return predicates.every(predicate => NodeEvaluator.Matches(DevScopeFx.Specialize(predicate, concept), cells, 'n'))
+    }
+
+    /** `p` with every ConceptIs decided for a node of `concept` (the engine decides it from the node; NodeEvaluator reads values only). */
+    public static Specialize(p: Predicate, concept: string): Predicate
+    {
+        if (p instanceof ConceptIs) return p.Concept === concept ? TruePredicate.Instance : FalsePredicate.Instance
+        if (p instanceof Not) return new Not(DevScopeFx.Specialize(p.Term, concept))
+        if (p instanceof And) return new And(p.Terms.map(term => DevScopeFx.Specialize(term, concept)))
+        if (p instanceof Or) return new Or(p.Terms.map(term => DevScopeFx.Specialize(term, concept)))
+        return p
     }
 }

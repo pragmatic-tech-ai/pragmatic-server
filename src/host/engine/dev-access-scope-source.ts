@@ -1,13 +1,15 @@
+import { createHash } from 'node:crypto'
 import { AccessDefault, AccessScope } from '@pragmatic-tech-ai/graph'
 import type { CellValue, Cypher, GraphEngine, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import type { Repository } from '@pragmatic-tech-ai/todl'
 import { PolicyScopeCompiler, TodlNodePlacement } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
+import type { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { ConnectorPrincipalDigest } from '../connector-read-authorization.js'
-import type { ITenantSecurity } from '../cypher/read-filter-source.js'
 import { AccessScopeConjunction } from './access-scope-conjunction.js'
 import { DepthScopeCompiler } from './depth-scope-compiler.js'
+import type { IPlacementDefaults } from './depth-scope-compiler.js'
 import type { IDevGraphEngine } from './dev-graph-engine-host.js'
 import { EngineSchemaCatalog } from './engine-schema-catalog.js'
 import { PrincipalFacts } from './principal-facts.js'
@@ -20,16 +22,58 @@ export interface IDevScope
     readonly Scope: AccessScope
     /** Where the caller's CREATEs in `modelId` go, stamped with the security model's create defaults. */
     Placement(modelId: string): Cypher.INodePlacement
-    /** Stable, secret-free fingerprint of the scope (principal digest and engine schema version), for cursors. */
+    /**
+     * Stable, secret-free fingerprint of everything the scope was compiled from (principal digest, tenant, a hash of
+     * the claims, engine schema version, security-model generation), for cursors.
+     */
     readonly Digest: string
 }
 
-/** The tenant security the scope source reads (TenantReadAuthorization): the cached model and its reload signal. */
+/** The tenant security the scope source reads (TenantReadAuthorization): the cached evaluator and its reload signal. */
 export interface ITenantSecuritySource
 {
-    SecurityFor(context: AccessContext): Promise<ITenantSecurity>
+    EvaluatorForContext(context: AccessContext): Promise<AccessDepthEvaluator>
     /** Raised after a tenant's security model is invalidated (reloaded on next use). */
     readonly Invalidated: ISignal<string>
+}
+
+/** Where the scope compilers' diagnostics go (policy leaves the engine cannot express, depth rules compiled to False). */
+export interface IDevScopeDiagnostics
+{
+    ScopeDiagnostics(messages: readonly string[]): void
+}
+
+export class ConsoleDevScopeDiagnostics implements IDevScopeDiagnostics
+{
+    private static readonly Line = 'dev access scope: '
+
+    public ScopeDiagnostics(messages: readonly string[]): void
+    {
+        for (const message of messages) console.warn(ConsoleDevScopeDiagnostics.Line + message)
+    }
+}
+
+export enum DevAccessScopeErrorCode
+{
+    /** The engine kept upgrading while the scope was compiled; a later call compiles against the settled version. */
+    SchemaUnsettled = 1,
+    /** Identity is configured but no tenant security source was given. */
+    MissingSecuritySource,
+}
+
+export class DevAccessScopeError extends Error
+{
+    private static readonly ErrorName = 'DevAccessScopeError'
+    private static readonly Messages: Readonly<Record<DevAccessScopeErrorCode, string>> = {
+        [DevAccessScopeErrorCode.SchemaUnsettled]: 'the dev graph engine kept upgrading while its access scope was compiled',
+        [DevAccessScopeErrorCode.MissingSecuritySource]: 'identity is configured but no tenant security source was given',
+    }
+
+    public constructor(public readonly Code: DevAccessScopeErrorCode)
+    {
+        super(DevAccessScopeError.Messages[Code])
+        this.name = DevAccessScopeError.ErrorName
+    }
 }
 
 /** The engine schema one scope is compiled against, with what is derived from it once per version. */
@@ -48,32 +92,37 @@ class SchemaState
     }
 }
 
-/** A principal's compiled scope for one schema version (cached; placement is per call). */
+/** No identity: nothing is stamped on a create. */
+class NoPlacementDefaults implements IPlacementDefaults
+{
+    public static readonly Instance = new NoPlacementDefaults()
+    private static readonly None: ReadonlyMap<string, CellValue> = new Map()
+
+    public Defaults(): ReadonlyMap<string, CellValue>
+    {
+        return NoPlacementDefaults.None
+    }
+}
+
+/** A principal's compiled scope for one schema version and security generation (cached; placement is per call). */
 class CompiledScope
 {
-    private static readonly NoDefaults: ReadonlyMap<string, CellValue> = new Map()
-
-    public constructor(public readonly Scope: AccessScope, public readonly Digest: string, private readonly defaults: (concept: string) => ReadonlyMap<string, CellValue> = () => CompiledScope.NoDefaults)
+    public constructor(public readonly Scope: AccessScope, public readonly Digest: string, public readonly Defaults: IPlacementDefaults)
     {
-    }
-
-    public Defaults(concept: string): ReadonlyMap<string, CellValue>
-    {
-        return this.defaults(concept)
     }
 }
 
 /** TODL placement (the model's namespace and the model as owner) plus the principal's create defaults. */
 class DevNodePlacement implements Cypher.INodePlacement
 {
-    public constructor(private readonly inner: TodlNodePlacement, private readonly compiled: CompiledScope)
+    public constructor(private readonly inner: TodlNodePlacement, private readonly defaults: IPlacementDefaults)
     {
     }
 
     public Place(concept: string, properties: ReadonlyMap<string, CellValue>): Cypher.INodePlace
     {
         const place = this.inner.Place(concept, properties)
-        const defaults = this.compiled.Defaults(concept)
+        const defaults = this.defaults.Defaults(concept)
         return defaults.size === 0 ? place : { ...place, Defaults: defaults }
     }
 }
@@ -93,7 +142,7 @@ class DevScope implements IDevScope
     {
         // a model id with no namespace prefix falls back to the solution name (as the dev draft does), else to itself
         const namespace = SavedMemberReader.NamespaceOf(modelId, this.solutionName ?? modelId)
-        return new DevNodePlacement(new TodlNodePlacement(modelId, namespace), this.compiled)
+        return new DevNodePlacement(new TodlNodePlacement(modelId, namespace), this.compiled.Defaults)
     }
 }
 
@@ -106,47 +155,56 @@ class DevScope implements IDevScope
  *   identity; reads are policy-filtered).
  * - Identity configured: policy AND depth; a tenant with no security model is deny-all (fail-closed, as today).
  *
- * Scopes are cached per (tenant, principal digest, claims, engine schema version) and dropped when the security model
- * is invalidated (TenantReadAuthorization.Invalidated) or the engine upgrades (host Changed). Every compiled scope is
- * checked by the engine itself (a read opened under it) before it is handed out.
+ * Scopes are cached per Digest (principal digest, tenant, claims hash, engine schema version, security generation);
+ * the generation is bumped and the cache dropped when the security model is invalidated
+ * (TenantReadAuthorization.Invalidated), and the cache dropped when the engine upgrades (host Changed). Every compiled
+ * scope is checked by the engine itself (a read opened under it) before it is handed out; compiler diagnostics go to
+ * {@link IDevScopeDiagnostics}, each message once until the cache is dropped.
  */
 export class DevAccessScopeSource implements IDisposable
 {
     private static readonly MaxSnapshotReads = 5
-    private static readonly UnsettledMessage = 'the dev graph engine kept upgrading while its access scope was compiled'
-    private static readonly MissingSecurityMessage = 'identity is configured but no tenant security source was given'
+    private static readonly HashAlgorithm = 'sha256'
+    private static readonly HexEncoding = 'hex'
 
     private readonly scopes = new Map<string, Promise<CompiledScope>>()
     private readonly subscriptions: ISubscription[] = []
+    private readonly reported = new Set<string>()
     private schema: SchemaState | undefined
+    private generation = 0
 
     public constructor(
         private readonly host: IDevGraphEngine,
         private readonly readAuthorization: ITenantSecuritySource | undefined,
         private readonly identityConfigured: boolean,
-        private readonly solutionName: () => Promise<string | undefined> = () => Promise.resolve(undefined))
+        private readonly solutionName: () => Promise<string | undefined> = () => Promise.resolve(undefined),
+        private readonly diagnostics: IDevScopeDiagnostics = new ConsoleDevScopeDiagnostics())
     {
-        if (identityConfigured && readAuthorization === undefined) throw new Error(DevAccessScopeSource.MissingSecurityMessage)
+        if (identityConfigured && readAuthorization === undefined) throw new DevAccessScopeError(DevAccessScopeErrorCode.MissingSecuritySource)
         this.subscriptions.push(host.Changed.Subscribe(() => this.Drop(true)))
-        if (readAuthorization !== undefined) this.subscriptions.push(readAuthorization.Invalidated.Subscribe(() => this.Drop(false)))
+        if (readAuthorization !== undefined)
+        {
+            this.subscriptions.push(readAuthorization.Invalidated.Subscribe(() =>
+            {
+                this.generation += 1
+                this.Drop(false)
+            }))
+        }
     }
 
     public async ScopeFor(context: AccessContext): Promise<IDevScope>
     {
         const schema = await this.Schema()
-        const principal = ConnectorPrincipalDigest.Of(context)
-        const claims = [...context.Principal.Claims].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
-        // claims are part of the key (policies and claim-mapped roles read them) but never of the Digest
-        const key = JSON.stringify([context.Tenant.Id, principal, claims, schema.Version])
-        let compiled = this.scopes.get(key)
+        const digest = this.DigestOf(context, schema.Version)
+        let compiled = this.scopes.get(digest)
         if (compiled === undefined)
         {
-            const built = this.Compile(context, schema, JSON.stringify([principal, schema.Version]))
+            const built = this.Compile(context, schema, digest)
             compiled = built
-            this.scopes.set(key, built)
+            this.scopes.set(digest, built)
             built.catch(() =>
             {
-                if (this.scopes.get(key) === built) this.scopes.delete(key)
+                if (this.scopes.get(digest) === built) this.scopes.delete(digest)
             })
         }
         return new DevScope(await compiled, await this.solutionName())
@@ -158,30 +216,50 @@ export class DevAccessScopeSource implements IDisposable
         this.Drop(true)
     }
 
+    /** Claims are hashed (they may carry personal data); policies and claim-mapped roles read them, so they key the scope. */
+    private DigestOf(context: AccessContext, version: string): string
+    {
+        const claims = [...context.Principal.Claims].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+        const claimsHash = createHash(DevAccessScopeSource.HashAlgorithm).update(JSON.stringify(claims)).digest(DevAccessScopeSource.HexEncoding)
+        return JSON.stringify([ConnectorPrincipalDigest.Of(context), context.Tenant.Id, claimsHash, version, this.generation])
+    }
+
     private Drop(schema: boolean): void
     {
         this.scopes.clear()
+        this.reported.clear()
         if (schema) this.schema = undefined
     }
 
     private async Compile(context: AccessContext, schema: SchemaState, digest: string): Promise<CompiledScope>
     {
         const policy = schema.Policies.Compile(new PrincipalFacts(context.Principal), AccessDefault.Allow)
+        const messages = schema.Policies.Diagnostics.map(diagnostic => diagnostic.Message)
         let compiled: CompiledScope
         if (!this.identityConfigured)
         {
-            compiled = new CompiledScope(AccessScope.Build({ Default: AccessDefault.Allow, Rows: policy.Rows }), digest)
+            compiled = new CompiledScope(AccessScope.Build({ Default: AccessDefault.Allow, Rows: policy.Rows }), digest, NoPlacementDefaults.Instance)
         }
         else
         {
-            const security = await this.readAuthorization!.SecurityFor(context)
-            const depth = DepthScopeCompiler.Compile(security, context.Principal, schema.Description)
-            compiled = new CompiledScope(AccessScopeConjunction.And(policy, depth.Scope(), schema.Catalog), digest, concept => depth.Defaults(concept))
+            const evaluator = await this.readAuthorization!.EvaluatorForContext(context)
+            const depth = DepthScopeCompiler.Compile(evaluator, context.Principal, schema.Description)
+            messages.push(...depth.Diagnostics.map(diagnostic => diagnostic.Message))
+            compiled = new CompiledScope(AccessScopeConjunction.And(policy, depth.Scope(), schema.Catalog), digest, depth)
         }
         // the engine's own scope validation (ruling R63): a scope it would reject is never handed out
         const reader = await schema.Engine.BeginRead(compiled.Scope)
         reader.dispose()
+        this.Report(messages)
         return compiled
+    }
+
+    private Report(messages: readonly string[]): void
+    {
+        const fresh = messages.filter(message => !this.reported.has(message))
+        if (fresh.length === 0) return
+        for (const message of fresh) this.reported.add(message)
+        this.diagnostics.ScopeDiagnostics(fresh)
     }
 
     /** The engine and the snapshot it runs, read so the repository and description belong to the engine's version. */
@@ -199,6 +277,6 @@ export class DevAccessScopeSource implements IDisposable
                 return this.schema
             }
         }
-        throw new Error(DevAccessScopeSource.UnsettledMessage)
+        throw new DevAccessScopeError(DevAccessScopeErrorCode.SchemaUnsettled)
     }
 }
