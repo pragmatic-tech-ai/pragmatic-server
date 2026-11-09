@@ -1,4 +1,4 @@
-import { AccessDefault, AccessScope, And, FalsePredicate, TruePredicate } from '@pragmatic-tech-ai/graph'
+import { AccessDefault, AccessScope, And, ConceptIs, FalsePredicate, Not, TruePredicate } from '@pragmatic-tech-ai/graph'
 import type { IReadOnlyMembers, IWriteRules, Predicate } from '@pragmatic-tech-ai/graph'
 import type { EngineSchemaCatalog } from './engine-schema-catalog.js'
 
@@ -27,12 +27,35 @@ export enum WriteRule
     Delete = 'Delete',
 }
 
+/** The per-operation read-only members of one key, unioned across scopes. */
+class ReadOnlyDraft
+{
+    private create: Set<string> | undefined
+    private update: Set<string> | undefined
+
+    public Add(members: IReadOnlyMembers | undefined): void
+    {
+        for (const member of members?.Create ?? []) (this.create ??= new Set<string>()).add(member)
+        for (const member of members?.Update ?? []) (this.update ??= new Set<string>()).add(member)
+    }
+
+    /** undefined when nothing is read-only. */
+    public Members(): IReadOnlyMembers | undefined
+    {
+        if (this.create === undefined && this.update === undefined) return undefined
+        return {
+            ...(this.create === undefined ? {} : { Create: this.create }),
+            ...(this.update === undefined ? {} : { Update: this.update }),
+        }
+    }
+}
+
 /** One key's write rules while two scopes are combined. */
 class WriteRulesDraft
 {
     public readonly Predicates = new Map<WriteRule, Predicate>()
-    private readOnlyCreate: Set<string> | undefined
-    private readOnlyUpdate: Set<string> | undefined
+    private readonly readOnly = new ReadOnlyDraft()
+    private readonly readOnlyExact = new ReadOnlyDraft()
 
     public Add(rules: IWriteRules): void
     {
@@ -41,16 +64,8 @@ class WriteRulesDraft
             const predicate = rules[rule]
             if (predicate !== undefined) this.And(rule, predicate)
         }
-        for (const member of rules.ReadOnly?.Create ?? [])
-        {
-            this.readOnlyCreate ??= new Set<string>()
-            this.readOnlyCreate.add(member)
-        }
-        for (const member of rules.ReadOnly?.Update ?? [])
-        {
-            this.readOnlyUpdate ??= new Set<string>()
-            this.readOnlyUpdate.add(member)
-        }
+        this.readOnly.Add(rules.ReadOnly)
+        this.readOnlyExact.Add(rules.ReadOnlyExact)
     }
 
     public And(rule: WriteRule, predicate: Predicate): void
@@ -60,31 +75,28 @@ class WriteRulesDraft
 
     public Rules(): IWriteRules
     {
+        const readOnly = this.readOnly.Members()
+        const readOnlyExact = this.readOnlyExact.Members()
         return {
             Create: this.Predicates.get(WriteRule.Create),
             Update: this.Predicates.get(WriteRule.Update),
             Delete: this.Predicates.get(WriteRule.Delete),
-            ...(this.readOnlyCreate === undefined && this.readOnlyUpdate === undefined ? {} : { ReadOnly: this.ReadOnlyMembers() }),
-        }
-    }
-
-    private ReadOnlyMembers(): IReadOnlyMembers
-    {
-        return {
-            ...(this.readOnlyCreate === undefined ? {} : { Create: this.readOnlyCreate }),
-            ...(this.readOnlyUpdate === undefined ? {} : { Update: this.readOnlyUpdate }),
+            ...(readOnly === undefined ? {} : { ReadOnly: readOnly }),
+            ...(readOnlyExact === undefined ? {} : { ReadOnlyExact: readOnlyExact }),
         }
     }
 }
 
 /**
  * The AND of two access scopes over one engine schema, deny-wins: a node is visible (a write allowed) iff both scopes
- * admit it. Rows on the same key are ANDed, write rules are ANDed per operation, Hidden and ReadOnly (per operation) are unioned, and
- * the Default is Allow only when both are.
+ * admit it. Rows on the same key are ANDed, write rules are ANDed per operation, Hidden / HiddenExact and ReadOnly /
+ * ReadOnlyExact (per operation) are unioned key by key (inherited sets stay inherited, exact sets exact), and the
+ * Default is Allow only when both are.
  *
  * A scope's Default only decides a node none of whose keys has an entry in that scope, but the combined scope sees
  * both scopes' entries. So where one scope would leave a concept to its Default Deny while the other has an entry
- * for it, the combined scope carries an explicit False on that concept (per operation for writes), keeping the deny.
+ * for it, the combined scope keeps the deny for that concept's OWN instances: `Not(ConceptIs concept)` is ANDed onto
+ * its entry (per operation for writes). Never a plain False, which would also deny every subconcept (ruling R93).
  */
 export class AccessScopeConjunction
 {
@@ -95,29 +107,27 @@ export class AccessScopeConjunction
         const rows = new Map<string, Predicate>()
         const writes = new Map<string, WriteRulesDraft>()
         const hidden = new Map<string, Set<string>>()
+        const hiddenExact = new Map<string, Set<string>>()
         for (const scope of [left, right])
         {
             for (const [key, predicate] of scope.Rows) rows.set(key, PredicateFold.And(rows.get(key), predicate))
             for (const [key, rules] of scope.Writes) AccessScopeConjunction.Draft(writes, key).Add(rules)
-            for (const [key, members] of scope.Hidden)
-            {
-                const union = hidden.get(key) ?? new Set<string>()
-                for (const member of members) union.add(member)
-                hidden.set(key, union)
-            }
+            AccessScopeConjunction.Union(hidden, scope.Hidden)
+            AccessScopeConjunction.Union(hiddenExact, scope.HiddenExact)
         }
         for (const concept of catalog.Concepts())
         {
             const keys = catalog.Applicable(concept)
+            const own = new Not(new ConceptIs(concept))
             for (const [self, other] of [[left, right], [right, left]] as const)
             {
                 if (self.Default !== AccessDefault.Deny) continue
-                if (!AccessScopeConjunction.HasRow(self, keys) && AccessScopeConjunction.HasRow(other, keys)) rows.set(concept, FalsePredicate.Instance)
+                if (!AccessScopeConjunction.HasRow(self, keys) && AccessScopeConjunction.HasRow(other, keys)) rows.set(concept, PredicateFold.And(rows.get(concept), own))
                 for (const rule of AccessScopeConjunction.Rules)
                 {
                     if (!AccessScopeConjunction.HasRule(self, keys, rule) && AccessScopeConjunction.HasRule(other, keys, rule))
                     {
-                        AccessScopeConjunction.Draft(writes, concept).Predicates.set(rule, FalsePredicate.Instance)
+                        AccessScopeConjunction.Draft(writes, concept).And(rule, own)
                     }
                 }
             }
@@ -125,9 +135,18 @@ export class AccessScopeConjunction
         const fallback = left.Default === AccessDefault.Allow && right.Default === AccessDefault.Allow ? AccessDefault.Allow : AccessDefault.Deny
         const rules = new Map<string, IWriteRules>()
         for (const [key, draft] of writes) rules.set(key, draft.Rules())
-        return AccessScope.Build({ Default: fallback, Rows: rows, Writes: rules, Hidden: hidden })
+        return AccessScope.Build({ Default: fallback, Rows: rows, Writes: rules, Hidden: hidden, HiddenExact: hiddenExact })
     }
 
+    private static Union(into: Map<string, Set<string>>, from: ReadonlyMap<string, ReadonlySet<string>>): void
+    {
+        for (const [key, members] of from)
+        {
+            const union = into.get(key) ?? new Set<string>()
+            for (const member of members) union.add(member)
+            into.set(key, union)
+        }
+    }
     private static Draft(writes: Map<string, WriteRulesDraft>, key: string): WriteRulesDraft
     {
         let draft = writes.get(key)

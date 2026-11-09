@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { AccessDefault } from '@pragmatic-tech-ai/graph'
 import type { CellValue } from '@pragmatic-tech-ai/graph'
 import { AccessLevel, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
-import type { IFieldSecurityConfig, IPrivilegeConfig, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
+import type { IFieldSecurityConfig, IPrivilegeConfig, ISecurityModelConfig, Principal } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
 import { DepthDiagnosticCode, DepthScopeCompiler } from '../depth-scope-compiler.js'
 import type { DepthScope } from '../depth-scope-compiler.js'
@@ -31,7 +31,7 @@ class Instances
 /** One compiled depth scope and today's evaluator over the same model, compared instance by instance. */
 class DepthCase
 {
-    public constructor(public readonly Depth: DepthScope, private readonly evaluator: AccessDepthEvaluator, private readonly principal: ReturnType<typeof DevScopeFx.Context>['Principal'])
+    public constructor(public readonly Depth: DepthScope, private readonly evaluator: AccessDepthEvaluator, private readonly principal: Principal)
     {
     }
 
@@ -138,8 +138,8 @@ describe('DepthScopeCompiler ownership semantics', () =>
     test('an unset, empty or unknown business unit value reads as the root unit (OwnershipResolver)', async () =>
     {
         const base = DevScopeFx.Model([DevScopeFx.Privilege(PrivilegeAction.Read, AccessLevel.BusinessUnit)])
-        const model = { ...base, teams: [...base.teams, { id: 'team-root', name: 'R', owningBusinessUnit: DevScopeFx.Root }],
-            membership: { claimsMapping: [], overrides: [{ principalId: DevScopeFx.P1, homeBusinessUnit: DevScopeFx.Sales, teams: ['team-root'] }] } }
+        const model = { ...base, teams: [...base.teams, { id: DevScopeFx.TeamRoot, name: 'R', owningBusinessUnit: DevScopeFx.Root }],
+            membership: { claimsMapping: [], overrides: [{ principalId: DevScopeFx.P1, homeBusinessUnit: DevScopeFx.Sales, teams: [DevScopeFx.TeamRoot] }] } }
         const depth = await DepthCase.Of(model)
         assert.deepEqual(depth.Visible(ScopeAxis.Read), ['mine', 'rooted', 'unset', 'empty', 'bogus', 'ownerless'])
         DepthFx.AssertParity(depth)
@@ -158,7 +158,7 @@ describe('DepthScopeCompiler ownership semantics', () =>
     test('a missing owner field compiles to False with a diagnostic', async () =>
     {
         const base = DevScopeFx.Model([DevScopeFx.Privilege(PrivilegeAction.Read, AccessLevel.User)])
-        const model = { ...base, ownershipRules: base.ownershipRules.map(rule => rule.concept === DevScopeFx.Widget ? { ...rule, owner: { kind: rule.owner!.kind, value: 'nope' } } : rule) }
+        const model = { ...base, ownershipRules: base.ownershipRules.map(rule => rule.concept === DevScopeFx.Widget ? { ...rule, owner: { kind: rule.owner!.kind, value: DevScopeFx.MissingField } } : rule) }
         const depth = await DepthCase.Of(model)
         assert.deepEqual(depth.Visible(ScopeAxis.Read), [])
         assert.ok(depth.Depth.Diagnostics.some(d => d.Code === DepthDiagnosticCode.MissingOwnerField && d.Concept === DevScopeFx.Widget))
@@ -169,7 +169,7 @@ describe('DepthScopeCompiler ownership semantics', () =>
         const base = DevScopeFx.Model([DevScopeFx.Privilege(PrivilegeAction.Read, AccessLevel.BusinessUnit)])
         // root in reach, so a root fallback would admit every instance: the missing FIELD must not fail open
         const model = { ...base,
-            ownershipRules: base.ownershipRules.map(rule => rule.concept === DevScopeFx.Widget ? { ...rule, owningBusinessUnit: { kind: rule.owningBusinessUnit.kind, value: 'nope' } } : rule),
+            ownershipRules: base.ownershipRules.map(rule => rule.concept === DevScopeFx.Widget ? { ...rule, owningBusinessUnit: { kind: rule.owningBusinessUnit.kind, value: DevScopeFx.MissingField } } : rule),
             membership: { claimsMapping: [], overrides: [{ principalId: DevScopeFx.P1, homeBusinessUnit: DevScopeFx.Root, teams: [] }] } }
         const depth = await DepthCase.Of(model)
         assert.deepEqual(depth.Visible(ScopeAxis.Read), [])
@@ -264,25 +264,31 @@ describe('DepthScopeCompiler field security and create defaults', () =>
     test('secured readable field hidden without profile', async () =>
     {
         const depth = await DepthCase.Compile(read, DevScopeFx.Fields([DevScopeFx.Secret], []))
-        assert.deepEqual([...depth.Depth.Hidden.get(DevScopeFx.Widget) ?? []], [DevScopeFx.Secret])
-        assert.equal(depth.Depth.ReadOnly.get(DevScopeFx.Widget), undefined, 'hidden members are not also read-only')
-        assert.equal(depth.Depth.Hidden.has(DevScopeFx.Gadget), false, 'only the secured concept')
+        assert.deepEqual([...depth.Depth.HiddenExact.get(DevScopeFx.Widget) ?? []], [DevScopeFx.Secret])
+        assert.equal(depth.Depth.ReadOnlyExact.get(DevScopeFx.Widget), undefined, 'hidden members are not also read-only')
+        assert.equal(depth.Depth.HiddenExact.has(DevScopeFx.Gadget), false, 'only the secured concept')
+        assert.equal(depth.Depth.Scope().Hidden.size, 0, 'never through the inherited Hidden sets')
     })
 
     test('a field secured on a child only is hidden on the child, never on the parent', async () =>
     {
         const depth = await DepthCase.Compile(read, DevScopeFx.Fields([DevScopeFx.Secret], [], DevScopeFx.Gizmo))
-        assert.deepEqual([...depth.Depth.Hidden.get(DevScopeFx.Gizmo) ?? []], [DevScopeFx.Secret])
-        assert.equal(depth.Depth.Hidden.has(DevScopeFx.Widget), false)
+        assert.deepEqual([...depth.Depth.HiddenExact.get(DevScopeFx.Gizmo) ?? []], [DevScopeFx.Secret])
+        assert.equal(depth.Depth.HiddenExact.has(DevScopeFx.Widget), false)
     })
 
-    test('a field secured on the parent is keyed on the parent only (the engine extends it to subconcepts: fail-closed)', async () =>
+    test('a field secured on the parent is not hidden or read-only on a child unless the child secures it', async () =>
     {
-        // today's mask is exact-concept, so Gizmo.secret would read; engine Hidden sets have no ConceptIs guard and
-        // apply to subconcepts, so the parent's entry also hides it on Gizmo (see the Task 5 report)
-        const depth = await DepthCase.Compile(read, DevScopeFx.Fields([DevScopeFx.Secret], []))
-        assert.equal(depth.Depth.Hidden.has(DevScopeFx.Gizmo), false, 'nothing is keyed on the child')
-        assert.deepEqual([...depth.Depth.Hidden.get(DevScopeFx.Widget) ?? []], [DevScopeFx.Secret])
+        const hidden = await DepthCase.Compile(read, DevScopeFx.Fields([DevScopeFx.Secret], []))
+        const scope = hidden.Depth.Scope()
+        assert.deepEqual([...scope.HiddenExact.get(DevScopeFx.Widget) ?? []], [DevScopeFx.Secret])
+        assert.equal(scope.HiddenExact.has(DevScopeFx.Gizmo), false)
+        assert.equal(scope.Hidden.size, 0, 'exact sets only: the engine never extends them to Gizmo (R94)')
+        const readOnly = await DepthCase.Compile(read, DevScopeFx.Fields([DevScopeFx.Code], [{ field: DevScopeFx.Code, read: true }]))
+        const writes = readOnly.Depth.Scope().Writes
+        assert.deepEqual([...writes.get(DevScopeFx.Widget)?.ReadOnlyExact?.Update ?? []], [DevScopeFx.Code])
+        assert.equal(writes.get(DevScopeFx.Gizmo)?.ReadOnlyExact, undefined)
+        assert.equal(writes.get(DevScopeFx.Widget)?.ReadOnly, undefined, 'never through the inherited ReadOnly sets')
     })
 
     test('readable but not writable field is read-only per operation', async () =>
@@ -293,8 +299,8 @@ describe('DepthScopeCompiler field security and create defaults', () =>
             { field: DevScopeFx.Secret, read: true, create: true, update: true },
         ])
         const depth = await DepthCase.Compile(read, fields)
-        assert.equal(depth.Depth.Hidden.get(DevScopeFx.Widget), undefined)
-        const readOnly = depth.Depth.Scope().Writes.get(DevScopeFx.Widget)?.ReadOnly
+        assert.equal(depth.Depth.HiddenExact.get(DevScopeFx.Widget), undefined)
+        const readOnly = depth.Depth.Scope().Writes.get(DevScopeFx.Widget)?.ReadOnlyExact
         assert.deepEqual([...readOnly?.Create ?? []], [DevScopeFx.Code], 'not writable at create')
         assert.deepEqual([...readOnly?.Update ?? []].sort(), [DevScopeFx.Code, DevScopeFx.Owner], 'not writable at update: owner is create-only')
     })

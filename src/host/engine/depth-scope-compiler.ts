@@ -44,10 +44,12 @@ export class DepthScope implements IPlacementDefaults
 
     public constructor(
         public readonly Rows: ReadonlyMap<string, Predicate>,
-        /** Create / Update / Delete per concept; read-only members are kept apart in {@link DepthScope.ReadOnly}. */
+        /** Create / Update / Delete per concept; read-only members are kept apart in {@link DepthScope.ReadOnlyExact}. */
         public readonly Writes: ReadonlyMap<string, IWriteRules>,
-        public readonly Hidden: ReadonlyMap<string, ReadonlySet<string>>,
-        public readonly ReadOnly: ReadonlyMap<string, IReadOnlyMembers>,
+        /** Exact-concept hidden members (R94): never inherited by subconcepts, as today's exact-concept field mask. */
+        public readonly HiddenExact: ReadonlyMap<string, ReadonlySet<string>>,
+        /** Exact-concept read-only members per operation (R94), folded into Writes as `ReadOnlyExact`. */
+        public readonly ReadOnlyExact: ReadonlyMap<string, IReadOnlyMembers>,
         private readonly defaults: ReadonlyMap<string, ReadonlyMap<string, CellValue>>,
         public readonly Diagnostics: readonly IDepthDiagnostic[])
     {
@@ -65,15 +67,15 @@ export class DepthScope implements IPlacementDefaults
         return this.defaults.get(concept) ?? DepthScope.NoDefaults
     }
 
-    /** The axis as an engine scope (ReadOnly folded into Writes). */
+    /** The axis as an engine scope (ReadOnlyExact folded into Writes). */
     public Scope(): AccessScope
     {
         const writes = new Map<string, IWriteRules>(this.Writes)
-        for (const [concept, members] of this.ReadOnly)
+        for (const [concept, members] of this.ReadOnlyExact)
         {
-            writes.set(concept, { ...writes.get(concept), ReadOnly: members })
+            writes.set(concept, { ...writes.get(concept), ReadOnlyExact: members })
         }
-        return AccessScope.Build({ Default: this.Default, Rows: this.Rows, Writes: writes, Hidden: this.Hidden })
+        return AccessScope.Build({ Default: this.Default, Rows: this.Rows, Writes: writes, HiddenExact: this.HiddenExact })
     }
 }
 
@@ -101,11 +103,10 @@ class FieldSets
  * - A concept without a privilege is None, so denied: ungoverned concepts stay fail-closed, as today. A tenant with no
  *   security model (DenyAll evaluator) therefore denies every instance; taxonomy terms (`todl.Term`) stay readable in
  *   every case, as today (they are schema-level and never passed the depth filter), and are never writable.
- * - Field security: a secured member the principal may not read is Hidden; a readable one it may not write at create
- *   is read-only on Create, at update read-only on Update (R92). Hidden and ReadOnly sets cannot be guarded by concept:
- *   the engine applies a key's sets to its subconcepts too, so a member secured on a parent is also hidden / read-only
- *   on a subconcept that does not secure it (fail-closed; see the Task 5 report). Writing a Hidden member is refused
- *   (HiddenMember): write-only members are not supported.
+ * - Field security, exact-concept like today's mask (R94): a secured member the principal may not read is in
+ *   `HiddenExact`; a readable one it may not write at create is in `ReadOnlyExact.Create`, at update in
+ *   `ReadOnlyExact.Update` (R92). A member secured on a parent is never hidden or read-only on a subconcept that does
+ *   not secure it. Writing a hidden member is refused (HiddenMember): write-only members are not supported.
  */
 export class DepthScopeCompiler
 {

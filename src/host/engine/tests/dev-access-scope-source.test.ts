@@ -82,6 +82,8 @@ class SourceFx
     public static readonly SetCode = "MATCH (w:acme.Widget {code: 'w1'}) SET w.code = 'w1x'"
     public static readonly Unknown = 'acme.Nope'
     public static readonly Gizmos = 'MATCH (g:acme.Gizmo) RETURN g.code AS c ORDER BY c'
+    public static readonly GizmoSecrets = 'MATCH (g:acme.Gizmo) RETURN g.secret AS s'
+    public static readonly SetGizmoCode = "MATCH (g:acme.Gizmo {code: 'z1'}) SET g.code = 'z1x'"
     public static readonly SetOwner = "MATCH (w:acme.Widget {code: 'w1'}) SET w.owner = 'p1'"
     public static readonly CreateOwned = "CREATE (w:acme.Widget {code: 'w7', owner: 'p1'}) RETURN w.code AS c"
     public static readonly SetSecret = "MATCH (w:acme.Widget {code: 'w1'}) SET w.secret = 'x'"
@@ -98,7 +100,7 @@ class SourceFx
         + '    Widget w2 { owner = "p2"; owningBu = "north"; code = "w2"; secret = "s2"; }\n'
         + '    Widget w3 { owner = "p2"; owningBu = "root"; code = "w3"; }\n'
         + '    Gadget g1 { code = "g1"; }\n'
-        + '    Gizmo z1 { owner = "p2"; owningBu = "root"; code = "z1"; }\n'
+        + '    Gizmo z1 { owner = "p2"; owningBu = "root"; code = "z1"; secret = "z"; }\n'
         + '  }\n'
         + '}\n'
 
@@ -284,14 +286,14 @@ describe('DevAccessScopeSource', () =>
     test('scope validates against the engine schema', async () =>
     {
         // the model governs acme.Nope and owns acme.Gear / acme.Counter, which this schema lacks; the owner field of Widget is renamed away
-        const base = DevScopeFx.Model([SourceFx.ReadUser, DevScopeFx.Privilege(PrivilegeAction.Read, AccessLevel.Organization, SourceFx.Unknown)], DevScopeFx.Fields(['nope', DevScopeFx.Secret], []))
-        const model = { ...base, ownershipRules: base.ownershipRules.map(rule => rule.concept === DevScopeFx.Widget ? { ...rule, owner: { kind: rule.owner!.kind, value: 'missing' } } : rule) }
-        const { Fx } = await ScopeFx.With(model, 'policy Widget { allow read when entity.nope == "x"; }')
+        const base = DevScopeFx.Model([SourceFx.ReadUser, DevScopeFx.Privilege(PrivilegeAction.Read, AccessLevel.Organization, SourceFx.Unknown)], DevScopeFx.Fields([DevScopeFx.MissingField, DevScopeFx.Secret], []))
+        const model = { ...base, ownershipRules: base.ownershipRules.map(rule => rule.concept === DevScopeFx.Widget ? { ...rule, owner: { kind: rule.owner!.kind, value: DevScopeFx.MissingField } } : rule) }
+        const { Fx } = await ScopeFx.With(model, 'policy Widget { allow read when entity.' + DevScopeFx.MissingField + ' == "x"; }')
         const scope = await Fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))
         assert.equal(scope.Scope.Rows.has(SourceFx.Unknown), false)
         assert.deepEqual(await Fx.Column(DevScopeFx.P1, SourceFx.Widgets), [], 'missing owner field: User level denies')
         // the engine really validates: a scope naming what the schema lacks is refused
-        const bad = AccessScope.Build({ Default: scope.Scope.Default, Hidden: new Map([[DevScopeFx.Widget, new Set(['nope'])]]) })
+        const bad = AccessScope.Build({ Default: scope.Scope.Default, Hidden: new Map([[DevScopeFx.Widget, new Set([DevScopeFx.MissingField])]]) })
         await assert.rejects((await Fx.Engine()).BeginRead(bad), (error: unknown) => error instanceof GraphError && error.GraphCode === GraphErrorCode.InvalidArgument)
     })
 
@@ -300,6 +302,16 @@ describe('DevAccessScopeSource', () =>
         const { Fx } = await ScopeFx.With(DevScopeFx.Model([SourceFx.ReadUser, DevScopeFx.Privilege(PrivilegeAction.Read, AccessLevel.Organization, DevScopeFx.Gizmo)]))
         assert.deepEqual(await Fx.Column(DevScopeFx.P1, SourceFx.Gizmos), ['z1'], 'z1 is owned by p2 in root: only its own Org level admits it')
         assert.deepEqual(await Fx.Column(DevScopeFx.P1, SourceFx.Widgets), ['w1', 'z1'])
+    })
+
+    test('a field secured on the parent is readable and writable on a child that does not secure it (R94)', async () =>
+    {
+        const privileges = [SourceFx.ReadOrg, DevScopeFx.Privilege(PrivilegeAction.Read, AccessLevel.Organization, DevScopeFx.Gizmo), DevScopeFx.Privilege(PrivilegeAction.Update, AccessLevel.Organization, DevScopeFx.Gizmo)]
+        const fields = DevScopeFx.Fields([DevScopeFx.Secret, DevScopeFx.Code], [{ field: DevScopeFx.Code, read: true }])
+        const { Fx } = await ScopeFx.With(DevScopeFx.Model(privileges, fields))
+        assert.deepEqual(await Fx.Column(DevScopeFx.P1, SourceFx.Secrets), ['z', null, null, null], 'read on the Gizmo, hidden on the Widgets (nulls sort last)')
+        await Fx.Write(DevScopeFx.P1, SourceFx.SetGizmoCode)
+        assert.deepEqual(await Fx.Column(DevScopeFx.P1, SourceFx.Gizmos), ['z1x'], 'read-only on Widget, writable on Gizmo')
     })
 
     test('a create-only field is settable on create and refused on update', async () =>
@@ -331,11 +343,11 @@ describe('DevAccessScopeSource', () =>
     test('compiler diagnostics are reported once', async () =>
     {
         const base = DevScopeFx.Model([SourceFx.ReadUser])
-        const model = { ...base, ownershipRules: base.ownershipRules.map(rule => rule.concept === DevScopeFx.Widget ? { ...rule, owner: { kind: rule.owner!.kind, value: 'missing' } } : rule) }
+        const model = { ...base, ownershipRules: base.ownershipRules.map(rule => rule.concept === DevScopeFx.Widget ? { ...rule, owner: { kind: rule.owner!.kind, value: DevScopeFx.MissingField } } : rule) }
         const { Fx } = await ScopeFx.With(model)
         await Fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))
         await Fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P2))
-        assert.equal(Fx.Diagnostics.Messages.filter(message => message.startsWith('owner field "missing"')).length, 1, JSON.stringify(Fx.Diagnostics.Messages))
+        assert.equal(Fx.Diagnostics.Messages.filter(message => message.startsWith('owner field "' + DevScopeFx.MissingField + '"')).length, 1, JSON.stringify(Fx.Diagnostics.Messages))
     })
 
     test('placement uses the model namespace and the model as owner', async () =>

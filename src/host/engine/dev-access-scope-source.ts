@@ -6,6 +6,8 @@ import { PolicyScopeCompiler, TodlNodePlacement } from '@pragmatic-tech-ai/todl/
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
+import { StructuredLogger } from '../../observability/logger.js'
+import type { ILogger } from '../../observability/logger.js'
 import { ConnectorPrincipalDigest } from '../connector-read-authorization.js'
 import { AccessScopeConjunction } from './access-scope-conjunction.js'
 import { DepthScopeCompiler } from './depth-scope-compiler.js'
@@ -43,13 +45,18 @@ export interface IDevScopeDiagnostics
     ScopeDiagnostics(messages: readonly string[]): void
 }
 
-export class ConsoleDevScopeDiagnostics implements IDevScopeDiagnostics
+/** Reports each diagnostic as one warning on the server logger. */
+export class LoggerDevScopeDiagnostics implements IDevScopeDiagnostics
 {
     private static readonly Line = 'dev access scope: '
 
+    public constructor(private readonly logger: ILogger = StructuredLogger.ToStdout())
+    {
+    }
+
     public ScopeDiagnostics(messages: readonly string[]): void
     {
-        for (const message of messages) console.warn(ConsoleDevScopeDiagnostics.Line + message)
+        for (const message of messages) this.logger.Warn(LoggerDevScopeDiagnostics.Line + message)
     }
 }
 
@@ -178,7 +185,7 @@ export class DevAccessScopeSource implements IDisposable
         private readonly readAuthorization: ITenantSecuritySource | undefined,
         private readonly identityConfigured: boolean,
         private readonly solutionName: () => Promise<string | undefined> = () => Promise.resolve(undefined),
-        private readonly diagnostics: IDevScopeDiagnostics = new ConsoleDevScopeDiagnostics())
+        private readonly diagnostics: IDevScopeDiagnostics = new LoggerDevScopeDiagnostics())
     {
         if (identityConfigured && readAuthorization === undefined) throw new DevAccessScopeError(DevAccessScopeErrorCode.MissingSecuritySource)
         this.subscriptions.push(host.Changed.Subscribe(() => this.Drop(true)))

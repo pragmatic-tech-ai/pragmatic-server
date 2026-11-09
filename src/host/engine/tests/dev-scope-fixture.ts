@@ -27,6 +27,10 @@ export class DevScopeFx
     public static readonly P2 = 'p2'
     public static readonly TeamA = 'team-a'
     public static readonly TeamB = 'team-b'
+    /** A team owned by the root unit (puts the root in a member's reach). */
+    public static readonly TeamRoot = 'team-root'
+    /** A field name no fixture concept has. */
+    public static readonly MissingField = 'nope'
     public static readonly Root = 'root'
     public static readonly Sales = 'sales'
     public static readonly East = 'east'
