@@ -1,10 +1,10 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { AccessScope, Cypher, GraphEngine, StorageKind } from '@pragmatic-tech-ai/graph'
-import { TodlFileConnector } from '@pragmatic-tech-ai/todl/engine'
+import { EngineBridgeError, EngineBridgeErrorCode, TodlFileConnector } from '@pragmatic-tech-ai/todl/engine'
 import { TodlSourceCollector } from '../../model/todl-source-collector.js'
 import { DevSnapshotSource } from '../dev-snapshot-source.js'
-import { ServerModelWorkspace, StaleSourceFileError } from '../server-model-workspace.js'
+import { ServerModelWorkspace } from '../server-model-workspace.js'
 import { EngineHostFx } from './engine-host-fixture.js'
 
 /** Opens a memory engine over the fixture's saved snapshot with the file connector over the server workspace. */
@@ -19,6 +19,34 @@ class WorkspaceFx
     public static readonly RenameAda = "MATCH (n:shop.Customer {name: 'Ada'}) SET n.name = 'Ann'"
     public static readonly Names = 'MATCH (n:shop.Customer) RETURN n.name AS name ORDER BY name'
     public static readonly NewFile = 'new.todl'
+    public static readonly Unrestored = /could not be restored/
+
+    /** A session's stale refusal: EngineBridgeError with code Stale. */
+    public static IsStale(error: unknown): boolean
+    {
+        return error instanceof EngineBridgeError && error.Code === EngineBridgeErrorCode.Stale
+    }
+
+    public static async Failure(work: Promise<unknown>): Promise<unknown>
+    {
+        try
+        {
+            await work
+        }
+        catch (error)
+        {
+            return error
+        }
+        assert.fail('expected the statement to fail')
+    }
+
+    /** The error and its causes, outermost first. */
+    public static Chain(error: unknown): Error[]
+    {
+        const chain: Error[] = []
+        for (let at = error; at instanceof Error; at = at.cause) chain.push(at)
+        return chain
+    }
 
     public static async Run(fx: EngineHostFx, query: string): Promise<void>
     {
@@ -109,7 +137,9 @@ describe('ServerModelWorkspace', () =>
         try
         {
             const before = await WorkspaceFx.NamesIn(engine)
-            await assert.rejects(new Cypher.CypherEngine(engine).Execute(AccessScope.System, WorkspaceFx.RenameBoth))
+            const failure = await WorkspaceFx.Failure(new Cypher.CypherEngine(engine).Execute(AccessScope.System, WorkspaceFx.RenameBoth))
+            assert.ok(WorkspaceFx.Chain(failure).some(WorkspaceFx.IsStale), String(failure))
+            assert.ok(!WorkspaceFx.Chain(failure).some(e => WorkspaceFx.Unrestored.test(e.message)), 'nothing is reported unrestored: ' + String(failure))
             assert.equal(shared.Files.get(EngineHostFx.SharedFile), EngineHostFx.Shared, 'the shared file is unchanged')
             assert.deepEqual(await WorkspaceFx.NamesIn(engine), before, 'the engine data is unchanged')
         }
@@ -148,7 +178,7 @@ describe('ServerModelWorkspace', () =>
         const fx = new EngineHostFx()
         const session = (await new ServerModelWorkspace(fx.Source, fx.Lang).OpenDraft(EngineHostFx.ModelM))!
         fx.A.Files.set(EngineHostFx.File, EngineHostFx.SourceA.replace('Ada', 'Other'))
-        await assert.rejects(session.WriteFile(EngineHostFx.File, EngineHostFx.SourceA), StaleSourceFileError)
+        await assert.rejects(session.WriteFile(EngineHostFx.File, EngineHostFx.SourceA), WorkspaceFx.IsStale)
         assert.match(fx.A.Files.get(EngineHostFx.File)!, /Other/)
         assert.deepEqual(fx.Lang.Changes, [])
     })
