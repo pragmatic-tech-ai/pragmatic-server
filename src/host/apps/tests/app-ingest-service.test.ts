@@ -215,10 +215,10 @@ class DeployWire
         const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
         const handler = ServerConnectionHandler.Attach(
             serverSocket, languageService, manager, IngestFixture.Context(role),
-            () => Promise.reject(new Error('no connectors')), ctx => server.Graph(ctx),
+            () => Promise.reject(new Error('no connectors')), undefined,
             undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Runtime,
             runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider,
-            undefined, undefined, undefined, undefined, undefined, undefined, runtime.deployProvider)
+            undefined, undefined, undefined, undefined, undefined, runtime.deployProvider)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         return {
             client,

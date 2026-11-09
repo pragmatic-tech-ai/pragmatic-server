@@ -56,7 +56,7 @@ class SecurityModelFixture
         const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) }, BuildStateChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
         const manager = {} as unknown as SolutionManagerService
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        this.handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, this.Context(), () => Promise.reject(new Error(SecurityModelFixture.NoneMessage)), () => Promise.reject(new Error(SecurityModelFixture.NoGraphMessage)), undefined, undefined, undefined, undefined, admin)
+        this.handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, this.Context(), () => Promise.reject(new Error(SecurityModelFixture.NoneMessage)), undefined, undefined, undefined, undefined, undefined, admin)
         this.Client = createMessageConnection(new WebSocketMessageReader(clientSocket), new WebSocketMessageWriter(clientSocket), NullLogger)
         this.Client.listen()
     }

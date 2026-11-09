@@ -1,5 +1,5 @@
 import type { Diagnostic, Repository, TodlDocument } from '@pragmatic-tech-ai/todl'
-import { SavedModelCompiler, SnapshotDescriber, TodlNames } from '@pragmatic-tech-ai/todl/engine'
+import { EngineCellMapper, SavedModelCompiler, SnapshotDescriber, TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import type { ISavedModel, ISnapshotDescription } from '@pragmatic-tech-ai/todl/engine'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDevLanguageService } from '../model/dev-model-writer.js'
@@ -7,10 +7,11 @@ import type { IDevSolution } from './dev-solution.js'
 import { SavedMember, SavedMemberReader } from './saved-member-reader.js'
 
 /**
- * The engine description of the saved solution, with the repository it was compiled from and the compile's
- * diagnostics (an error means the saved sources do not compile, for example a commit only half on disk).
+ * The engine description of the saved solution, with the repository it was compiled from, the compile's diagnostics
+ * (an error means the saved sources do not compile, for example a commit only half on disk) and the mapper that
+ * renders the engine's Cypher cells in TODL's wire shape against the same compiled metadata.
  */
-export type DevSnapshot = ISnapshotDescription & { Repository: Repository; CompileDiagnostics: readonly Diagnostic[] }
+export type DevSnapshot = ISnapshotDescription & { Repository: Repository; CompileDiagnostics: readonly Diagnostic[]; CellMapper: EngineCellMapper }
 
 /** What a snapshot was compiled from: the solution (identity and name) and each member's storage, source hash and
  *  bases fingerprint (content, not identity). Equal keys compile to the same snapshot. */
@@ -97,7 +98,7 @@ export class DevSnapshotSource
     {
         const saved = SavedModelCompiler.Compile(models, bases, solutionName)
         const described = SnapshotDescriber.Describe(saved.Snapshot, { DefaultConnector: TodlNames.FileConnector })
-        return { ...described, Repository: saved.Repository, CompileDiagnostics: saved.Diagnostics }
+        return { ...described, Repository: saved.Repository, CompileDiagnostics: saved.Diagnostics, CellMapper: new EngineCellMapper(saved.Snapshot) }
     }
 
     /**

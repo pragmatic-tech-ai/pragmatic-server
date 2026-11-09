@@ -15,13 +15,15 @@ import { ServerModelWorkspace } from './server-model-workspace.js'
 /**
  * The dev tenant's embedded graph engine, run from the saved solution. `Changed` is raised after each applied
  * upgrade (a saved edit recompiled to a new description); `Repository` / `Description` are the snapshot the engine
- * currently runs.
+ * currently runs, and `Snapshot` is that whole snapshot in one read (its `Description.Version` equals the engine's
+ * `SchemaVersion` except while an upgrade is being applied).
  */
 export interface IDevGraphEngine
 {
     Engine(): Promise<GraphEngine>
     Repository(): Promise<Repository>
     Description(): Promise<ISchemaDescription>
+    Snapshot(): Promise<DevSnapshot>
     readonly Changed: ISignal<void>
 }
 
@@ -313,6 +315,11 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
     public async Description(): Promise<ISchemaDescription>
     {
         return (await this.Opened()).Snapshot.Description
+    }
+
+    public async Snapshot(): Promise<DevSnapshot>
+    {
+        return (await this.Opened()).Snapshot
     }
 
     /** Resolves when the upgrades already started (by an elapsed debounce) have finished. */

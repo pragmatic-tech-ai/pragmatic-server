@@ -288,7 +288,7 @@ export class WorkerHost
             ? new RedisTenantOwnership(options.redisUrl!, options.replicaId ?? randomUUID())
             : new InMemoryTenantOwnership()
         await ownership.Start().catch(() => {})
-        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets, undefined, options.adapterPacks)
+        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets, undefined, options.adapterPacks, options.logger)
         const host = options.host ?? WorkerHost.DefaultHost
         const httpsServer = createServer(MachineTls.Server(options.tls))
         const resilience = options.wsResilience ?? WorkerHost.DefaultWsResilience
@@ -560,7 +560,7 @@ export class WorkerHost
                         policy: new BackpressurePolicy(resilience.backpressureSoftBytes, resilience.backpressureHardBytes, resilience.backpressureGraceMs),
                         onShed: () => this.logger.Info(WorkerHost.ShedLine, { [WorkerHost.EventKey]: WorkerHost.ShedEvent }),
                     })
-                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider, this.paging, fieldMasks, ctx => server.ConnectorReadAuthorizationFor(ctx), (ctx, target) => server.ConnectorWriteAuthorizationFor(ctx, target), server, (ctx, id, request) => server.ExecuteCypher(ctx, id, request), runtime.deployProvider, development.devGraphService, runtime.environmentGraphHost, development.devEngine)
+                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, () => server.Connectors(), development.devCypher, this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider, this.paging, fieldMasks, ctx => server.ConnectorReadAuthorizationFor(ctx), (ctx, target) => server.ConnectorWriteAuthorizationFor(ctx, target), (ctx, id, request) => server.ExecuteCypher(ctx, id, request), runtime.deployProvider, development.devGraphService, runtime.environmentGraphHost, development.devEngine)
                     this.handlers.add(handler)
                     const revocable: IRevocableConnection =
                     {

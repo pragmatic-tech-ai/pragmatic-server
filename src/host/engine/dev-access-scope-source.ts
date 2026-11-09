@@ -31,6 +31,12 @@ export interface IDevScope
     readonly Digest: string
 }
 
+/** Where a caller's dev scope comes from (DevAccessScopeSource). */
+export interface IDevScopeSource
+{
+    ScopeFor(context: AccessContext): Promise<IDevScope>
+}
+
 /** The tenant security the scope source reads (TenantReadAuthorization): the cached evaluator and its reload signal. */
 export interface ITenantSecuritySource
 {
@@ -168,7 +174,7 @@ class DevScope implements IDevScope
  * scope is checked by the engine itself (a read opened under it) before it is handed out; compiler diagnostics go to
  * {@link IDevScopeDiagnostics}, each message once until the cache is dropped.
  */
-export class DevAccessScopeSource implements IDisposable
+export class DevAccessScopeSource implements IDevScopeSource, IDisposable
 {
     private static readonly MaxSnapshotReads = 5
     private static readonly HashAlgorithm = 'sha256'

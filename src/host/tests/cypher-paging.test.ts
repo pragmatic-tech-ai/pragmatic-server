@@ -1,18 +1,40 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, cpSync, rmSync, writeFileSync } from 'node:fs'
+import { setTimeout as delay } from 'node:timers/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, CursorStaleError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherParamValue, CypherQueryPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
-import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import { CypherLimits } from '../../config/cypher-limits.js'
 import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
+import type { IDevCypherQuery, IDevCypherRequest } from '../engine/dev-cypher-query.js'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+
+/** The server's dev Cypher, counting the queries that reach the engine (the dev path's graph fetch). */
+class CountingDevCypher implements IDevCypherQuery
+{
+    public Runs = 0
+
+    public constructor(private readonly inner: IDevCypherQuery)
+    {
+    }
+
+    public Run(context: AccessContext, request: IDevCypherRequest): Promise<CypherQueryPageDto>
+    {
+        this.Runs++
+        return this.inner.Run(context, request)
+    }
+
+    public Models(): Promise<readonly string[]>
+    {
+        return this.inner.Models()
+    }
+}
 
 /** One open sample solution plus a factory for client connections attached to its single language service. */
 class CypherPagingWorld
@@ -22,7 +44,7 @@ class CypherPagingWorld
     private readonly manager: SolutionManagerService
     private readonly limits: CypherLimits | undefined
     private readonly connections: { client: PragmaticClient, handler: ServerConnectionHandler }[] = []
-    private graphFetches = 0
+    private readonly cypher: CountingDevCypher
 
     public constructor(server: PragmaticServer, language: SolutionLanguageService, manager: SolutionManagerService, limits: CypherLimits | undefined)
     {
@@ -30,6 +52,7 @@ class CypherPagingWorld
         this.Language = language
         this.manager = manager
         this.limits = limits
+        this.cypher = new CountingDevCypher(server.DevCypher())
     }
 
     /** The language service keys documents by the member storage root (forward-slashed), not the OS path. */
@@ -42,22 +65,38 @@ class CypherPagingWorld
     public Connect(): PragmaticClient
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, CypherPagingFixture.Permissive(), () => Promise.reject(new Error(CypherPagingFixture.NoConnectors)), ctx => this.FetchGraph(ctx), undefined, undefined, undefined, undefined, undefined, this.limits, TenantPurpose.Development)
+        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, CypherPagingFixture.Permissive(), () => Promise.reject(new Error(CypherPagingFixture.NoConnectors)), this.cypher, undefined, undefined, undefined, undefined, undefined, this.limits, TenantPurpose.Development)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.connections.push({ client, handler })
         return client
     }
 
-    /** How many times any attached handler asked for the tenant graph. */
-    public get GraphFetches(): number
+    /** The dev engine runs from SAVED sources: an edit reaches it once written to the member's file. */
+    public Save(text: string): void
     {
-        return this.graphFetches
+        writeFileSync(this.ModelUri, text)
     }
 
-    private FetchGraph(context: AccessContext): Promise<IGraphQuery>
+    public async SchemaVersion(): Promise<string>
     {
-        this.graphFetches++
-        return this.server.Graph(context)
+        return (await this.server.DevEngine().Engine()).SchemaVersion
+    }
+
+    /** Waits (bounded) until the dev engine has upgraded away from `version`. */
+    public async Upgraded(version: string): Promise<void>
+    {
+        for (let waited = 0; waited < CypherPagingFixture.UpgradeWaitMs; waited += CypherPagingFixture.PollMs)
+        {
+            if (await this.SchemaVersion() !== version) return
+            await delay(CypherPagingFixture.PollMs)
+        }
+        assert.fail(CypherPagingFixture.NoUpgradeMessage)
+    }
+
+    /** How many times any attached handler asked for the tenant graph (ran a query on the dev engine). */
+    public get GraphFetches(): number
+    {
+        return this.cypher.Runs
     }
 
     public async Dispose(): Promise<void>
@@ -80,6 +119,9 @@ class CypherPagingFixture
     private static readonly ModelFile = join('models', 'model.todl')
     public static readonly ModelFileName = 'model.todl'
     public static readonly NoConnectors = 'no connectors'
+    public static readonly UpgradeWaitMs = 10000
+    public static readonly PollMs = 25
+    public static readonly NoUpgradeMessage = 'the dev engine never upgraded to the saved edit'
     public static readonly ModelTodl = 'namespace acme { concept Service { } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } } }'
     public static readonly EditedModelTodl = 'namespace acme { concept Service { } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } Service s6 { label = "f"; } } }'
     public static readonly OrderedLabels = 'MATCH (a:Service) RETURN a.label ORDER BY a.label'
@@ -188,11 +230,14 @@ test('a graph edit between pages makes the next cursor stale (-32032)', async ()
         const first = await client.CypherQuery(CypherPagingFixture.OrderedLabels, undefined, { pageSize: 2 })
         assert.ok(first.nextCursor !== undefined)
         const before = world.Language.GraphRevision
+        const version = await world.SchemaVersion()
+        world.Save(CypherPagingFixture.EditedModelTodl)
         client.DidChange(world.ModelUri, CypherPagingFixture.EditedModelTodl)
         // the notification is fire-and-forget: a round-trip request flushes it ahead of WhenIdle
         await client.CypherQuery(CypherPagingFixture.OrderedLabels, undefined, { pageSize: 1 })
         await world.Language.WhenIdle()
         assert.ok(world.Language.GraphRevision > before, 'the edit must move the graph revision')
+        await world.Upgraded(version)
         await assert.rejects(() => client.CypherQuery(CypherPagingFixture.OrderedLabels, undefined, { cursor: first.nextCursor, pageSize: 2 }), CypherPagingFixture.IsStale)
     })
 })

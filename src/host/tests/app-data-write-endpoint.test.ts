@@ -62,7 +62,7 @@ class EndpointFixture
         const applications = { List: async () => [], ApplicationFor: async (name: string) => ({ Manifest: { name, version: '1.0.0' } }) } as unknown as PragmaticAppsRegistry
         const appGraph = async (): Promise<IGraphQuery> => Promise.reject(new Error(EndpointFixture.NoConnectors))
         const appWrite = (_c: AccessContext, name: string, ops: readonly AppWriteOpDto[]): Promise<AppWriteResultDto> => write(name, ops)
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, context, () => Promise.reject(new Error(EndpointFixture.NoConnectors)), ctx => server.Graph(ctx), undefined, undefined, undefined, undefined, undefined, undefined, purpose, runtime ? applications : undefined, runtime ? appGraph : undefined, runtime ? appWrite : undefined)
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, context, () => Promise.reject(new Error(EndpointFixture.NoConnectors)), server.DevCypher(), undefined, undefined, undefined, undefined, undefined, undefined, purpose, runtime ? applications : undefined, runtime ? appGraph : undefined, runtime ? appWrite : undefined)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

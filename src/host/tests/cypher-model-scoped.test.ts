@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, CursorStaleError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherQueryParams, CypherQueryPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { AccessScope } from '@pragmatic-tech-ai/graph'
 import { toJSON, ModelShardExtractor } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
@@ -39,18 +40,28 @@ class ModelScopedWorld
         this.ModelIds = modelIds
     }
 
-    public get GraphRevision(): number
+    /** The dev engine's schema version and latest commit (they replace GraphRevision in a dev cursor's fingerprint). */
+    public async EngineRevision(): Promise<string[]>
     {
-        return this.language.GraphRevision
+        const engine = await this.server.DevEngine().Engine()
+        const reader = await engine.BeginRead(AccessScope.System)
+        try
+        {
+            return [engine.SchemaVersion, String(reader.SnapshotCommit)]
+        }
+        finally
+        {
+            reader.dispose()
+        }
     }
 
     public Connect(context: AccessContext, purpose: TenantPurpose = TenantPurpose.Development): ServerConnectionHandler
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
-            serverSocket, this.language, this.manager, context, () => Promise.reject(new Error(ModelScopedFixture.NoConnectors)), ctx => this.server.Graph(ctx),
+            serverSocket, this.language, this.manager, context, () => Promise.reject(new Error(ModelScopedFixture.NoConnectors)), this.server.DevCypher(),
             undefined, undefined, undefined, undefined, undefined, undefined, purpose, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-            this.fieldMasks, ctx => this.server.ConnectorReadAuthorizationFor(ctx), undefined, this.server)
+            this.fieldMasks, ctx => this.server.ConnectorReadAuthorizationFor(ctx), undefined)
         this.clients.push(PragmaticClient.CreateOverSocket(clientSocket))
         this.handlers.push(handler)
         return handler
@@ -330,7 +341,7 @@ test('no-identity / no-modelId path is byte-unchanged', async () =>
     {
         const handler = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Plain))
         const page = await handler.RunCypherQuery(ModelScopedFixture.Params(undefined, ModelScopedFixture.LabelQuery, { pageSize: 1 }))
-        const fingerprint = PageFingerprint.Of('cypher', ModelScopedFixture.LabelQuery, CypherParamConverter.Canonical(undefined), String(world.GraphRevision))
+        const fingerprint = PageFingerprint.Of('cypher', ModelScopedFixture.LabelQuery, CypherParamConverter.Canonical(undefined), ...await world.EngineRevision())
         const expected = PageRequest.Resolve({ pageSize: 1 }, fingerprint, new PagingLimits(), new CypherLimits().RowCap).NextCursor(true)
         assert.equal(page.nextCursor, expected)
     })

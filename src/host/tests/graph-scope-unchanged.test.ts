@@ -3,16 +3,17 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, cpSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { toJSON, ModelShardExtractor, Cypher } from '@pragmatic-tech-ai/todl'
-import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
+import { toJSON, ModelShardExtractor } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AccessLevel, PrivilegeAction, OwnershipSourceKind } from '@pragmatic-tech-ai/todl-identity'
-import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
+import type { AccessContext, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
+import { CypherLimits } from '../../config/cypher-limits.js'
+import { PagingLimits } from '../../config/paging-limits.js'
 import { PpSecurityHarness } from '../cypher/tests/pp-security-harness.js'
 
 /**
- * The dev-authoring graphs (Graph, ModelGraph) must NOT inherit the bound-app bypass: a concept the tenant model does not
+ * The dev-authoring graph (the dev engine, tenant-wide and model-scoped) must NOT inherit the bound-app bypass: a concept the tenant model does not
  * reference stays fail-closed there, even though it would be "ungoverned". Widget is governed (p2 holds the grant); Gadget is not.
  */
 class ScopeFixture
@@ -52,10 +53,19 @@ class ScopeFixture
         }
     }
 
-    public static Column(graph: IGraphQuery, query: string): string[]
+    /** The first column of `query` on the dev engine for `context` (model-scoped when `modelId` is given), sorted. */
+    public static async Column(server: PragmaticServer, context: AccessContext, query: string, modelId?: string): Promise<string[]>
     {
-        return Cypher.CypherEngine.OverQuery(graph).Execute(query).Rows
-            .map(r => (r[0] instanceof Cypher.ScalarValue ? String(r[0].Value) : '')).sort()
+        const limits = new CypherLimits()
+        const page = await server.DevCypher().Run(context, {
+            Source: query,
+            Parameters: undefined,
+            ...(modelId === undefined ? {} : { ModelId: modelId }),
+            Page: { Params: {}, Limits: new PagingLimits(), RowCap: limits.RowCap },
+            TimeoutMs: limits.TimeoutMs,
+            MaxVarLength: limits.MaxVarLength,
+        })
+        return page.items.map(r => (typeof r[0] === 'string' ? r[0] : '')).sort()
     }
 
     public static async With(body: (server: PragmaticServer, modelId: string) => Promise<void>): Promise<void>
@@ -93,25 +103,25 @@ class ScopeFixture
     }
 }
 
-test('ModelGraph keeps the fail-closed depth filter: a concept the model does not reference stays denied', async () =>
+test('the model-scoped dev graph keeps the fail-closed depth filter: a concept the model does not reference stays denied', async () =>
 {
     await ScopeFixture.With(async (server, modelId) =>
     {
-        const granted = await server.ModelGraph(PpSecurityHarness.Context(ScopeFixture.Granted), modelId)
-        assert.deepEqual(ScopeFixture.Column(granted, ScopeFixture.WidgetQuery), ['W1'], 'the governed grant still reads')
-        assert.deepEqual(ScopeFixture.Column(granted, ScopeFixture.GadgetQuery), [], 'the ungoverned concept gets no bypass')
-        const plain = await server.ModelGraph(PpSecurityHarness.Context(ScopeFixture.Plain), modelId)
-        assert.deepEqual(ScopeFixture.Column(plain, ScopeFixture.WidgetQuery), [])
-        assert.deepEqual(ScopeFixture.Column(plain, ScopeFixture.GadgetQuery), [])
+        const granted = PpSecurityHarness.Context(ScopeFixture.Granted)
+        assert.deepEqual(await ScopeFixture.Column(server, granted, ScopeFixture.WidgetQuery, modelId), ['W1'], 'the governed grant still reads')
+        assert.deepEqual(await ScopeFixture.Column(server, granted, ScopeFixture.GadgetQuery, modelId), [], 'the ungoverned concept gets no bypass')
+        const plain = PpSecurityHarness.Context(ScopeFixture.Plain)
+        assert.deepEqual(await ScopeFixture.Column(server, plain, ScopeFixture.WidgetQuery, modelId), [])
+        assert.deepEqual(await ScopeFixture.Column(server, plain, ScopeFixture.GadgetQuery, modelId), [])
     })
 })
 
-test('Graph keeps the fail-closed depth filter: a concept the model does not reference stays denied', async () =>
+test('the tenant-wide dev graph keeps the fail-closed depth filter: a concept the model does not reference stays denied', async () =>
 {
     await ScopeFixture.With(async server =>
     {
-        const granted = await server.Graph(PpSecurityHarness.Context(ScopeFixture.Granted))
-        assert.deepEqual(ScopeFixture.Column(granted, ScopeFixture.WidgetQuery), ['W1'])
-        assert.deepEqual(ScopeFixture.Column(granted, ScopeFixture.GadgetQuery), [])
+        const granted = PpSecurityHarness.Context(ScopeFixture.Granted)
+        assert.deepEqual(await ScopeFixture.Column(server, granted, ScopeFixture.WidgetQuery), ['W1'])
+        assert.deepEqual(await ScopeFixture.Column(server, granted, ScopeFixture.GadgetQuery), [])
     })
 })

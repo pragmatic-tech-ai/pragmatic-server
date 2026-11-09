@@ -229,7 +229,7 @@ class WireWorld
     public Connect(fieldMasks?: IFieldReadMaskSource): PragmaticClient
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, WireWorld.Permissive(), () => Promise.reject(new Error(WireWorld.NoConnectors)), () => Promise.reject(new Error(WireWorld.NoGraph)), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, fieldMasks)
+        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, WireWorld.Permissive(), () => Promise.reject(new Error(WireWorld.NoConnectors)), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, fieldMasks)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.connections.push({ client, handler })
         return client

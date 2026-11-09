@@ -11,6 +11,7 @@ import { DevAccessScopeSource } from '../dev-access-scope-source.js'
 import type { IDevScopeDiagnostics } from '../dev-access-scope-source.js'
 import { DevGraphEngineHost } from '../dev-graph-engine-host.js'
 import type { IDevEngineDiagnostics, IDevGraphEngine } from '../dev-graph-engine-host.js'
+import type { DevSnapshot } from '../dev-snapshot-source.js'
 import { PrincipalFacts } from '../principal-facts.js'
 import { FakeLanguageService, FakeSolution, MemoryStorage } from './engine-host-fixture.js'
 import { DevScopeFx } from './dev-scope-fixture.js'
@@ -60,6 +61,11 @@ class ProbeHost implements IDevGraphEngine
     public Description(): Promise<ISchemaDescription>
     {
         return this.Inner.Description()
+    }
+
+    public Snapshot(): Promise<DevSnapshot>
+    {
+        return this.Inner.Snapshot()
     }
 
     public Raise(): void

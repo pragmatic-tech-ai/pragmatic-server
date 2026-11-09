@@ -82,7 +82,7 @@ namespace shop {
             await server.OpenSolution(dir)
             const languageService = await server.LanguageService()
             const manager = await server.Manager()
-            handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, ConnectorPagingFixture.OwnerContext(), () => server.Connectors(), ctx => server.Graph(ctx), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, paging)
+            handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, ConnectorPagingFixture.OwnerContext(), () => server.Connectors(), server.DevCypher(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, paging)
             client = PragmaticClient.CreateOverSocket(clientSocket)
             const models = await client.Connectors()
             await body(client, models[0]!.modelId)

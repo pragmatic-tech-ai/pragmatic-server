@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
-import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog, WikiOriginKind, Cypher, ConjunctiveQueryFilterProvider } from '@pragmatic-tech-ai/todl'
+import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog, WikiOriginKind, Cypher, ConjunctiveQueryFilterProvider, ModelShardExtractor, toJSON } from '@pragmatic-tech-ai/todl'
 import type { ModelConnectorPlan, IDataSourceAdapterProvider, IConnectorQueryFilterProvider } from '@pragmatic-tech-ai/todl'
 import type { Domain } from '@pragmatic-tech-ai/todl/domain'
 import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-system'
@@ -56,7 +56,6 @@ import { ShareService } from './host/sharing/share-service.js'
 import { AssignService } from './host/sharing/assign-service.js'
 import { AccessPolicySetting } from './host/apps/access-policy-setting.js'
 import { FilteredGraphQuery } from './host/cypher/filtered-graph-query.js'
-import { ModelShardCache, type IModelShardSource } from './host/cypher/model-shard-cache.js'
 import { InProcessWriteLock, type IWriteLock } from './host/cypher/write-lock.js'
 import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
@@ -68,13 +67,12 @@ import { OpenDevWriteSecurity, PrincipalDevWriteSecurity } from './host/cypher/d
 import type { IDevWriteSecurity } from './host/cypher/dev-write-security.js'
 import { DevModelWriter } from './host/model/dev-model-writer.js'
 import { PragmaticAppsRegistry } from './host/apps/pragmatic-apps-registry.js'
-import { StructuredLogger } from './observability/logger.js'
+import { NullLogger, StructuredLogger } from './observability/logger.js'
+import type { ILogger } from './observability/logger.js'
 import { AppIngestService } from './host/apps/app-ingest-service.js'
 import { RuntimeAppGraph } from './host/cypher/runtime-app-graph.js'
 import { AppConnectorPlan } from './host/cypher/app-connector-plan.js'
 import type { PragmaticAppManifest } from './host/apps/pragmatic-app-manifest.js'
-import { TenantGraphCache } from './host/cypher/tenant-graph-cache.js'
-import type { TenantRepository } from './host/cypher/tenant-graph-source.js'
 import { ShareStore } from './host/sharing/share-store.js'
 import { ShareGrantIndex } from './host/sharing/share-grant-index.js'
 import { ShareWideningInstanceFilter } from './host/sharing/share-widening-instance-filter.js'
@@ -87,6 +85,8 @@ import { GraphPackageReader } from './host/graphs/graph-package-reader.js'
 import { DevGraphService, type IDevGraphService } from './host/graphs/dev-graph-service.js'
 import { DevGraphEngineHost } from './host/engine/dev-graph-engine-host.js'
 import type { IDevGraphEngine } from './host/engine/dev-graph-engine-host.js'
+import { DevAccessScopeSource, LoggerDevScopeDiagnostics } from './host/engine/dev-access-scope-source.js'
+import { DevCypherQuery } from './host/engine/dev-cypher-query.js'
 import { EnvironmentGraph, EnvironmentGraphOverlay, LoadedGraphStore, NoEnvironmentGraphError } from './host/graphs/environment-graph.js'
 import type { IEnvironmentGraphHost } from './host/graphs/environment-graph.js'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -141,6 +141,8 @@ export interface PragmaticServerOptions
     readonly adapterPacks?: AdapterPacksConfig
     /** Cross-process tenant write lock (cluster); absent => in-process only, correct for a single replica. */
     writeLock?: IWriteLock
+    /** The host's logger (dev access-scope diagnostics, ...); absent => nothing is logged. */
+    logger?: ILogger
 }
 
 /** The node labels a Cypher query references; wildcard when any node pattern is unlabeled; parseFailed when the text is not valid Cypher (nothing is prefetched). */
@@ -151,7 +153,7 @@ export type CypherScanQuery = { text: string; parameters: ReadonlyMap<string, Cy
 type AppBase = { domain: Domain; plan: ModelConnectorPlan; nativeBase: IGraphQuery; defaultConcepts: ReadonlySet<string>; ownConcepts: ReadonlySet<string> }
 
 /** Headless single-tenant in-process host: composes the engine over the lazy root and opens a solution. */
-export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
+export class PragmaticServer implements IEnvironmentGraphHost
 {
     private static readonly DefaultPackagesDir = 'packages'
     private static readonly DefaultGraphsDir = 'graphs'
@@ -187,13 +189,13 @@ export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
     private pack: ServerIdentityPack | undefined
     private tenant: Tenant | undefined
     private oidc: OidcFrontDoor | undefined
-    private graphCache: TenantGraphCache | undefined
-    private shardCache: ModelShardCache | undefined
     private appsStorage: IStorage | undefined
     private appsRegistry: PragmaticAppsRegistry | undefined
     private appIngest: AppIngestService | undefined
     private devGraphService: IDevGraphService | undefined
     private devEngine: DevGraphEngineHost | undefined
+    private devScopes: Promise<DevAccessScopeSource> | undefined
+    private devCypher: DevCypherQuery | undefined
     private environmentGraph: EnvironmentGraph | undefined
     private loadedGraphStore: LoadedGraphStore | undefined
     private readonly appGraphs = new Map<string, Promise<AppBase>>()
@@ -882,6 +884,52 @@ export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
         return this.devEngine
     }
 
+    /**
+     * The dev tenant's access scopes over {@link PragmaticServer.DevEngine}: the TODL policies AND, with identity, the
+     * tenant security model (DevAccessScopeSource), diagnostics on the configured logger. Built on first use, disposed
+     * with the server.
+     */
+    public DevScopes(): Promise<DevAccessScopeSource>
+    {
+        if (this.disposing !== undefined)
+        {
+            return Promise.reject(new Error(PragmaticServer.DisposedMessage))
+        }
+        if (this.devScopes === undefined)
+        {
+            const built = this.BuildDevScopes()
+            this.devScopes = built
+            // a failed build (the security source did not load) is retried by the next call
+            built.catch(() =>
+            {
+                if (this.devScopes === built)
+                {
+                    this.devScopes = undefined
+                }
+            })
+        }
+        return this.devScopes
+    }
+
+    /** The dev `cypher/query` and `cypher/models` on the engine, under each caller's dev scope. */
+    public DevCypher(): DevCypherQuery
+    {
+        this.devCypher ??= new DevCypherQuery(this.DevEngine(), () => this.DevScopes(), () => this.ActiveSolutionName())
+        return this.devCypher
+    }
+
+    private async BuildDevScopes(): Promise<DevAccessScopeSource>
+    {
+        const engine = this.DevEngine()
+        const authorization = this.identity === undefined ? undefined : await this.ReadAuthorization()
+        return new DevAccessScopeSource(engine, authorization, this.identity !== undefined, () => this.ActiveSolutionName(), new LoggerDevScopeDiagnostics(this.options.logger ?? new NullLogger()))
+    }
+
+    private async ActiveSolutionName(): Promise<string | undefined>
+    {
+        return (await this.Manager()).ActiveSolution?.Name
+    }
+
     /** The language service as its concrete type (the key resolves it typed), for slices ILanguageService omits. */
     private async SolutionLanguageService(): Promise<SolutionLanguageService>
     {
@@ -918,57 +966,6 @@ export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
     }
 
     /**
-     * The queryable graph for `context` over the tenant's ACTIVE solution (its member projects),
-     * RBAC-filtered per request. With no solution open the graph is empty. Session-scoped
-     * multi-solution querying is deferred (future SSM program).
-     * The solution view is ONE Repository shared by every member, so the sources are the distinct
-     * repositories reachable from members with Storage (identity-deduped), pinned to the solution name.
-     */
-    public async Graph(context: AccessContext): Promise<IGraphQuery>
-    {
-        const depthSource = await this.DepthFilterSource()
-        this.graphCache ??= new TenantGraphCache(() => this.CollectGraphSources(), depthSource)
-        return await this.graphCache.GraphFor(context)
-    }
-
-    /**
-     * The queryable graph for ONE model shard of the active solution, RBAC-filtered and field-masked.
-     * Visibility is membership in the tenant's own sources: a non-member id raises InvalidParams; a member shard returns
-     * whatever the principal sees (possibly nothing), so row presence is never an oracle.
-     */
-    public async ModelGraph(context: AccessContext, modelId: string): Promise<IGraphQuery>
-    {
-        const shards = this.Shards()
-        const shard = await shards.Locate(modelId)
-        if (shard === undefined)
-        {
-            throw new ResponseError(ErrorCodes.InvalidParams, PragmaticServer.ModelNotFoundMessage)
-        }
-        // the unfiltered shard graph is shared across principals; the row filter and field mask apply per request below
-        const base = await shards.Graph(shard)
-        const predicate = IdentityEnforcement.ForRepository(shard.Repo, context, Action.Read).InstanceFilter()
-        const depth = await (await this.DepthFilterSource()).ReadFilterFor(context)
-        const filtered = new FilteredGraphQuery(base, new CompositeInstanceFilter([predicate, depth]))
-        if (this.identity === undefined)
-        {
-            return filtered
-        }
-        const mask = await (await this.ReadAuthorization()).FieldReadMaskFor(context)
-        return mask === AllowAllFieldReadMask.Instance ? filtered : new FieldMaskedGraphQuery(filtered, mask)
-    }
-
-    /** The model shard ids of the active solution a principal may pass as modelId (membership in the tenant's own sources). */
-    public async ModelIds(_context: AccessContext): Promise<readonly string[]>
-    {
-        return await this.Shards().Ids()
-    }
-
-    private Shards(): ModelShardCache
-    {
-        return this.shardCache ??= new ModelShardCache(() => this.CollectGraphSources())
-    }
-
-    /**
      * Executes a Cypher WRITE against the dev member that declares `modelId`. Visibility is membership in the tenant's own
      * sources (unknown / non-member => InvalidParams, no existence oracle). Dev tenants only; serialized per tenant.
      */
@@ -978,13 +975,12 @@ export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
         {
             throw new ResponseError(ErrorCodes.InvalidRequest, PragmaticServer.NotDevelopmentMessage)
         }
-        const shard = await this.Shards().Locate(modelId)
         const solution = (await this.Manager()).ActiveSolution
-        if (shard === undefined || solution === undefined)
+        const languageService = await this.LanguageService()
+        if (solution === undefined || !await PragmaticServer.DeclaresModel(languageService, solution.Members.ToArray(), modelId))
         {
             throw new ResponseError(ErrorCodes.InvalidParams, PragmaticServer.ModelNotFoundMessage)
         }
-        const languageService = await this.LanguageService()
         const namespace = modelId.includes(PragmaticServer.NamespaceSeparator) ? modelId.slice(0, modelId.lastIndexOf(PragmaticServer.NamespaceSeparator)) : solution.Name
         // Memoized on first use: assumes LanguageService() resolves to a stable singleton for this server's lifetime.
         const writer = this.cypherWriter ??= new DevModelWriter(languageService as SolutionLanguageService)
@@ -1018,28 +1014,18 @@ export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
         return undefined
     }
 
-    private async CollectGraphSources(): Promise<readonly TenantRepository[]>
+    /** True when a member's model view declares `modelId` as a model (not an instance or a concept). */
+    private static async DeclaresModel(languageService: ILanguageService, members: readonly { Storage?: IStorage }[], modelId: string): Promise<boolean>
     {
-        const solution = (await this.Manager()).ActiveSolution
-        if (solution === undefined)
+        for (const member of members)
         {
-            return []
-        }
-        const languageService = await this.LanguageService()
-        const sources: TenantRepository[] = []
-        for (const member of solution.Members.ToArray())
-        {
-            if (member.Storage === undefined)
+            const view = member.Storage === undefined ? undefined : await languageService.ModelView(member.Storage)
+            if (view !== undefined && ModelShardExtractor.ModelsOf(toJSON(view.model)).some(id => String(id) === modelId))
             {
-                continue
-            }
-            const view = await languageService.ModelView(member.Storage)
-            if (view !== undefined && !sources.some(s => s.repo === view.model))
-            {
-                sources.push({ repo: view.model, model: solution.Name, version: PragmaticServer.GraphModelVersion })
+                return true
             }
         }
-        return sources
+        return false
     }
 
     public StateOf(moduleId: string): ModuleStateProperty | undefined
@@ -1082,8 +1068,6 @@ export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
         }
         finally
         {
-            this.graphCache?.Dispose()
-            this.shardCache?.Dispose()
             this.appGraphs.clear()
             try
             {
@@ -1097,6 +1081,9 @@ export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
             {
                 try
                 {
+                    // the scope source unsubscribes from the engine host and the security source before the engine goes
+                    const scopes = await this.devScopes?.catch(() => undefined)
+                    scopes?.dispose()
                     await this.devEngine?.dispose()
                 }
                 finally

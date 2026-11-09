@@ -50,7 +50,7 @@ class PagingGuardFixture
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const context = new AccessContext(principal, tenant, [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Tenant, 't1', []))], new ResourceAuthorizationPolicy())
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, language, manager, context, () => Promise.reject(new Error(PagingGuardFixture.NoConnectors)), ctx => server.Graph(ctx), undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development)
+        const handler = ServerConnectionHandler.Attach(serverSocket, language, manager, context, () => Promise.reject(new Error(PagingGuardFixture.NoConnectors)), server.DevCypher(), undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

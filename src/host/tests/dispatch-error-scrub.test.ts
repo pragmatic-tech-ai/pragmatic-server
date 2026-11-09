@@ -33,7 +33,7 @@ class Fixtures
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.OwnerContext(), () => Promise.reject(new Error('no connectors')), () => Promise.reject(new Error('no graph')))
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.OwnerContext(), () => Promise.reject(new Error('no connectors')), undefined)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {
@@ -68,7 +68,7 @@ class Fixtures
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.OwnerContext(), () => Promise.reject(thrown), () => Promise.reject(new Error('no graph')), instrumentation)
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.OwnerContext(), () => Promise.reject(thrown), undefined, instrumentation)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

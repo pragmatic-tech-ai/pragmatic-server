@@ -48,7 +48,7 @@ class Harness
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const grants = [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Tenant, 't1', []))]
         const context = new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
-        const handler = ServerConnectionHandler.Attach(serverSocket, service, manager, context, () => Promise.reject(new Error('no connectors')), () => Promise.reject(new Error('no graph')))
+        const handler = ServerConnectionHandler.Attach(serverSocket, service, manager, context, () => Promise.reject(new Error('no connectors')), undefined)
         return new Harness(server, service, handler, PragmaticClient.CreateOverSocket(clientSocket))
     }
 

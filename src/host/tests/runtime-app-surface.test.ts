@@ -198,11 +198,11 @@ class RuntimeSurfaceFixture
         const runtime = purpose === TenantPurpose.Runtime
         const handler = ServerConnectionHandler.Attach(
             serverSocket, languageService, manager, RuntimeSurfaceFixture.Permissive(),
-            () => Promise.reject(new Error(RuntimeSurfaceFixture.NoConnectors)), ctx => server.Graph(ctx),
+            () => Promise.reject(new Error(RuntimeSurfaceFixture.NoConnectors)), server.DevCypher(),
             undefined, undefined, undefined, undefined, undefined, undefined, purpose,
             runtime ? server.Applications() : undefined,
             runtime ? (ctx, name, labels) => server.GraphForPragmaticApp(ctx, name, labels) : undefined,
-            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
             runtime ? server : undefined)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.disposables.push(async () =>

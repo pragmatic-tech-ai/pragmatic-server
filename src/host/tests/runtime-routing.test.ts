@@ -38,7 +38,7 @@ class RuntimeRoutingFixture
         const runtime = purpose === TenantPurpose.Runtime
         const applications = { List: async () => [], ApplicationFor: async (name: string) => ({ Manifest: { name, version: '1.0.0' } }) } as unknown as PragmaticAppsRegistry
         const appGraph = async (): Promise<IGraphQuery> => Promise.reject(new Error(RuntimeRoutingFixture.NoConnectors))
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, RuntimeRoutingFixture.Permissive(), () => Promise.reject(new Error(RuntimeRoutingFixture.NoConnectors)), ctx => server.Graph(ctx), undefined, undefined, undefined, undefined, undefined, undefined, purpose, runtime ? applications : undefined, runtime ? appGraph : undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, runtime ? server : undefined)
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, RuntimeRoutingFixture.Permissive(), () => Promise.reject(new Error(RuntimeRoutingFixture.NoConnectors)), server.DevCypher(), undefined, undefined, undefined, undefined, undefined, undefined, purpose, runtime ? applications : undefined, runtime ? appGraph : undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, runtime ? server : undefined)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

@@ -145,11 +145,11 @@ class EnvReadFixture
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
             serverSocket, languageService, manager, context,
-            () => Promise.reject(new Error(EnvReadFixture.NoConnectors)), ctx => server.Graph(ctx),
+            () => Promise.reject(new Error(EnvReadFixture.NoConnectors)), undefined,
             undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Runtime,
             server.Applications(),
             (ctx, name, labels) => server.GraphForPragmaticApp(ctx, name, labels),
-            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
             host)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.disposables.push(async () =>
