@@ -8,10 +8,11 @@ import { SavedMember, SavedMemberReader } from './saved-member-reader.js'
 
 /**
  * The engine description of the saved solution, with the repository it was compiled from, the compile's diagnostics
- * (an error means the saved sources do not compile, for example a commit only half on disk) and the mapper that
- * renders the engine's Cypher cells in TODL's wire shape against the same compiled metadata.
+ * (an error means the saved sources do not compile, for example a commit only half on disk), the mapper that
+ * renders the engine's Cypher cells in TODL's wire shape against the same compiled metadata, and `Models`: the model
+ * ids the compile accepted (one package each, with or without instances), sorted, without the solution package.
  */
-export type DevSnapshot = ISnapshotDescription & { Repository: Repository; CompileDiagnostics: readonly Diagnostic[]; CellMapper: EngineCellMapper }
+export type DevSnapshot = ISnapshotDescription & { Repository: Repository; CompileDiagnostics: readonly Diagnostic[]; CellMapper: EngineCellMapper; Models: readonly string[] }
 
 /** What a snapshot was compiled from: the solution (identity and name) and each member's storage, source hash and
  *  bases fingerprint (content, not identity). Equal keys compile to the same snapshot. */
@@ -98,7 +99,13 @@ export class DevSnapshotSource
     {
         const saved = SavedModelCompiler.Compile(models, bases, solutionName)
         const described = SnapshotDescriber.Describe(saved.Snapshot, { DefaultConnector: TodlNames.FileConnector })
-        return { ...described, Repository: saved.Repository, CompileDiagnostics: saved.Diagnostics, CellMapper: new EngineCellMapper(saved.Snapshot) }
+        return { ...described, Repository: saved.Repository, CompileDiagnostics: saved.Diagnostics, CellMapper: new EngineCellMapper(saved.Snapshot), Models: DevSnapshotSource.ModelsOf(saved.Snapshot.manifests, solutionName) }
+    }
+
+    /** The compiled packages' model ids (SavedModelCompiler binds one per accepted model id), without the solution's. */
+    private static ModelsOf(manifests: readonly { readonly model: string }[], solutionName: string): string[]
+    {
+        return [...new Set(manifests.map(manifest => manifest.model).filter(model => model !== solutionName))].sort()
     }
 
     /**

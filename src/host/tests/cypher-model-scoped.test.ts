@@ -40,14 +40,18 @@ class ModelScopedWorld
         this.ModelIds = modelIds
     }
 
-    /** The dev engine's schema version and latest commit (they replace GraphRevision in a dev cursor's fingerprint). */
-    public async EngineRevision(): Promise<string[]>
+    /**
+     * The dev engine's schema version and latest commit (they replace GraphRevision in a dev cursor's fingerprint), then
+     * the caller's scope digest (every dev cursor carries it).
+     */
+    public async EngineRevision(context: AccessContext): Promise<string[]>
     {
+        const digest = (await (await this.server.DevScopes()).ScopeFor(context)).Digest
         const engine = await this.server.DevEngine().Engine()
         const reader = await engine.BeginRead(AccessScope.System)
         try
         {
-            return [engine.SchemaVersion, String(reader.SnapshotCommit)]
+            return [engine.SchemaVersion, String(reader.SnapshotCommit), digest]
         }
         finally
         {
@@ -341,7 +345,7 @@ test('no-identity / no-modelId path is byte-unchanged', async () =>
     {
         const handler = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Plain))
         const page = await handler.RunCypherQuery(ModelScopedFixture.Params(undefined, ModelScopedFixture.LabelQuery, { pageSize: 1 }))
-        const fingerprint = PageFingerprint.Of('cypher', ModelScopedFixture.LabelQuery, CypherParamConverter.Canonical(undefined), ...await world.EngineRevision())
+        const fingerprint = PageFingerprint.Of('cypher', ModelScopedFixture.LabelQuery, CypherParamConverter.Canonical(undefined), ...await world.EngineRevision(ModelScopedFixture.Context(ModelScopedFixture.Plain)))
         const expected = PageRequest.Resolve({ pageSize: 1 }, fingerprint, new PagingLimits(), new CypherLimits().RowCap).NextCursor(true)
         assert.equal(page.nextCursor, expected)
     })

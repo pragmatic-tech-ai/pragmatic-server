@@ -13,6 +13,7 @@ import { CypherLimits } from '../../../config/cypher-limits.js'
 import { PagingLimits } from '../../../config/paging-limits.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { PpSecurityHarness } from '../../cypher/tests/pp-security-harness.js'
+import { CypherParamConverter } from '../../cypher/cypher-param-converter.js'
 import type { IDevCypherRequest } from '../dev-cypher-query.js'
 
 /** What one dev query asks beyond its text. */
@@ -37,7 +38,8 @@ class DevCypherWorld
         const limits = new CypherLimits()
         const request: IDevCypherRequest = {
             Source: source,
-            Parameters: options.parameters,
+            Parameters: CypherParamConverter.ToMap(options.parameters),
+            CanonicalParameters: CypherParamConverter.Canonical(options.parameters),
             ...(options.modelId === undefined ? {} : { ModelId: options.modelId }),
             Page: { Params: { pageSize: options.pageSize, cursor: options.cursor }, Limits: new PagingLimits(), RowCap: limits.RowCap },
             TimeoutMs: limits.TimeoutMs,
@@ -121,7 +123,12 @@ class DevCypherFx
     public static readonly SolutionName = 'Sample'
     public static readonly Alpha = 'alpha'
     public static readonly Linker = 'linker'
-    public static readonly SelfOrigin = 'self'
+    public static readonly Kinds = 'kinds'
+    public static readonly Term = 'todl.Term'
+    public static readonly EmptyModel = 'acme.Empty'
+    public static readonly ModelC = 'acme.ShopC'
+    public static readonly AlphaNode = "MATCH (w:Widget {label: 'alpha'}) RETURN w"
+    public static readonly Overflow = 'RETURN 9223372036854775807 + 1 AS v'
     public static readonly CountAll = 'MATCH (x) RETURN count(x) AS c'
     public static readonly NodeAll = 'MATCH (n) RETURN n'
     public static readonly WidgetLabels = 'MATCH (w:Widget) RETURN w.label AS l'
@@ -210,6 +217,9 @@ class DevCypherFx
     }
 
     public static readonly TwoWidgets = 'namespace acme { concept Widget { } model Shop : acme { Widget w1 {} Widget w2 {} } }'
+    /** ShopA (alpha classified Big and Small through a many-valued taxonomy field), ShopB, and the empty model ShopC. */
+    public static readonly Taxonomy = 'namespace acme { concept Widget { kinds : Kinds[]; } taxonomy Kinds : represents Widget { term Big { } term Small { } } '
+        + 'model ShopA : acme { Widget a1 { label = "alpha"; kinds = [Big, Small]; } } model ShopB : acme { Widget b1 { label = "gamma"; } } model ShopC : acme { } }'
     public static readonly Three = 'namespace acme { concept Widget { } model Shop : acme { Widget w1 { label = "a"; } Widget w2 { label = "b"; } Widget w3 { label = "c"; } } }'
     public static readonly ThreeEdited = 'namespace acme { concept Widget { } model Shop : acme { Widget w0 { label = "0"; } Widget w1 { label = "a"; } Widget w2 { label = "b"; } Widget w3 { label = "c"; } } }'
 
@@ -455,10 +465,7 @@ test('field-secured member absent from node cells', async () =>
         const plain = PpSecurityHarness.Context(DevCypherFx.Plain)
         const granted = PpSecurityHarness.Context(DevCypherFx.Granted)
         const alpha = DevCypherFx.Nodes(await world.Run(plain, DevCypherFx.WidgetNodes)).find(node => node.label === DevCypherFx.Alpha)!
-        // the engine leaves a hidden member out of the node's properties; EngineCellMapper renders every declared field,
-        // so the member's value is absent (null, as an unset field) while its key stays. The legacy FieldMaskedGraphQuery
-        // omitted the key: a wire difference reported in the Task 6 report, pinned here so a change is deliberate.
-        assert.deepEqual(alpha.fields[DevCypherFx.SecretField], { value: null, definitionOrigin: DevCypherFx.Widget, valueOrigin: DevCypherFx.SelfOrigin })
+        assert.ok(!(DevCypherFx.SecretField in alpha.fields), 'the hidden member is absent from the node cell')
         assert.ok(!JSON.stringify(alpha).includes(DevCypherFx.Secret))
         assert.deepEqual((await world.Run(plain, DevCypherFx.SecretColumn)).items.map(row => row[0]), [null, null, null])
         assert.deepEqual(await world.Column(plain, DevCypherFx.SecretWhere), [], 'a hidden member cannot be filtered on')
@@ -478,5 +485,58 @@ test('no solution open returns no rows', async () =>
         assert.equal(page.nextCursor, undefined)
         assert.deepEqual(await world.Server.DevCypher().Models(), [])
         assert.equal(await DevCypherFx.CodeOf(world.Run(DevCypherFx.Permissive(), DevCypherFx.NodeAll, { modelId: DevCypherFx.ModelA })), ErrorCodes.InvalidParams)
+    })
+})
+
+test('an empty model is listed and a query scoped to it returns an empty page', async () =>
+{
+    await DevCypherFx.With(DevCypherFx.Taxonomy, undefined, async world =>
+    {
+        assert.deepEqual(await world.Server.DevCypher().Models(), [DevCypherFx.ModelA, DevCypherFx.ModelB, DevCypherFx.ModelC])
+        const page = await world.Run(DevCypherFx.Permissive(), DevCypherFx.WidgetLabels, { modelId: DevCypherFx.ModelC })
+        assert.deepEqual(page.items, [])
+        assert.equal(page.nextCursor, undefined)
+    })
+})
+
+test('model-scoped node cells keep many-valued taxonomy refs', async () =>
+{
+    await DevCypherFx.With(DevCypherFx.Taxonomy, undefined, async world =>
+    {
+        const context = DevCypherFx.Permissive()
+        const wide = DevCypherFx.Nodes(await world.Run(context, DevCypherFx.AlphaNode))[0]!
+        const scoped = DevCypherFx.Nodes(await world.Run(context, DevCypherFx.AlphaNode, { modelId: DevCypherFx.ModelA }))[0]!
+        assert.equal(wide.refs[DevCypherFx.Kinds]?.length, 2)
+        assert.deepEqual(scoped.refs, wide.refs)
+    })
+})
+
+test('tenant-wide MATCH (n) also returns the taxonomy terms as todl.Term nodes (ruling T6-c)', async () =>
+{
+    await DevCypherFx.With(DevCypherFx.Taxonomy, undefined, async world =>
+    {
+        const context = DevCypherFx.Permissive()
+        const terms = DevCypherFx.Nodes(await world.Run(context, DevCypherFx.NodeAll)).filter(node => node.concept === DevCypherFx.Term)
+        assert.equal(terms.length, 2)
+        const scoped = DevCypherFx.Nodes(await world.Run(context, DevCypherFx.NodeAll, { modelId: DevCypherFx.ModelA })).filter(node => node.concept === DevCypherFx.Term)
+        assert.equal(scoped.length, 2, 'a model scope leaves the terms to the caller scope (ruling T6-b)')
+    })
+})
+
+test('a tenant-wide cursor is stale for another principal', async () =>
+{
+    await DevCypherFx.With(DevCypherFx.Three, undefined, async world =>
+    {
+        const first = await world.Run(DevCypherFx.Permissive(), DevCypherFx.OrderedLabels, { pageSize: 1 })
+        assert.ok(first.nextCursor !== undefined)
+        assert.equal(await DevCypherFx.CodeOf(world.Run(DevCypherFx.Viewer(), DevCypherFx.OrderedLabels, { pageSize: 1, cursor: first.nextCursor })), CursorStaleError.Code)
+    })
+})
+
+test('an integer overflow is InvalidParams', async () =>
+{
+    await DevCypherFx.With(DevCypherFx.Three, undefined, async world =>
+    {
+        assert.equal(await DevCypherFx.CodeOf(world.Run(DevCypherFx.Permissive(), DevCypherFx.Overflow)), ErrorCodes.InvalidParams)
     })
 })

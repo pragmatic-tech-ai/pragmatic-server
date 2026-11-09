@@ -86,6 +86,7 @@ export class ServerConnectionHandler
     private static readonly ModelIdField = 'modelId'
     private static readonly RuntimeModelScopeMessage = `${InvalidParamsPrefix.Text}model-scoped query is not available on a runtime tenant`
     private static readonly ModelScopeUnavailableMessage = `${InvalidParamsPrefix.Text}model-scoped query not available`
+    private static readonly DevCypherUnavailableMessage = `${InvalidParamsPrefix.Text}dev cypher not available`
     private static readonly ModelViewFingerprintTag = 'modelView'
     private static readonly NotRuntimeMessage = 'operation requires a runtime tenant'
     private static readonly DataRevisionFingerprintTag = 'data'
@@ -593,7 +594,8 @@ export class ServerConnectionHandler
             // the dev engine's scope decides every row and member; nothing is filtered or masked here
             return this.RequireDevCypher().Run(this.accessContext, {
                 Source: source,
-                Parameters: params.parameters,
+                Parameters: parameters,
+                CanonicalParameters: CypherParamConverter.Canonical(params.parameters),
                 ...(modelId === undefined ? {} : { ModelId: modelId }),
                 Page: { Params: params, Limits: this.paging, RowCap: this.cypherLimits.RowCap },
                 TimeoutMs: this.cypherLimits.TimeoutMs,
@@ -717,7 +719,7 @@ export class ServerConnectionHandler
     {
         if (this.devCypher === undefined)
         {
-            throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.ModelScopeUnavailableMessage)
+            throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.DevCypherUnavailableMessage)
         }
         return this.devCypher
     }

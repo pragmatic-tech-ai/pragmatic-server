@@ -914,7 +914,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     /** The dev `cypher/query` and `cypher/models` on the engine, under each caller's dev scope. */
     public DevCypher(): DevCypherQuery
     {
-        this.devCypher ??= new DevCypherQuery(this.DevEngine(), () => this.DevScopes(), () => this.ActiveSolutionName())
+        this.devCypher ??= new DevCypherQuery(this.DevEngine(), () => this.DevScopes())
         return this.devCypher
     }
 
@@ -977,6 +977,10 @@ export class PragmaticServer implements IEnvironmentGraphHost
         }
         const solution = (await this.Manager()).ActiveSolution
         const languageService = await this.LanguageService()
+        // The legacy writer's model check stays on the language service's views until cypher/execute moves onto the
+        // engine (Task 7): asking the engine here would open it before the write, and the legacy writer's output (a new
+        // instance in a second `<namespace>.todl` block of the model) does not compile for the saved snapshot, so the
+        // engine could never upgrade to it.
         if (solution === undefined || !await PragmaticServer.DeclaresModel(languageService, solution.Members.ToArray(), modelId))
         {
             throw new ResponseError(ErrorCodes.InvalidParams, PragmaticServer.ModelNotFoundMessage)
@@ -994,7 +998,10 @@ export class PragmaticServer implements IEnvironmentGraphHost
             ? new OpenDevWriteSecurity()
             : await PrincipalDevWriteSecurity.For(context, await this.ReadAuthorization())
         this.cypherExecutor ??= new DevCypherExecutor(writer, () => languageService.GraphRevision, this.options.writeLock ?? new InProcessWriteLock())
-        return this.cypherExecutor.Execute(request, { member, identity: { model: solution.Name, version: PragmaticServer.GraphModelVersion, namespace } }, security)
+        const result = await this.cypherExecutor.Execute(request, { member, identity: { model: solution.Name, version: PragmaticServer.GraphModelVersion, namespace } }, security)
+        // the write went to the saved files outside the engine: bring the engine up to them so a following read sees it
+        await this.devEngine?.Synchronize()
+        return result
     }
 
     private async OwningMember(languageService: ILanguageService, members: readonly { Storage?: IStorage }[], modelId: string): Promise<{ Storage: IStorage } | undefined>

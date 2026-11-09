@@ -1,16 +1,14 @@
-import { AccessDefault, AccessScope, Cypher, OwnerIs } from '@pragmatic-tech-ai/graph'
+import { AccessDefault, AccessScope, ConceptIs, Cypher, Or, OwnerIs } from '@pragmatic-tech-ai/graph'
 import type { GraphEngine, ISchemaDescription } from '@pragmatic-tech-ai/graph'
 import { CursorStaleError, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { CypherParamValue, CypherQueryPageDto, PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CypherQueryPageDto, PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { PagingLimits } from '../../config/paging-limits.js'
-import { CypherParamConverter, CypherParamError } from '../cypher/cypher-param-converter.js'
 import { CypherResultMapper } from '../cypher/cypher-result-mapper.js'
 import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
 import { PageFingerprint, PageRequest } from '../paging/page-request.js'
 import { AccessScopeConjunction } from './access-scope-conjunction.js'
-import { DevAccessScopeError, DevAccessScopeErrorCode } from './dev-access-scope-source.js'
 import type { IDevScope, IDevScopeSource } from './dev-access-scope-source.js'
 import type { IDevGraphEngine } from './dev-graph-engine-host.js'
 import type { DevSnapshot } from './dev-snapshot-source.js'
@@ -24,12 +22,14 @@ export interface IDevCypherPage
     readonly RowCap: number
 }
 
-/** One dev `cypher/query` request (the wire parameters, already validated by the handler). */
+/** One dev `cypher/query` request; the handler converts and canonicalizes the wire parameters once. */
 export interface IDevCypherRequest
 {
     readonly Source: string
-    readonly Parameters: { [name: string]: CypherParamValue } | undefined
-    /** A model id of the active solution; the query then sees only that model's instances. */
+    readonly Parameters: ReadonlyMap<string, Cypher.ParameterValue>
+    /** `CypherParamConverter.Canonical` of the wire parameters (for the cursor fingerprint). */
+    readonly CanonicalParameters: string
+    /** A model id of the active solution; the query then sees only that model's instances (and the terms). */
     readonly ModelId?: string
     readonly Page: IDevCypherPage
     readonly TimeoutMs: number
@@ -42,6 +42,26 @@ export interface IDevCypherQuery
     Run(context: AccessContext, request: IDevCypherRequest): Promise<CypherQueryPageDto>
     /** The model ids `cypher/query` accepts as `modelId`, sorted. */
     Models(): Promise<readonly string[]>
+}
+
+export enum DevCypherQueryErrorCode
+{
+    /** The engine kept upgrading or committing on every attempt; a later request runs on the settled engine. */
+    Unsettled = 1,
+}
+
+export class DevCypherQueryError extends Error
+{
+    private static readonly ErrorName = 'DevCypherQueryError'
+    private static readonly Messages: Readonly<Record<DevCypherQueryErrorCode, string>> = {
+        [DevCypherQueryErrorCode.Unsettled]: 'the dev graph engine kept changing while the query ran',
+    }
+
+    public constructor(public readonly Code: DevCypherQueryErrorCode)
+    {
+        super(DevCypherQueryError.Messages[Code])
+        this.name = DevCypherQueryError.ErrorName
+    }
 }
 
 /** The engine's schema version and latest commit: a page is only valid for the state it was read at. */
@@ -70,22 +90,18 @@ class EngineState
     }
 }
 
-/** What is derived once per engine description: the model ids and the schema catalog. */
-class DescriptionFacts
+/** One attempt's outcome: the page, or that the engine moved while it ran. */
+class Attempt
 {
-    public readonly Catalog: EngineSchemaCatalog
-    public readonly Models: readonly string[]
+    public static readonly Moved = new Attempt(undefined)
 
-    public constructor(public readonly Description: ISchemaDescription, solutionName: string | undefined)
+    private constructor(public readonly Page: CypherQueryPageDto | undefined)
     {
-        this.Catalog = new EngineSchemaCatalog(Description)
-        const owners = new Set<string>()
-        for (const node of Description.Seed)
-        {
-            // the solution package owns what lies outside every model (and the taxonomy terms): it is no model
-            if (node.Owner !== solutionName) owners.add(node.Owner)
-        }
-        this.Models = [...owners].sort()
+    }
+
+    public static Done(page: CypherQueryPageDto): Attempt
+    {
+        return new Attempt(page)
     }
 }
 
@@ -94,15 +110,16 @@ class DescriptionFacts
  * alone decides what the query sees (rows, hidden members); this class never filters or masks a result itself.
  *
  * - `ModelId` must be one of {@link DevCypherQuery.Models} (else InvalidParams "model not found", the same error for
- *   every unknown id). It ANDs `OwnerIs(modelId)` into the `todl.Element` rows entry of the caller's scope
- *   (AccessScopeConjunction, deny-wins), so the model filter applies to every concept.
- * - The result cells are mapped to TODL's wire shape (EngineCellMapper of the snapshot the engine runs), then to the
- *   wire page (CypherResultMapper).
- * - Cursor fingerprint: `cypher`, the text, the canonical parameters, the engine schema version and commit, and for a
- *   model-scoped query `model`, the model id and the scope digest. A query that saw the engine move (an upgrade or a
+ *   every unknown id). It ANDs `Or(ConceptIs todl.Term, OwnerIs(modelId))` into the `todl.Element` rows entry of the
+ *   caller's scope (AccessScopeConjunction, deny-wins): the model filter reaches every concept but the taxonomy terms
+ *   (owned by the solution package), which the caller's own scope alone governs, so term refs survive.
+ * - The result cells are mapped to TODL's wire shape by the running snapshot's EngineCellMapper, with a reader under
+ *   the same scope telling it which relationship-held fields are hidden; then to the wire page (CypherResultMapper).
+ * - Cursor fingerprint: `cypher`, the text, the canonical parameters, the engine schema version and commit, the scope
+ *   digest, and for a model-scoped query `model` and the model id. A query that saw the engine move (an upgrade or a
  *   commit while it ran) is run again, up to {@link DevCypherQuery.MaxAttempts} times; a continuation page that never
- *   settles is reported stale rather than served from a state its cursor was not minted for.
- * - Engine Syntax / Semantic errors are InvalidParams; a timeout is {@link DevCypherQuery.TimeoutCode}.
+ *   settles is CursorStale, a first page DevCypherQueryError Unsettled.
+ * - Engine Syntax / Semantic / IntegerOverflow errors are InvalidParams; a timeout is {@link DevCypherQuery.TimeoutCode}.
  */
 export class DevCypherQuery implements IDevCypherQuery
 {
@@ -113,78 +130,71 @@ export class DevCypherQuery implements IDevCypherQuery
     private static readonly ModelScopeTag = 'model'
     private static readonly ModelNotFoundMessage = `${InvalidParamsPrefix.Text}model not found`
 
-    private facts: DescriptionFacts | undefined
+    private catalog: { readonly Description: ISchemaDescription; readonly Catalog: EngineSchemaCatalog } | undefined
     private readonly modelScopes = new WeakMap<AccessScope, Map<string, AccessScope>>()
 
-    public constructor(
-        private readonly host: IDevGraphEngine,
-        private readonly scopes: () => Promise<IDevScopeSource>,
-        private readonly solutionName: () => Promise<string | undefined>)
+    public constructor(private readonly host: IDevGraphEngine, private readonly scopes: () => Promise<IDevScopeSource>)
     {
     }
 
     public async Models(): Promise<readonly string[]>
     {
-        return (await this.Facts((await this.host.Snapshot()).Description)).Models
+        return (await this.host.Snapshot()).Models
     }
 
     public async Run(context: AccessContext, request: IDevCypherRequest): Promise<CypherQueryPageDto>
     {
-        const parameters = DevCypherQuery.Parameters(request)
-        const canonical = CypherParamConverter.Canonical(request.Parameters)
         for (let attempt = 1; attempt <= DevCypherQuery.MaxAttempts; attempt++)
         {
-            const last = attempt === DevCypherQuery.MaxAttempts
-            const engine = await this.host.Engine()
-            const before = await EngineState.Of(engine)
-            const snapshot = await this.host.Snapshot()
-            if (snapshot.Description.Version !== before.Version)
-            {
-                // an upgrade is being applied: its snapshot is installed once the engine has upgraded
-                await DevCypherQuery.Yield()
-                continue
-            }
-            const facts = await this.Facts(snapshot.Description)
-            if (request.ModelId !== undefined && !facts.Models.includes(request.ModelId))
-            {
-                throw new ResponseError(ErrorCodes.InvalidParams, DevCypherQuery.ModelNotFoundMessage)
-            }
-            const devScope = await (await this.scopes()).ScopeFor(context)
-            const scope = request.ModelId === undefined ? devScope.Scope : this.ModelScope(devScope.Scope, request.ModelId, facts)
-            const page = PageRequest.Resolve(request.Page.Params, DevCypherQuery.Fingerprint(request, canonical, before, devScope), request.Page.Limits, request.Page.RowCap)
-            let result: Cypher.CypherResult
-            try
-            {
-                const cypher = new Cypher.CypherEngine(engine, { MaxVarLength: request.MaxVarLength })
-                result = await cypher.Execute(scope, request.Source, { Parameters: parameters, Limits: { Skip: page.Offset, RowCap: page.Size, Cancel: Cypher.Deadline.After(request.TimeoutMs) } })
-            }
-            catch (error)
-            {
-                // a scope or plan made for a schema the engine left while the query ran: run it again on the new one
-                if (!last && !(await DevCypherQuery.Settled(engine, before))) continue
-                throw DevCypherQuery.WireError(error)
-            }
-            if (!(await DevCypherQuery.Settled(engine, before)))
-            {
-                if (!last) continue
-                if (DevCypherQuery.Continues(request.Page.Params)) throw new ResponseError(CursorStaleError.Code, CursorStaleError.Message)
-            }
-            return DevCypherQuery.Wire(snapshot, result, page)
+            const outcome = await this.Attempt(context, request, attempt === DevCypherQuery.MaxAttempts)
+            if (outcome.Page !== undefined) return outcome.Page
         }
-        throw new DevAccessScopeError(DevAccessScopeErrorCode.SchemaUnsettled)
+        if (DevCypherQuery.Continues(request.Page.Params)) throw new ResponseError(CursorStaleError.Code, CursorStaleError.Message)
+        throw new DevCypherQueryError(DevCypherQueryErrorCode.Unsettled)
     }
 
-    private async Facts(description: ISchemaDescription): Promise<DescriptionFacts>
+    private async Attempt(context: AccessContext, request: IDevCypherRequest, last: boolean): Promise<Attempt>
     {
-        if (this.facts === undefined || this.facts.Description !== description)
+        const engine = await this.host.Engine()
+        const before = await EngineState.Of(engine)
+        const snapshot = await this.host.Snapshot()
+        if (snapshot.Description.Version !== before.Version)
         {
-            this.facts = new DescriptionFacts(description, await this.solutionName())
+            // an upgrade is being applied: its snapshot is installed once the engine has upgraded
+            await DevCypherQuery.Yield()
+            return Attempt.Moved
         }
-        return this.facts
+        if (request.ModelId !== undefined && !snapshot.Models.includes(request.ModelId))
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, DevCypherQuery.ModelNotFoundMessage)
+        }
+        const devScope = await (await this.scopes()).ScopeFor(context)
+        const scope = request.ModelId === undefined ? devScope.Scope : this.ModelScope(devScope.Scope, request.ModelId, snapshot.Description)
+        const page = PageRequest.Resolve(request.Page.Params, DevCypherQuery.Fingerprint(request, before, devScope), request.Page.Limits, request.Page.RowCap)
+        let result: Cypher.CypherResult
+        try
+        {
+            const cypher = new Cypher.CypherEngine(engine, { MaxVarLength: request.MaxVarLength })
+            result = await cypher.Execute(scope, request.Source, { Parameters: request.Parameters, Limits: { Skip: page.Offset, RowCap: page.Size, Cancel: Cypher.Deadline.After(request.TimeoutMs) } })
+        }
+        catch (error)
+        {
+            // a scope or plan made for a schema the engine left while the query ran: run it again on the new one
+            if (!last && !(await DevCypherQuery.Settled(engine, before))) return Attempt.Moved
+            throw DevCypherQuery.WireError(error)
+        }
+        const mapped = await DevCypherQuery.Wire(engine, scope, snapshot, result, page)
+        if (!(await DevCypherQuery.Settled(engine, before)))
+        {
+            if (!last) return Attempt.Moved
+            // never settled: a continuation cannot be served from a state its cursor was not minted for
+            if (DevCypherQuery.Continues(request.Page.Params)) throw new ResponseError(CursorStaleError.Code, CursorStaleError.Message)
+        }
+        return Attempt.Done(mapped)
     }
 
     /** The caller's scope AND the model's own instances (cached per scope object, which is per schema version). */
-    private ModelScope(scope: AccessScope, modelId: string, facts: DescriptionFacts): AccessScope
+    private ModelScope(scope: AccessScope, modelId: string, description: ISchemaDescription): AccessScope
     {
         let byModel = this.modelScopes.get(scope)
         if (byModel === undefined)
@@ -195,30 +205,26 @@ export class DevCypherQuery implements IDevCypherQuery
         let scoped = byModel.get(modelId)
         if (scoped === undefined)
         {
-            const model = AccessScope.Build({ Default: AccessDefault.Allow, Rows: new Map([[TodlNames.Element, new OwnerIs(new Set([modelId]))]]) })
-            scoped = AccessScopeConjunction.And(scope, model, facts.Catalog)
+            const rows = new Map([[TodlNames.Element, new Or([new ConceptIs(TodlNames.Term), new OwnerIs(new Set([modelId]))])]])
+            scoped = AccessScopeConjunction.And(scope, AccessScope.Build({ Default: AccessDefault.Allow, Rows: rows }), this.CatalogOf(description))
             byModel.set(modelId, scoped)
         }
         return scoped
     }
 
-    private static Parameters(request: IDevCypherRequest): ReadonlyMap<string, Cypher.ParameterValue>
+    private CatalogOf(description: ISchemaDescription): EngineSchemaCatalog
     {
-        try
+        if (this.catalog === undefined || this.catalog.Description !== description)
         {
-            return CypherParamConverter.ToMap(request.Parameters)
+            this.catalog = { Description: description, Catalog: new EngineSchemaCatalog(description) }
         }
-        catch (error)
-        {
-            if (error instanceof CypherParamError) throw new ResponseError(ErrorCodes.InvalidParams, `${InvalidParamsPrefix.Text}${error.message}`)
-            throw error
-        }
+        return this.catalog.Catalog
     }
 
-    private static Fingerprint(request: IDevCypherRequest, canonical: string, state: EngineState, scope: IDevScope): string
+    private static Fingerprint(request: IDevCypherRequest, state: EngineState, scope: IDevScope): string
     {
-        const parts = [DevCypherQuery.FingerprintTag, request.Source, canonical, state.Version, String(state.Commit)]
-        if (request.ModelId !== undefined) parts.push(DevCypherQuery.ModelScopeTag, request.ModelId, scope.Digest)
+        const parts = [DevCypherQuery.FingerprintTag, request.Source, request.CanonicalParameters, state.Version, String(state.Commit), scope.Digest]
+        if (request.ModelId !== undefined) parts.push(DevCypherQuery.ModelScopeTag, request.ModelId)
         return PageFingerprint.Of(...parts)
     }
 
@@ -233,9 +239,18 @@ export class DevCypherQuery implements IDevCypherQuery
         return params?.cursor !== undefined && params.cursor !== null
     }
 
-    private static Wire(snapshot: DevSnapshot, result: Cypher.CypherResult, page: PageRequest): CypherQueryPageDto
+    /** The wire page; a reader under the query's scope tells the mapper which relationship-held fields are hidden. */
+    private static async Wire(engine: GraphEngine, scope: AccessScope, snapshot: DevSnapshot, result: Cypher.CypherResult, page: PageRequest): Promise<CypherQueryPageDto>
     {
-        return CypherResultMapper.ToWire(snapshot.CellMapper.MapResult(Cypher.CypherEngine.ToDto(result)), page.NextCursor(result.HasMore))
+        const reader = await engine.BeginRead(scope)
+        try
+        {
+            return CypherResultMapper.ToWire(snapshot.CellMapper.MapResult(Cypher.CypherEngine.ToDto(result), reader), page.NextCursor(result.HasMore))
+        }
+        finally
+        {
+            reader.dispose()
+        }
     }
 
     private static WireError(error: unknown): unknown
@@ -245,6 +260,7 @@ export class DevCypherQuery implements IDevCypherQuery
         {
             case Cypher.CypherErrorCode.Syntax:
             case Cypher.CypherErrorCode.Semantic:
+            case Cypher.CypherErrorCode.IntegerOverflow:
                 return new ResponseError(ErrorCodes.InvalidParams, `${InvalidParamsPrefix.Text}${error.message}`)
             case Cypher.CypherErrorCode.Timeout:
                 return new ResponseError(DevCypherQuery.TimeoutCode, DevCypherQuery.TimeoutMessage)

@@ -322,6 +322,22 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         return (await this.Opened()).Snapshot
     }
 
+    /**
+     * Upgrades to what is saved now, without waiting for the debounce (a writer outside the engine, the legacy dev
+     * cypher/execute, calls it after its write so a following read sees it): cancels a pending debounce and runs one more
+     * drain pass. Resolves once that pass has finished; at once when nothing is open yet (the first open reads the
+     * latest saved state) or the host is disposing.
+     */
+    public Synchronize(): Promise<void>
+    {
+        if (this.disposing !== undefined || this.opening === undefined) return Promise.resolve()
+        this.debounce?.dispose()
+        this.debounce = undefined
+        this.pending = true
+        this.draining ??= this.Drain()
+        return this.draining
+    }
+
     /** Resolves when the upgrades already started (by an elapsed debounce) have finished. */
     public WhenUpgraded(): Promise<void>
     {

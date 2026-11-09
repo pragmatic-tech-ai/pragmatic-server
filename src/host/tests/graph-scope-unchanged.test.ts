@@ -10,6 +10,7 @@ import type { AccessContext, ISecurityModelConfig } from '@pragmatic-tech-ai/tod
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { CypherLimits } from '../../config/cypher-limits.js'
 import { PagingLimits } from '../../config/paging-limits.js'
+import { CypherParamConverter } from '../cypher/cypher-param-converter.js'
 import { PpSecurityHarness } from '../cypher/tests/pp-security-harness.js'
 
 /**
@@ -59,7 +60,8 @@ class ScopeFixture
         const limits = new CypherLimits()
         const page = await server.DevCypher().Run(context, {
             Source: query,
-            Parameters: undefined,
+            Parameters: new Map(),
+            CanonicalParameters: CypherParamConverter.Canonical(undefined),
             ...(modelId === undefined ? {} : { ModelId: modelId }),
             Page: { Params: {}, Limits: new PagingLimits(), RowCap: limits.RowCap },
             TimeoutMs: limits.TimeoutMs,
