@@ -1,7 +1,9 @@
 import type { AccessContext, ITenantConfigStore, ISecurityModelConfig, Principal } from '@pragmatic-tech-ai/todl-identity'
 import { PrivilegeAction, AccessLevel } from '@pragmatic-tech-ai/todl-identity'
 import type { IInstanceFilter } from '@pragmatic-tech-ai/todl'
-import { AccessDepthEvaluator, AccessDepthInstanceFilter, AllowAllInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
+import { AccessDepthEvaluator, AccessDepthInstanceFilter, AllowAllInstanceFilter, TenantSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
+import type { ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
+import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { FieldSecurityEvaluator, IMembership } from '@pragmatic-tech-ai/todl-identity-engine'
 import { AllowAllFieldReadMask } from './field-masked-graph-query.js'
 import type { IFieldReadMask } from './field-masked-graph-query.js'
@@ -86,18 +88,78 @@ export class AllowAllWriteAuthorizerSource implements IWriteAuthorizerSource
     }
 }
 
+/** One tenant's parsed security model: the access-depth evaluator plus the ownership rules and hierarchy it decides with. */
+export interface ITenantSecurity
+{
+    readonly Evaluator: AccessDepthEvaluator
+    /** The same model the evaluator was built from (its hierarchy, membership, ownership rules and field security). */
+    readonly Model: TenantSecurityModel
+    /** Each team's owning business unit (teams without one are absent): the units a team membership adds to a principal's reach. */
+    readonly TeamBusinessUnits: ReadonlyMap<string, string>
+    /** False when the tenant has no SecurityModel: the evaluator is DenyAll (fail-closed). */
+    readonly HasSecurityModel: boolean
+}
+
+class TenantSecurity implements ITenantSecurity
+{
+    private constructor(
+        public readonly Evaluator: AccessDepthEvaluator,
+        public readonly Model: TenantSecurityModel,
+        public readonly TeamBusinessUnits: ReadonlyMap<string, string>,
+        public readonly HasSecurityModel: boolean)
+    {
+    }
+
+    public static DenyAll(): TenantSecurity
+    {
+        return new TenantSecurity(AccessDepthEvaluator.DenyAll(), TenantSecurityModel.Empty(), new Map(), false)
+    }
+
+    public static From(config: ISecurityModelConfig): TenantSecurity
+    {
+        const teams = new Map<string, string>()
+        for (const team of config.teams)
+        {
+            if (team.owningBusinessUnit !== undefined) teams.set(team.id, team.owningBusinessUnit)
+        }
+        return new TenantSecurity(AccessDepthEvaluator.FromConfig(config), TenantSecurityModel.FromConfig(config), teams, true)
+    }
+}
+
+/** The subscribe side of the reload signal: raised with the environment id after each Invalidate. */
+class SecurityModelInvalidated implements ISignal<string>
+{
+    private readonly signal = new Signal<string>()
+
+    public Subscribe(handler: (environmentId: string) => void): ISubscription
+    {
+        return this.signal.subscribe(handler)
+    }
+
+    public Raise(environmentId: string): void
+    {
+        this.signal.emit(environmentId)
+    }
+}
+
 /**
  * Identity configured: builds and caches one AccessDepthEvaluator per tenant from the tenant's
  * SecurityModel (absent/null ⇒ DenyAll, fail-closed), and returns a per-principal depth filter.
  * The evaluator is built once per tenant and reused; a runtime SecurityModel change calls Invalidate
  * to drop the cached evaluator so the next request re-reads the store — live, without a restart.
+ * `Invalidated` is raised after each Invalidate so per-principal caches built on the evaluator drop too.
  */
 export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthorizerSource, IFieldReadMaskSource, ISecurityModelReload
 {
-    private readonly evaluators = new Map<string, Promise<AccessDepthEvaluator>>()
-    private readonly modelless = new Set<string>()
+    public readonly Invalidated: ISignal<string>
 
-    constructor(private readonly store: ITenantConfigStore) {}
+    private readonly securities = new Map<string, Promise<TenantSecurity>>()
+    private readonly invalidated = new SecurityModelInvalidated()
+
+    constructor(private readonly store: ITenantConfigStore)
+    {
+        this.Invalidated = this.invalidated
+    }
 
     public async ReadFilterFor(context: AccessContext): Promise<IInstanceFilter>
     {
@@ -113,8 +175,7 @@ export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthori
 
     public async HasSecurityModelFor(context: AccessContext): Promise<boolean>
     {
-        await this.EvaluatorFor(context.Tenant.Id)
-        return !this.modelless.has(context.Tenant.Id)
+        return (await this.SecurityOf(context.Tenant.Id)).HasSecurityModel
     }
 
     public async WriteAuthorizerFor(context: AccessContext): Promise<IWriteAuthorizer>
@@ -151,42 +212,51 @@ export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthori
         return this.EvaluatorFor(context.Tenant.Id)
     }
 
-    public Invalidate(environmentId: string): void
+    /** The context tenant's cached security model (evaluator, ownership rules, hierarchy). */
+    public SecurityFor(context: AccessContext): Promise<ITenantSecurity>
     {
-        this.evaluators.delete(environmentId)
-        this.modelless.delete(environmentId)
+        return this.SecurityOf(context.Tenant.Id)
     }
 
-    private EvaluatorFor(environmentId: string): Promise<AccessDepthEvaluator>
+    public Invalidate(environmentId: string): void
     {
-        let built = this.evaluators.get(environmentId)
+        this.securities.delete(environmentId)
+        this.invalidated.Raise(environmentId)
+    }
+
+    private async EvaluatorFor(environmentId: string): Promise<AccessDepthEvaluator>
+    {
+        return (await this.SecurityOf(environmentId)).Evaluator
+    }
+
+    private SecurityOf(environmentId: string): Promise<TenantSecurity>
+    {
+        let built = this.securities.get(environmentId)
         if (built === undefined)
         {
             built = this.Build(environmentId)
-            this.evaluators.set(environmentId, built)
+            this.securities.set(environmentId, built)
             // Evict a failed build so a later call retries (concurrent callers share the in-flight promise).
             built.catch(() =>
             {
-                if (this.evaluators.get(environmentId) === built)
+                if (this.securities.get(environmentId) === built)
                 {
-                    this.evaluators.delete(environmentId)
+                    this.securities.delete(environmentId)
                 }
             })
         }
         return built
     }
 
-    private async Build(environmentId: string): Promise<AccessDepthEvaluator>
+    private async Build(environmentId: string): Promise<TenantSecurity>
     {
         const config = await this.store.Get(environmentId)
         const model: ISecurityModelConfig | null | undefined = config?.SecurityModel
         if (model === undefined || model === null)
         {
-            this.modelless.add(environmentId)
-            return AccessDepthEvaluator.DenyAll()
+            return TenantSecurity.DenyAll()
         }
-        this.modelless.delete(environmentId)
-        return AccessDepthEvaluator.FromConfig(model)
+        return TenantSecurity.From(model)
     }
 }
 
