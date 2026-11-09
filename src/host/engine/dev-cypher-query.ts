@@ -1,5 +1,5 @@
 import { AccessDefault, AccessScope, ConceptIs, Cypher, Or, OwnerIs } from '@pragmatic-tech-ai/graph'
-import type { GraphEngine, ISchemaDescription } from '@pragmatic-tech-ai/graph'
+import type { GraphEngine, GraphReader, ISchemaDescription } from '@pragmatic-tech-ai/graph'
 import { CursorStaleError, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherQueryPageDto, PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { TodlNames } from '@pragmatic-tech-ai/todl/engine'
@@ -11,7 +11,6 @@ import { PageFingerprint, PageRequest } from '../paging/page-request.js'
 import { AccessScopeConjunction } from './access-scope-conjunction.js'
 import type { IDevScope, IDevScopeSource } from './dev-access-scope-source.js'
 import type { IDevGraphEngine } from './dev-graph-engine-host.js'
-import type { DevSnapshot } from './dev-snapshot-source.js'
 import { EngineSchemaCatalog } from './engine-schema-catalog.js'
 
 /** The page a dev query asks for: the wire paging params, the connection's paging limits and the row cap. */
@@ -171,11 +170,15 @@ export class DevCypherQuery implements IDevCypherQuery
         const devScope = await (await this.scopes()).ScopeFor(context)
         const scope = request.ModelId === undefined ? devScope.Scope : this.ModelScope(devScope.Scope, request.ModelId, snapshot.Description)
         const page = PageRequest.Resolve(request.Page.Params, DevCypherQuery.Fingerprint(request, before, devScope), request.Page.Limits, request.Page.RowCap)
-        let result: Cypher.CypherResult
+        let mapped: CypherQueryPageDto
+        let reader: GraphReader | undefined
         try
         {
+            // one reader under the query's scope per attempt: it tells the mapper which members the scope hides
+            reader = await engine.BeginRead(scope)
             const cypher = new Cypher.CypherEngine(engine, { MaxVarLength: request.MaxVarLength })
-            result = await cypher.Execute(scope, request.Source, { Parameters: request.Parameters, Limits: { Skip: page.Offset, RowCap: page.Size, Cancel: Cypher.Deadline.After(request.TimeoutMs) } })
+            const result = await cypher.Execute(scope, request.Source, { Parameters: request.Parameters, Limits: { Skip: page.Offset, RowCap: page.Size, Cancel: Cypher.Deadline.After(request.TimeoutMs) } })
+            mapped = CypherResultMapper.ToWire(snapshot.CellMapper.MapResult(Cypher.CypherEngine.ToDto(result), reader), page.NextCursor(result.HasMore))
         }
         catch (error)
         {
@@ -183,7 +186,10 @@ export class DevCypherQuery implements IDevCypherQuery
             if (!last && !(await DevCypherQuery.Settled(engine, before))) return Attempt.Moved
             throw DevCypherQuery.WireError(error)
         }
-        const mapped = await DevCypherQuery.Wire(engine, scope, snapshot, result, page)
+        finally
+        {
+            reader?.dispose()
+        }
         if (!(await DevCypherQuery.Settled(engine, before)))
         {
             if (!last) return Attempt.Moved
@@ -237,20 +243,6 @@ export class DevCypherQuery implements IDevCypherQuery
     private static Continues(params: PageParams): boolean
     {
         return params?.cursor !== undefined && params.cursor !== null
-    }
-
-    /** The wire page; a reader under the query's scope tells the mapper which relationship-held fields are hidden. */
-    private static async Wire(engine: GraphEngine, scope: AccessScope, snapshot: DevSnapshot, result: Cypher.CypherResult, page: PageRequest): Promise<CypherQueryPageDto>
-    {
-        const reader = await engine.BeginRead(scope)
-        try
-        {
-            return CypherResultMapper.ToWire(snapshot.CellMapper.MapResult(Cypher.CypherEngine.ToDto(result), reader), page.NextCursor(result.HasMore))
-        }
-        finally
-        {
-            reader.dispose()
-        }
     }
 
     private static WireError(error: unknown): unknown
