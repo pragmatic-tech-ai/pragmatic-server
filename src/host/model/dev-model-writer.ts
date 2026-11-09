@@ -1,14 +1,16 @@
 import { ModelDraft, ModelDraftBaker, ModelDraftWriter, SnowflakeIdGenerator, checkAgainst } from '@pragmatic-tech-ai/todl'
 import { Cypher } from '@pragmatic-tech-ai/todl'
-import type { Repository, SourceFile, TodlDocument } from '@pragmatic-tech-ai/todl'
+import type { Repository, SourceFile, TodlDocument, WikiOrigin } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { TodlSourceCollector } from './todl-source-collector.js'
+import { SavedMember } from '../engine/saved-member-reader.js'
 
 /** The slice of the language service the writer needs (SolutionLanguageService satisfies it). */
 export interface IDevLanguageService
 {
-    ResolveBasesFor(consumerStorage: IStorage): Promise<{ bases: TodlDocument[] }>
+    /** `originOf` tags a base node with where it was compiled from (an open sibling member, or a published package). */
+    ResolveBasesFor(consumerStorage: IStorage): Promise<{ bases: TodlDocument[]; originOf?: ReadonlyMap<string, WikiOrigin> }>
     DidChange(uri: string, text: string): void
     WhenIdle(): Promise<void>
     readonly GraphRevision: number
@@ -96,7 +98,6 @@ export class DevModelWriter
     private static readonly FailedMessage = 'Failed to persist model write'
     private static readonly RestoreFailedSuffix = ' (restore also failed for '
     private static readonly RestoreFailedClose = ' file(s))'
-    private static readonly RootSeparator = '/'
 
     constructor(
         private readonly languageService: IDevLanguageService,
@@ -176,8 +177,7 @@ export class DevModelWriter
     /** The language service keys files by absolute URI: the storage root (with a trailing separator) + the storage-relative path. */
     private static AbsoluteUri(storage: IStorage, uri: string): string
     {
-        const root = storage.Root
-        return (root.endsWith(DevModelWriter.RootSeparator) ? root : root + DevModelWriter.RootSeparator) + uri
+        return SavedMember.AbsoluteUri(storage, uri)
     }
 
     private async Restore(storage: IStorage, snapshots: ReadonlyMap<string, string | undefined>): Promise<string[]>

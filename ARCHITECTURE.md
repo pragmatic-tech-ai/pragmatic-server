@@ -52,6 +52,15 @@
 - **Push-down (runtime):** a runtime read passes `{ text, parameters }` to `GraphForPragmaticApp`, which pushes `Cypher.CypherPushDown` ∧ the access-policy push-down (only with no record shares) into `ConnectorPrefetch` source queries.
 - **Handler:** `ServerConnectionHandler` registers `CypherProtocol.Query` under `guarded` (rate-limit→authorize→handler); `cypher-param-converter.ts` (wire params→engine, `Object.create(null)` anti-`__proto__`), `cypher-result-mapper.ts` (engine PascalCase→wire camelCase). Error map: syntax/semantic→InvalidParams, `CypherTimeout`→ -32030. Limits from `CypherLimits` config.
 
+## Dev graph engine (`src/host/engine/`)
+
+Plan M1.4 moves the dev-tenant graph onto an embedded pragmatic-graph engine (`@pragmatic-tech-ai/graph`, `file:../pragmatic-graph`). Inputs come from SAVED `.todl` files only, never the language service's unsaved buffers (`DidChange` text is a live buffer).
+
+- **`SavedMemberReader`** (`saved-member-reader.ts`) - per member: `TodlSourceCollector.Collect(storage)` + `ResolveBasesFor(storage)` -> `SavedMember { Storage, Sources, Bases, OriginOf, Models }`; `Models` = the `model` containers the member's own sources declare (compile provenance). `NamespaceOf(modelId, solutionName)` = id prefix, else solution name.
+- **`DevSnapshotSource.Current()`** (`dev-snapshot-source.ts`) - every member with a model compiled from its saved sources (absolute uris) by TODL `SavedModelCompiler` (one package per model id, so seed `Owner` = model id; instances outside every model -> the solution package), described by `SnapshotDescriber` with `DefaultConnector: TodlNames.FileConnector`. `Description.Version` is the content digest `GraphEngine.Upgrade` compares. Base nodes compiled from an in-solution member that is itself compiled here are stripped (`OriginOf` `OpenProject`), so nothing is declared twice.
+- **`ServerModelWorkspace`** (`server-model-workspace.ts`) - TODL `ITodlModelWorkspace` for `TodlFileConnector`: `OpenDraft(modelId)` finds the member whose saved sources declare the model (`OwningMember`; the saved-file counterpart of `PragmaticServer.OwningMember`), drafts over its sources (storage-relative uris), `SourceHash` = `TodlSourceCollector.SourceHash`. Solution name / undeclared id -> undefined (not editable). Each `WriteFile`/`DeleteFile` writes storage, then `DidChange(absoluteUri, text)` + `WhenIdle()`; a refresh failure is logged, never fails the write.
+- `IDevSolution` (`dev-solution.ts`) is the solution slice it reads (`Name`, `Members.ToArray()`); TODL `Solution` satisfies it.
+
 ## Runtime data ops (`TenantPurpose.Runtime`; `src/host/sharing/`, `src/host/apps/`)
 
 - **Applications:** `PragmaticAppsRegistry` (`src/host/apps/`) lists/opens an application (manifest = package set); a connection binds one app (`boundApp`) via `application/open`. Data ops require a bound app, else "no application selected".
@@ -92,6 +101,7 @@
 | Tenant provisioning shape | `TenantProvisioning` — `src/tenancy/tenant-provisioning.ts:6` |
 | Graph for a request | `PragmaticServer.Graph` → `TenantGraphCache` — `src/host/cypher/` |
 | Active-solution → repos | `CollectGraphSources` — `src/pragmatic-server.ts:254` |
+| Dev engine snapshot / model workspace | `DevSnapshotSource` / `ServerModelWorkspace` — `src/host/engine/` |
 | RBAC instance filter | `TenantGraphCache.AllowedIds` — `tenant-graph-cache.ts:85` |
 | Method authorization | `PolicyGate` — `src/host/policy-gate.ts` |
 | Request pipeline | `ServerConnectionHandler.guarded` — `src/host/server-connection-handler.ts` |
