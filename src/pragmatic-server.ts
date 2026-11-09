@@ -84,7 +84,7 @@ import { DevGraphEngineHost } from './host/engine/dev-graph-engine-host.js'
 import type { IDevGraphEngine } from './host/engine/dev-graph-engine-host.js'
 import { DevAccessScopeSource, LoggerDevScopeDiagnostics } from './host/engine/dev-access-scope-source.js'
 import { DevCypherQuery } from './host/engine/dev-cypher-query.js'
-import { DevModelView } from './host/engine/dev-model-view.js'
+import { DevModelView, LoggerDevModelViewDiagnostics } from './host/engine/dev-model-view.js'
 import { EnvironmentGraph, EnvironmentGraphOverlay, LoadedGraphStore, NoEnvironmentGraphError } from './host/graphs/environment-graph.js'
 import type { IEnvironmentGraphHost } from './host/graphs/environment-graph.js'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -919,7 +919,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
      */
     public DevModelView(): DevModelView
     {
-        this.devModelView ??= new DevModelView(this.DevEngine(), () => this.DevScopes(), async () => (await this.Manager()).ActiveSolution, () => this.LanguageService())
+        this.devModelView ??= new DevModelView(this.DevEngine(), () => this.DevScopes(), async () => (await this.Manager()).ActiveSolution, () => this.LanguageService(), new LoggerDevModelViewDiagnostics(this.options.logger ?? new NullLogger()))
         return this.devModelView
     }
 

@@ -1,3 +1,4 @@
+import { GraphError, GraphErrorCode } from '@pragmatic-tech-ai/graph'
 import type { GraphEngine, GraphReader, ISubscription, MemberDef } from '@pragmatic-tech-ai/graph'
 import { ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ModelViewPageDto, PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -6,6 +7,8 @@ import { SnapshotDescriber, TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable, IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { PagingLimits } from '../../config/paging-limits.js'
+import { StructuredLogger } from '../../observability/logger.js'
+import type { ILogger } from '../../observability/logger.js'
 import type { IMemberReadGate } from '../model-member-builder.js'
 import { ModelProjection } from '../model-read-filter.js'
 import type { IModelNodeGate } from '../model-read-filter.js'
@@ -46,6 +49,27 @@ export interface IDevModelView
     Page(context: AccessContext, memberId: string | undefined, page: IDevModelViewPage): Promise<ModelViewPageDto>
     /** True when the active solution holds `nodeId` and the caller's scope hides it (false for an unknown id). */
     Hidden(context: AccessContext, nodeId: string): Promise<boolean>
+}
+
+/** Where the model view's diagnostics go (a node the engine refused to judge, hidden fail-closed). */
+export interface IDevModelViewDiagnostics
+{
+    ModelViewDiagnostic(message: string): void
+}
+
+/** Reports each diagnostic as one warning on the server logger. */
+export class LoggerDevModelViewDiagnostics implements IDevModelViewDiagnostics
+{
+    private static readonly Line = 'dev model view: '
+
+    public constructor(private readonly logger: ILogger = StructuredLogger.ToStdout())
+    {
+    }
+
+    public ModelViewDiagnostic(message: string): void
+    {
+        this.logger.Warn(LoggerDevModelViewDiagnostics.Line + message)
+    }
 }
 
 export enum DevModelViewErrorCode
@@ -178,16 +202,37 @@ class VisibleInstanceCache
 class EngineModelGate implements IModelNodeGate, IMemberReadGate
 {
     private static readonly NoMembers: readonly MemberDef[] = []
+    private static readonly RefusedPrefix = '"'
+    private static readonly RefusedSuffix = '" is hidden: the engine refused its values as a hypothetical node: '
 
-    public constructor(private readonly reader: GraphReader, private readonly visible: VisibleInstances)
+    public constructor(private readonly reader: GraphReader, private readonly visible: VisibleInstances, private readonly diagnostics: IDevModelViewDiagnostics)
     {
     }
 
     public Keeps(node: Node): boolean
     {
         if (node.type === null || this.visible.Unrestricted) return true
-        if (node.isClass) return this.reader.Admits(node.type, SnapshotDescriber.SeedProperties(this.MembersOf(node.type), node.attrs, node.class))
+        if (node.isClass) return this.Admits(node, node.type)
         return this.visible.ConceptOf(node.id) === node.type
+    }
+
+    /**
+     * The engine's answer for a class node. Values the engine itself refuses (SchemaViolation: a string TODL accepts but
+     * the engine's value codec does not, such as a lone surrogate in an unsaved buffer) hide the node fail-closed and are
+     * reported; any other error is a fault and propagates.
+     */
+    private Admits(node: Node, concept: string): boolean
+    {
+        try
+        {
+            return this.reader.Admits(concept, SnapshotDescriber.SeedProperties(this.MembersOf(concept), node.attrs, node.class))
+        }
+        catch (error)
+        {
+            if (!(error instanceof GraphError) || error.GraphCode !== GraphErrorCode.SchemaViolation) throw error
+            this.diagnostics.ModelViewDiagnostic(EngineModelGate.RefusedPrefix + node.id + EngineModelGate.RefusedSuffix + error.message)
+            return false
+        }
     }
 
     public CanRead(node: Node, field: string): boolean
@@ -229,7 +274,8 @@ class EngineRead
  *   engine commit, scope digest: a cursor is stale after any structure edit, upgrade or commit, and for another caller.
  * - Hidden: the first member whose structure resolves the id decides; an unknown id is not hidden.
  * - The visible-instance set (a `todl.Element` scan) is cached per scope digest for the latest engine state (an LRU of
- *   at most 32 digests) and dropped on the host's `Changed` and the scope source's `Dropped`. A read that saw the engine upgrade is repeated (`MaxAttempts`).
+ *   at most 32 digests) and dropped on the host's `Changed` and the scope source's `Dropped`.
+ *   A class node whose values the engine refuses (SchemaViolation) is hidden and reported to {@link IDevModelViewDiagnostics}. A read that saw the engine upgrade is repeated (`MaxAttempts`).
  */
 export class DevModelView implements IDevModelView, IDisposable
 {
@@ -242,12 +288,14 @@ export class DevModelView implements IDevModelView, IDisposable
     private readonly subscriptions: ISubscription[] = []
     /** The scope source whose `Dropped` the cache follows (subscribed on first use: the source is built lazily). */
     private followed: IDevScopeSource | undefined
+    private followedSubscription: ISubscription | undefined
 
     public constructor(
         private readonly host: IDevGraphEngine,
         private readonly scopes: () => Promise<IDevScopeSource>,
         private readonly solution: () => Promise<IDevModelSolution | undefined>,
-        private readonly structure: () => Promise<IDevModelStructure>)
+        private readonly structure: () => Promise<IDevModelStructure>,
+        private readonly diagnostics: IDevModelViewDiagnostics = new LoggerDevModelViewDiagnostics())
     {
         this.subscriptions.push(host.Changed.Subscribe(() => this.cache.Clear()))
     }
@@ -312,6 +360,8 @@ export class DevModelView implements IDevModelView, IDisposable
     public dispose(): void
     {
         for (const subscription of this.subscriptions.splice(0)) subscription.dispose()
+        this.followedSubscription?.dispose()
+        this.followedSubscription = undefined
         this.followed = undefined
         this.cache.Clear()
     }
@@ -341,7 +391,7 @@ export class DevModelView implements IDevModelView, IDisposable
                     ? VisibleInstances.All
                     : await this.cache.Get(scope.Digest, version, reader.SnapshotCommit, reader, TodlNames.Element)
                 if (DevModelView.Moved(engine, version)) continue
-                return work(new EngineRead(version, reader.SnapshotCommit, scope, new EngineModelGate(reader, visible)))
+                return work(new EngineRead(version, reader.SnapshotCommit, scope, new EngineModelGate(reader, visible, this.diagnostics)))
             }
             finally
             {
@@ -351,13 +401,14 @@ export class DevModelView implements IDevModelView, IDisposable
         throw new DevModelViewError(DevModelViewErrorCode.Unsettled)
     }
 
-    /** Subscribes the cache to `source.Dropped` once per source (a rebuilt source is followed afresh). */
+    /** Subscribes the cache to `source.Dropped` once per source; switching to a rebuilt source drops the previous subscription. */
     private Follow(source: IDevScopeSource): IDevScopeSource
     {
         if (this.followed !== source)
         {
+            this.followedSubscription?.dispose()
             this.followed = source
-            this.subscriptions.push(source.Dropped.Subscribe(() => this.cache.Clear()))
+            this.followedSubscription = source.Dropped.Subscribe(() => this.cache.Clear())
         }
         return source
     }

@@ -15,8 +15,11 @@ import { PagingLimits } from '../../../config/paging-limits.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { PpSecurityHarness } from '../../cypher/tests/pp-security-harness.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
+import { Signal } from '@pragmatic-tech-ai/todl-runtime'
+import type { ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { DevModelView } from '../dev-model-view.js'
-import type { IDevModelStructure, IDevModelView } from '../dev-model-view.js'
+import type { IDevModelStructure, IDevModelView, IDevModelViewDiagnostics } from '../dev-model-view.js'
+import type { IDevScope, IDevScopeSource } from '../dev-access-scope-source.js'
 
 /**
  * Ported from host/tests/model-read-filter.test.ts, model-view-paging.test.ts and model-surface.test.ts: the dev
@@ -38,6 +41,53 @@ class FixedStructure implements IDevModelStructure
     public async ModelView(): Promise<{ model: Repository; provenanceOf: ReadonlyMap<string, string> }>
     {
         return { model: this.model, provenanceOf: this.provenance }
+    }
+}
+
+/** Records every model-view diagnostic. */
+class RecordingDiagnostics implements IDevModelViewDiagnostics
+{
+    public readonly Messages: string[] = []
+
+    public ModelViewDiagnostic(message: string): void
+    {
+        this.Messages.push(message)
+    }
+}
+
+/** A Dropped signal that counts its live subscriptions. */
+class CountingDropped implements ISignal<void>
+{
+    public Active = 0
+    private readonly signal = new Signal<void>()
+
+    public Subscribe(handler: (value: void) => void): ISubscription
+    {
+        const inner = this.signal.subscribe(handler)
+        this.Active += 1
+        let disposed = false
+        return { dispose: () =>
+        {
+            if (disposed) return
+            disposed = true
+            this.Active -= 1
+            inner.dispose()
+        } }
+    }
+}
+
+/** A scope source that delegates to the server's and counts the subscriptions to its Dropped. */
+class CountingScopeSource implements IDevScopeSource
+{
+    public readonly Dropped = new CountingDropped()
+
+    public constructor(private readonly inner: () => Promise<IDevScopeSource>)
+    {
+    }
+
+    public async ScopeFor(context: AccessContext): Promise<IDevScope>
+    {
+        return (await this.inner()).ScopeFor(context)
     }
 }
 
@@ -192,9 +242,9 @@ class DevWorld
     }
 
     /** A DevModelView on this server's engine and scopes whose structure is `structure` (the unit ports). */
-    public View(structure: IDevModelStructure): DevModelView
+    public View(structure: IDevModelStructure, diagnostics?: IDevModelViewDiagnostics, scopes: () => Promise<IDevScopeSource> = () => this.Server.DevScopes()): DevModelView
     {
-        const view = new DevModelView(this.Server.DevEngine(), () => this.Server.DevScopes(), async () => this.manager.ActiveSolution, async () => structure)
+        const view = new DevModelView(this.Server.DevEngine(), scopes, async () => this.manager.ActiveSolution, async () => structure, diagnostics)
         this.views.push(view)
         return view
     }
@@ -478,6 +528,10 @@ class ClassFx
     public static readonly Basic = 'acme.Basic'
     public static readonly W1 = 'acme.w1'
     public static readonly IconPath = 'resources/big.svg'
+    public static readonly Region = 'region'
+    public static readonly Eu = 'eu'
+    /** A string TODL holds but the engine's value codec refuses. */
+    public static readonly LoneSurrogate = String.fromCharCode(0xd800)
 
     public static Todl(withPolicy: boolean): string
     {
@@ -945,6 +999,54 @@ test('an annotated term is admitted with its resources under an org read, and De
         assert.ok(ids.includes(ClassFx.Widget))
         assert.deepEqual(await client.Resources(ClassFx.Big), [])
         assert.equal(await world.Server.DevModelView().Hidden(DevWorld.Owner(), ClassFx.Big), true)
+    })
+})
+
+test('a class node whose values the engine refuses is hidden, the page succeeds and a diagnostic is reported', async () =>
+{
+    await DevWorld.With(ClassFx.Todl(true), undefined, async world =>
+    {
+        const repo = new Repository()
+        const b = repo.builder()
+        b.definePrimitive('string')
+        b.defineConcept(ClassFx.Widget)
+        b.addField(ClassFx.Widget, ClassFx.Region, 'string')
+        b.assertInstance(ClassFx.Widget, ClassFx.Premium, true)
+        b.setField(ClassFx.Premium, ClassFx.Region, ClassFx.LoneSurrogate)
+        b.assertInstance(ClassFx.Widget, ClassFx.Basic, true)
+        b.setField(ClassFx.Basic, ClassFx.Region, ClassFx.Eu)
+        b.assertInstance(ClassFx.Widget, ClassFx.W1)
+        b.setField(ClassFx.W1, ClassFx.Region, ClassFx.Eu)
+        b.commit()
+        assert.equal(repo.resolve(ClassFx.Premium)?.isClass, true)
+        const diagnostics = new RecordingDiagnostics()
+        const page = await DevWorld.Page(world.View(new FixedStructure(repo), diagnostics), DevWorld.Reader(), world.MemberId, ViewFx.All)
+        const ids = page.items.map(m => m.id)
+        assert.ok(!ids.includes(ClassFx.Premium))
+        assert.ok(ids.includes(ClassFx.Basic))
+        assert.ok(ids.includes(ClassFx.W1))
+        assert.equal(diagnostics.Messages.length, 1)
+        assert.ok(diagnostics.Messages[0]!.includes(ClassFx.Premium))
+    })
+})
+
+test('switching to a rebuilt scope source drops the subscription to the previous one', async () =>
+{
+    await DevWorld.With(ClassFx.Todl(true), undefined, async world =>
+    {
+        const first = new CountingScopeSource(() => world.Server.DevScopes())
+        const second = new CountingScopeSource(() => world.Server.DevScopes())
+        let current: IDevScopeSource = first
+        const view = world.View(new FixedStructure(ModelFixture.Build(false)), undefined, async () => current)
+        await DevWorld.Page(view, DevWorld.Reader(), world.MemberId, ViewFx.All)
+        await DevWorld.Page(view, DevWorld.Reader(), world.MemberId, ViewFx.All)
+        assert.equal(first.Dropped.Active, 1)
+        current = second
+        await DevWorld.Page(view, DevWorld.Reader(), world.MemberId, ViewFx.All)
+        assert.equal(first.Dropped.Active, 0)
+        assert.equal(second.Dropped.Active, 1)
+        view.dispose()
+        assert.equal(second.Dropped.Active, 0)
     })
 })
 
