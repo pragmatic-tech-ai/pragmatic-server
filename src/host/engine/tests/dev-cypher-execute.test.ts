@@ -594,6 +594,11 @@ class SilentEngineDiagnostics implements IDevEngineDiagnostics
     {
         this.Failures.push(SilentEngineDiagnostics.Unsettled)
     }
+
+    public DrainUnsettled(): void
+    {
+        this.Failures.push(SilentEngineDiagnostics.Unsettled)
+    }
 }
 
 class RecordingWriteDiagnostics implements IDevWriteDiagnostics
@@ -1011,7 +1016,9 @@ describe('DevCypherExecute lease (ported from host/cypher/tests/dev-cypher-execu
             assert.equal(wedged.reason, ExecFx.WedgedReason)
             assert.equal(lock.Acquired, 1, 'a wedged tenant refuses before taking the lease')
             gate.Open()
-            await fx.Execute.WhenUnwedged()
+            // the writes settle (the late revert lands); the background release runs in the following turns
+            await fx.Host.WhenWritesSettled()
+            await Turns.Drain()
             assert.equal(lock.Released, 1, 'the lease is released once the writes settle')
             assert.equal((await fx.Run(ExecFx.SetMine)).status, AppWriteStatus.Applied)
             assert.match(fx.File(), ExecFx.CodeA)

@@ -107,6 +107,8 @@ export interface IDevEngineDiagnostics
      * the upgrade pass or the teardown stopped waiting and went on.
      */
     WritesUnsettled(): void
+    /** Teardown stopped waiting for an upgrade pass (a hang in the recompile or the upgrade) and disposed anyway. */
+    DrainUnsettled(): void
 }
 
 /** Reports each failure as one error on the server logger, by error name only (messages can carry paths). */
@@ -115,6 +117,7 @@ export class LoggerDevEngineDiagnostics implements IDevEngineDiagnostics
     private static readonly Line = 'dev graph engine kept its previous version; the upgrade failed: '
     private static readonly HandlerLine = 'dev graph engine upgraded, but a Changed subscriber failed: '
     private static readonly UnsettledLine = 'dev graph engine writes did not settle in time; the host went on without them'
+    private static readonly DrainLine = 'dev graph engine teardown stopped waiting for a hung upgrade pass'
     private static readonly UnknownName = 'UnknownError'
 
     public constructor(private readonly logger: ILogger = StructuredLogger.ToStdout())
@@ -134,6 +137,11 @@ export class LoggerDevEngineDiagnostics implements IDevEngineDiagnostics
     public WritesUnsettled(): void
     {
         this.logger.Error(LoggerDevEngineDiagnostics.UnsettledLine)
+    }
+
+    public DrainUnsettled(): void
+    {
+        this.logger.Error(LoggerDevEngineDiagnostics.DrainLine)
     }
 
     private static NameOf(error: unknown): string
@@ -454,6 +462,7 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
     private readonly writes = new EngineWriteTracker()
     private readonly fences = new WriteFenceSlot()
     private opening: Promise<OpenedEngine> | undefined
+    private openSucceeded = false
     private debounce: IDisposable | undefined
     private draining: Promise<void> | undefined
     private pending = false
@@ -517,10 +526,14 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         return this.writes.Settled()
     }
 
-    /** True once the engine has been asked to open (by a read, a query or a write); false before its first use. */
+    /**
+     * @internal True once the engine opened successfully (a failed open leaves it false). Not part of IDevGraphEngine:
+     * its only reader is the worker-host test proving a dev query used the ATTACHED engine; no public behaviour can
+     * show that without opening the engine itself, so the read is kept here, internal.
+     */
     public get IsOpen(): boolean
     {
-        return this.opening !== undefined
+        return this.openSucceeded
     }
 
     public InstallWriteFence(fence: IWriteFence): IDisposable
@@ -565,7 +578,9 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
                 PrepareTimeoutMs: this.prepareTimeoutMs,
             })
             const applied = engine.CommitApplied.Subscribe(commit => this.writes.Finalized(commit))
-            return new OpenedEngine(engine, source, subscription, applied, this.writes, snapshot)
+            const opened = new OpenedEngine(engine, source, subscription, applied, this.writes, snapshot)
+            this.openSucceeded = true
+            return opened
         }
         catch (error)
         {
@@ -617,8 +632,10 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         {
             if (!(await BoundedWait.Within(this.writes.Settled(), DevGraphEngineHost.MaxSettleMs, this.settleTimer)))
             {
-                // a hung connector call: report and go on; the next change retries once the writes settle
+                // a hung connector call: report and re-arm, so the skipped upgrade runs as soon as the writes settle
+                // (the next pass waits on them again) rather than waiting for the next GraphChanged
                 this.diagnostics.WritesUnsettled()
+                this.pending = true
                 return
             }
             const begun = this.writes.Begun
@@ -658,7 +675,11 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
     {
         this.debounce?.dispose()
         this.debounce = undefined
-        await this.draining
+        // bounded too: a hang inside the recompile (Source.Current) or engine.Upgrade never makes dispose hang
+        if (this.draining !== undefined && !(await BoundedWait.Within(this.draining, DevGraphEngineHost.MaxSettleMs, this.settleTimer)))
+        {
+            this.diagnostics.DrainUnsettled()
+        }
         const opened = await this.opening?.catch(() => undefined)
         if (opened === undefined) return
         if (!(await BoundedWait.Within(this.writes.Settled(), DevGraphEngineHost.MaxSettleMs, this.settleTimer))) this.diagnostics.WritesUnsettled()

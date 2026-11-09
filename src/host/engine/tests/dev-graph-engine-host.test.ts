@@ -60,6 +60,13 @@ class RecordingDiagnostics implements IDevEngineDiagnostics
     {
         this.Unsettled += 1
     }
+
+    public Drains = 0
+
+    public DrainUnsettled(): void
+    {
+        this.Drains += 1
+    }
 }
 
 /** A connector whose transactions do nothing: the tracker's bookkeeping alone is under test. */
@@ -121,6 +128,7 @@ class Settles
 /** One host over the two-member fixture, with a manual debounce. */
 class HostFx
 {
+    public static readonly TurnCount = 10
     public static readonly Names = 'MATCH (n:shop.Customer) RETURN n.name AS name ORDER BY name'
     public static readonly RenameBoth = "MATCH (a:shop.Customer {name: 'Ada'}), (b:shop.Customer {name: 'Bo'}) SET a.name = 'Ann', b.name = 'Bea'"
     public static readonly Cy = EngineHostFx.SourceA.replace('Ada', 'Cy')
@@ -168,6 +176,22 @@ class HostFx
     {
         this.Timer.Fire()
         await this.Host.WhenUpgraded()
+    }
+
+    /** Lets pending continuations and immediates run (no real-time wait). */
+    public static async Turns(): Promise<void>
+    {
+        for (let turn = 0; turn < HostFx.TurnCount; turn++) await new Promise<void>(resolve => setImmediate(resolve))
+    }
+
+    /** Elapses the settle bound by hand until `done` settles (no real-time wait). */
+    public static async ElapseUntil(h: HostFx, done: Promise<void>): Promise<void>
+    {
+        while (!(await Settles.Yet(done)))
+        {
+            await h.SettleTimer.WhenStarted()
+            h.SettleTimer.FireAll()
+        }
     }
 
     /** The customer names the engine holds, in order (each cell a scalar's value). */
@@ -423,7 +447,38 @@ describe('DevGraphEngineHost', () =>
         }
     })
 
-    test('a hung connector write never stalls the upgrade drain or dispose: each wait is bounded and reported (F-f)', async () =>
+    test('an upgrade pass skipped over unsettled writes is re-armed and runs once they settle (F-f)', async () =>
+    {
+        const h = new HostFx()
+        try
+        {
+            const gate = new ManualGate()
+            const engine = await h.Host.Engine()
+            h.Fx.A.Hold = gate.Promise
+            const write = new Cypher.CypherEngine(engine).Execute(AccessScope.System, HostFx.RenameAda)
+            await h.Fx.A.WhenWriting()
+            h.Fx.Lang.RaiseGraphChanged()
+            h.Timer.Fire()
+            await h.SettleTimer.WhenStarted()
+            h.SettleTimer.FireAll()
+            await HostFx.Turns()
+            assert.equal(h.Diagnostics.Unsettled, 1)
+            // re-armed: the next pass waits on the writes again, with no further GraphChanged
+            await h.SettleTimer.WhenStarted()
+            gate.Open()
+            await write
+            await h.Host.WhenUpgraded()
+            assert.equal(h.Changes, 1, 'the skipped upgrade ran once the writes settled')
+            assert.deepEqual(await HostFx.NamesIn(engine), ['Ann', 'Bo'])
+            assert.equal(h.Diagnostics.Unsettled, 1)
+        }
+        finally
+        {
+            await h.Host.dispose()
+        }
+    })
+
+    test('a hung connector write never makes dispose hang: each wait is bounded and reported (F-f)', async () =>
     {
         const h = new HostFx()
         const gate = new ManualGate()
@@ -431,24 +486,36 @@ describe('DevGraphEngineHost', () =>
         h.Fx.A.Hold = gate.Promise
         const write = new Cypher.CypherEngine(engine).Execute(AccessScope.System, HostFx.RenameAda).catch((error: unknown) => error)
         await h.Fx.A.WhenWriting()
-        // an upgrade pass waits for the hung write only until the bound elapses, then reports and goes on
-        h.Save(HostFx.Cy)
+        h.Fx.Lang.RaiseGraphChanged()
         h.Timer.Fire()
         await h.SettleTimer.WhenStarted()
         h.SettleTimer.FireAll()
-        await h.Host.WhenUpgraded()
+        await HostFx.Turns()
         assert.equal(h.Diagnostics.Unsettled, 1)
         assert.equal(h.Changes, 0, 'nothing was upgraded over a write still in flight')
-        // dispose is bounded the same way: it completes although the write never returned
         const disposed = h.Host.dispose()
-        while (!(await Settles.Yet(disposed)))
-        {
-            await h.SettleTimer.WhenStarted()
-            h.SettleTimer.FireAll()
-        }
+        await HostFx.ElapseUntil(h, disposed)
         assert.ok(h.Diagnostics.Unsettled >= 2)
         gate.Open()
         await write
+    })
+
+    test('a hang inside the recompile never makes dispose hang: teardown bounds its wait on the drain (F-f)', async () =>
+    {
+        const h = new HostFx()
+        const gate = new ManualGate()
+        await h.Host.Engine()
+        h.Fx.Lang.ResolveHold = gate.Promise
+        h.Fx.Lang.RaiseGraphChanged()
+        h.Timer.Fire()
+        // the pass is past its (settled) write wait and hung in the recompile
+        await HostFx.Turns()
+        assert.equal(h.Diagnostics.Unsettled, 0)
+        const disposed = h.Host.dispose()
+        await HostFx.ElapseUntil(h, disposed)
+        assert.equal(h.Diagnostics.Drains, 1, 'the hung pass was reported')
+        h.Fx.Lang.ResolveHold = undefined
+        gate.Open()
     })
 
     test('a real engine write leaves flight once the engine finalizes (CommitApplied), so WhenWritesSettled resolves', async () =>

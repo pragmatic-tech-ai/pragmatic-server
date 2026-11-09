@@ -34,6 +34,10 @@ class SilentDiagnostics implements IDevEngineDiagnostics
     public WritesUnsettled(): void
     {
     }
+
+    public DrainUnsettled(): void
+    {
+    }
 }
 
 class RecordingScopeDiagnostics implements IDevScopeDiagnostics

@@ -295,12 +295,6 @@ export class DevCypherExecute implements IDevCypherExecute
         return this.mutex.Run(() => this.Locked(context, modelId, request))
     }
 
-    /** Resolves once a wedge (an earlier write's unsettled connector writes) has cleared; at once when none. */
-    public WhenUnwedged(): Promise<void>
-    {
-        return this.wedged ?? Promise.resolve()
-    }
-
     private async Locked(context: AccessContext, modelId: string, request: DevCypherRequest): Promise<CypherExecuteResultDto>
     {
         // wedged: an earlier write may still be writing files; refuse before taking the lease

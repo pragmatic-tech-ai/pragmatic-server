@@ -194,6 +194,8 @@ export class FakeLanguageService implements IDevLanguageService
     public OnIdle: () => void = () => undefined
     /** Fails ResolveBasesFor while set. */
     public ResolveFailure: Error | undefined
+    /** While set, ResolveBasesFor waits for it (a hung recompile). */
+    public ResolveHold: Promise<void> | undefined
     private readonly basesOf = new Map<IStorage, () => ResolvedBases>()
 
     public RaiseGraphChanged(): void
@@ -204,6 +206,7 @@ export class FakeLanguageService implements IDevLanguageService
     public async ResolveBasesFor(consumerStorage: IStorage): Promise<{ bases: TodlDocument[]; originOf: ReadonlyMap<string, WikiOrigin> }>
     {
         if (this.ResolveFailure !== undefined) throw this.ResolveFailure
+        if (this.ResolveHold !== undefined) await this.ResolveHold
         const resolved = this.basesOf.get(consumerStorage)?.() ?? new ResolvedBases([EngineHostFx.SchemaDocument()], new Map())
         return { bases: resolved.Bases, originOf: resolved.OriginOf }
     }
