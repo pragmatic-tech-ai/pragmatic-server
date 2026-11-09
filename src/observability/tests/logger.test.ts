@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { StructuredLogger, NullLogger, LogLevel } from '../logger.js'
+import { StructuredLogger, NullLogger, LogLevel, type ILogger } from '../logger.js'
 
 class Capture
 {
@@ -258,7 +258,7 @@ test('NullLogger writes nothing to stdout and returns itself from Child', () =>
     probe.Install()
     try
     {
-        const logger = new NullLogger()
+        const logger: ILogger = new NullLogger()
         assert.equal(logger.Child({ a: 1 }), logger)
         logger.Info('ignored', { a: 1 })
         logger.Warn('ignored')

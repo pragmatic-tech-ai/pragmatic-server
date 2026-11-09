@@ -207,7 +207,7 @@ class RuntimeTenant
         // all reads and the browser's live query would come back empty.
         writeFileSync(join(this.seedDir, RuntimeTenant.SecurityModelFile), JSON.stringify(RuntimeSecurityModel.Config()))
         await BundleBuilder.Generate(
-            { name: RuntimeTenant.EnvName, kind: EnvKind.Dev, tenantId: RuntimeTenant.TenantId, purpose: TenantPurposeName.Runtime, hostPort: this.port },
+            { name: RuntimeTenant.EnvName, kind: EnvKind.Dev, environmentId: RuntimeTenant.TenantId, purpose: TenantPurposeName.Runtime, hostPort: this.port },
             this.bundleDir, this.seedDir)
         execFileSync(RuntimeTenant.Docker, this.RunArgs(), { stdio: 'ignore' })
         this.started = true

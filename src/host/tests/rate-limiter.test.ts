@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { RateLimitScope, RateLimitDecision, NullRateLimiter, TokenBucketRateLimiter } from '../rate-limiter.js'
+import { RateLimitScope, RateLimitDecision, NullRateLimiter, TokenBucketRateLimiter, type IRateLimiter } from '../rate-limiter.js'
 
 class FakeClock
 {
@@ -10,7 +10,7 @@ class FakeClock
 
 test('NullRateLimiter always allows', () =>
 {
-    const limiter = new NullRateLimiter()
+    const limiter: IRateLimiter = new NullRateLimiter()
     for (let i = 0; i < 100; i++)
     {
         assert.equal(limiter.Check({ scope: RateLimitScope.Tenant, tenant: 't1', key: 't1' }).Allowed, true)

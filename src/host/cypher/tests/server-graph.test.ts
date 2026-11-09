@@ -33,7 +33,7 @@ class ServerGraphFixture
             await server.Start()
             const graph = await server.Graph(ServerGraphFixture.Permissive())
             const result = Cypher.CypherEngine.OverQuery(graph).Execute(ServerGraphFixture.CountQuery)
-            assert.equal((result.Rows[0]![0] as { Value: number }).Value, 0)
+            assert.equal((result.Rows[0]![0] as unknown as { Value: number }).Value, 0)
         }
         finally
         {
@@ -55,7 +55,7 @@ class ServerGraphFixture
             await server.OpenSolution(solution)
             const graph = await server.Graph(ServerGraphFixture.Permissive())
             const result = Cypher.CypherEngine.OverQuery(graph).Execute(ServerGraphFixture.CountQuery)
-            const count = (result.Rows[0]![0] as { Value: number }).Value
+            const count = (result.Rows[0]![0] as unknown as { Value: number }).Value
             assert.equal(count, ServerGraphFixture.ExpectedCount)
         }
         finally

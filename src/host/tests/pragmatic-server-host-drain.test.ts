@@ -219,7 +219,7 @@ test('happy path: observability is flushed, and only AFTER the in-flight request
     {
         const disposing = host.DisposeAsync()
         await new Promise<void>(resolve => setTimeout(resolve, 80))
-        assert.deepEqual(events, [])
+        assert.equal(events.length, 0)
         events.push('release')
         held.Release()
         await disposing

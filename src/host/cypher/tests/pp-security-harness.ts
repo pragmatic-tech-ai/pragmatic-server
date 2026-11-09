@@ -3,6 +3,9 @@ import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Rol
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import type { PragmaticServer } from '../../../pragmatic-server.js'
 
+/** The harness models always declare roles; the type says so, so tests can derive from `roles` without a guard. */
+export type HarnessSecurityModel = ISecurityModelConfig & Required<Pick<ISecurityModelConfig, 'roles'>>
+
 export class PpSecurityHarness
 {
     public static readonly KeyEnv = 'PS_SP3B_KEY'
@@ -46,13 +49,13 @@ export class PpSecurityHarness
     }
 
     /** The principal lives in BU `sales`; role `reader` grants Read at BusinessUnit level on Widget; ownership from field `owningBu`. */
-    public static BuSecurityModel(principalId: string): ISecurityModelConfig
+    public static BuSecurityModel(principalId: string): HarnessSecurityModel
     {
         return PpSecurityHarness.ModelAt(principalId, AccessLevel.BusinessUnit)
     }
 
     /** Org-level grant = allow-all on the depth axis (for compose tests isolating the predicate axis). */
-    public static OrgSecurityModel(principalId: string): ISecurityModelConfig
+    public static OrgSecurityModel(principalId: string): HarnessSecurityModel
     {
         return PpSecurityHarness.ModelAt(principalId, AccessLevel.Organization)
     }
@@ -69,7 +72,7 @@ export class PpSecurityHarness
         await store.Save(PpSecurityHarness.TenantId, merged)
     }
 
-    private static ModelAt(principalId: string, level: AccessLevel): ISecurityModelConfig
+    private static ModelAt(principalId: string, level: AccessLevel): HarnessSecurityModel
     {
         return {
             businessUnits: [{ id: PpSecurityHarness.RootBu, name: PpSecurityHarness.RootName }, { id: PpSecurityHarness.SalesBu, name: PpSecurityHarness.SalesName, parent: PpSecurityHarness.RootBu }],

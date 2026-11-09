@@ -55,6 +55,12 @@ namespace shop {
 
     private static Captured: Record<string, unknown> | undefined
 
+    /** Read through a call so the reset in Run() does not narrow the captured options to undefined. */
+    private static CapturedOptions(): Record<string, unknown> | undefined
+    {
+        return Fixture.Captured
+    }
+
     private static Provisioning(): InMemoryTenantProvisioning
     {
         const pool = Fixture.Pool()
@@ -92,8 +98,8 @@ namespace shop {
             const r2 = await s2.Connectors()
             const rows = (await r1.ReadEntities(r1.ModelsWithConnectors()[0]!.ModelId, Fixture.ConceptId)).Entities
             assert.ok(rows.length >= 1)
-            assert.equal(Fixture.Captured?.database, 'app')
-            assert.equal(Fixture.Captured?.password, 'db-password')
+            assert.equal(Fixture.CapturedOptions()?.database, 'app')
+            assert.equal(Fixture.CapturedOptions()?.password, 'db-password')
             await assert.rejects(() => r2.ReadEntities(r2.ModelsWithConnectors()[0]!.ModelId, Fixture.ConceptId), /is not declared/)
         }
         finally
