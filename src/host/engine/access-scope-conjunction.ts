@@ -147,6 +147,7 @@ export class AccessScopeConjunction
             into.set(key, union)
         }
     }
+
     private static Draft(writes: Map<string, WriteRulesDraft>, key: string): WriteRulesDraft
     {
         let draft = writes.get(key)

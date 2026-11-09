@@ -41,7 +41,7 @@ describe('AccessScopeConjunction', () =>
         ]))
         const context = DevScopeFx.Context(DevScopeFx.P1)
         const description = DevScopeFx.Description()
-        const depth = DepthScopeCompiler.Compile(await Auth.EvaluatorForContext(context), context.Principal, description).Scope()
+        const depth = DepthScopeCompiler.Compile(await Auth.EvaluatorForContext(context), context.Principal, description, await Auth.HasSecurityModelFor(context)).Scope()
         const combined = AccessScopeConjunction.And(ConjunctionFx.RootPolicy(), depth, new EngineSchemaCatalog(description))
         for (const concept of ConjunctionFx.Concepts)
         {

@@ -5,12 +5,14 @@ import type { Diagnostic, Repository } from '@pragmatic-tech-ai/todl'
 import { TodlFileConnector } from '@pragmatic-tech-ai/todl/engine'
 import { Disposable, Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
+import { StructuredLogger } from '../../observability/logger.js'
+import type { ILogger } from '../../observability/logger.js'
 import type { IDevLanguageService } from './dev-language-service.js'
 import type { IDevSolution } from './dev-solution.js'
 import { DevSnapshotSource } from './dev-snapshot-source.js'
 import type { DevSnapshot } from './dev-snapshot-source.js'
 import { SavedMemberReader } from './saved-member-reader.js'
-import { ConsoleDevWriteDiagnostics, ServerModelWorkspace, WriteFenceSlot } from './server-model-workspace.js'
+import { LoggerDevWriteDiagnostics, ServerModelWorkspace, WriteFenceSlot } from './server-model-workspace.js'
 import type { IDevWriteDiagnostics, IWriteFence } from './server-model-workspace.js'
 
 /**
@@ -30,6 +32,12 @@ export interface IDevGraphEngine
      * and a running pass is awaited. A writer calls it after its commit, whose saved files raised the change.
      */
     WhenUpgraded(): Promise<void>
+    /**
+     * Resolves once none of the engine's own connector transactions is in flight: every file write a commit began,
+     * including one still running after the write-through timed out and its late revert, has settled. A writer awaits
+     * it before releasing its write lease, so the next writer never starts while files are still being written.
+     */
+    WhenWritesSettled(): Promise<void>
     /**
      * Installs the writer's fence (its write lease) for the engine's own `.todl` writes until the handle is disposed:
      * each draft session checks it before its first file write and refuses the write (Stale) once it no longer holds.
@@ -75,25 +83,30 @@ export interface IDevEngineDiagnostics
     ChangedHandlerFailed(error: unknown): void
 }
 
-export class ConsoleDevEngineDiagnostics implements IDevEngineDiagnostics
+/** Reports each failure as one error on the server logger, by error name only (messages can carry paths). */
+export class LoggerDevEngineDiagnostics implements IDevEngineDiagnostics
 {
     private static readonly Line = 'dev graph engine kept its previous version; the upgrade failed: '
     private static readonly HandlerLine = 'dev graph engine upgraded, but a Changed subscriber failed: '
-    private static readonly Separator = ': '
+    private static readonly UnknownName = 'UnknownError'
+
+    public constructor(private readonly logger: ILogger = StructuredLogger.ToStdout())
+    {
+    }
 
     public UpgradeFailed(error: unknown): void
     {
-        console.error(ConsoleDevEngineDiagnostics.Line + ConsoleDevEngineDiagnostics.Describe(error))
+        this.logger.Error(LoggerDevEngineDiagnostics.Line + LoggerDevEngineDiagnostics.NameOf(error))
     }
 
     public ChangedHandlerFailed(error: unknown): void
     {
-        console.error(ConsoleDevEngineDiagnostics.HandlerLine + ConsoleDevEngineDiagnostics.Describe(error))
+        this.logger.Error(LoggerDevEngineDiagnostics.HandlerLine + LoggerDevEngineDiagnostics.NameOf(error))
     }
 
-    private static Describe(error: unknown): string
+    private static NameOf(error: unknown): string
     {
-        return error instanceof Error ? error.name + ConsoleDevEngineDiagnostics.Separator + error.message : String(error)
+        return error instanceof Error ? error.name : LoggerDevEngineDiagnostics.UnknownName
     }
 }
 
@@ -118,15 +131,19 @@ export class DevSnapshotCompileError extends Error
 }
 
 /**
- * Counts the engine's own connector transactions in flight: from Begin until Commit or Revert settles, and again
- * while a Revert after Commit (compensation) runs. `Begun` counts every transaction ever begun, so a reader can tell
- * whether one started while it read.
+ * Counts the engine's own connector transactions in flight: from Begin until the engine has finalized the commit
+ * (`Finalized`, raised on the engine's CommitApplied), a failed Commit, or a Revert settles, and again while a Revert
+ * after Commit (compensation) runs. A committed transaction therefore stays in flight until the engine side of the
+ * write-through completes, so the upgrade drain never reads while the engine is still finalizing. `Begun` counts every
+ * transaction ever begun, so a reader can tell whether one started while it read.
  */
 export class EngineWriteTracker
 {
     private active = 0
     private begun = 0
     private waiters: (() => void)[] = []
+    /** Transactions whose connector Commit returned and whose engine Finalize has not been observed yet. */
+    private readonly finalizing = new Set<TrackedTransaction>()
 
     public get Begun(): number
     {
@@ -159,6 +176,30 @@ export class EngineWriteTracker
         const waiters = this.waiters
         this.waiters = []
         for (const resolve of waiters) resolve()
+    }
+
+    /** A transaction committed on the connector side: it stays in flight until the engine finalizes (or it reverts). */
+    public AwaitFinalize(transaction: TrackedTransaction): void
+    {
+        this.finalizing.add(transaction)
+    }
+
+    /** Leaves the finalizing set (a compensating Revert); false when the transaction was not in it. */
+    public Unfinalize(transaction: TrackedTransaction): boolean
+    {
+        return this.finalizing.delete(transaction)
+    }
+
+    /**
+     * The engine applied a commit (CommitApplied, after Finalize): every committed transaction leaves flight. Dev
+     * writes are serialized (DevCypherExecute's mutex), so the commit applied is the one those transactions belong to.
+     * Also called when the engine is disposed, so nothing waits on a Finalize that will never come.
+     */
+    public Finalized(): void
+    {
+        const done = [...this.finalizing]
+        this.finalizing.clear()
+        for (const transaction of done) transaction.End()
     }
 
     public Track(connector: IGraphConnector): IGraphConnector
@@ -204,34 +245,41 @@ class TrackedTransaction implements IConnectorTransaction
         return this.inner.Apply(changes)
     }
 
+    /** A committed transaction stays in flight until the engine finalizes (EngineWriteTracker.Finalized); a failed one ends. */
     public async Commit(): Promise<void>
     {
         try
         {
             await this.inner.Commit()
         }
-        finally
+        catch (error)
         {
             this.End()
+            throw error
         }
+        if (!this.ended) this.tracker.AwaitFinalize(this)
     }
 
     public async Revert(): Promise<void>
     {
-        // a Revert after Commit compensates: it writes files again, so it is in flight while it runs
-        if (this.ended) this.tracker.Enter()
+        // committed but not finalized (the engine Finalize failed, or the write-through timed out): this compensation
+        // ends the flight that began at Begin
+        const finalizing = this.tracker.Unfinalize(this)
+        // a Revert after the transaction ended compensates: it writes files again, so it is in flight while it runs
+        const compensating = this.ended
+        if (compensating) this.tracker.Enter()
         try
         {
             await this.inner.Revert()
         }
         finally
         {
-            if (this.ended) this.tracker.Exit()
-            else this.End()
+            if (compensating) this.tracker.Exit()
+            else if (finalizing || !this.ended) this.End()
         }
     }
 
-    private End(): void
+    public End(): void
     {
         if (this.ended) return
         this.ended = true
@@ -255,13 +303,18 @@ class DevEngineChanged implements ISignal<void>
     }
 }
 
-/** An open engine with the snapshot it currently runs and the language-service subscription that upgrades it. */
+/**
+ * An open engine with the snapshot it currently runs, the language-service subscription that upgrades it and the
+ * CommitApplied subscription that tells the write tracker the engine finalized.
+ */
 class OpenedEngine implements IDisposable
 {
     public constructor(
         public readonly Engine: GraphEngine,
         public readonly Source: DevSnapshotSource,
         private readonly subscription: IDisposable,
+        private readonly applied: ISubscription,
+        private readonly writes: EngineWriteTracker,
         public Snapshot: DevSnapshot,
     )
     {
@@ -270,7 +323,10 @@ class OpenedEngine implements IDisposable
     public async dispose(): Promise<void>
     {
         this.subscription.dispose()
+        this.applied.dispose()
         await this.Engine.dispose()
+        // no Finalize comes after the engine is gone: nothing may wait on one
+        this.writes.Finalized()
     }
 }
 
@@ -291,6 +347,8 @@ class OpenedEngine implements IDisposable
 export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
 {
     public static readonly UpgradeDebounceMs = 150
+    /** Bounds the connector phase of each write-through (the engine's PrepareTimeoutMs), explicitly rather than by default. */
+    public static readonly PrepareTimeoutMs = 30000
     private static readonly DisposedMessage = 'The dev graph engine host has been disposed'
 
     public readonly Changed: ISignal<void>
@@ -308,8 +366,9 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         private readonly solution: () => Promise<IDevSolution | undefined>,
         private readonly languageService: () => Promise<IDevEngineLanguageService>,
         private readonly timer: IUpgradeTimer = new TimeoutUpgradeTimer(),
-        private readonly diagnostics: IDevEngineDiagnostics = new ConsoleDevEngineDiagnostics(),
-        private readonly writeDiagnostics: IDevWriteDiagnostics = new ConsoleDevWriteDiagnostics(),
+        private readonly diagnostics: IDevEngineDiagnostics = new LoggerDevEngineDiagnostics(),
+        private readonly writeDiagnostics: IDevWriteDiagnostics = new LoggerDevWriteDiagnostics(),
+        private readonly prepareTimeoutMs: number = DevGraphEngineHost.PrepareTimeoutMs,
     )
     {
         this.Changed = this.changed
@@ -354,6 +413,11 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         return this.draining ?? Promise.resolve()
     }
 
+    public WhenWritesSettled(): Promise<void>
+    {
+        return this.writes.Settled()
+    }
+
     public InstallWriteFence(fence: IWriteFence): IDisposable
     {
         return this.fences.Install(fence)
@@ -389,8 +453,14 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         {
             const snapshot = await source.Current()
             const connector = this.writes.Track(new TodlFileConnector(workspace))
-            const engine = await GraphEngine.Open({ Description: snapshot.Description, Storage: { Kind: StorageKind.Memory }, Connectors: [connector] })
-            return new OpenedEngine(engine, source, subscription, snapshot)
+            const engine = await GraphEngine.Open({
+                Description: snapshot.Description,
+                Storage: { Kind: StorageKind.Memory },
+                Connectors: [connector],
+                PrepareTimeoutMs: this.prepareTimeoutMs,
+            })
+            const applied = engine.CommitApplied.Subscribe(() => this.writes.Finalized())
+            return new OpenedEngine(engine, source, subscription, applied, this.writes, snapshot)
         }
         catch (error)
         {

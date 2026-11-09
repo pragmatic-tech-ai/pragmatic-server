@@ -1,21 +1,24 @@
 import { afterEach, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessError, AccessErrorCode, AccessScope, Cypher, GraphError, GraphErrorCode } from '@pragmatic-tech-ai/graph'
+import { AccessDefault, AccessError, AccessErrorCode, AccessScope, Cypher, GraphError, GraphErrorCode, IsNull } from '@pragmatic-tech-ai/graph'
 import type { GraphEngine, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import type { Repository } from '@pragmatic-tech-ai/todl'
+import { TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import { AccessLevel, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { TenantReadAuthorization } from '../../cypher/read-filter-source.js'
+import { AccessScopeConjunction } from '../access-scope-conjunction.js'
 import { DevAccessScopeSource } from '../dev-access-scope-source.js'
+import { EngineSchemaCatalog } from '../engine-schema-catalog.js'
 import type { IDevScopeDiagnostics } from '../dev-access-scope-source.js'
 import { DevGraphEngineHost } from '../dev-graph-engine-host.js'
 import type { IDevEngineDiagnostics, IDevGraphEngine } from '../dev-graph-engine-host.js'
 import type { IWriteFence } from '../server-model-workspace.js'
 import type { DevSnapshot } from '../dev-snapshot-source.js'
 import { PrincipalFacts } from '../principal-facts.js'
-import { FakeLanguageService, FakeSolution, MemoryStorage } from './engine-host-fixture.js'
+import { FakeLanguageService, FakeSolution, HeldFence, MemoryStorage } from './engine-host-fixture.js'
 import { DevScopeFx } from './dev-scope-fixture.js'
 
 class SilentDiagnostics implements IDevEngineDiagnostics
@@ -75,6 +78,11 @@ class ProbeHost implements IDevGraphEngine
         return this.Inner.WhenUpgraded()
     }
 
+    public WhenWritesSettled(): Promise<void>
+    {
+        return this.Inner.WhenWritesSettled()
+    }
+
     public InstallWriteFence(fence: IWriteFence): IDisposable
     {
         return this.Inner.InstallWriteFence(fence)
@@ -105,6 +113,9 @@ class SourceFx
     public static readonly SetOwner = "MATCH (w:acme.Widget {code: 'w1'}) SET w.owner = 'p1'"
     public static readonly CreateOwned = "CREATE (w:acme.Widget {code: 'w7', owner: 'p1'}) RETURN w.code AS c"
     public static readonly SetSecret = "MATCH (w:acme.Widget {code: 'w1'}) SET w.secret = 'x'"
+    public static readonly AllNodes = 'MATCH (n) RETURN n.code AS c'
+    public static readonly Terms = 'MATCH (t:todl.Term) RETURN t.taxonomy AS c'
+    public static readonly CreateOrg = DevScopeFx.Privilege(PrivilegeAction.Create, AccessLevel.Organization)
     public static readonly ReadOrg = DevScopeFx.Privilege(PrivilegeAction.Read, AccessLevel.Organization)
     public static readonly ReadUser = DevScopeFx.Privilege(PrivilegeAction.Read, AccessLevel.User)
     private static readonly Policies = 'POLICIES'
@@ -112,6 +123,7 @@ class SourceFx
         + '  concept Widget { owner : string?; owningBu : string?; secret : string?; code : string?; }\n'
         + '  concept Gadget { code : string?; }\n'
         + '  concept Gizmo : Widget { }\n'
+        + '  taxonomy Kinds : represents Widget { term Big { } }\n'
         + '  POLICIES\n'
         + '  model Shop : acme {\n'
         + '    Widget w1 { owner = "p1"; owningBu = "sales"; code = "w1"; secret = "s1"; }\n'
@@ -131,12 +143,25 @@ class SourceFx
         this.Storage = new MemoryStorage('mem/acme', { 'model.todl': SourceFx.Source.replace(SourceFx.Policies, policies) })
         const solution = new FakeSolution('sol', [{ Storage: this.Storage }])
         this.Host = new ProbeHost(new DevGraphEngineHost(() => Promise.resolve(solution), () => Promise.resolve(this.Lang), undefined, new SilentDiagnostics()))
+        // the test writes straight through the engine, without DevCypherExecute's lease: writes fail closed without a fence
+        this.Host.InstallWriteFence(HeldFence.Instance)
     }
 
     public static async Column(engine: GraphEngine, scope: AccessScope, query: string): Promise<unknown[]>
     {
         const result = await new Cypher.CypherEngine(engine).Execute(scope, query)
         return result.Rows.map(row => (row[0] instanceof Cypher.ScalarValue ? row[0].Value : null))
+    }
+
+    /** A policy-shaped scope (Default Allow) with one always-true entry keyed on the reserved root, for reads and writes. */
+    public static RootPolicy(): AccessScope
+    {
+        const always = new IsNull(TodlNames.Class)
+        return AccessScope.Build({
+            Default: AccessDefault.Allow,
+            Rows: new Map([[TodlNames.Element, always]]),
+            Writes: new Map([[TodlNames.Element, { Create: always, Update: always, Delete: always }]]),
+        })
     }
 
     public static Denied(error: unknown): boolean
@@ -216,6 +241,38 @@ describe('DevAccessScopeSource', () =>
 {
     afterEach(() => ScopeFx.DisposeAll())
 
+    test('the compiled scopes are an LRU of at most MaxScopes principals (M8)', async () =>
+    {
+        const fx = ScopeFx.Anonymous()
+        const first = await fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))
+        for (let n = 0; n < DevAccessScopeSource.MaxScopes + 5; n++)
+        {
+            await fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1 + String(n)))
+            // touching p1 keeps it the most recently used
+            assert.equal((await fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))).Scope, first.Scope)
+        }
+        assert.equal(fx.Scopes.CachedScopes, DevAccessScopeSource.MaxScopes)
+        assert.equal((await fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))).Scope, first.Scope, 'the most recently used scope survives')
+    })
+
+    test('a policy keyed on todl.Element keeps the Widget and Term decisions unchanged on a real engine', async () =>
+    {
+        const { Fx } = await ScopeFx.With(DevScopeFx.Model([SourceFx.ReadUser, SourceFx.CreateOrg]))
+        const devScope = await Fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))
+        const depth = devScope.Scope
+        const combined = AccessScopeConjunction.And(SourceFx.RootPolicy(), depth, new EngineSchemaCatalog(await Fx.Source.Host.Description()))
+        const engine = await Fx.Engine()
+        for (const query of [SourceFx.Widgets, SourceFx.Gadgets, SourceFx.Gizmos, SourceFx.Terms, SourceFx.AllNodes, SourceFx.Secrets])
+        {
+            assert.deepEqual(await SourceFx.Column(engine, combined, query), await SourceFx.Column(engine, depth, query), query)
+        }
+        assert.deepEqual(await SourceFx.Column(engine, combined, SourceFx.Widgets), ['w1'], 'p1\'s own Widget stays visible')
+        assert.equal((await SourceFx.Column(engine, combined, SourceFx.Terms)).length, 1, 'terms stay readable')
+        // writes too: an Organization create passes both, an ungoverned concept is refused by both
+        await new Cypher.CypherEngine(engine).Execute(combined, SourceFx.Create, { Placement: devScope.Placement(SourceFx.Model) })
+        await assert.rejects(new Cypher.CypherEngine(engine).Execute(combined, SourceFx.CreateGadget, { Placement: devScope.Placement(SourceFx.Model) }), SourceFx.Denied)
+    })
+
     test('no identity allows all', async () =>
     {
         const fx = ScopeFx.Anonymous()
@@ -241,6 +298,9 @@ describe('DevAccessScopeSource', () =>
         const { Fx } = await ScopeFx.With(undefined)
         assert.deepEqual(await Fx.Column(DevScopeFx.P1, SourceFx.Widgets), [])
         assert.deepEqual(await Fx.Column(DevScopeFx.P1, SourceFx.Gadgets), [])
+        // ruling F-b: no security model reads nothing at all, taxonomy terms included
+        assert.deepEqual(await Fx.Column(DevScopeFx.P1, SourceFx.AllNodes), [])
+        assert.deepEqual(await Fx.Column(DevScopeFx.P1, SourceFx.Terms), [])
         await assert.rejects(Fx.Write(DevScopeFx.P1, SourceFx.Create), SourceFx.Denied)
     })
 

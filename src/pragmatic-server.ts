@@ -80,7 +80,8 @@ import { DevGraphStore } from './host/graphs/dev-graph-store.js'
 import { GraphPackageIngest } from './host/graphs/graph-package-ingest.js'
 import { GraphPackageReader } from './host/graphs/graph-package-reader.js'
 import { DevGraphService, type IDevGraphService } from './host/graphs/dev-graph-service.js'
-import { DevGraphEngineHost } from './host/engine/dev-graph-engine-host.js'
+import { DevGraphEngineHost, LoggerDevEngineDiagnostics } from './host/engine/dev-graph-engine-host.js'
+import { LoggerDevWriteDiagnostics } from './host/engine/server-model-workspace.js'
 import type { IDevGraphEngine } from './host/engine/dev-graph-engine-host.js'
 import { DevAccessScopeSource, LoggerDevScopeDiagnostics } from './host/engine/dev-access-scope-source.js'
 import { DevCypherQuery } from './host/engine/dev-cypher-query.js'
@@ -875,7 +876,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
         {
             throw new Error(PragmaticServer.DisposedMessage)
         }
-        this.devEngine ??= new DevGraphEngineHost(async () => (await this.Manager()).ActiveSolution, () => this.SolutionLanguageService())
+        const logger = this.options.logger ?? new NullLogger()
+        this.devEngine ??= new DevGraphEngineHost(async () => (await this.Manager()).ActiveSolution, () => this.SolutionLanguageService(), undefined,
+            new LoggerDevEngineDiagnostics(logger), new LoggerDevWriteDiagnostics(logger))
         return this.devEngine
     }
 

@@ -101,8 +101,9 @@ class FieldSets
  *   root unit; an unset owner owns nothing. A rule naming a field the engine schema lacks (or types as non-String)
  *   compiles to False with a diagnostic.
  * - A concept without a privilege is None, so denied: ungoverned concepts stay fail-closed, as today. A tenant with no
- *   security model (DenyAll evaluator) therefore denies every instance; taxonomy terms (`todl.Term`) stay readable in
- *   every case, as today (they are schema-level and never passed the depth filter), and are never writable.
+ *   security model (DenyAll evaluator) therefore denies every instance, and its taxonomy terms too (ruling F-b: its
+ *   Term row is False). Under a security model taxonomy terms (`todl.Term`) stay readable, as today (they are
+ *   schema-level and never passed the depth filter); they are never writable.
  * - Field security, exact-concept like today's mask (R94): a secured member the principal may not read is in
  *   `HiddenExact`; a readable one it may not write at create is in `ReadOnlyExact.Create`, at update in
  *   `ReadOnlyExact.Update` (R92). A member secured on a parent is never hidden or read-only on a subconcept that does
@@ -131,7 +132,7 @@ export class DepthScopeCompiler
     private readonly reachAndBelow: ReadonlySet<string>
     private readonly units: readonly string[]
 
-    private constructor(private readonly evaluator: AccessDepthEvaluator, private readonly principal: Principal, description: ISchemaDescription)
+    private constructor(private readonly evaluator: AccessDepthEvaluator, private readonly principal: Principal, description: ISchemaDescription, private readonly hasSecurityModel: boolean)
     {
         this.catalog = new EngineSchemaCatalog(description)
         const membership = evaluator.MembershipOf(principal)
@@ -147,9 +148,10 @@ export class DepthScopeCompiler
         this.units = [hierarchy.RootId(), ...hierarchy.DescendantsOf(hierarchy.RootId())]
     }
 
-    public static Compile(evaluator: AccessDepthEvaluator, principal: Principal, description: ISchemaDescription): DepthScope
+    /** `hasSecurityModel`: false for a tenant with no security model (a DenyAll evaluator), which reads no terms either. */
+    public static Compile(evaluator: AccessDepthEvaluator, principal: Principal, description: ISchemaDescription, hasSecurityModel: boolean): DepthScope
     {
-        return new DepthScopeCompiler(evaluator, principal, description).Run()
+        return new DepthScopeCompiler(evaluator, principal, description, hasSecurityModel).Run()
     }
 
     private Run(): DepthScope
@@ -168,7 +170,8 @@ export class DepthScopeCompiler
             for (const [rule, action] of DepthScopeCompiler.Operations) rules[rule] = this.Guarded(concept, action)
             writes.set(concept, rules)
         }
-        if (this.catalog.IsConcept(TodlNames.Term)) rows.set(TodlNames.Term, TruePredicate.Instance)
+        // ruling F-b: terms are readable under any security model, but a tenant with none (DenyAll) reads nothing
+        if (this.catalog.IsConcept(TodlNames.Term)) rows.set(TodlNames.Term, this.hasSecurityModel ? TruePredicate.Instance : FalsePredicate.Instance)
         const hidden = new Map<string, ReadonlySet<string>>()
         const readOnly = new Map<string, IReadOnlyMembers>()
         this.FieldSecurity(concepts, hidden, readOnly)

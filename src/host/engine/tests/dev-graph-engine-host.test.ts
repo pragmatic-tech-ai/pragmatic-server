@@ -1,13 +1,13 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { AccessScope, Cypher, GraphError, GraphErrorCode } from '@pragmatic-tech-ai/graph'
-import type { GraphEngine } from '@pragmatic-tech-ai/graph'
+import type { ConnectorChangeSet, GraphEngine, IConnectorTransaction, IGraphConnector } from '@pragmatic-tech-ai/graph'
 import { Disposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
-import { DevGraphEngineHost, DevSnapshotCompileError } from '../dev-graph-engine-host.js'
+import { DevGraphEngineHost, DevSnapshotCompileError, EngineWriteTracker } from '../dev-graph-engine-host.js'
 import type { IDevEngineDiagnostics, IUpgradeTimer } from '../dev-graph-engine-host.js'
 import { DevSnapshotSource } from '../dev-snapshot-source.js'
-import { EngineHostFx } from './engine-host-fixture.js'
+import { EngineHostFx, HeldFence } from './engine-host-fixture.js'
 
 /** A debounce timer the test fires by hand: only the latest started work is pending. */
 class ManualUpgradeTimer implements IUpgradeTimer
@@ -55,6 +55,29 @@ class RecordingDiagnostics implements IDevEngineDiagnostics
     }
 }
 
+/** A connector whose transactions do nothing: the tracker's bookkeeping alone is under test. */
+class InertConnector implements IGraphConnector
+{
+    public readonly Name = 'inert'
+
+    public async Begin(): Promise<IConnectorTransaction>
+    {
+        return { Apply: async (_changes: ConnectorChangeSet) => undefined, Commit: async () => undefined, Revert: async () => undefined }
+    }
+}
+
+/** Whether a promise has settled after the current turn's microtasks and one macrotask. */
+class Settles
+{
+    public static async Yet(promise: Promise<void>): Promise<boolean>
+    {
+        let settled = false
+        void promise.then(() => { settled = true })
+        await new Promise<void>(resolve => setImmediate(resolve))
+        return settled
+    }
+}
+
 /** One host over the two-member fixture, with a manual debounce. */
 class HostFx
 {
@@ -79,6 +102,8 @@ class HostFx
     public constructor()
     {
         this.Host.Changed.Subscribe(() => { this.Changes += 1 })
+        // the tests write straight through the engine, without DevCypherExecute's lease: writes fail closed without a fence
+        this.Host.InstallWriteFence(HeldFence.Instance)
     }
 
     /** Saves member a's file and raises the language service's change, as a real save does. */
@@ -354,5 +379,58 @@ describe('DevGraphEngineHost', () =>
         {
             await h.Host.dispose()
         }
+    })
+
+    test('a real engine write leaves flight once the engine finalizes (CommitApplied), so WhenWritesSettled resolves', async () =>
+    {
+        const h = new HostFx()
+        try
+        {
+            const engine = await h.Host.Engine()
+            await h.Write(engine, HostFx.RenameAda)
+            assert.equal(await Settles.Yet(h.Host.WhenWritesSettled()), true)
+        }
+        finally
+        {
+            await h.Host.dispose()
+        }
+    })
+})
+
+describe('EngineWriteTracker (M1: settle after the engine finalizes)', () =>
+{
+    test('a committed transaction stays in flight until Finalized', async () =>
+    {
+        const tracker = new EngineWriteTracker()
+        const transaction = await tracker.Track(new InertConnector()).Begin()
+        await transaction.Commit()
+        assert.equal(await Settles.Yet(tracker.Settled()), false, 'the connector committed, the engine has not finalized')
+        assert.equal(tracker.Quiet(tracker.Begun), false)
+        const settled = tracker.Settled()
+        tracker.Finalized()
+        assert.equal(await Settles.Yet(settled), true)
+        assert.equal(tracker.Quiet(tracker.Begun), true)
+    })
+
+    test('a committed transaction reverted before Finalize (a failed Finalize or a timeout) leaves flight after its revert', async () =>
+    {
+        const tracker = new EngineWriteTracker()
+        const transaction = await tracker.Track(new InertConnector()).Begin()
+        await transaction.Commit()
+        await transaction.Revert()
+        assert.equal(await Settles.Yet(tracker.Settled()), true)
+        // a later Finalized for another commit never exits twice
+        tracker.Finalized()
+        assert.equal(tracker.Quiet(tracker.Begun), true)
+    })
+
+    test('a revert after Finalized compensates in flight and leaves again', async () =>
+    {
+        const tracker = new EngineWriteTracker()
+        const transaction = await tracker.Track(new InertConnector()).Begin()
+        await transaction.Commit()
+        tracker.Finalized()
+        await transaction.Revert()
+        assert.equal(tracker.Quiet(tracker.Begun), true)
     })
 })

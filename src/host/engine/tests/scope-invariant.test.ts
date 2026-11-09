@@ -191,6 +191,15 @@ class InvariantText
     public static readonly NotApplied = 'statement was not applied'
     public static readonly NoTenantAuthorization = 'the field-read mask source is not the tenant read authorization'
     public static readonly ModelCount = 'the fixture has two models'
+    /** Common to every unreadable-member message (Field, Ref, Attr, EdgeVia, Projected). */
+    public static readonly Unreadable = 'unreadable '
+
+    /** True for an invariant violation (a node outside the scope, an unreadable member, a ref to a hidden node), never another assertion. */
+    public static IsViolation(error: unknown): boolean
+    {
+        if (!(error instanceof assert.AssertionError)) return false
+        return [InvariantText.OutsideScope, InvariantText.Unreadable, InvariantText.RefTarget].some(text => error.message.includes(text))
+    }
 
     public static At(...parts: string[]): string
     {
@@ -491,7 +500,7 @@ class InvariantWorld
         const handler = ServerConnectionHandler.Attach(serverSocket, this.language, this.manager, context, () => Promise.reject(new Error(InvariantFx.NoConnectors)), development.devCypher,
             undefined, undefined, undefined, undefined, undefined, undefined, server.Purpose(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
             fieldMasks, ctx => server.ConnectorReadAuthorizationFor(ctx), (ctx, target) => server.ConnectorWriteAuthorizationFor(ctx, target), (ctx, id, request) => server.ExecuteCypher(ctx, id, request),
-            undefined, development.devGraphService, undefined, development.devEngine, development.devModelView)
+            undefined, development.devGraphService, undefined, development.devModelView)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.handlers.push(handler)
         this.clients.push(client)
@@ -683,7 +692,7 @@ describe('scope invariant: no dev endpoint returns a row or member outside its A
 
             // negative control: p-org's answers judged by p-bu's expected sets must fail the invariant
             const control = new PrincipalSweep(world, await world.Connect(PpSecurityHarness.Context(InvariantFx.OrgReader)), PpSecurityHarness.Context(InvariantFx.BuReader), models, false)
-            await assert.rejects(() => control.Run(), assert.AssertionError)
+            await assert.rejects(() => control.Run(), (error: unknown) => InvariantText.IsViolation(error))
         })
     })
 })

@@ -203,7 +203,9 @@ class Attempt
  *
  * - `modelId` must be one of `DevSnapshot.Models` (the `cypher/models` list), else InvalidParams "model not found".
  * - Serialized per tenant: an in-process mutex, then the tenant write lease (`IWriteLock`; busy -> Conflict) held
- *   across the whole write and installed as the workspace's write fence (`IDevGraphEngine.InstallWriteFence`). Each
+ *   across the whole write and installed as the workspace's write fence (`IDevGraphEngine.InstallWriteFence`); both
+ *   are released only after `IDevGraphEngine.WhenWritesSettled`, so a connector still writing after a write-through
+ *   timeout (or its late revert) finishes before the next write starts, on success, failure and throw alike. Each
  *   attempt first checks `expectedRevision` against the language service's `GraphRevision` (else Conflict "graph
  *   revision has advanced") and the lease (`Held()`, else Conflict "the tenant write lease was lost before the write
  *   could persist"); each draft session checks the fence again right before its first file write, so nothing persists
@@ -294,8 +296,17 @@ export class DevCypherExecute implements IDevCypherExecute
         }
         finally
         {
-            installed.dispose()
-            await lease.Release()
+            try
+            {
+                // on every path: a write-through that timed out may still be writing files (and then reverting them);
+                // the next writer starts only once they settle, so the mutex and lease are released after
+                await this.host.WhenWritesSettled()
+            }
+            finally
+            {
+                installed.dispose()
+                await lease.Release()
+            }
         }
     }
 

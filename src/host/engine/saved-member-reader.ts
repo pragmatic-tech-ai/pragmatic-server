@@ -84,6 +84,8 @@ export class DeclaredModelCache
 class BasesFingerprint
 {
     private static readonly HashAlgorithm = 'sha256'
+    private static readonly HexEncoding = 'hex'
+    private static readonly UnknownOriginMessage = 'unknown wiki origin kind: '
     private static readonly Separator = '\u0000'
     private static readonly OpenProjectTag = 'open:'
     private static readonly PackageTag = 'package:'
@@ -108,13 +110,24 @@ class BasesFingerprint
             hash.update(this.OriginText(origin))
             hash.update(BasesFingerprint.Separator)
         }
-        return hash.digest('hex')
+        return hash.digest(BasesFingerprint.HexEncoding)
     }
 
+    /** Exhaustive over WikiOriginKind: a new kind fails to compile here, and an unknown one at runtime throws. */
     private OriginText(origin: WikiOrigin): string
     {
-        if (origin.kind === WikiOriginKind.OpenProject) return BasesFingerprint.OpenProjectTag + this.StorageId(origin.storage)
-        return BasesFingerprint.PackageTag + origin.id + BasesFingerprint.VersionSeparator + origin.version
+        switch (origin.kind)
+        {
+            case WikiOriginKind.OpenProject:
+                return BasesFingerprint.OpenProjectTag + this.StorageId(origin.storage)
+            case WikiOriginKind.Package:
+                return BasesFingerprint.PackageTag + origin.id + BasesFingerprint.VersionSeparator + origin.version
+            default:
+            {
+                const unknown: never = origin
+                throw new Error(BasesFingerprint.UnknownOriginMessage + String((unknown as { kind?: unknown }).kind))
+            }
+        }
     }
 
     private StorageId(storage: IStorage): number
@@ -138,6 +151,8 @@ export class SavedMemberReader
 {
     private static readonly NamespaceSeparator = '.'
 
+    private readonly fingerprint = new BasesFingerprint()
+
     public constructor(
         private readonly languageService: IDevLanguageService,
         private readonly collector: TodlSourceCollector = new TodlSourceCollector(),
@@ -145,8 +160,6 @@ export class SavedMemberReader
     )
     {
     }
-
-    private readonly fingerprint = new BasesFingerprint()
 
     public async Read(storage: IStorage): Promise<SavedMember>
     {

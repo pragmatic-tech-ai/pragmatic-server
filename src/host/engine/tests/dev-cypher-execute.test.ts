@@ -548,18 +548,59 @@ class ExecLanguageService extends FakeLanguageService
     }
 }
 
-/** A memory member whose N-th write (counted from the last reset) fails. */
+/** A memory member whose N-th write (counted from the last reset) fails, and whose writes can be held open. */
 class FailingStorage extends MemoryStorage
 {
     public static readonly DiskFull = 'disk full'
     public FailOnWriteNumber = 0
+    /** While set, every write waits for it before it lands (a slow disk). */
+    public Hold: Promise<void> | undefined
+    /** Writes started (held ones included). */
+    public Started = 0
     private writes = 0
 
     public override async WriteText(path: string, content: string): Promise<void>
     {
         this.writes += 1
+        this.Started += 1
         if (this.FailOnWriteNumber === this.writes) throw new Error(FailingStorage.DiskFull)
+        if (this.Hold !== undefined) await this.Hold
         await super.WriteText(path, content)
+    }
+}
+
+/** A gate a test opens by hand. */
+class ManualGate
+{
+    public readonly Promise: Promise<void>
+    private open: () => void = () => undefined
+
+    public constructor()
+    {
+        this.Promise = new Promise<void>(resolve => { this.open = resolve })
+    }
+
+    public Open(): void
+    {
+        this.open()
+    }
+}
+
+/** Real-time waits for the timeout test (the engine's write-through deadline is a real timer). */
+class Wait
+{
+    private static readonly PollMs = 5
+    private static readonly MaxPolls = 400
+
+    public static Ms(ms: number): Promise<void>
+    {
+        return new Promise<void>(resolve => setTimeout(resolve, ms))
+    }
+
+    public static async Until(condition: () => boolean): Promise<void>
+    {
+        for (let poll = 0; poll < Wait.MaxPolls && !condition(); poll++) await Wait.Ms(Wait.PollMs)
+        assert.ok(condition(), 'the condition never held')
     }
 }
 
@@ -694,6 +735,11 @@ class ScriptedHost implements IDevGraphEngine
         await this.inner.WhenUpgraded()
     }
 
+    public WhenWritesSettled(): Promise<void>
+    {
+        return this.inner.WhenWritesSettled()
+    }
+
     public InstallWriteFence(fence: IWriteFence): IDisposable
     {
         return this.inner.InstallWriteFence(fence)
@@ -748,6 +794,8 @@ interface IExecOptions
     readonly lock?: IWriteLock
     readonly files?: Readonly<Record<string, string>>
     readonly host?: IHostScript
+    /** The engine's write-through deadline (default DevGraphEngineHost.PrepareTimeoutMs). */
+    readonly prepareTimeoutMs?: number
 }
 
 /**
@@ -765,17 +813,21 @@ class ExecFx
     public static readonly Schema = 'namespace acme {\n  concept Widget { owner : string?; owningBu : string?; secret : string?; code : string?; relationship peer -> Widget?; relationship buddy -> Widget?; }\n  viewpoint Front : frames Widget\n  viewpoint Back : frames Widget\n}\n'
     public static readonly Shop = 'namespace acme {\n  model Shop : acme {\n    Widget w1 { owner = "p1"; owningBu = "sales"; label = "mine"; secret = "hush"; peer = w2; }\n    Widget w2 { owningBu = "root"; label = "theirs"; }\n  }\n}\n'
     public static readonly OtherModel = 'namespace acme {\n  model Other : acme {\n    Widget o1 { owningBu = "sales"; label = "other"; }\n  }\n}\n'
+    /** acme.Other's o1 references acme.Shop's w1: an incoming edge from another model's file. */
+    public static readonly OtherReferencing = 'namespace acme {\n  model Other : acme {\n    Widget o1 { owningBu = "sales"; label = "other"; buddy = w1; }\n  }\n}\n'
     /** acme.Shop split across two files (each block declares a viewpoint): w1 in model.todl, w3 in other.todl. */
     public static readonly SplitFront = 'namespace acme {\n  model Shop : acme conforms Front {\n    Widget w1 { owningBu = "sales"; label = "mine"; }\n  }\n}\n'
     public static readonly SplitBack = 'namespace acme {\n  model Shop : acme conforms Back {\n    Widget w3 { owningBu = "sales"; label = "third"; }\n  }\n}\n'
     public static readonly OutsideEdit = 'namespace acme {\n  model Shop : acme {\n    Widget w1 { owner = "p1"; owningBu = "sales"; label = "edited elsewhere"; secret = "hush"; peer = w2; }\n    Widget w2 { owningBu = "root"; label = "theirs"; }\n  }\n}\n'
     public static readonly Create = "CREATE (:Widget {label: 'fresh'})"
+    public static readonly DetachMine = "MATCH (w:Widget {label: 'mine'}) DETACH DELETE w"
     public static readonly SetMine = "MATCH (a:Widget {label: 'mine'}) SET a.code = 'A'"
     public static readonly SetSplit = "MATCH (a:Widget {label: 'mine'}), (b:Widget {label: 'third'}) SET a.code = 'A', b.code = 'B'"
     public static readonly FreshCount = "MATCH (w:Widget {label: 'fresh'}) RETURN count(w) AS c"
     public static readonly SourcesChanged = 'model sources changed during the write'
     public static readonly LeaseLost = 'the tenant write lease was lost before the write could persist'
     public static readonly ZeroCounts = { nodesCreated: 0, nodesDeleted: 0, relationshipsCreated: 0, relationshipsDeleted: 0, propertiesSet: 0 }
+    public static readonly ShortPrepareMs = 50
     private static readonly TimeoutMs = 5000
     private static readonly MaxVarLength = 8
 
@@ -790,18 +842,18 @@ class ExecFx
     public Scripted: ScriptedHost | undefined
     private scopes: DevAccessScopeSource | undefined
 
-    private constructor(files: Readonly<Record<string, string>>)
+    private constructor(files: Readonly<Record<string, string>>, prepareTimeoutMs: number | undefined)
     {
         this.A = new FailingStorage('mem/a', files)
         this.Lang.ConsumeSibling(this.A, this.SchemaMember)
         const solution = new FakeSolution(ExecFx.SolutionName, [{ Storage: this.SchemaMember }, { Storage: this.A }])
-        this.Host = new DevGraphEngineHost(() => Promise.resolve(solution), () => Promise.resolve(this.Lang), undefined, this.EngineDiagnostics, this.WriteDiagnostics)
+        this.Host = new DevGraphEngineHost(() => Promise.resolve(solution), () => Promise.resolve(this.Lang), undefined, this.EngineDiagnostics, this.WriteDiagnostics, prepareTimeoutMs)
     }
 
     /** Opens the fixture: no identity when `model` is absent, else the DevScopeFx tenant holding `model`. */
     public static async Open(options: IExecOptions = {}): Promise<ExecFx>
     {
-        const fx = new ExecFx(options.files ?? { [ExecFx.ModelFile]: ExecFx.Shop })
+        const fx = new ExecFx(options.files ?? { [ExecFx.ModelFile]: ExecFx.Shop }, options.prepareTimeoutMs)
         const auth = options.model === undefined ? undefined : (await DevScopeFx.Authorization(options.model)).Auth
         fx.scopes = new DevAccessScopeSource(fx.Host, auth, options.model !== undefined, () => Promise.resolve(ExecFx.SolutionName), { ScopeDiagnostics: () => undefined })
         const scopes = fx.scopes
@@ -881,6 +933,36 @@ describe('DevCypherExecute lease (ported from host/cypher/tests/dev-cypher-execu
         })
     })
 
+    test('a write-through that times out keeps the lease until its files settle; the next execute waits (I2)', async () =>
+    {
+        const lock = new ScriptedLock(false, true)
+        const gate = new ManualGate()
+        await ExecFx.With({ lock, prepareTimeoutMs: ExecFx.ShortPrepareMs }, async fx =>
+        {
+            const before = fx.File()
+            fx.A.Hold = gate.Promise
+            const first = fx.Run(ExecFx.Create)
+            await Wait.Until(() => fx.A.Started > 0)
+            await Wait.Ms(ExecFx.ShortPrepareMs * 4)
+            assert.equal(lock.Released, 0, 'the write-through timed out, but its file write is still running: the lease is held')
+            fx.A.Hold = undefined
+            const second = fx.Run(ExecFx.SetMine)
+            await Wait.Ms(ExecFx.ShortPrepareMs)
+            assert.equal(lock.Acquired, 1, 'the next execute has not started')
+            const started = fx.A.Started
+            gate.Open()
+            const timedOut = await first
+            assert.equal(timedOut.status, AppWriteStatus.Failed)
+            assert.equal(fx.File(), before, 'the late revert restored the file before the lease was released')
+            const applied = await second
+            assert.equal(applied.status, AppWriteStatus.Applied)
+            assert.ok(fx.A.Started > started)
+            assert.deepEqual([lock.Acquired, lock.Released], [2, 2])
+            assert.match(fx.File(), /code = "A"/)
+            assert.doesNotMatch(fx.File(), /fresh/)
+        })
+    })
+
     test('a lease held elsewhere is an in-band Conflict and nothing persists', async () =>
     {
         await ExecFx.With({ lock: new ScriptedLock(true, true) }, async fx =>
@@ -945,7 +1027,6 @@ describe('DevCypherExecute lease (ported from host/cypher/tests/dev-cypher-execu
         await ExecFx.With({}, async fx =>
         {
             const source = fx.Source()
-            const files = fx.FileNames()
             const revision = fx.Lang.GraphRevision
             fx.A.FailOnWriteNumber = 1
             const result = await fx.Run(ExecFx.Create)
@@ -958,10 +1039,8 @@ describe('DevCypherExecute lease (ported from host/cypher/tests/dev-cypher-execu
             assert.equal(result.revision, revision)
             assert.deepEqual(result.rows, [])
             assert.equal(fx.Source(), source)
-            // ported from dev-model-writer.test.ts "restore deletes a file that did not exist before" (server side):
-            // a failed write leaves no file storage did not hold; TODL's TodlFileConnector tests "partial write failure
-            // restores" and "a torn write is restored" cover the connector deleting a file its commit created
-            assert.deepEqual(fx.FileNames(), files)
+            // "restore deletes a file that did not exist before" (dev-model-writer.test.ts) is a real new-file case in
+            // server-model-workspace.test.ts: a dev CREATE always lands in the file declaring its model, never a new one
             assert.equal(await fx.EngineFreshCount(), 0n)
         })
     })
@@ -1034,16 +1113,26 @@ describe('DevCypherExecute persist (ported from host/model/tests/dev-model-write
 
     test('a co-located file with schema and two model blocks keeps both blocks and its schema on write-back', async () =>
     {
-        const twoModels = 'namespace acme { concept Order { total : string?; } model A : acme { Order o1 { total = "1"; } } model B : acme { Order o2 { total = "2"; } } }'
+        const schema = 'namespace acme { concept Order { total : string?; } '
+        const twoModels = schema + 'model A : acme { Order o1 { total = "1"; } } model B : acme { Order o2 { total = "2"; } } }'
         await ExecFx.With({ files: { [ExecFx.ModelFile]: ExecFx.Shop, [ExecFx.ExtraFile]: twoModels } }, async fx =>
         {
             const result = await fx.Run("CREATE (:Order {total: '3'})", 'acme.A')
             assert.equal(result.status, AppWriteStatus.Applied)
             const extra = fx.File(ExecFx.ExtraFile)
-            assert.match(extra, /concept Order/)
-            assert.match(extra, /model A : acme \{[^}]*o1/)
-            assert.match(extra, /model B : acme \{[^}]*o2/)
-            assert.match(extra, /total = "3"/)
+            // the schema segment is kept byte for byte, ahead of the first model block
+            assert.ok(extra.startsWith(schema + 'model A : acme {'), extra)
+            const blockA = extra.slice(extra.indexOf('model A : acme {'), extra.indexOf('model B : acme {'))
+            const blockB = extra.slice(extra.indexOf('model B : acme {'))
+            // o1 stays in A and o2 in B, each with its own total
+            assert.match(blockA, /Order o1 \{\s*total = "1";\s*\}/)
+            assert.match(blockB, /Order o2 \{\s*total = "2";\s*\}/)
+            assert.doesNotMatch(blockA, /o2/)
+            assert.doesNotMatch(blockB, /o1/)
+            // the created instance lands in block A (the write's model), never in B
+            assert.match(blockA, /Order \w+ \{\s*total = "3";\s*\}/)
+            assert.doesNotMatch(blockB, /total = "3"/)
+            assert.equal(extra.split('total = "3"').length - 1, 1)
         })
     })
 })
@@ -1147,8 +1236,10 @@ describe('DevCypherExecute outcomes', () =>
     {
         await ExecFx.With({ host: { FailUpgradeAfterCommit: true } }, async fx =>
         {
+            const before = fx.Lang.GraphRevision
             const result = await fx.Run("CREATE (w:Widget {label: 'fresh'}) RETURN w")
             assert.equal(result.status, AppWriteStatus.Applied)
+            assert.ok(result.revision > before, 'the saved write moved the revision even though the upgrade wait failed')
             assert.equal(result.rows.length, 1)
             assert.equal(fx.ExecuteDiagnostics.Failures.length, 1)
             assert.match(fx.File(), /label = "fresh"/)
@@ -1200,6 +1291,29 @@ describe('DevCypherExecute outcomes', () =>
             assert.equal((await fx.Run("MATCH (o:Widget {label: 'other'}) SET o.code = 'x'", 'acme.Other')).status, AppWriteStatus.Applied, 'under its own model it is writable')
             assert.match(fx.File(ExecFx.OtherFile), /code = "x"/)
         })
+    })
+
+    test('DETACH DELETE of an own node with an incoming edge from another model: visible or hidden source, Applied; that file loses only the reference (ruling F-a)', async () =>
+    {
+        const files = { [ExecFx.ModelFile]: ExecFx.Shop, [ExecFx.OtherFile]: ExecFx.OtherReferencing }
+        // visible source (no identity: every node visible), then a source the caller cannot see (User-level read: o1 has no owner)
+        const user: [PrivilegeAction, AccessLevel][] = [[PrivilegeAction.Read, AccessLevel.User], [PrivilegeAction.Delete, AccessLevel.User]]
+        for (const options of [{ files }, { files, model: ExecFx.Security(user) }])
+        {
+            await ExecFx.With(options, async fx =>
+            {
+                const result = await fx.Run(ExecFx.DetachMine)
+                assert.equal(result.status, AppWriteStatus.Applied, JSON.stringify(result))
+                assert.equal(result.counts.nodesDeleted, 1)
+                assert.doesNotMatch(fx.File(), /w1/)
+                const other = fx.File(ExecFx.OtherFile)
+                assert.doesNotMatch(other, /buddy/, 'the dangling reference is removed from the other model\'s file')
+                assert.match(other, /Widget o1/)
+                assert.match(other, /label = "other"/)
+                assert.match(other, /owningBu = "sales"/)
+                assert.match(other, /model Other : acme/)
+            })
+        }
     })
 })
 

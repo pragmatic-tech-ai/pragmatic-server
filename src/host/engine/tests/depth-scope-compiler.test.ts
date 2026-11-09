@@ -40,7 +40,7 @@ class DepthCase
         const { Auth } = await DevScopeFx.Authorization(model)
         const context = DevScopeFx.Context(principal)
         const evaluator = await Auth.EvaluatorForContext(context)
-        return new DepthCase(DepthScopeCompiler.Compile(evaluator, context.Principal, DevScopeFx.Description()), evaluator, context.Principal)
+        return new DepthCase(DepthScopeCompiler.Compile(evaluator, context.Principal, DevScopeFx.Description(), await Auth.HasSecurityModelFor(context)), evaluator, context.Principal)
     }
 
     public static Compile(privileges: readonly IPrivilegeConfig[], fields?: IFieldSecurityConfig, principal: string = DevScopeFx.P1): Promise<DepthCase>
@@ -243,16 +243,17 @@ describe('DepthScopeCompiler judges each instance on its own concept (ConceptIs,
         assert.equal(DevScopeFx.Admits(depth.Depth.Scope(), DevScopeFx.Term, ScopeAxis.Create, {}), false)
     })
 
-    test('no security model is deny all, terms stay readable (today\'s DenyAll)', async () =>
+    test('no security model is deny all, terms included (ruling F-b)', async () =>
     {
         const { Auth } = await DevScopeFx.Authorization()
         const context = DevScopeFx.Context(DevScopeFx.P1)
-        const depth = DepthScopeCompiler.Compile(await Auth.EvaluatorForContext(context), context.Principal, DevScopeFx.Description())
+        assert.equal(await Auth.HasSecurityModelFor(context), false)
+        const depth = DepthScopeCompiler.Compile(await Auth.EvaluatorForContext(context), context.Principal, DevScopeFx.Description(), false)
         for (const concept of DepthFx.Concepts)
         {
             for (const [, axis] of DepthFx.Actions) assert.equal(DevScopeFx.Admits(depth.Scope(), concept, axis, Instances.All['mine']!), false, `${concept} ${axis}`)
         }
-        assert.equal(DevScopeFx.Admits(depth.Scope(), DevScopeFx.Term, ScopeAxis.Read, {}), true)
+        assert.equal(DevScopeFx.Admits(depth.Scope(), DevScopeFx.Term, ScopeAxis.Read, {}), false)
         assert.equal(DevScopeFx.Admits(depth.Scope(), DevScopeFx.Term, ScopeAxis.Create, {}), false)
     })
 })

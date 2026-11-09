@@ -4,6 +4,27 @@ import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IStorage, StorageEntry } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDevLanguageService } from '../dev-language-service.js'
 import type { IDevSolution, IDevSolutionMember } from '../dev-solution.js'
+import { WriteFenceSlot } from '../server-model-workspace.js'
+import type { IWriteFence } from '../server-model-workspace.js'
+
+/** A write fence that always holds: a writer's lease that is never lost (writes fail closed without one). */
+export class HeldFence implements IWriteFence
+{
+    public static readonly Instance = new HeldFence()
+
+    public async Held(): Promise<boolean>
+    {
+        return true
+    }
+
+    /** A fence slot with the held fence installed, for a workspace driven without DevCypherExecute. */
+    public static Slot(): WriteFenceSlot
+    {
+        const slot = new WriteFenceSlot()
+        slot.Install(HeldFence.Instance)
+        return slot
+    }
+}
 
 /** An in-memory member storage rooted at `Root`. */
 export class MemoryStorage implements IStorage

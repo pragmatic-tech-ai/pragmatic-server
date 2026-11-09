@@ -139,13 +139,15 @@ test('worker host serves dev graph endpoints', async () =>
             const server = await worker.RegistryForTest().ServerFor(DevWorkerFx.Tenant)
             const handlers = worker.HandlersForTest()
             assert.equal(handlers.length, 1)
-            assert.equal(handlers[0]!.DevEngineForTest(), server.DevEngine(), 'the dev graph engine is attached')
             assert.deepEqual(await client.ListGraphs(), [], 'the dev graph service is attached')
             await assert.rejects(client.CypherQuery(DevWorkerFx.UnknownLabel), (error: { code?: number }) => error.code === ErrorCodes.InvalidParams)
             const page = await client.CypherQuery(DevWorkerFx.Query)
             assert.deepEqual(page.columns, [DevWorkerFx.Column])
             assert.equal(page.items.length, 1)
             assert.match(JSON.stringify(page.items[0]), new RegExp(DevWorkerFx.Label))
+            // the query was served by the tenant's dev graph engine: it opened on that first use, at the saved snapshot
+            const engine = await server.DevEngine().Engine()
+            assert.equal(engine.SchemaVersion, (await server.DevEngine().Snapshot()).Description.Version, 'the dev graph engine served the query')
         }
         finally
         {

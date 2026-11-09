@@ -4,6 +4,7 @@ import { mkdtempSync, cpSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
+import type { AccessScope, GraphEngine, GraphReader, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { CursorStaleError, ErrorCodes, InMemoryMessageSocket, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ModelMemberDto, ModelViewPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { EdgeKind, Repository } from '@pragmatic-tech-ai/todl'
@@ -11,15 +12,15 @@ import type { Edge, SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AccessContext, AccessLevel, Grant, Principal, PrincipalKind, PrivilegeAction, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
+import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import { PagingLimits } from '../../../config/paging-limits.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { PpSecurityHarness } from '../../cypher/tests/pp-security-harness.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
-import { Signal } from '@pragmatic-tech-ai/todl-runtime'
-import type { ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { DevModelView } from '../dev-model-view.js'
 import type { IDevModelStructure, IDevModelView, IDevModelViewDiagnostics } from '../dev-model-view.js'
 import type { IDevScope, IDevScopeSource } from '../dev-access-scope-source.js'
+import type { IDevGraphEngine } from '../dev-graph-engine-host.js'
 
 /**
  * Ported from host/tests/model-read-filter.test.ts, model-view-paging.test.ts and model-surface.test.ts: the dev
@@ -235,7 +236,7 @@ class DevWorld
         const development = ServerConnectionHandler.DevelopmentAttachArgs(this.Server)
         const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, context, () => Promise.reject(new Error(DevWorld.NoConnectors)), development.devCypher,
             undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-            undefined, undefined, undefined, undefined, development.devGraphService, undefined, development.devEngine, development.devModelView)
+            undefined, undefined, undefined, undefined, development.devGraphService, undefined, development.devModelView)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.connections.push({ client, handler })
         return client
@@ -532,6 +533,26 @@ class ClassFx
     public static readonly Eu = 'eu'
     /** A string TODL holds but the engine's value codec refuses. */
     public static readonly LoneSurrogate = String.fromCharCode(0xd800)
+    public static readonly AdmitsFault = 'the engine reader faulted'
+    public static readonly RegionMember = ClassFx.Widget + '.' + ClassFx.Region
+
+    /** A class-bearing repository: Premium's region is `premium`, Basic's is eu, instance w1 is eu. */
+    public static Repository(premium: string): Repository
+    {
+        const repo = new Repository()
+        const b = repo.builder()
+        b.definePrimitive('string')
+        b.defineConcept(ClassFx.Widget)
+        b.addField(ClassFx.Widget, ClassFx.Region, 'string')
+        b.assertInstance(ClassFx.Widget, ClassFx.Premium, true)
+        b.setField(ClassFx.Premium, ClassFx.Region, premium)
+        b.assertInstance(ClassFx.Widget, ClassFx.Basic, true)
+        b.setField(ClassFx.Basic, ClassFx.Region, ClassFx.Eu)
+        b.assertInstance(ClassFx.Widget, ClassFx.W1)
+        b.setField(ClassFx.W1, ClassFx.Region, ClassFx.Eu)
+        b.commit()
+        return repo
+    }
 
     public static Todl(withPolicy: boolean): string
     {
@@ -541,6 +562,33 @@ class ClassFx
             + 'class Widget Premium { region = "eu"; } class Widget Basic { region = "us"; } '
             + policy
             + 'model Shop : acme { Widget w1 { region = "eu"; } } }'
+    }
+}
+
+/** The dev engine host with every reader's `Admits` throwing a plain Error (an engine fault, not SchemaViolation). */
+class AdmitsFaultHost
+{
+    public static Over(host: IDevGraphEngine): IDevGraphEngine
+    {
+        return new Proxy(host, { get: (target, name) => (name === 'Engine' ? () => AdmitsFaultHost.Engine(target) : AdmitsFaultHost.Bound(target, name)) })
+    }
+
+    private static async Engine(host: IDevGraphEngine): Promise<GraphEngine>
+    {
+        const engine = await host.Engine()
+        return new Proxy(engine, { get: (target, name) => (name === 'BeginRead' ? (scope: AccessScope) => AdmitsFaultHost.Reader(target, scope) : AdmitsFaultHost.Bound(target, name)) })
+    }
+
+    private static async Reader(engine: GraphEngine, scope: AccessScope): Promise<GraphReader>
+    {
+        const reader = await engine.BeginRead(scope)
+        return new Proxy(reader, { get: (target, name) => (name === 'Admits' ? () => { throw new Error(ClassFx.AdmitsFault) } : AdmitsFaultHost.Bound(target, name)) })
+    }
+
+    private static Bound(target: object, name: string | symbol): unknown
+    {
+        const value: unknown = Reflect.get(target, name, target)
+        return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value
     }
 }
 
@@ -1006,18 +1054,7 @@ test('a class node whose values the engine refuses is hidden, the page succeeds 
 {
     await DevWorld.With(ClassFx.Todl(true), undefined, async world =>
     {
-        const repo = new Repository()
-        const b = repo.builder()
-        b.definePrimitive('string')
-        b.defineConcept(ClassFx.Widget)
-        b.addField(ClassFx.Widget, ClassFx.Region, 'string')
-        b.assertInstance(ClassFx.Widget, ClassFx.Premium, true)
-        b.setField(ClassFx.Premium, ClassFx.Region, ClassFx.LoneSurrogate)
-        b.assertInstance(ClassFx.Widget, ClassFx.Basic, true)
-        b.setField(ClassFx.Basic, ClassFx.Region, ClassFx.Eu)
-        b.assertInstance(ClassFx.Widget, ClassFx.W1)
-        b.setField(ClassFx.W1, ClassFx.Region, ClassFx.Eu)
-        b.commit()
+        const repo = ClassFx.Repository(ClassFx.LoneSurrogate)
         assert.equal(repo.resolve(ClassFx.Premium)?.isClass, true)
         const diagnostics = new RecordingDiagnostics()
         const page = await DevWorld.Page(world.View(new FixedStructure(repo), diagnostics), DevWorld.Reader(), world.MemberId, ViewFx.All)
@@ -1027,6 +1064,28 @@ test('a class node whose values the engine refuses is hidden, the page succeeds 
         assert.ok(ids.includes(ClassFx.W1))
         assert.equal(diagnostics.Messages.length, 1)
         assert.ok(diagnostics.Messages[0]!.includes(ClassFx.Premium))
+        // pinned: the diagnostic names the node and Concept.member only, never the refused attribute value
+        assert.ok(diagnostics.Messages[0]!.includes(ClassFx.RegionMember), diagnostics.Messages[0])
+        assert.ok(!diagnostics.Messages[0]!.includes(ClassFx.LoneSurrogate), 'the attribute value never reaches the diagnostic')
+    })
+})
+
+test('an Admits error other than SchemaViolation is a fault: EngineModelGate rethrows it and reports nothing', async () =>
+{
+    await DevWorld.With(ClassFx.Todl(true), undefined, async world =>
+    {
+        const diagnostics = new RecordingDiagnostics()
+        const host = AdmitsFaultHost.Over(world.Server.DevEngine())
+        const view = new DevModelView(host, () => world.Server.DevScopes(), async () => world.Server.Manager().then(m => m.ActiveSolution), async () => new FixedStructure(ClassFx.Repository(ClassFx.Eu)), diagnostics)
+        try
+        {
+            await assert.rejects(DevWorld.Page(view, DevWorld.Reader(), world.MemberId, ViewFx.All), new RegExp(ClassFx.AdmitsFault))
+            assert.deepEqual(diagnostics.Messages, [])
+        }
+        finally
+        {
+            view.dispose()
+        }
     })
 })
 

@@ -4,7 +4,7 @@ import { Repository, EdgeKind } from '@pragmatic-tech-ai/todl'
 import type { Edge } from '@pragmatic-tech-ai/todl'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { ModelReadFilter } from '../model-read-filter.js'
-import type { ModelMemberPage } from '../model-read-filter.js'
+import type { ModelMemberPage } from '../model-projection.js'
 import { AllowAllFieldReadMask } from '../cypher/field-masked-graph-query.js'
 import type { IFieldReadMask } from '../cypher/field-masked-graph-query.js'
 

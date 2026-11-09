@@ -47,6 +47,8 @@ export interface IDevScopeSource
 export interface ITenantSecuritySource
 {
     EvaluatorForContext(context: AccessContext): Promise<AccessDepthEvaluator>
+    /** False when the tenant has no security model (its evaluator is DenyAll). */
+    HasSecurityModelFor(context: AccessContext): Promise<boolean>
     /** Raised after a tenant's security model is invalidated (reloaded on next use). */
     readonly Invalidated: ISignal<string>
 }
@@ -199,6 +201,8 @@ class DevScope implements IDevScope
 export class DevAccessScopeSource implements IDevScopeSource, IDisposable
 {
     private static readonly MaxSnapshotReads = 5
+    /** At most this many compiled scopes are kept (least recently used evicted), like VisibleInstanceCache. */
+    public static readonly MaxScopes = 64
     private static readonly HashAlgorithm = 'sha256'
     private static readonly HexEncoding = 'hex'
 
@@ -236,11 +240,18 @@ export class DevAccessScopeSource implements IDevScopeSource, IDisposable
         const schema = await this.Schema()
         const digest = this.DigestOf(context, schema.Version)
         let compiled = this.scopes.get(digest)
-        if (compiled === undefined)
+        if (compiled !== undefined)
+        {
+            // most recently used last
+            this.scopes.delete(digest)
+            this.scopes.set(digest, compiled)
+        }
+        else
         {
             const built = this.Compile(context, schema, digest)
             compiled = built
             this.scopes.set(digest, built)
+            if (this.scopes.size > DevAccessScopeSource.MaxScopes) this.scopes.delete(this.scopes.keys().next().value!)
             built.catch(() =>
             {
                 if (this.scopes.get(digest) === built) this.scopes.delete(digest)
@@ -253,6 +264,12 @@ export class DevAccessScopeSource implements IDevScopeSource, IDisposable
     {
         for (const subscription of this.subscriptions.splice(0)) subscription.dispose()
         this.Drop(true)
+    }
+
+    /** How many compiled scopes are cached (bounded by {@link DevAccessScopeSource.MaxScopes}). */
+    public get CachedScopes(): number
+    {
+        return this.scopes.size
     }
 
     /** Claims are hashed (they may carry personal data); policies and claim-mapped roles read them, so they key the scope. */
@@ -283,7 +300,8 @@ export class DevAccessScopeSource implements IDevScopeSource, IDisposable
         else
         {
             const evaluator = await this.readAuthorization!.EvaluatorForContext(context)
-            const depth = DepthScopeCompiler.Compile(evaluator, context.Principal, schema.Description)
+            const hasModel = await this.readAuthorization!.HasSecurityModelFor(context)
+            const depth = DepthScopeCompiler.Compile(evaluator, context.Principal, schema.Description, hasModel)
             messages.push(...depth.Diagnostics.map(diagnostic => diagnostic.Message))
             compiled = new CompiledScope(AccessScopeConjunction.And(policy, depth.Scope(), schema.Catalog), digest, depth)
         }

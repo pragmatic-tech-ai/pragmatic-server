@@ -3,6 +3,8 @@ import { EngineBridgeError, EngineBridgeErrorCode } from '@pragmatic-tech-ai/tod
 import type { ITodlDraftSession, ITodlModelWorkspace } from '@pragmatic-tech-ai/todl/engine'
 import { Disposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable, IStorage } from '@pragmatic-tech-ai/todl-runtime'
+import { StructuredLogger } from '../../observability/logger.js'
+import type { ILogger } from '../../observability/logger.js'
 import type { IDevLanguageService } from './dev-language-service.js'
 import type { IDevSolution } from './dev-solution.js'
 import { TodlSourceCollector } from '../model/todl-source-collector.js'
@@ -14,14 +16,19 @@ export interface IDevWriteDiagnostics
     RefreshFailed(error: unknown): void
 }
 
-export class ConsoleDevWriteDiagnostics implements IDevWriteDiagnostics
+/** Reports each refresh failure as one warning on the server logger, by error name only. */
+export class LoggerDevWriteDiagnostics implements IDevWriteDiagnostics
 {
     private static readonly RefreshLine = 'dev model write persisted but the language-service refresh failed: '
     private static readonly UnknownName = 'UnknownError'
 
+    public constructor(private readonly logger: ILogger = StructuredLogger.ToStdout())
+    {
+    }
+
     public RefreshFailed(error: unknown): void
     {
-        console.error(ConsoleDevWriteDiagnostics.RefreshLine + (error instanceof Error ? error.name : ConsoleDevWriteDiagnostics.UnknownName))
+        this.logger.Warn(LoggerDevWriteDiagnostics.RefreshLine + (error instanceof Error ? error.name : LoggerDevWriteDiagnostics.UnknownName))
     }
 }
 
@@ -33,7 +40,8 @@ export interface IWriteFence
 
 /**
  * The one write fence the workspace's draft sessions check: dev writes are serialized, so the writer holding the
- * write mutex installs its lease here for the length of its write (and disposes it after). None installed: no check.
+ * write mutex installs its lease here for the length of its write (and disposes it after). None installed: every
+ * draft session refuses to write (fail closed).
  */
 export class WriteFenceSlot
 {
@@ -74,6 +82,7 @@ class ServerDraftSession implements ITodlDraftSession
 {
     private static readonly StaleMessage = 'A model source file changed after its draft was opened'
     private static readonly FenceLostMessage = 'The tenant write lease was lost before the write could persist'
+    private static readonly NoFenceMessage = 'No tenant write lease is installed; the write cannot persist'
 
     /** What this session last put in a file: its text, or undefined after it deleted the file. */
     private readonly written = new Map<string, string | undefined>()
@@ -107,6 +116,13 @@ class ServerDraftSession implements ITodlDraftSession
     public async WriteFile(uri: string, text: string): Promise<void>
     {
         await this.Fence()
+        if (await this.ReadFile(uri) === text)
+        {
+            // another session of the same commit already wrote exactly this text (every model drafts over all of its
+            // member's files, so a delete's dangling-reference removal is emitted by both models): nothing to write
+            this.written.set(uri, text)
+            return
+        }
         await this.Guard(uri)
         await this.storage.WriteText(uri, text)
         this.written.set(uri, text)
@@ -123,15 +139,17 @@ class ServerDraftSession implements ITodlDraftSession
     }
 
     /**
-     * Before the session's first write: the installed fence (the writer's lease) must still hold, else the write is
-     * refused untouched as `Stale` (the connector restores nothing it did not write). Checked once: a restore of a
-     * file this session wrote is never refused.
+     * Before the session's first write: a fence (the writer's lease) must be installed and still hold, else the write
+     * is refused untouched as `Stale` (the connector restores nothing it did not write). No fence installed fails
+     * closed: only a writer holding the tenant lease (DevCypherExecute) may persist. Checked once: a restore of a file
+     * this session wrote is never refused.
      */
     private async Fence(): Promise<void>
     {
         if (this.fenced) return
         const fence = this.fences.Current
-        if (fence !== undefined && !(await fence.Held())) throw new EngineBridgeError(EngineBridgeErrorCode.Stale, ServerDraftSession.FenceLostMessage)
+        if (fence === undefined) throw new EngineBridgeError(EngineBridgeErrorCode.Stale, ServerDraftSession.NoFenceMessage)
+        if (!(await fence.Held())) throw new EngineBridgeError(EngineBridgeErrorCode.Stale, ServerDraftSession.FenceLostMessage)
         this.fenced = true
     }
 
@@ -176,7 +194,7 @@ export class ServerModelWorkspace implements ITodlModelWorkspace
     public constructor(
         private readonly solution: () => Promise<IDevSolution | undefined>,
         private readonly languageService: IDevLanguageService,
-        private readonly diagnostics: IDevWriteDiagnostics = new ConsoleDevWriteDiagnostics(),
+        private readonly diagnostics: IDevWriteDiagnostics = new LoggerDevWriteDiagnostics(),
         reader?: SavedMemberReader,
         private readonly fences: WriteFenceSlot = new WriteFenceSlot(),
     )
