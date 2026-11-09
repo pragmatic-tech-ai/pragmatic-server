@@ -108,6 +108,8 @@ export class FakeLanguageService implements IDevLanguageService
     /** Fails ResolveBasesFor while set. */
     public ResolveFailure: Error | undefined
     private readonly basesOf = new Map<IStorage, ResolvedBases>()
+    /** The published schema every other storage resolves: one document, so repeated resolutions are identical. */
+    private readonly schemaBases = new ResolvedBases([EngineHostFx.SchemaDocument()], new Map())
 
     public RaiseGraphChanged(): void
     {
@@ -117,7 +119,7 @@ export class FakeLanguageService implements IDevLanguageService
     public async ResolveBasesFor(consumerStorage: IStorage): Promise<{ bases: TodlDocument[]; originOf: ReadonlyMap<string, WikiOrigin> }>
     {
         if (this.ResolveFailure !== undefined) throw this.ResolveFailure
-        const resolved = this.basesOf.get(consumerStorage) ?? new ResolvedBases([EngineHostFx.SchemaDocument()], new Map())
+        const resolved = this.basesOf.get(consumerStorage) ?? this.schemaBases
         return { bases: resolved.Bases, originOf: resolved.OriginOf }
     }
 

@@ -266,6 +266,11 @@ export class WorkerHost
         return this.handlers.size
     }
 
+    public HandlersForTest(): readonly ServerConnectionHandler[]
+    {
+        return [...this.handlers]
+    }
+
     public HealthAddressForTest(): WebSocketAddress
     {
         if (this.healthAddress === null)

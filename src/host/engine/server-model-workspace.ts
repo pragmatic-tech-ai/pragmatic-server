@@ -126,7 +126,8 @@ export class ServerModelWorkspace implements ITodlModelWorkspace
         if (member === undefined) return undefined
         const namespace = SavedMemberReader.NamespaceOf(model, solution.Name)
         const bases = checkAgainst([...member.Bases], []).model
-        const draft = ModelDraft.fromSources([bases], [...member.Sources], { namespace })
+        // `model` keeps a created instance in this model and the file declaring it (the re-emit keeps declared ids)
+        const draft = ModelDraft.fromSources([bases], [...member.Sources], { namespace, model })
         const opened = new Map(member.Sources.map(source => [source.uri, source.text]))
         return new ServerDraftSession(member.Storage, this.reader, this.languageService, this.diagnostics, opened, draft, namespace, this.reader.SourceHash(member.Sources))
     }

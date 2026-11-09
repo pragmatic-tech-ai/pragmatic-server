@@ -175,6 +175,7 @@ export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
 
     private static readonly GraphModelVersion = '0.0.0'
     private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
+    private static readonly DisposedMessage = 'The server has been disposed'
     private static readonly ModelNotFoundMessage = `${InvalidParamsPrefix.Text}model not found`
 
     private readonly root: LazyCompositionRoot
@@ -873,8 +874,18 @@ export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
      */
     public DevEngine(): IDevGraphEngine
     {
-        this.devEngine ??= new DevGraphEngineHost(async () => (await this.Manager()).ActiveSolution, async () => await this.LanguageService() as SolutionLanguageService)
+        if (this.disposing !== undefined)
+        {
+            throw new Error(PragmaticServer.DisposedMessage)
+        }
+        this.devEngine ??= new DevGraphEngineHost(async () => (await this.Manager()).ActiveSolution, () => this.SolutionLanguageService())
         return this.devEngine
+    }
+
+    /** The language service as its concrete type (the key resolves it typed), for slices ILanguageService omits. */
+    private async SolutionLanguageService(): Promise<SolutionLanguageService>
+    {
+        return this.root.Resolve(SolutionLanguageService.Key)
     }
 
     public async OpenSolution(location: string): Promise<void>

@@ -1,4 +1,4 @@
-import { checkAgainst, MetaKind, toJSON, WikiOriginKind } from '@pragmatic-tech-ai/todl'
+import { checkAgainst, MetaKind, Severity, toJSON, WikiOriginKind } from '@pragmatic-tech-ai/todl'
 import type { SourceFile, TodlDocument, WikiOrigin } from '@pragmatic-tech-ai/todl'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDevLanguageService } from '../model/dev-model-writer.js'
@@ -16,6 +16,8 @@ export class SavedMember
         public readonly Bases: readonly TodlDocument[],
         public readonly OriginOf: ReadonlyMap<string, WikiOrigin>,
         public readonly Models: readonly string[],
+        /** `TodlSourceCollector.SourceHash` of `Sources`. */
+        public readonly SourceHash: string,
     )
     {
     }
@@ -33,8 +35,16 @@ export class SavedMember
     }
 }
 
-/** One member's cached compile: the declared models of the sources hashing to `SourceHash`. */
-class DeclaredModels
+/** One member's declared-model compile: the models, and whether the compile was clean (no error diagnostics). */
+export class DeclaredModels
+{
+    public constructor(public readonly Models: readonly string[], public readonly Clean: boolean)
+    {
+    }
+}
+
+/** A cached clean compile of the sources hashing to `SourceHash`. */
+class CachedModels
 {
     public constructor(public readonly SourceHash: string, public readonly Models: readonly string[])
     {
@@ -44,20 +54,22 @@ class DeclaredModels
 /**
  * The declared models of each member, kept per storage for the sources they were compiled from: an unchanged member
  * (same `SourceHash`) is not recompiled. One entry per storage (the latest), dropped with the storage. The models a
- * member's OWN sources declare do not depend on its bases (a base's models are never its own), so the source hash
- * alone keys the entry.
+ * member's OWN sources declare do not depend on its bases once they compile cleanly (a base's models are never its
+ * own), so the source hash keys the entry; a compile with errors (an unresolved base, say) is never cached, so it is
+ * retried on the next read.
  */
 export class DeclaredModelCache
 {
-    private readonly entries = new WeakMap<IStorage, DeclaredModels>()
+    private readonly entries = new WeakMap<IStorage, CachedModels>()
 
-    public ModelsOf(storage: IStorage, sourceHash: string, compile: () => readonly string[]): readonly string[]
+    public ModelsOf(storage: IStorage, sourceHash: string, compile: () => DeclaredModels): readonly string[]
     {
         const cached = this.entries.get(storage)
         if (cached !== undefined && cached.SourceHash === sourceHash) return cached.Models
-        const models = compile()
-        this.entries.set(storage, new DeclaredModels(sourceHash, models))
-        return models
+        const compiled = compile()
+        if (compiled.Clean) this.entries.set(storage, new CachedModels(sourceHash, compiled.Models))
+        else this.entries.delete(storage)
+        return compiled.Models
     }
 }
 
@@ -83,8 +95,9 @@ export class SavedMemberReader
         const sources = await this.collector.Collect(storage)
         const resolved = await this.languageService.ResolveBasesFor(storage)
         const originOf = resolved.originOf ?? new Map<string, WikiOrigin>()
-        const models = this.cache.ModelsOf(storage, this.collector.SourceHash(sources), () => SavedMemberReader.DeclaredModels(resolved.bases, sources))
-        return new SavedMember(storage, sources, resolved.bases, originOf, models)
+        const hash = this.collector.SourceHash(sources)
+        const models = this.cache.ModelsOf(storage, hash, () => SavedMemberReader.DeclaredModels(resolved.bases, sources))
+        return new SavedMember(storage, sources, resolved.bases, originOf, models, hash)
     }
 
     public SourceHash(sources: readonly SourceFile[]): string
@@ -106,12 +119,13 @@ export class SavedMemberReader
     }
 
     /** The model containers the member's OWN sources declare (a base's models belong to the base). */
-    private static DeclaredModels(bases: readonly TodlDocument[], sources: readonly SourceFile[]): string[]
+    private static DeclaredModels(bases: readonly TodlDocument[], sources: readonly SourceFile[]): DeclaredModels
     {
-        if (sources.length === 0) return []
+        if (sources.length === 0) return new DeclaredModels([], true)
         const compiled = checkAgainst([...bases], [...sources])
-        return toJSON(compiled.model).nodes
+        const models = toJSON(compiled.model).nodes
             .filter(node => node.metaKind === MetaKind.Model && compiled.provenance.has(node.id))
             .map(node => node.id)
+        return new DeclaredModels(models, !compiled.diagnostics.some(diagnostic => diagnostic.severity === Severity.Error))
     }
 }

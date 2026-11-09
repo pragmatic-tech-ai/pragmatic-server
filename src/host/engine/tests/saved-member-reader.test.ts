@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import { DeclaredModelCache, SavedMemberReader } from '../saved-member-reader.js'
+import { DeclaredModelCache, DeclaredModels, SavedMemberReader } from '../saved-member-reader.js'
 import { DevSnapshotSource } from '../dev-snapshot-source.js'
 import { ServerModelWorkspace } from '../server-model-workspace.js'
 import { EngineHostFx } from './engine-host-fixture.js'
@@ -11,7 +11,7 @@ class CountingCache extends DeclaredModelCache
 {
     public Compiles = 0
 
-    public override ModelsOf(storage: IStorage, sourceHash: string, compile: () => readonly string[]): readonly string[]
+    public override ModelsOf(storage: IStorage, sourceHash: string, compile: () => DeclaredModels): readonly string[]
     {
         return super.ModelsOf(storage, sourceHash, () =>
         {
@@ -40,5 +40,16 @@ describe('SavedMemberReader', () =>
         const member = await reader.Read(fx.A)
         assert.equal(cache.Compiles, 3, 'a changed member recompiles')
         assert.deepEqual(member.Models, ['shop.P'])
+    })
+
+    test('a member whose compile has errors is not cached', async () =>
+    {
+        const fx = new EngineHostFx()
+        const cache = new CountingCache()
+        const reader = new SavedMemberReader(fx.Lang, undefined, cache)
+        fx.A.Files.set(EngineHostFx.File, EngineHostFx.SourceA.replace('name = "Ada";', 'name = ;'))
+        await reader.Read(fx.A)
+        await reader.Read(fx.A)
+        assert.equal(cache.Compiles, 2, 'an erroring compile is retried')
     })
 })

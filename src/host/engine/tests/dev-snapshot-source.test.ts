@@ -58,6 +58,19 @@ describe('DevSnapshotSource', () =>
         assert.deepEqual(SnapshotFx.OwnersOf(current.Description.Seed, [SnapshotFx.I1, SnapshotFx.I2]), [SnapshotFx.Stock, SnapshotFx.Desk])
     })
 
+    test('an unchanged saved solution is not recompiled', async () =>
+    {
+        const fx = new EngineHostFx()
+        const source = new DevSnapshotSource(fx.Source, fx.Lang)
+        const first = await source.Current()
+        fx.Lang.DidChange(EngineHostFx.UriA, SnapshotFx.Unsaved)
+        assert.equal(await source.Current(), first, 'a buffer-only change returns the previous snapshot')
+        fx.A.Files.set(EngineHostFx.File, SnapshotFx.Saved)
+        const saved = await source.Current()
+        assert.notEqual(saved, first)
+        assert.notEqual(saved.Description.Version, first.Description.Version)
+    })
+
     test('no active solution is an empty snapshot', async () =>
     {
         const fx = new EngineHostFx()

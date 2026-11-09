@@ -7,7 +7,7 @@ import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { DevGraphEngineHost, DevSnapshotCompileError } from '../dev-graph-engine-host.js'
 import type { IDevEngineDiagnostics, IUpgradeTimer } from '../dev-graph-engine-host.js'
 import { DevSnapshotSource } from '../dev-snapshot-source.js'
-import { EngineHostFx, FakeSolution, MemoryStorage } from './engine-host-fixture.js'
+import { EngineHostFx } from './engine-host-fixture.js'
 
 /** A debounce timer the test fires by hand: only the latest started work is pending. */
 class ManualUpgradeTimer implements IUpgradeTimer
@@ -42,9 +42,16 @@ class RecordingDiagnostics implements IDevEngineDiagnostics
 {
     public readonly Failures: unknown[] = []
 
+    public readonly HandlerFailures: unknown[] = []
+
     public UpgradeFailed(error: unknown): void
     {
         this.Failures.push(error)
+    }
+
+    public ChangedHandlerFailed(error: unknown): void
+    {
+        this.HandlerFailures.push(error)
     }
 }
 
@@ -57,12 +64,11 @@ class HostFx
     public static readonly Di = EngineHostFx.SourceA.replace('Ada', 'Di')
     public static readonly Broken = EngineHostFx.SourceA.replace('name = "Ada";', 'name = ;')
     public static readonly ResolveMessage = 'bases unavailable'
-    /**
-     * Two members whose model names survive the draft round-trip (it re-emits a model as `<namespace>Model`), so a
-     * committed write recompiles cleanly: shop.shopModel holds c1 Ada, crm.crmModel holds c2 Bo.
-     */
-    public static readonly StableA = 'namespace shop {\n  model shopModel : shop {\n    Customer c1 { name = "Ada"; }\n  }\n}\n'
-    public static readonly StableB = 'namespace crm {\n  model crmModel : shop {\n    shop.Customer c2 { name = "Bo"; }\n  }\n}\n'
+    public static readonly SubscriberMessage = 'subscriber failed'
+    public static readonly RenameAda = "MATCH (n:shop.Customer {name: 'Ada'}) SET n.name = 'Ann'"
+    public static readonly RenameBo = "MATCH (n:shop.Customer {name: 'Bo'}) SET n.name = 'Bea'"
+    public static readonly ModelM = /model M : shop/
+    public static readonly ModelN = /model N : shop/
 
     public readonly Fx = new EngineHostFx()
     public readonly Timer = new ManualUpgradeTimer()
@@ -82,12 +88,12 @@ class HostFx
         this.Fx.Lang.RaiseGraphChanged()
     }
 
-    /** Replaces the solution with the two round-trip-stable members. */
-    public UseStableModels(): void
+    /** Runs a write through the engine (its file connector writes the saved sources), then lets the upgrade run. */
+    public async Write(engine: GraphEngine, statement: string): Promise<void>
     {
-        const a = new MemoryStorage(EngineHostFx.RootA, { [EngineHostFx.File]: HostFx.StableA })
-        const b = new MemoryStorage(EngineHostFx.RootB, { [EngineHostFx.File]: HostFx.StableB })
-        this.Fx.Solution = new FakeSolution(EngineHostFx.SolutionName, [{ Storage: a }, { Storage: b }])
+        await new Cypher.CypherEngine(engine).Execute(AccessScope.System, statement)
+        this.Fx.Lang.RaiseGraphChanged()
+        await this.Settle()
     }
 
     /** Lets the debounce elapse and waits for the upgrades it started. */
@@ -237,7 +243,6 @@ describe('DevGraphEngineHost', () =>
     test('an upgrade arriving during a commit waits for it and never lands torn', async () =>
     {
         const h = new HostFx()
-        h.UseStableModels()
         try
         {
             const engine = await h.Host.Engine()
@@ -273,11 +278,55 @@ describe('DevGraphEngineHost', () =>
         try
         {
             const engine = await h.Host.Engine()
-            assert.deepEqual(await HostFx.NamesIn(engine).catch(() => []), [])
+            const empty = await h.Host.Description()
+            assert.deepEqual(empty.Seed, [], 'no solution seeds no instances')
+            assert.equal((await h.Host.Repository()).has(EngineHostFx.C1), false)
             h.Fx.Solution = solution
             h.Fx.Lang.RaiseGraphChanged()
             await h.Settle()
+            assert.equal(h.Changes, 1)
             assert.deepEqual(await HostFx.NamesIn(engine), ['Ada', 'Bo'])
+        }
+        finally
+        {
+            await h.Host.dispose()
+        }
+    })
+
+    test('a throwing Changed subscriber is reported and never stalls later upgrades', async () =>
+    {
+        const h = new HostFx()
+        h.Host.Changed.Subscribe(() => { throw new Error(HostFx.SubscriberMessage) })
+        const engine = await h.Host.Engine()
+        h.Save(HostFx.Cy)
+        await h.Settle()
+        assert.equal(h.Diagnostics.HandlerFailures.length, 1)
+        assert.deepEqual(await HostFx.NamesIn(engine), ['Bo', 'Cy'])
+        h.Save(HostFx.Di)
+        await h.Settle()
+        assert.equal(h.Diagnostics.HandlerFailures.length, 2)
+        assert.deepEqual(await HostFx.NamesIn(engine), ['Bo', 'Di'], 'the next save still upgrades')
+        assert.deepEqual(h.Diagnostics.Failures, [])
+        await h.Host.dispose()
+        await assert.rejects(engine.BeginRead(AccessScope.System), (error: unknown) => error instanceof GraphError && error.GraphCode === GraphErrorCode.Disposed)
+    })
+
+    test('two models of one namespace: successive engine writes both upgrade, declared ids kept', async () =>
+    {
+        const h = new HostFx()
+        try
+        {
+            const engine = await h.Host.Engine()
+            await h.Write(engine, HostFx.RenameAda)
+            assert.equal(h.Changes, 1)
+            await h.Write(engine, HostFx.RenameBo)
+            assert.equal(h.Changes, 2)
+            assert.deepEqual(h.Diagnostics.Failures, [])
+            assert.match(h.Fx.A.Files.get(EngineHostFx.File)!, HostFx.ModelM)
+            assert.match(h.Fx.B.Files.get(EngineHostFx.File)!, HostFx.ModelN)
+            assert.deepEqual(await HostFx.NamesIn(engine), ['Ann', 'Bea'])
+            const owners = (await h.Host.Description()).Seed.filter(n => n.PublicId === EngineHostFx.C1 || n.PublicId === EngineHostFx.C2).map(n => n.Owner).sort()
+            assert.deepEqual(owners, [EngineHostFx.ModelM, EngineHostFx.ModelN])
         }
         finally
         {

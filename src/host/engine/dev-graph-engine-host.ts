@@ -58,17 +58,29 @@ export class TimeoutUpgradeTimer implements IUpgradeTimer
 export interface IDevEngineDiagnostics
 {
     UpgradeFailed(error: unknown): void
+    /** A `Changed` subscriber threw (the upgrade itself applied; later upgrades are unaffected). */
+    ChangedHandlerFailed(error: unknown): void
 }
 
 export class ConsoleDevEngineDiagnostics implements IDevEngineDiagnostics
 {
     private static readonly Line = 'dev graph engine kept its previous version; the upgrade failed: '
+    private static readonly HandlerLine = 'dev graph engine upgraded, but a Changed subscriber failed: '
     private static readonly Separator = ': '
 
     public UpgradeFailed(error: unknown): void
     {
-        const text = error instanceof Error ? error.name + ConsoleDevEngineDiagnostics.Separator + error.message : String(error)
-        console.error(ConsoleDevEngineDiagnostics.Line + text)
+        console.error(ConsoleDevEngineDiagnostics.Line + ConsoleDevEngineDiagnostics.Describe(error))
+    }
+
+    public ChangedHandlerFailed(error: unknown): void
+    {
+        console.error(ConsoleDevEngineDiagnostics.HandlerLine + ConsoleDevEngineDiagnostics.Describe(error))
+    }
+
+    private static Describe(error: unknown): string
+    {
+        return error instanceof Error ? error.name + ConsoleDevEngineDiagnostics.Separator + error.message : String(error)
     }
 }
 
@@ -367,12 +379,19 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
     /** One upgrade pass per pending request; requests arriving during a pass coalesce into the next. */
     private async Drain(): Promise<void>
     {
-        while (this.pending && this.disposing === undefined)
+        try
         {
-            this.pending = false
-            await this.UpgradeOnce()
+            while (this.pending && this.disposing === undefined)
+            {
+                this.pending = false
+                await this.UpgradeOnce()
+            }
         }
-        this.draining = undefined
+        finally
+        {
+            // cleared with no await after the last `pending` check, so a later request always starts a new drain
+            this.draining = undefined
+        }
     }
 
     private async UpgradeOnce(): Promise<void>
@@ -394,6 +413,9 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
             }
             DevSnapshotCompileError.ThrowIfFailed(snapshot.CompileDiagnostics)
             if (snapshot.Description.Version === opened.Engine.SchemaVersion) return
+            // The one remaining window: an engine commit that begins while Upgrade runs. Upgrade installs the new
+            // bindings in its own turn (ruling R77), so that commit fails with a retry-safe ConflictError and nothing
+            // is applied torn; the retry belongs to the write path (Task 7).
             await opened.Engine.Upgrade(snapshot.Description)
             opened.Snapshot = snapshot
             applied = true
@@ -402,7 +424,15 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         {
             this.diagnostics.UpgradeFailed(error)
         }
-        if (applied) this.changed.Raise()
+        if (!applied) return
+        try
+        {
+            this.changed.Raise()
+        }
+        catch (error)
+        {
+            this.diagnostics.ChangedHandlerFailed(error)
+        }
     }
 
     private async Teardown(): Promise<void>
