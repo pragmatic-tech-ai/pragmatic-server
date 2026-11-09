@@ -13,7 +13,7 @@ import { SavedMember, SavedMemberReader } from './saved-member-reader.js'
 export type DevSnapshot = ISnapshotDescription & { Repository: Repository; CompileDiagnostics: readonly Diagnostic[] }
 
 /** What a snapshot was compiled from: the solution (identity and name) and each member's storage, source hash and
- *  resolved bases (by identity). Equal keys compile to the same snapshot. */
+ *  bases fingerprint (content, not identity). Equal keys compile to the same snapshot. */
 class SnapshotKey
 {
     private readonly name: string | undefined
@@ -31,8 +31,7 @@ class SnapshotKey
 
     private static SameMember(a: SavedMember, b: SavedMember): boolean
     {
-        return a.Storage === b.Storage && a.SourceHash === b.SourceHash && a.OriginOf === b.OriginOf
-            && a.Bases.length === b.Bases.length && a.Bases.every((base, at) => base === b.Bases[at])
+        return a.Storage === b.Storage && a.SourceHash === b.SourceHash && a.BasesHash === b.BasesHash
     }
 }
 
@@ -56,9 +55,9 @@ export class DevSnapshotSource
     }
 
     /**
-     * The snapshot of what is saved now. When the solution, every member's source hash and the resolved bases (by
-     * identity) are those of the previous call, the previous snapshot is returned without recompiling (a change to
-     * unsaved buffers only).
+     * The snapshot of what is saved now. When the solution, every member's source hash and its resolved bases' content
+     * fingerprint are those of the previous call, the previous snapshot is returned without recompiling (a change to
+     * unsaved buffers only, even with freshly rebuilt sibling bases).
      */
     public async Current(): Promise<DevSnapshot>
     {

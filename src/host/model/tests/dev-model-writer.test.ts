@@ -223,7 +223,7 @@ describe('DevModelWriter', () =>
 
 describe('DevModelWriter emit refusals', () =>
 {
-    test('a co-located file the splicer refuses to rewrite fails as DevModelWriteFailedError with nothing written', async () =>
+    test('a co-located file with schema and two model blocks keeps both blocks and its schema on write-back', async () =>
     {
         const f = new Fixture()
         const twoModels = 'namespace shop { concept Order { total : string?; } model A : shop { Order o1 { total = "1"; } } model B : shop { Order o2 { total = "2"; } } }'
@@ -232,8 +232,10 @@ describe('DevModelWriter emit refusals', () =>
         writer.Begin()
         writer.CreateNode('shop.Order', new Map([['total', '3']]))
         writer.Commit()
-        const before = new Map(f.Storage.Files)
-        await assert.rejects(() => f.Writer.Persist(draft, f.Member), DevModelWriteFailedError)
-        assert.deepEqual(f.Storage.Files, before)
+        await f.Writer.Persist(draft, f.Member)
+        const extra = f.Storage.Files.get('extra.todl')!
+        assert.match(extra, /concept Order/)
+        assert.match(extra, /model A : shop \{[^}]*o1/)
+        assert.match(extra, /model B : shop \{[^}]*o2/)
     })
 })

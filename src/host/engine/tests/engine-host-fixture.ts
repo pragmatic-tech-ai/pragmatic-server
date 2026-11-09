@@ -107,9 +107,7 @@ export class FakeLanguageService implements IDevLanguageService
     public OnIdle: () => void = () => undefined
     /** Fails ResolveBasesFor while set. */
     public ResolveFailure: Error | undefined
-    private readonly basesOf = new Map<IStorage, ResolvedBases>()
-    /** The published schema every other storage resolves: one document, so repeated resolutions are identical. */
-    private readonly schemaBases = new ResolvedBases([EngineHostFx.SchemaDocument()], new Map())
+    private readonly basesOf = new Map<IStorage, () => ResolvedBases>()
 
     public RaiseGraphChanged(): void
     {
@@ -119,7 +117,7 @@ export class FakeLanguageService implements IDevLanguageService
     public async ResolveBasesFor(consumerStorage: IStorage): Promise<{ bases: TodlDocument[]; originOf: ReadonlyMap<string, WikiOrigin> }>
     {
         if (this.ResolveFailure !== undefined) throw this.ResolveFailure
-        const resolved = this.basesOf.get(consumerStorage) ?? this.schemaBases
+        const resolved = this.basesOf.get(consumerStorage)?.() ?? new ResolvedBases([EngineHostFx.SchemaDocument()], new Map())
         return { bases: resolved.Bases, originOf: resolved.OriginOf }
     }
 
@@ -143,13 +141,21 @@ export class FakeLanguageService implements IDevLanguageService
         this.OnIdle()
     }
 
-    /** Makes `consumer` resolve `producer`'s compiled sources as a live in-solution base (tagged OpenProject). */
+    /**
+     * Makes `consumer` resolve `producer`'s compiled sources as a live in-solution base (tagged OpenProject), compiled
+     * afresh on every resolution like the real resolver (new objects, same content).
+     */
     public ConsumeSibling(consumer: IStorage, producer: MemoryStorage): void
+    {
+        this.basesOf.set(consumer, () => FakeLanguageService.SiblingBases(producer))
+    }
+
+    private static SiblingBases(producer: MemoryStorage): ResolvedBases
     {
         const doc = toJSON(checkAgainst([], [...producer.Files].map(([uri, text]) => ({ uri, text }))).model)
         const originOf = new Map<string, WikiOrigin>()
         for (const node of doc.nodes) originOf.set(node.id, { kind: WikiOriginKind.OpenProject, storage: producer })
-        this.basesOf.set(consumer, new ResolvedBases([doc], originOf))
+        return new ResolvedBases([doc], originOf)
     }
 }
 

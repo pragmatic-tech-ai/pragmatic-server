@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { checkAgainst, MetaKind, Severity, toJSON, WikiOriginKind } from '@pragmatic-tech-ai/todl'
 import type { SourceFile, TodlDocument, WikiOrigin } from '@pragmatic-tech-ai/todl'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
@@ -18,6 +19,8 @@ export class SavedMember
         public readonly Models: readonly string[],
         /** `TodlSourceCollector.SourceHash` of `Sources`. */
         public readonly SourceHash: string,
+        /** A content fingerprint of `Bases` and `OriginOf`: equal for freshly built but content-equal resolutions. */
+        public readonly BasesHash: string,
     )
     {
     }
@@ -74,6 +77,59 @@ export class DeclaredModelCache
 }
 
 /**
+ * Content fingerprints of a member's resolved bases and their origins. The language service builds a live sibling's
+ * base afresh on every resolution, so identity never repeats; content does. An open-project origin is fingerprinted
+ * by its storage's stable per-reader number (storage objects are the solution's members, stable for its life).
+ */
+class BasesFingerprint
+{
+    private static readonly HashAlgorithm = 'sha256'
+    private static readonly Separator = '\u0000'
+    private static readonly OpenProjectTag = 'open:'
+    private static readonly PackageTag = 'package:'
+    private static readonly VersionSeparator = '@'
+
+    private readonly storageIds = new WeakMap<IStorage, number>()
+    private nextStorageId = 0
+
+    public Of(bases: readonly TodlDocument[], originOf: ReadonlyMap<string, WikiOrigin>): string
+    {
+        const hash = createHash(BasesFingerprint.HashAlgorithm)
+        for (const base of bases)
+        {
+            hash.update(JSON.stringify(base))
+            hash.update(BasesFingerprint.Separator)
+        }
+        const origins = [...originOf].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        for (const [id, origin] of origins)
+        {
+            hash.update(id)
+            hash.update(BasesFingerprint.Separator)
+            hash.update(this.OriginText(origin))
+            hash.update(BasesFingerprint.Separator)
+        }
+        return hash.digest('hex')
+    }
+
+    private OriginText(origin: WikiOrigin): string
+    {
+        if (origin.kind === WikiOriginKind.OpenProject) return BasesFingerprint.OpenProjectTag + this.StorageId(origin.storage)
+        return BasesFingerprint.PackageTag + origin.id + BasesFingerprint.VersionSeparator + origin.version
+    }
+
+    private StorageId(storage: IStorage): number
+    {
+        let id = this.storageIds.get(storage)
+        if (id === undefined)
+        {
+            id = this.nextStorageId++
+            this.storageIds.set(storage, id)
+        }
+        return id
+    }
+}
+
+/**
  * Reads dev members from their storage, never from the language service's unsaved buffers. Shared by the model
  * workspace (which member owns a model) and the snapshot source (what the saved solution compiles to); share one
  * reader between them so each unchanged member compiles once (see {@link DeclaredModelCache}).
@@ -90,6 +146,8 @@ export class SavedMemberReader
     {
     }
 
+    private readonly fingerprint = new BasesFingerprint()
+
     public async Read(storage: IStorage): Promise<SavedMember>
     {
         const sources = await this.collector.Collect(storage)
@@ -97,7 +155,7 @@ export class SavedMemberReader
         const originOf = resolved.originOf ?? new Map<string, WikiOrigin>()
         const hash = this.collector.SourceHash(sources)
         const models = this.cache.ModelsOf(storage, hash, () => SavedMemberReader.DeclaredModels(resolved.bases, sources))
-        return new SavedMember(storage, sources, resolved.bases, originOf, models, hash)
+        return new SavedMember(storage, sources, resolved.bases, originOf, models, hash, this.fingerprint.Of(resolved.bases, originOf))
     }
 
     public SourceHash(sources: readonly SourceFile[]): string

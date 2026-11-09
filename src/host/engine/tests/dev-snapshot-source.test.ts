@@ -71,6 +71,23 @@ describe('DevSnapshotSource', () =>
         assert.notEqual(saved.Description.Version, first.Description.Version)
     })
 
+    test('freshly rebuilt but content-equal sibling bases do not recompile', async () =>
+    {
+        const fx = new EngineHostFx()
+        const producer = new MemoryStorage('mem/p', { [SnapshotFx.CatalogFile]: SnapshotFx.Catalog })
+        const consumer = new MemoryStorage('mem/c', { [SnapshotFx.UseFile]: SnapshotFx.Use })
+        fx.Lang.ConsumeSibling(consumer, producer)
+        fx.Solution = new FakeSolution(EngineHostFx.SolutionName, [{ Storage: producer }, { Storage: consumer }])
+        const source = new DevSnapshotSource(fx.Source, fx.Lang)
+        const first = await source.Current()
+        const resolvedTwice = [await fx.Lang.ResolveBasesFor(consumer), await fx.Lang.ResolveBasesFor(consumer)]
+        assert.notEqual(resolvedTwice[0]!.bases[0], resolvedTwice[1]!.bases[0], 'each resolution builds new base objects')
+        assert.equal(await source.Current(), first, 'content-equal bases reuse the snapshot')
+        producer.Files.set(SnapshotFx.CatalogFile, SnapshotFx.Catalog.replace('Pen', 'Ink'))
+        const changed = await source.Current()
+        assert.notEqual(changed, first, 'a changed sibling recompiles')
+    })
+
     test('no active solution is an empty snapshot', async () =>
     {
         const fx = new EngineHostFx()
