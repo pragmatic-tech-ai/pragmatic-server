@@ -2,11 +2,27 @@ import { checkAgainst, ModelDraft } from '@pragmatic-tech-ai/todl'
 import { EngineBridgeError, EngineBridgeErrorCode } from '@pragmatic-tech-ai/todl/engine'
 import type { ITodlDraftSession, ITodlModelWorkspace } from '@pragmatic-tech-ai/todl/engine'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import { ConsoleDevWriteDiagnostics } from '../model/dev-model-writer.js'
-import type { IDevLanguageService, IDevWriteDiagnostics } from '../model/dev-model-writer.js'
+import type { IDevLanguageService } from './dev-language-service.js'
 import type { IDevSolution } from './dev-solution.js'
 import { TodlSourceCollector } from '../model/todl-source-collector.js'
 import { SavedMember, SavedMemberReader } from './saved-member-reader.js'
+
+/** Where a write's language-service refresh failure is reported; implementations log error names only (messages can carry paths). */
+export interface IDevWriteDiagnostics
+{
+    RefreshFailed(error: unknown): void
+}
+
+export class ConsoleDevWriteDiagnostics implements IDevWriteDiagnostics
+{
+    private static readonly RefreshLine = 'dev model write persisted but the language-service refresh failed: '
+    private static readonly UnknownName = 'UnknownError'
+
+    public RefreshFailed(error: unknown): void
+    {
+        console.error(ConsoleDevWriteDiagnostics.RefreshLine + (error instanceof Error ? error.name : ConsoleDevWriteDiagnostics.UnknownName))
+    }
+}
 
 /**
  * One dev model opened as a draft over its member's saved sources. Uris are relative to the member's storage.

@@ -2,7 +2,7 @@ import type { Diagnostic, Repository, TodlDocument } from '@pragmatic-tech-ai/to
 import { EngineCellMapper, SavedModelCompiler, SnapshotDescriber, TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import type { ISavedModel, ISnapshotDescription } from '@pragmatic-tech-ai/todl/engine'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import type { IDevLanguageService } from '../model/dev-model-writer.js'
+import type { IDevLanguageService } from './dev-language-service.js'
 import type { IDevSolution } from './dev-solution.js'
 import { SavedMember, SavedMemberReader } from './saved-member-reader.js'
 

@@ -2,7 +2,7 @@ import { checkAgainst, toJSON, WikiOriginKind } from '@pragmatic-tech-ai/todl'
 import type { TodlDocument, WikiOrigin } from '@pragmatic-tech-ai/todl'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IStorage, StorageEntry } from '@pragmatic-tech-ai/todl-runtime'
-import type { IDevLanguageService } from '../../model/dev-model-writer.js'
+import type { IDevLanguageService } from '../dev-language-service.js'
 import type { IDevSolution, IDevSolutionMember } from '../dev-solution.js'
 
 /** An in-memory member storage rooted at `Root`. */

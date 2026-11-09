@@ -46,7 +46,7 @@ import { PageFingerprint, PageRequest } from './paging/page-request.js'
 import { BuildStateMapper } from './build-state-mapper.js'
 import { CypherParamConverter, CypherParamError } from './cypher/cypher-param-converter.js'
 import { AdapterPackError, AdapterPackErrorKind } from '@pragmatic-tech-ai/todl-connectors-host'
-import type { DevCypherRequest } from './cypher/dev-cypher-executor.js'
+import type { DevCypherRequest } from './engine/dev-cypher-execute.js'
 import { GraphDataDigest } from './paging/graph-data-digest.js'
 import { CypherResultMapper } from './cypher/cypher-result-mapper.js'
 import { trace } from '@opentelemetry/api'
@@ -666,22 +666,8 @@ export class ServerConnectionHandler
         {
             request.expectedRevision = params.expectedRevision
         }
-        try
-        {
-            return await this.cypherExecuteProvider(this.accessContext, modelId, request)
-        }
-        catch (error)
-        {
-            if (error instanceof Cypher.CypherSyntaxError || error instanceof Cypher.CypherSemanticError)
-            {
-                throw new ResponseError(ErrorCodes.InvalidParams, `${InvalidParamsPrefix.Text}${error.message}`)
-            }
-            if (error instanceof Cypher.CypherTimeout)
-            {
-                throw new ResponseError(ServerConnectionHandler.CypherTimeoutCode, ServerConnectionHandler.CypherTimeoutMessage)
-            }
-            throw error
-        }
+        // the dev engine path reports engine syntax / semantic errors and timeouts as wire errors itself
+        return this.cypherExecuteProvider(this.accessContext, modelId, request)
     }
 
     /**

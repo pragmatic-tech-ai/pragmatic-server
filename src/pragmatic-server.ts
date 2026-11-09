@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
-import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog, WikiOriginKind, Cypher, ConjunctiveQueryFilterProvider, ModelShardExtractor, toJSON } from '@pragmatic-tech-ai/todl'
+import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog, Cypher, ConjunctiveQueryFilterProvider } from '@pragmatic-tech-ai/todl'
 import type { ModelConnectorPlan, IDataSourceAdapterProvider, IConnectorQueryFilterProvider } from '@pragmatic-tech-ai/todl'
 import type { Domain } from '@pragmatic-tech-ai/todl/domain'
 import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-system'
@@ -61,11 +61,8 @@ import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { CypherExecuteResultDto, CypherAppDeployParamsDto, AppDeployResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { DevCypherExecutor } from './host/cypher/dev-cypher-executor.js'
-import type { DevCypherRequest } from './host/cypher/dev-cypher-executor.js'
-import { OpenDevWriteSecurity, PrincipalDevWriteSecurity } from './host/cypher/dev-write-security.js'
-import type { IDevWriteSecurity } from './host/cypher/dev-write-security.js'
-import { DevModelWriter } from './host/model/dev-model-writer.js'
+import { DevCypherExecute } from './host/engine/dev-cypher-execute.js'
+import type { DevCypherRequest } from './host/engine/dev-cypher-execute.js'
 import { PragmaticAppsRegistry } from './host/apps/pragmatic-apps-registry.js'
 import { NullLogger, StructuredLogger } from './observability/logger.js'
 import type { ILogger } from './observability/logger.js'
@@ -90,7 +87,6 @@ import { DevCypherQuery } from './host/engine/dev-cypher-query.js'
 import { EnvironmentGraph, EnvironmentGraphOverlay, LoadedGraphStore, NoEnvironmentGraphError } from './host/graphs/environment-graph.js'
 import type { IEnvironmentGraphHost } from './host/graphs/environment-graph.js'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { InvalidParamsPrefix } from './host/invalid-params-prefix.js'
 
 export interface OidcServerOptions
 {
@@ -175,10 +171,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private static readonly NoMemberStorageForConnectors = 'Active solution has no member storage to read a model view from'
     private static readonly NoModelViewForConnectors = 'Active solution produced no model view'
 
-    private static readonly GraphModelVersion = '0.0.0'
     private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
     private static readonly DisposedMessage = 'The server has been disposed'
-    private static readonly ModelNotFoundMessage = `${InvalidParamsPrefix.Text}model not found`
 
     private readonly root: LazyCompositionRoot
     private readonly options: PragmaticServerOptions
@@ -201,8 +195,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private readonly appGraphs = new Map<string, Promise<AppBase>>()
     private readonly shareStores = new Map<string, ShareStore>()
     private readAuth: Promise<TenantReadAuthorization> | undefined
-    private cypherExecutor: DevCypherExecutor | undefined
-    private cypherWriter: DevModelWriter | undefined
+    private devExecute: DevCypherExecute | undefined
 
     public constructor(options: PragmaticServerOptions)
     {
@@ -966,8 +959,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * Executes a Cypher WRITE against the dev member that declares `modelId`. Visibility is membership in the tenant's own
-     * sources (unknown / non-member => InvalidParams, no existence oracle). Dev tenants only; serialized per tenant.
+     * Executes a dev Cypher WRITE on the dev graph engine (`DevCypherExecute`), CREATEs placed in `modelId`, which must
+     * be one of `cypher/models` (else InvalidParams). Dev tenants only; serialized per tenant under the write lease.
      */
     public async ExecuteCypher(context: AccessContext, modelId: string, request: DevCypherRequest): Promise<CypherExecuteResultDto>
     {
@@ -975,64 +968,14 @@ export class PragmaticServer implements IEnvironmentGraphHost
         {
             throw new ResponseError(ErrorCodes.InvalidRequest, PragmaticServer.NotDevelopmentMessage)
         }
-        const solution = (await this.Manager()).ActiveSolution
-        const languageService = await this.LanguageService()
-        // The legacy writer's model check stays on the language service's views until cypher/execute moves onto the
-        // engine (Task 7): asking the engine here would open it before the write, and the legacy writer's output (a new
-        // instance in a second `<namespace>.todl` block of the model) does not compile for the saved snapshot, so the
-        // engine could never upgrade to it.
-        if (solution === undefined || !await PragmaticServer.DeclaresModel(languageService, solution.Members.ToArray(), modelId))
-        {
-            throw new ResponseError(ErrorCodes.InvalidParams, PragmaticServer.ModelNotFoundMessage)
-        }
-        const namespace = modelId.includes(PragmaticServer.NamespaceSeparator) ? modelId.slice(0, modelId.lastIndexOf(PragmaticServer.NamespaceSeparator)) : solution.Name
-        // Memoized on first use: assumes LanguageService() resolves to a stable singleton for this server's lifetime.
-        const writer = this.cypherWriter ??= new DevModelWriter(languageService as SolutionLanguageService)
-        // The owning member is the one whose storage is the recorded origin of the model node (deterministic, node-id based).
-        const member = await this.OwningMember(languageService, solution.Members.ToArray(), modelId)
-        if (member === undefined)
-        {
-            throw new ResponseError(ErrorCodes.InvalidParams, PragmaticServer.ModelNotFoundMessage)
-        }
-        const security: IDevWriteSecurity = this.identity === undefined
-            ? new OpenDevWriteSecurity()
-            : await PrincipalDevWriteSecurity.For(context, await this.ReadAuthorization())
-        this.cypherExecutor ??= new DevCypherExecutor(writer, () => languageService.GraphRevision, this.options.writeLock ?? new InProcessWriteLock())
-        const result = await this.cypherExecutor.Execute(request, { member, identity: { model: solution.Name, version: PragmaticServer.GraphModelVersion, namespace } }, security)
-        // the write went to the saved files outside the engine: bring the engine up to them so a following read sees it
-        await this.devEngine?.Synchronize()
-        return result
+        return this.DevExecute().Run(context, modelId, request)
     }
 
-    private async OwningMember(languageService: ILanguageService, members: readonly { Storage?: IStorage }[], modelId: string): Promise<{ Storage: IStorage } | undefined>
+    /** The dev `cypher/execute` on the engine, under each caller's dev scope (memoized, one per tenant). */
+    private DevExecute(): DevCypherExecute
     {
-        // each member's view may record origins for the nodes it owns: look through ALL members until the model's origin is found
-        for (const candidate of members)
-        {
-            const view = candidate.Storage === undefined ? undefined : await languageService.ModelView(candidate.Storage)
-            const origin = view?.originOf.get(modelId)
-            if (origin === undefined || origin.kind !== WikiOriginKind.OpenProject)
-            {
-                continue
-            }
-            const owner = members.find(m => m.Storage === origin.storage)
-            return owner?.Storage === undefined ? undefined : { Storage: owner.Storage }
-        }
-        return undefined
-    }
-
-    /** True when a member's model view declares `modelId` as a model (not an instance or a concept). */
-    private static async DeclaresModel(languageService: ILanguageService, members: readonly { Storage?: IStorage }[], modelId: string): Promise<boolean>
-    {
-        for (const member of members)
-        {
-            const view = member.Storage === undefined ? undefined : await languageService.ModelView(member.Storage)
-            if (view !== undefined && ModelShardExtractor.ModelsOf(toJSON(view.model)).some(id => String(id) === modelId))
-            {
-                return true
-            }
-        }
-        return false
+        this.devExecute ??= new DevCypherExecute(this.DevEngine(), () => this.DevScopes(), async () => (await this.LanguageService()).GraphRevision, this.options.writeLock ?? new InProcessWriteLock())
+        return this.devExecute
     }
 
     public StateOf(moduleId: string): ModuleStateProperty | undefined

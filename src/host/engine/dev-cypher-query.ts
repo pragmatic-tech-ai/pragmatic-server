@@ -245,7 +245,8 @@ export class DevCypherQuery implements IDevCypherQuery
         return params?.cursor !== undefined && params.cursor !== null
     }
 
-    private static WireError(error: unknown): unknown
+    /** An engine Cypher error as the wire error the dev endpoints report (anything else unchanged). */
+    public static WireError(error: unknown): unknown
     {
         if (!(error instanceof Cypher.CypherError)) return error
         switch (error.Code)

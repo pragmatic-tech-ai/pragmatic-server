@@ -1,28 +1,22 @@
-import type { CypherExecuteResultDto, CypherWriteCountsDto, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { Cypher } from '@pragmatic-tech-ai/todl'
-import { CypherResultMapper } from './cypher-result-mapper.js'
+import type { Cypher } from '@pragmatic-tech-ai/graph'
+import type { AppWriteStatus, CypherExecuteResultDto, CypherQueryPageDto, CypherWriteCountsDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
-/** Maps an engine write result (PascalCase stats) to the camelCase wire DTO. Never carries field values in `reason`. */
+/**
+ * Builds the camelCase `cypher/execute` wire result from the engine's write stats and the RETURN rows already mapped
+ * to the wire page (EngineCellMapper, then CypherResultMapper). Never carries field values in `reason`.
+ */
 export class CypherExecuteResultMapper
 {
-    private static readonly Empty: Cypher.CypherResultDto = { Columns: [], Rows: [], Truncated: false, HasMore: false }
-
-    public static ToWire(status: AppWriteStatus, revision: number, result: Cypher.CypherResultDto | undefined, reason?: string): CypherExecuteResultDto
+    /** A write that ran: its stats (absent for a read-only query: zero counts) and its rows. */
+    public static Applied(status: AppWriteStatus, revision: number, page: CypherQueryPageDto, stats: Cypher.CypherWriteStatsDto | undefined): CypherExecuteResultDto
     {
-        const page = CypherResultMapper.ToWire(result ?? CypherExecuteResultMapper.Empty)
-        const dto: CypherExecuteResultDto = {
-            status,
-            counts: CypherExecuteResultMapper.Counts(result?.Stats),
-            revision,
-            columns: page.columns,
-            rows: page.items,
-            truncated: page.truncated,
-        }
-        if (reason !== undefined)
-        {
-            dto.reason = reason
-        }
-        return dto
+        return { status, counts: CypherExecuteResultMapper.Counts(stats), revision, columns: page.columns, rows: page.items, truncated: page.truncated }
+    }
+
+    /** A write that was refused or failed: nothing was kept, so no counts and no rows, only the fixed reason. */
+    public static Refused(status: AppWriteStatus, revision: number, reason: string): CypherExecuteResultDto
+    {
+        return { status, counts: CypherExecuteResultMapper.Counts(undefined), revision, columns: [], rows: [], truncated: false, reason }
     }
 
     public static Counts(stats: Cypher.CypherWriteStatsDto | undefined): CypherWriteCountsDto
@@ -34,11 +28,5 @@ export class CypherExecuteResultMapper
             relationshipsDeleted: stats?.RelationshipsDeleted ?? 0,
             propertiesSet: stats?.PropertiesSet ?? 0,
         }
-    }
-
-    public static Changed(stats: Cypher.CypherWriteStatsDto | undefined): boolean
-    {
-        const c = CypherExecuteResultMapper.Counts(stats)
-        return c.nodesCreated + c.nodesDeleted + c.relationshipsCreated + c.relationshipsDeleted + c.propertiesSet > 0
     }
 }

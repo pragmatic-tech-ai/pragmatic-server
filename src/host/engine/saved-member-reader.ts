@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { checkAgainst, MetaKind, Severity, toJSON, WikiOriginKind } from '@pragmatic-tech-ai/todl'
 import type { SourceFile, TodlDocument, WikiOrigin } from '@pragmatic-tech-ai/todl'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import type { IDevLanguageService } from '../model/dev-model-writer.js'
+import type { IDevLanguageService } from './dev-language-service.js'
 import { TodlSourceCollector } from '../model/todl-source-collector.js'
 
 /**

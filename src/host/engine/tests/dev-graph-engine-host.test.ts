@@ -156,21 +156,21 @@ describe('DevGraphEngineHost', () =>
         }
     })
 
-    test('Synchronize upgrades to the saved state without the debounce', async () =>
+    test('WhenUpgraded cuts a pending debounce short and upgrades to the saved state', async () =>
     {
         const h = new HostFx()
         try
         {
-            assert.equal(await h.Host.Synchronize(), undefined, 'nothing open: nothing to do')
+            assert.equal(await h.Host.WhenUpgraded(), undefined, 'nothing open: nothing to do')
             const engine = await h.Host.Engine()
             h.Save(HostFx.Cy)
             assert.ok(h.Timer.Armed)
-            await h.Host.Synchronize()
+            await h.Host.WhenUpgraded()
             assert.equal(h.Timer.Armed, false, 'the pending debounce is cancelled')
             assert.equal(h.Changes, 1)
             assert.deepEqual(await HostFx.NamesIn(engine), ['Bo', 'Cy'])
-            await h.Host.Synchronize()
-            assert.equal(h.Changes, 1, 'an unchanged saved state does not upgrade again')
+            await h.Host.WhenUpgraded()
+            assert.equal(h.Changes, 1, 'nothing pending: no upgrade pass runs')
         }
         finally
         {

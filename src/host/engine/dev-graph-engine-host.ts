@@ -5,12 +5,13 @@ import type { Diagnostic, Repository } from '@pragmatic-tech-ai/todl'
 import { TodlFileConnector } from '@pragmatic-tech-ai/todl/engine'
 import { Disposable, Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
-import type { IDevLanguageService } from '../model/dev-model-writer.js'
+import type { IDevLanguageService } from './dev-language-service.js'
 import type { IDevSolution } from './dev-solution.js'
 import { DevSnapshotSource } from './dev-snapshot-source.js'
 import type { DevSnapshot } from './dev-snapshot-source.js'
 import { SavedMemberReader } from './saved-member-reader.js'
-import { ServerModelWorkspace } from './server-model-workspace.js'
+import { ConsoleDevWriteDiagnostics, ServerModelWorkspace } from './server-model-workspace.js'
+import type { IDevWriteDiagnostics } from './server-model-workspace.js'
 
 /**
  * The dev tenant's embedded graph engine, run from the saved solution. `Changed` is raised after each applied
@@ -24,6 +25,11 @@ export interface IDevGraphEngine
     Repository(): Promise<Repository>
     Description(): Promise<ISchemaDescription>
     Snapshot(): Promise<DevSnapshot>
+    /**
+     * Resolves once every upgrade already asked for has finished: a pending debounce is cut short (its pass runs now)
+     * and a running pass is awaited. A writer calls it after its commit, whose saved files raised the change.
+     */
+    WhenUpgraded(): Promise<void>
     readonly Changed: ISignal<void>
 }
 
@@ -297,6 +303,7 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         private readonly languageService: () => Promise<IDevEngineLanguageService>,
         private readonly timer: IUpgradeTimer = new TimeoutUpgradeTimer(),
         private readonly diagnostics: IDevEngineDiagnostics = new ConsoleDevEngineDiagnostics(),
+        private readonly writeDiagnostics: IDevWriteDiagnostics = new ConsoleDevWriteDiagnostics(),
     )
     {
         this.Changed = this.changed
@@ -323,24 +330,21 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
     }
 
     /**
-     * Upgrades to what is saved now, without waiting for the debounce (a writer outside the engine, the legacy dev
-     * cypher/execute, calls it after its write so a following read sees it): cancels a pending debounce and runs one more
-     * drain pass. Resolves once that pass has finished; at once when nothing is open yet (the first open reads the
-     * latest saved state) or the host is disposing.
+     * Resolves once every upgrade already asked for has finished: a pending debounce is cut short (one drain pass runs
+     * now instead of when it elapses) and the running drain is awaited. At once when nothing is pending or running, or
+     * the host is disposing. `DevCypherExecute` calls it after a commit: the commit's saved files raised GraphChanged
+     * (the language service reloads them before each `WhenIdle` the commit awaits), so its upgrade is pending.
      */
-    public Synchronize(): Promise<void>
-    {
-        if (this.disposing !== undefined || this.opening === undefined) return Promise.resolve()
-        this.debounce?.dispose()
-        this.debounce = undefined
-        this.pending = true
-        this.draining ??= this.Drain()
-        return this.draining
-    }
-
-    /** Resolves when the upgrades already started (by an elapsed debounce) have finished. */
     public WhenUpgraded(): Promise<void>
     {
+        if (this.disposing !== undefined) return Promise.resolve()
+        if (this.debounce !== undefined)
+        {
+            this.debounce.dispose()
+            this.debounce = undefined
+            this.pending = true
+            this.draining ??= this.Drain()
+        }
         return this.draining ?? Promise.resolve()
     }
 
@@ -367,7 +371,7 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         const languageService = await this.languageService()
         const reader = new SavedMemberReader(languageService)
         const source = new DevSnapshotSource(this.solution, languageService, reader)
-        const workspace = new ServerModelWorkspace(this.solution, languageService, undefined, reader)
+        const workspace = new ServerModelWorkspace(this.solution, languageService, this.writeDiagnostics, reader)
         // subscribed before the first read, so a save racing the open is upgraded once it is open
         const subscription = languageService.GraphChanged.subscribe(() => this.Schedule())
         try
@@ -438,7 +442,7 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
             if (snapshot.Description.Version === opened.Engine.SchemaVersion) return
             // The one remaining window: an engine commit that begins while Upgrade runs. Upgrade installs the new
             // bindings in its own turn (ruling R77), so that commit fails with a retry-safe ConflictError and nothing
-            // is applied torn; the retry belongs to the write path (Task 7).
+            // is applied torn; DevCypherExecute retries it once.
             await opened.Engine.Upgrade(snapshot.Description)
             opened.Snapshot = snapshot
             applied = true

@@ -68,6 +68,11 @@ class ProbeHost implements IDevGraphEngine
         return this.Inner.Snapshot()
     }
 
+    public WhenUpgraded(): Promise<void>
+    {
+        return this.Inner.WhenUpgraded()
+    }
+
     public Raise(): void
     {
         this.signal.emit(undefined)
