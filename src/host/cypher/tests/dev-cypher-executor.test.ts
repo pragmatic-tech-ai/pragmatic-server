@@ -39,6 +39,7 @@ class StubLanguageService implements IDevLanguageService
     }
 
     public DidChange(): void {}
+    public DidDelete(): void {}
     public async WhenIdle(): Promise<void> {}
 }
 

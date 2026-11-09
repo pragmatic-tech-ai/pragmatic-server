@@ -23,6 +23,13 @@ export class TodlSourceCollector
         return out
     }
 
+    /** The language service keys files by absolute URI: the storage root (with a trailing separator) + the storage-relative path. */
+    public static AbsoluteUri(storage: IStorage, uri: string): string
+    {
+        const root = storage.Root
+        return (root.endsWith(TodlSourceCollector.PathSeparator) ? root : root + TodlSourceCollector.PathSeparator) + uri
+    }
+
     /** A stable hash of the sources (order-independent: sorted by uri). */
     public SourceHash(sources: readonly SourceFile[]): string
     {

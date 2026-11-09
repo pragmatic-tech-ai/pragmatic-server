@@ -90,6 +90,7 @@ export class FakeLanguageService implements IDevLanguageService
 {
     public GraphRevision = 1
     public readonly Changes: string[] = []
+    public readonly Deletes: string[] = []
     public readonly Buffers = new Map<string, string>()
     public Idles = 0
     private readonly basesOf = new Map<IStorage, ResolvedBases>()
@@ -104,6 +105,13 @@ export class FakeLanguageService implements IDevLanguageService
     {
         this.Changes.push(uri)
         this.Buffers.set(uri, text)
+        this.GraphRevision += 1
+    }
+
+    public DidDelete(uri: string): void
+    {
+        this.Deletes.push(uri)
+        this.Buffers.delete(uri)
         this.GraphRevision += 1
     }
 
@@ -157,6 +165,18 @@ export class EngineHostFx
     public Solution: IDevSolution | undefined = new FakeSolution(EngineHostFx.SolutionName, [{ Storage: this.A }, { Storage: this.B }, {}])
 
     public readonly Source = (): Promise<IDevSolution | undefined> => Promise.resolve(this.Solution)
+
+    /** One member `mem/s` whose single file declares both shop.M (c1 Ada) and shop.N (c2 Bo). */
+    public static readonly SharedFile = 'two.todl'
+    public static readonly Shared = 'namespace shop {\n  model M : shop {\n    Customer c1 { name = "Ada"; }\n  }\n  model N : shop {\n    Customer c2 { name = "Bo"; }\n  }\n}\n'
+
+    /** Replaces the solution with one member holding both models in {@link EngineHostFx.SharedFile}. */
+    public ShareOneFile(): MemoryStorage
+    {
+        const shared = new MemoryStorage('mem/s', { [EngineHostFx.SharedFile]: EngineHostFx.Shared })
+        this.Solution = new FakeSolution(EngineHostFx.SolutionName, [{ Storage: shared }])
+        return shared
+    }
 
     public static SchemaDocument(): TodlDocument
     {

@@ -10,8 +10,6 @@ import { TodlSourceCollector } from '../model/todl-source-collector.js'
  */
 export class SavedMember
 {
-    private static readonly RootSeparator = '/'
-
     public constructor(
         public readonly Storage: IStorage,
         public readonly Sources: readonly SourceFile[],
@@ -25,14 +23,7 @@ export class SavedMember
     /** The sources keyed by the language service's absolute uris (unique across members, unlike storage-relative ones). */
     public AbsoluteSources(): SourceFile[]
     {
-        return this.Sources.map(source => ({ uri: SavedMember.AbsoluteUri(this.Storage, source.uri), text: source.text }))
-    }
-
-    /** The language service keys files by absolute URI: the storage root (with a trailing separator) + the storage-relative path. */
-    public static AbsoluteUri(storage: IStorage, uri: string): string
-    {
-        const root = storage.Root
-        return (root.endsWith(SavedMember.RootSeparator) ? root : root + SavedMember.RootSeparator) + uri
+        return this.Sources.map(source => ({ uri: TodlSourceCollector.AbsoluteUri(this.Storage, source.uri), text: source.text }))
     }
 
     /** True when the base node `id` was compiled from one of `storages` (an open in-solution member). */

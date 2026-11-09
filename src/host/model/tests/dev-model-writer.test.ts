@@ -54,6 +54,7 @@ class FakeLanguageService implements IDevLanguageService
     public readonly Changes: string[] = []
     public async ResolveBasesFor(): Promise<{ bases: TodlDocument[] }> { return { bases: [toJSON(checkAgainst([], [{ uri: 'schema.todl', text: Fixture.Schema }]).model)] } }
     public DidChange(uri: string): void { this.Changes.push(uri); this.GraphRevision += 1 }
+    public DidDelete(): void {}
     public async WhenIdle(): Promise<void> {}
 }
 
