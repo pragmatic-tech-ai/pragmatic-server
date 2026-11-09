@@ -1,7 +1,8 @@
 import { checkAgainst, ModelDraft } from '@pragmatic-tech-ai/todl'
 import { EngineBridgeError, EngineBridgeErrorCode } from '@pragmatic-tech-ai/todl/engine'
 import type { ITodlDraftSession, ITodlModelWorkspace } from '@pragmatic-tech-ai/todl/engine'
-import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
+import { Disposable } from '@pragmatic-tech-ai/todl-runtime'
+import type { IDisposable, IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDevLanguageService } from './dev-language-service.js'
 import type { IDevSolution } from './dev-solution.js'
 import { TodlSourceCollector } from '../model/todl-source-collector.js'
@@ -24,6 +25,35 @@ export class ConsoleDevWriteDiagnostics implements IDevWriteDiagnostics
     }
 }
 
+/** A writer's hold on the tenant (its write lease): asked once per draft session before its first file write. */
+export interface IWriteFence
+{
+    Held(): Promise<boolean>
+}
+
+/**
+ * The one write fence the workspace's draft sessions check: dev writes are serialized, so the writer holding the
+ * write mutex installs its lease here for the length of its write (and disposes it after). None installed: no check.
+ */
+export class WriteFenceSlot
+{
+    private current: IWriteFence | undefined
+
+    public get Current(): IWriteFence | undefined
+    {
+        return this.current
+    }
+
+    public Install(fence: IWriteFence): IDisposable
+    {
+        this.current = fence
+        return new Disposable(() =>
+        {
+            if (this.current === fence) this.current = undefined
+        })
+    }
+}
+
 /**
  * One dev model opened as a draft over its member's saved sources. Uris are relative to the member's storage.
  *
@@ -43,9 +73,12 @@ export class ConsoleDevWriteDiagnostics implements IDevWriteDiagnostics
 class ServerDraftSession implements ITodlDraftSession
 {
     private static readonly StaleMessage = 'A model source file changed after its draft was opened'
+    private static readonly FenceLostMessage = 'The tenant write lease was lost before the write could persist'
 
     /** What this session last put in a file: its text, or undefined after it deleted the file. */
     private readonly written = new Map<string, string | undefined>()
+    /** True once the installed write fence held before this session's first write. */
+    private fenced = false
 
     public constructor(
         private readonly storage: IStorage,
@@ -53,6 +86,7 @@ class ServerDraftSession implements ITodlDraftSession
         private readonly languageService: IDevLanguageService,
         private readonly diagnostics: IDevWriteDiagnostics,
         private readonly opened: ReadonlyMap<string, string>,
+        private readonly fences: WriteFenceSlot,
         public readonly Draft: ModelDraft,
         public readonly Namespace: string,
         public readonly SourceHash: string,
@@ -72,6 +106,7 @@ class ServerDraftSession implements ITodlDraftSession
 
     public async WriteFile(uri: string, text: string): Promise<void>
     {
+        await this.Fence()
         await this.Guard(uri)
         await this.storage.WriteText(uri, text)
         this.written.set(uri, text)
@@ -80,10 +115,24 @@ class ServerDraftSession implements ITodlDraftSession
 
     public async DeleteFile(uri: string): Promise<void>
     {
+        await this.Fence()
         await this.Guard(uri)
         if (await this.storage.Exists(uri)) await this.storage.Delete(uri)
         this.written.set(uri, undefined)
         await this.Refresh(() => this.languageService.DidDelete(this.AbsoluteUri(uri)))
+    }
+
+    /**
+     * Before the session's first write: the installed fence (the writer's lease) must still hold, else the write is
+     * refused untouched as `Stale` (the connector restores nothing it did not write). Checked once: a restore of a
+     * file this session wrote is never refused.
+     */
+    private async Fence(): Promise<void>
+    {
+        if (this.fenced) return
+        const fence = this.fences.Current
+        if (fence !== undefined && !(await fence.Held())) throw new EngineBridgeError(EngineBridgeErrorCode.Stale, ServerDraftSession.FenceLostMessage)
+        this.fenced = true
     }
 
     /** Throws unless the file holds its opening text or the text this session last wrote (see the class comment). */
@@ -129,6 +178,7 @@ export class ServerModelWorkspace implements ITodlModelWorkspace
         private readonly languageService: IDevLanguageService,
         private readonly diagnostics: IDevWriteDiagnostics = new ConsoleDevWriteDiagnostics(),
         reader?: SavedMemberReader,
+        private readonly fences: WriteFenceSlot = new WriteFenceSlot(),
     )
     {
         this.reader = reader ?? new SavedMemberReader(languageService)
@@ -145,7 +195,7 @@ export class ServerModelWorkspace implements ITodlModelWorkspace
         // `model` keeps a created instance in this model and the file declaring it (the re-emit keeps declared ids)
         const draft = ModelDraft.fromSources([bases], [...member.Sources], { namespace, model })
         const opened = new Map(member.Sources.map(source => [source.uri, source.text]))
-        return new ServerDraftSession(member.Storage, this.reader, this.languageService, this.diagnostics, opened, draft, namespace, this.reader.SourceHash(member.Sources))
+        return new ServerDraftSession(member.Storage, this.reader, this.languageService, this.diagnostics, opened, this.fences, draft, namespace, this.reader.SourceHash(member.Sources))
     }
 
     /** The member whose saved sources declare `model` (the first, in member order), or undefined. */

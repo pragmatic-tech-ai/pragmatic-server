@@ -6,11 +6,13 @@ import type { Repository } from '@pragmatic-tech-ai/todl'
 import { AccessLevel, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
+import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { TenantReadAuthorization } from '../../cypher/read-filter-source.js'
 import { DevAccessScopeSource } from '../dev-access-scope-source.js'
 import type { IDevScopeDiagnostics } from '../dev-access-scope-source.js'
 import { DevGraphEngineHost } from '../dev-graph-engine-host.js'
 import type { IDevEngineDiagnostics, IDevGraphEngine } from '../dev-graph-engine-host.js'
+import type { IWriteFence } from '../server-model-workspace.js'
 import type { DevSnapshot } from '../dev-snapshot-source.js'
 import { PrincipalFacts } from '../principal-facts.js'
 import { FakeLanguageService, FakeSolution, MemoryStorage } from './engine-host-fixture.js'
@@ -71,6 +73,11 @@ class ProbeHost implements IDevGraphEngine
     public WhenUpgraded(): Promise<void>
     {
         return this.Inner.WhenUpgraded()
+    }
+
+    public InstallWriteFence(fence: IWriteFence): IDisposable
+    {
+        return this.Inner.InstallWriteFence(fence)
     }
 
     public Raise(): void

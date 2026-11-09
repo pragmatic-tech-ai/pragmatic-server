@@ -1,15 +1,16 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readdirSync, mkdirSync, mkdtempSync, cpSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, mkdirSync, mkdtempSync, cpSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { ConflictError } from '@pragmatic-tech-ai/graph'
+import { AccessScope, ConflictError, Cypher } from '@pragmatic-tech-ai/graph'
 import type { GraphEngine, GraphTransaction } from '@pragmatic-tech-ai/graph'
 import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, AppWriteStatus, CypherCells } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherExecuteParams, CypherExecuteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import { AccessLevel, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
+import type { IDisposable, IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { AccessContext, IFieldSecurityConfig, IPrivilegeConfig, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { CypherLimits } from '../../../config/cypher-limits.js'
 import { PagingLimits } from '../../../config/paging-limits.js'
@@ -22,10 +23,11 @@ import { WriteLockBusyError } from '../../cypher/write-lock.js'
 import type { IWriteLease, IWriteLock } from '../../cypher/write-lock.js'
 import { DevAccessScopeSource } from '../dev-access-scope-source.js'
 import { DevCypherExecute } from '../dev-cypher-execute.js'
+import type { IDevExecuteDiagnostics } from '../dev-cypher-execute.js'
 import { DevGraphEngineHost } from '../dev-graph-engine-host.js'
 import type { IDevEngineDiagnostics, IDevGraphEngine } from '../dev-graph-engine-host.js'
 import type { DevSnapshot } from '../dev-snapshot-source.js'
-import type { IDevWriteDiagnostics } from '../server-model-workspace.js'
+import type { IDevWriteDiagnostics, IWriteFence } from '../server-model-workspace.js'
 import { DevScopeFx } from './dev-scope-fixture.js'
 import { FakeLanguageService, FakeSolution, MemoryStorage } from './engine-host-fixture.js'
 
@@ -62,6 +64,13 @@ class ExecWorld
     {
         const dir = dirname(this.ModelFile)
         return this.TodlFiles().map(f => f + ':' + readFileSync(join(dir, f), 'utf8')).join(' | ')
+    }
+
+    /** The base member's schema file (empty when the fixture has none). */
+    public BaseSource(): string
+    {
+        const file = join(dirname(dirname(this.ModelFile)), ExecFixture.BaseDirName, ExecFixture.SchemaFileName)
+        return existsSync(file) ? readFileSync(file, 'utf8') : ''
     }
 
     /** The `.todl` files in the model member's folder, sorted. */
@@ -130,6 +139,8 @@ class ExecFixture
     public static readonly Create = "CREATE (:Widget {label: 'zeta'})"
     public static readonly Find = "MATCH (w:Widget) WHERE w.label = 'zeta' RETURN w.label AS label"
     public static readonly ModelFileName = 'model.todl'
+    public static readonly BaseDirName = 'base'
+    public static readonly SchemaFileName = 'schema.todl'
     private static readonly SolutionPrefix = 'cex-sol-'
     private static readonly PackagesPrefix = 'cex-pkgs-'
     private static readonly IdentityPrefix = 'cex-id-'
@@ -389,6 +400,23 @@ describe('dev cypher/execute over the connection (ported from host/tests/cypher-
         })
     })
 
+    test('a write to a sibling model\'s instance under another modelId is Denied (legacy: Invalid; ruling T7-b)', async () =>
+    {
+        await ExecFixture.With(false, async world =>
+        {
+            const handler = world.Connect(ExecFixture.Context(ExecFixture.Plain))
+            const source = world.Source()
+            const base = world.BaseSource()
+            const revision = world.GraphRevision
+            // legacy's original target: b1, an instance of BaseM (the base member), written under modelId acmeModel
+            const result = await handler.RunCypherExecute(ExecFixture.P(world.Shop, "MATCH (w:Widget) WHERE w.label = 'basey' SET w.label = 'changed'"))
+            assert.equal(result.status, AppWriteStatus.Denied)
+            assert.equal(world.Source(), source)
+            assert.equal(world.BaseSource(), base, 'base/ is unchanged')
+            assert.equal(world.GraphRevision, revision)
+        })
+    })
+
     test('concurrent executes serialize (per-tenant mutex) - both land with distinct revisions', async () =>
     {
         await ExecFixture.With(false, async world =>
@@ -489,6 +517,9 @@ describe('dev cypher/execute over the connection (ported from host/tests/cypher-
 class ExecLanguageService extends FakeLanguageService
 {
     public RefreshFailure: Error | undefined
+    /** Runs once, on the next bases resolution of `OnResolveOf` (a draft opening reads its member that way). */
+    public OnResolve: (() => void) | undefined
+    public OnResolveOf: IStorage | undefined
 
     public override DidChange(uri: string, text: string): void
     {
@@ -501,6 +532,19 @@ class ExecLanguageService extends FakeLanguageService
     {
         super.DidDelete(uri)
         this.RaiseGraphChanged()
+    }
+
+    public override async ResolveBasesFor(consumerStorage: IStorage): ReturnType<FakeLanguageService['ResolveBasesFor']>
+    {
+        const resolved = await super.ResolveBasesFor(consumerStorage)
+        if (consumerStorage === this.OnResolveOf)
+        {
+            const hook = this.OnResolve
+            this.OnResolve = undefined
+            this.OnResolveOf = undefined
+            hook?.()
+        }
+        return resolved
     }
 }
 
@@ -544,13 +588,27 @@ class RecordingWriteDiagnostics implements IDevWriteDiagnostics
     }
 }
 
-/** A lock whose lease is granted (or refused) and reports itself held (or lost) as the test dictates. */
+class RecordingExecuteDiagnostics implements IDevExecuteDiagnostics
+{
+    public readonly Failures: unknown[] = []
+
+    public AfterCommitFailed(error: unknown): void
+    {
+        this.Failures.push(error)
+    }
+}
+
+/**
+ * A lock whose lease is granted (or refused) and answers `Held()` from a script: each call takes the next answer,
+ * the last one repeating.
+ */
 class ScriptedLock implements IWriteLock
 {
     public Acquired = 0
     public Released = 0
+    public HeldCalls = 0
 
-    public constructor(private readonly busy: boolean, private readonly held: boolean)
+    public constructor(private readonly busy: boolean, private readonly held: boolean | readonly boolean[])
     {
     }
 
@@ -558,19 +616,45 @@ class ScriptedLock implements IWriteLock
     {
         if (this.busy) throw new WriteLockBusyError()
         this.Acquired++
-        return { Held: async () => this.held, Release: async () => { this.Released++ } }
+        return { Held: async () => this.NextHeld(), Release: async () => { this.Released++ } }
+    }
+
+    private NextHeld(): boolean
+    {
+        const answers = typeof this.held === 'boolean' ? [this.held] : this.held
+        const answer = answers[Math.min(this.HeldCalls, answers.length - 1)]!
+        this.HeldCalls++
+        return answer
     }
 }
 
-/** The host's engine with its first `conflicts` transaction commits failing as a commit racing an upgrade does. */
-class ConflictingHost implements IDevGraphEngine
+/** What a scripted host does to the engine's transactions and after a commit. */
+interface IHostScript
+{
+    /** The first N transaction commits fail as a commit racing an upgrade does (ConflictError). */
+    readonly Conflicts?: number
+    /** Runs on each scripted conflict. */
+    readonly OnConflict?: () => void
+    /** After a commit: the next read the engine opens fails. */
+    readonly FailReadAfterCommit?: boolean
+    /** After a commit: the next upgrade wait fails. */
+    readonly FailUpgradeAfterCommit?: boolean
+}
+
+/** The host with its engine's transactions and post-commit steps scripted ({@link IHostScript}). */
+class ScriptedHost implements IDevGraphEngine
 {
     private static readonly RacedMessage = 'an upgrade was applied while the transaction ran'
+    private static readonly ReadFailure = 'the engine read failed after the commit'
+    private static readonly UpgradeFailure = 'the upgrade wait failed after the commit'
     public Commits = 0
+    private conflicts: number
+    private committed = false
     private proxy: GraphEngine | undefined
 
-    public constructor(private readonly inner: DevGraphEngineHost, private conflicts: number)
+    public constructor(private readonly inner: DevGraphEngineHost, private readonly script: IHostScript)
     {
+        this.conflicts = script.Conflicts ?? 0
     }
 
     public get Changed(): IDevGraphEngine['Changed']
@@ -581,7 +665,7 @@ class ConflictingHost implements IDevGraphEngine
     public async Engine(): Promise<GraphEngine>
     {
         const engine = await this.inner.Engine()
-        this.proxy ??= new Proxy(engine, { get: (target, name) => (name === 'Begin' ? (scope: unknown) => this.Begin(target, scope) : ConflictingHost.Bound(target, name)) })
+        this.proxy ??= new Proxy(engine, { get: (target, name) => this.EngineMember(target, name) })
         return this.proxy
     }
 
@@ -600,15 +684,39 @@ class ConflictingHost implements IDevGraphEngine
         return this.inner.Snapshot()
     }
 
-    public WhenUpgraded(): Promise<void>
+    public async WhenUpgraded(): Promise<void>
     {
-        return this.inner.WhenUpgraded()
+        if (this.committed && this.script.FailUpgradeAfterCommit === true)
+        {
+            this.committed = false
+            throw new Error(ScriptedHost.UpgradeFailure)
+        }
+        await this.inner.WhenUpgraded()
+    }
+
+    public InstallWriteFence(fence: IWriteFence): IDisposable
+    {
+        return this.inner.InstallWriteFence(fence)
+    }
+
+    private EngineMember(engine: GraphEngine, name: string | symbol): unknown
+    {
+        if (name === 'Begin') return (scope: unknown) => this.Begin(engine, scope)
+        if (name === 'BeginRead' && this.committed && this.script.FailReadAfterCommit === true)
+        {
+            return () =>
+            {
+                this.committed = false
+                return Promise.reject(new Error(ScriptedHost.ReadFailure))
+            }
+        }
+        return ScriptedHost.Bound(engine, name)
     }
 
     private async Begin(engine: GraphEngine, scope: unknown): Promise<GraphTransaction>
     {
         const transaction = await engine.Begin(scope as Parameters<GraphEngine['Begin']>[0])
-        return new Proxy(transaction, { get: (target, name) => (name === 'Commit' ? () => this.Commit(target) : ConflictingHost.Bound(target, name)) })
+        return new Proxy(transaction, { get: (target, name) => (name === 'Commit' ? () => this.Commit(target) : ScriptedHost.Bound(target, name)) })
     }
 
     private async Commit(transaction: GraphTransaction): Promise<bigint>
@@ -618,9 +726,12 @@ class ConflictingHost implements IDevGraphEngine
         {
             this.conflicts -= 1
             transaction.dispose()
-            throw new ConflictError(ConflictingHost.RacedMessage)
+            this.script.OnConflict?.()
+            throw new ConflictError(ScriptedHost.RacedMessage)
         }
-        return transaction.Commit()
+        const commit = await transaction.Commit()
+        this.committed = true
+        return commit
     }
 
     private static Bound(target: object, name: string | symbol): unknown
@@ -628,6 +739,15 @@ class ConflictingHost implements IDevGraphEngine
         const value: unknown = Reflect.get(target, name, target)
         return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value
     }
+}
+
+/** What one fixture opens with. */
+interface IExecOptions
+{
+    readonly model?: ISecurityModelConfig
+    readonly lock?: IWriteLock
+    readonly files?: Readonly<Record<string, string>>
+    readonly host?: IHostScript
 }
 
 /**
@@ -641,15 +761,20 @@ class ExecFx
     public static readonly ModelFile = 'model.todl'
     public static readonly OtherFile = 'other.todl'
     public static readonly ExtraFile = 'extra.todl'
-    public static readonly SharedFile = 'two.todl'
     public static readonly Secret = 'hush'
-    public static readonly Schema = 'namespace acme {\n  concept Widget { owner : string?; owningBu : string?; secret : string?; code : string?; relationship peer -> Widget?; relationship buddy -> Widget?; }\n}\n'
+    public static readonly Schema = 'namespace acme {\n  concept Widget { owner : string?; owningBu : string?; secret : string?; code : string?; relationship peer -> Widget?; relationship buddy -> Widget?; }\n  viewpoint Front : frames Widget\n  viewpoint Back : frames Widget\n}\n'
     public static readonly Shop = 'namespace acme {\n  model Shop : acme {\n    Widget w1 { owner = "p1"; owningBu = "sales"; label = "mine"; secret = "hush"; peer = w2; }\n    Widget w2 { owningBu = "root"; label = "theirs"; }\n  }\n}\n'
     public static readonly OtherModel = 'namespace acme {\n  model Other : acme {\n    Widget o1 { owningBu = "sales"; label = "other"; }\n  }\n}\n'
-    public static readonly Shared = 'namespace acme {\n  model Shop : acme {\n    Widget w1 { owningBu = "sales"; label = "mine"; }\n  }\n  model Other : acme {\n    Widget o1 { owningBu = "sales"; label = "other"; }\n  }\n}\n'
+    /** acme.Shop split across two files (each block declares a viewpoint): w1 in model.todl, w3 in other.todl. */
+    public static readonly SplitFront = 'namespace acme {\n  model Shop : acme conforms Front {\n    Widget w1 { owningBu = "sales"; label = "mine"; }\n  }\n}\n'
+    public static readonly SplitBack = 'namespace acme {\n  model Shop : acme conforms Back {\n    Widget w3 { owningBu = "sales"; label = "third"; }\n  }\n}\n'
+    public static readonly OutsideEdit = 'namespace acme {\n  model Shop : acme {\n    Widget w1 { owner = "p1"; owningBu = "sales"; label = "edited elsewhere"; secret = "hush"; peer = w2; }\n    Widget w2 { owningBu = "root"; label = "theirs"; }\n  }\n}\n'
     public static readonly Create = "CREATE (:Widget {label: 'fresh'})"
-    public static readonly SetBoth = "MATCH (a:Widget {label: 'mine'}), (b:Widget {label: 'other'}) SET a.code = 'A', b.code = 'B'"
+    public static readonly SetMine = "MATCH (a:Widget {label: 'mine'}) SET a.code = 'A'"
+    public static readonly SetSplit = "MATCH (a:Widget {label: 'mine'}), (b:Widget {label: 'third'}) SET a.code = 'A', b.code = 'B'"
+    public static readonly FreshCount = "MATCH (w:Widget {label: 'fresh'}) RETURN count(w) AS c"
     public static readonly SourcesChanged = 'model sources changed during the write'
+    public static readonly LeaseLost = 'the tenant write lease was lost before the write could persist'
     public static readonly ZeroCounts = { nodesCreated: 0, nodesDeleted: 0, relationshipsCreated: 0, relationshipsDeleted: 0, propertiesSet: 0 }
     private static readonly TimeoutMs = 5000
     private static readonly MaxVarLength = 8
@@ -659,8 +784,10 @@ class ExecFx
     public readonly Lang = new ExecLanguageService()
     public readonly EngineDiagnostics = new SilentEngineDiagnostics()
     public readonly WriteDiagnostics = new RecordingWriteDiagnostics()
+    public readonly ExecuteDiagnostics = new RecordingExecuteDiagnostics()
     public readonly Host: DevGraphEngineHost
     public Execute!: DevCypherExecute
+    public Scripted: ScriptedHost | undefined
     private scopes: DevAccessScopeSource | undefined
 
     private constructor(files: Readonly<Record<string, string>>)
@@ -672,19 +799,19 @@ class ExecFx
     }
 
     /** Opens the fixture: no identity when `model` is absent, else the DevScopeFx tenant holding `model`. */
-    public static async Open(options: { model?: ISecurityModelConfig; lock?: IWriteLock; files?: Readonly<Record<string, string>>; host?: (host: DevGraphEngineHost) => IDevGraphEngine } = {}): Promise<ExecFx>
+    public static async Open(options: IExecOptions = {}): Promise<ExecFx>
     {
         const fx = new ExecFx(options.files ?? { [ExecFx.ModelFile]: ExecFx.Shop })
         const auth = options.model === undefined ? undefined : (await DevScopeFx.Authorization(options.model)).Auth
         fx.scopes = new DevAccessScopeSource(fx.Host, auth, options.model !== undefined, () => Promise.resolve(ExecFx.SolutionName), { ScopeDiagnostics: () => undefined })
         const scopes = fx.scopes
-        const host = options.host?.(fx.Host) ?? fx.Host
-        fx.Execute = new DevCypherExecute(host, () => Promise.resolve(scopes), () => Promise.resolve(fx.Lang.GraphRevision), options.lock)
+        fx.Scripted = options.host === undefined ? undefined : new ScriptedHost(fx.Host, options.host)
+        fx.Execute = new DevCypherExecute(fx.Scripted ?? fx.Host, () => Promise.resolve(scopes), () => Promise.resolve(fx.Lang.GraphRevision), options.lock, fx.ExecuteDiagnostics)
         return fx
     }
 
     /** Runs `body` on a fresh fixture and disposes it. */
-    public static async With(options: Parameters<typeof ExecFx.Open>[0], body: (fx: ExecFx) => Promise<void>): Promise<void>
+    public static async With(options: IExecOptions, body: (fx: ExecFx) => Promise<void>): Promise<void>
     {
         const fx = await ExecFx.Open(options)
         try
@@ -721,9 +848,22 @@ class ExecFx
         return [...this.A.Files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([uri, text]) => uri + ':' + text).join(' | ')
     }
 
+    /** Member a's file names, sorted. */
+    public FileNames(): string[]
+    {
+        return [...this.A.Files.keys()].sort()
+    }
+
     public File(uri: string = ExecFx.ModelFile): string
     {
         return this.A.Files.get(uri) ?? ''
+    }
+
+    /** How many `fresh` widgets the engine itself holds (System scope: the engine data, not the files). */
+    public async EngineFreshCount(): Promise<unknown>
+    {
+        const result = await new Cypher.CypherEngine(await this.Host.Engine()).Execute(AccessScope.System, ExecFx.FreshCount)
+        return (result.Rows[0]![0] as Cypher.ScalarValue).Value
     }
 }
 
@@ -767,11 +907,45 @@ describe('DevCypherExecute lease (ported from host/cypher/tests/dev-cypher-execu
         })
     })
 
+    test('a lease lost between the start of the engine write and its first file write persists nothing (ruling T7-c)', async () =>
+    {
+        // held at the attempt's check, lost at the draft session's fence right before its first file write
+        const lock = new ScriptedLock(false, [true, false])
+        await ExecFx.With({ lock }, async fx =>
+        {
+            const source = fx.Source()
+            const result = await fx.Run(ExecFx.Create)
+            assert.equal(result.status, AppWriteStatus.Conflict)
+            assert.equal(result.reason, ExecFx.LeaseLost)
+            assert.deepEqual(result.counts, ExecFx.ZeroCounts)
+            assert.equal(lock.HeldCalls, 2, 'the fence was asked again inside the commit')
+            assert.equal(fx.Source(), source, 'no file was written')
+            assert.equal(await fx.EngineFreshCount(), 0n, 'the engine data is unchanged')
+            assert.equal(lock.Released, 1)
+        })
+    })
+
+    test('the lease is re-checked on the retry after an engine conflict', async () =>
+    {
+        // attempt 1: held, then its commit conflicts; attempt 2: lost at its own check
+        const lock = new ScriptedLock(false, [true, false])
+        await ExecFx.With({ lock, host: { Conflicts: 1 } }, async fx =>
+        {
+            const source = fx.Source()
+            const result = await fx.Run(ExecFx.Create)
+            assert.equal(result.status, AppWriteStatus.Conflict)
+            assert.equal(result.reason, ExecFx.LeaseLost)
+            assert.equal(fx.Scripted!.Commits, 1, 'the retry never reached the engine')
+            assert.equal(fx.Source(), source)
+        })
+    })
+
     test('a Persist failure surfaces as in-band Failed with the fixed reason and no partial result', async () =>
     {
         await ExecFx.With({}, async fx =>
         {
             const source = fx.Source()
+            const files = fx.FileNames()
             const revision = fx.Lang.GraphRevision
             fx.A.FailOnWriteNumber = 1
             const result = await fx.Run(ExecFx.Create)
@@ -784,6 +958,11 @@ describe('DevCypherExecute lease (ported from host/cypher/tests/dev-cypher-execu
             assert.equal(result.revision, revision)
             assert.deepEqual(result.rows, [])
             assert.equal(fx.Source(), source)
+            // ported from dev-model-writer.test.ts "restore deletes a file that did not exist before" (server side):
+            // a failed write leaves no file storage did not hold; TODL's TodlFileConnector tests "partial write failure
+            // restores" and "a torn write is restored" cover the connector deleting a file its commit created
+            assert.deepEqual(fx.FileNames(), files)
+            assert.equal(await fx.EngineFreshCount(), 0n)
         })
     })
 })
@@ -807,15 +986,23 @@ describe('DevCypherExecute persist (ported from host/model/tests/dev-model-write
 
     test('a failing second file write restores every file and surfaces Failed', async () =>
     {
-        await ExecFx.With({ files: { [ExecFx.ModelFile]: ExecFx.Shop, [ExecFx.OtherFile]: ExecFx.OtherModel } }, async fx =>
+        // one model split across two files: the commit writes model.todl, then other.todl fails
+        await ExecFx.With({ files: { [ExecFx.ModelFile]: ExecFx.SplitFront, [ExecFx.OtherFile]: ExecFx.SplitBack } }, async fx =>
         {
             const source = fx.Source()
+            const files = fx.FileNames()
+            const before = fx.Lang.GraphRevision
             fx.A.FailOnWriteNumber = 2
-            const result = await fx.Run(ExecFx.SetBoth)
+            const result = await fx.Run(ExecFx.SetSplit)
             assert.equal(result.status, AppWriteStatus.Failed)
             assert.equal(fx.Source(), source)
+            assert.deepEqual(fx.FileNames(), files)
             // the first file was written and restored, each landing told to the language service (Task 3)
             assert.equal(fx.Lang.Changes.length, 2)
+            // the result carries the revision after the restore, so a following expectedRevision write is not refused
+            assert.equal(result.revision, before + 2)
+            assert.equal(result.revision, fx.Lang.GraphRevision)
+            assert.equal((await fx.Run(ExecFx.SetMine, ExecFx.Model, result.revision)).status, AppWriteStatus.Applied)
         })
     })
 
@@ -886,43 +1073,85 @@ describe('DevCypherExecute outcomes', () =>
         })
     })
 
+    test('a revision that moves between attempts is Conflict "graph revision has advanced"', async () =>
+    {
+        let lang: ExecLanguageService | undefined
+        await ExecFx.With({ host: { Conflicts: 1, OnConflict: () => { lang!.GraphRevision += 1 } } }, async fx =>
+        {
+            lang = fx.Lang
+            const source = fx.Source()
+            const result = await fx.Run(ExecFx.Create, ExecFx.Model, fx.Lang.GraphRevision)
+            assert.equal(result.status, AppWriteStatus.Conflict)
+            assert.equal(result.reason, 'graph revision has advanced')
+            assert.equal(fx.Scripted!.Commits, 1, 'the retry stopped at its revision check')
+            assert.equal(fx.Source(), source)
+        })
+    })
+
     test('stale sources give Conflict', async () =>
     {
-        // two models in one file, both written by one commit: the second draft finds the file changed under it
-        await ExecFx.With({ files: { [ExecFx.SharedFile]: ExecFx.Shared } }, async fx =>
+        // another writer saves the model file after the draft opened and before the commit checks its sources
+        await ExecFx.With({}, async fx =>
         {
-            const source = fx.Source()
-            const result = await fx.Run(ExecFx.SetBoth)
+            await fx.Host.Engine()
+            fx.Lang.OnResolveOf = fx.A
+            fx.Lang.OnResolve = () => { fx.A.Files.set(ExecFx.ModelFile, ExecFx.OutsideEdit) }
+            const result = await fx.Run(ExecFx.SetMine)
             assert.equal(result.status, AppWriteStatus.Conflict)
             assert.equal(result.reason, ExecFx.SourcesChanged)
             assert.deepEqual(result.counts, ExecFx.ZeroCounts)
-            assert.equal(fx.Source(), source)
+            assert.equal(fx.File(), ExecFx.OutsideEdit, 'the other writer\'s save is kept')
         })
     })
 
     test('an engine ConflictError (a commit racing an upgrade) is retried once and then applies', async () =>
     {
-        let conflicting: ConflictingHost | undefined
-        await ExecFx.With({ host: host => (conflicting = new ConflictingHost(host, 1)) }, async fx =>
+        await ExecFx.With({ host: { Conflicts: 1 } }, async fx =>
         {
             const result = await fx.Run(ExecFx.Create)
             assert.equal(result.status, AppWriteStatus.Applied)
-            assert.equal(conflicting!.Commits, 2)
+            assert.equal(fx.Scripted!.Commits, 2)
             assert.equal(fx.File().split('fresh').length - 1, 1, 'the node lands once')
         })
     })
 
     test('an engine ConflictError on the retry too is Conflict', async () =>
     {
-        let conflicting: ConflictingHost | undefined
-        await ExecFx.With({ host: host => (conflicting = new ConflictingHost(host, 2)) }, async fx =>
+        await ExecFx.With({ host: { Conflicts: 2 } }, async fx =>
         {
             const source = fx.Source()
             const result = await fx.Run(ExecFx.Create)
             assert.equal(result.status, AppWriteStatus.Conflict)
             assert.equal(result.reason, ExecFx.SourcesChanged)
-            assert.equal(conflicting!.Commits, 2)
+            assert.equal(fx.Scripted!.Commits, 2)
             assert.equal(fx.Source(), source)
+        })
+    })
+
+    test('a failure reading the rows after the commit is reported and the write is still Applied', async () =>
+    {
+        await ExecFx.With({ host: { FailReadAfterCommit: true } }, async fx =>
+        {
+            const before = fx.Lang.GraphRevision
+            const result = await fx.Run("CREATE (w:Widget {label: 'fresh'}) RETURN w")
+            assert.equal(result.status, AppWriteStatus.Applied)
+            assert.equal(result.counts.nodesCreated, 1)
+            assert.deepEqual(result.rows, [], 'rows are best-effort')
+            assert.ok(result.revision > before)
+            assert.equal(fx.ExecuteDiagnostics.Failures.length, 1)
+            assert.match(fx.File(), /label = "fresh"/)
+        })
+    })
+
+    test('a failing upgrade wait after the commit is reported and the write is still Applied', async () =>
+    {
+        await ExecFx.With({ host: { FailUpgradeAfterCommit: true } }, async fx =>
+        {
+            const result = await fx.Run("CREATE (w:Widget {label: 'fresh'}) RETURN w")
+            assert.equal(result.status, AppWriteStatus.Applied)
+            assert.equal(result.rows.length, 1)
+            assert.equal(fx.ExecuteDiagnostics.Failures.length, 1)
+            assert.match(fx.File(), /label = "fresh"/)
         })
     })
 
@@ -948,6 +1177,28 @@ describe('DevCypherExecute outcomes', () =>
             assert.equal(result.counts.propertiesSet, 1)
             const cell = CypherCells.AsNode(result.rows[0]![0])!
             assert.equal(cell.fields['code']!.value, 'C')
+        })
+    })
+
+    test('writes are confined to modelId: another model\'s instance is Denied, reads stay tenant-wide (ruling T7-b)', async () =>
+    {
+        await ExecFx.With({ files: { [ExecFx.ModelFile]: ExecFx.Shop, [ExecFx.OtherFile]: ExecFx.OtherModel } }, async fx =>
+        {
+            const source = fx.Source()
+            for (const write of [
+                "MATCH (o:Widget {label: 'other'}) SET o.code = 'x'",
+                "MATCH (o:Widget {label: 'other'}) DETACH DELETE o",
+                "MATCH (a:Widget {label: 'mine'}), (o:Widget {label: 'other'}) SET a.code = 'A', o.code = 'B'",
+            ])
+            {
+                const result = await fx.Run(write)
+                assert.equal(result.status, AppWriteStatus.Denied, write)
+                assert.equal(fx.Source(), source, write)
+            }
+            const read = await fx.Run("MATCH (o:Widget {label: 'other'}) RETURN o.label AS l")
+            assert.deepEqual(read.rows, [['other']], 'another model\'s instance stays readable')
+            assert.equal((await fx.Run("MATCH (o:Widget {label: 'other'}) SET o.code = 'x'", 'acme.Other')).status, AppWriteStatus.Applied, 'under its own model it is writable')
+            assert.match(fx.File(ExecFx.OtherFile), /code = "x"/)
         })
     })
 })
@@ -1027,9 +1278,10 @@ describe('DevCypherExecute scope (ported from host/cypher/tests/authorizing-cyph
         })
     })
 
-    test('a SET on a node CREATEd earlier in the query is judged against the create', async () =>
+    // Ruling T7-a: every write to a node created in the same query is judged at its create (Create rules on the
+    // end-of-batch values, ReadOnly.Create), so `CREATE (w) SET w.f = v` ends as `CREATE (w {f: v})` would.
+    test('writes to a node created in the same query are judged at its create: no Update privilege is needed', async () =>
     {
-        // no Update privilege at all: the created node's own write is part of its create
         const create: [PrivilegeAction, AccessLevel][] = [Read, [PrivilegeAction.Create, AccessLevel.BusinessUnit]]
         await ExecFx.With({ model: ExecFx.Security(create) }, async fx =>
         {
@@ -1039,10 +1291,7 @@ describe('DevCypherExecute scope (ported from host/cypher/tests/authorizing-cyph
         })
     })
 
-    // Legacy: Denied (the created node's SET was an Update the field gate refused). The engine judges every write to a
-    // node created in the same batch as part of its create (Create rules on end-of-batch values, ReadOnly.Create),
-    // so a member read-only on update only is writable there. Reported as a behaviour change (task-7-report.md).
-    test('a SET of a member read-only on update only, on a node CREATEd earlier in the query, is part of the create', async () =>
+    test('a member read-only on update only is writable on a node created in the same query (judged at its create)', async () =>
     {
         const all: [PrivilegeAction, AccessLevel][] = [Read, [PrivilegeAction.Create, AccessLevel.Organization], [PrivilegeAction.Update, AccessLevel.Organization]]
         const fields = DevScopeFx.Fields([DevScopeFx.Secret], [{ field: DevScopeFx.Secret, read: true, create: true }])
@@ -1050,14 +1299,37 @@ describe('DevCypherExecute scope (ported from host/cypher/tests/authorizing-cyph
         {
             const source = fx.Source()
             assert.equal((await fx.Run("CREATE (:Widget {label: 'fresh', secret: 'x'})")).status, AppWriteStatus.Applied, 'create-writable on create')
-            const after = fx.Source()
-            assert.notEqual(after, source)
+            assert.notEqual(fx.Source(), source)
             const result = await fx.Run("CREATE (w:Widget {label: 'later'}) SET w.secret = 'x'")
             assert.equal(result.status, AppWriteStatus.Applied)
             assert.match(fx.File(), /label = "later"/)
             const update = await fx.Run("MATCH (w:Widget {label: 'later'}) SET w.secret = 'y'")
             assert.equal(update.status, AppWriteStatus.Denied, 'an update of an existing node is refused')
             assert.doesNotMatch(fx.File(), /secret = "y"/)
+        })
+    })
+
+    test('a member read-only on create and update stays refused when set on a node created in the same query', async () =>
+    {
+        const all: [PrivilegeAction, AccessLevel][] = [Read, [PrivilegeAction.Create, AccessLevel.Organization], [PrivilegeAction.Update, AccessLevel.Organization]]
+        await ExecFx.With({ model: ExecFx.Security(all, DevScopeFx.Fields([DevScopeFx.Secret], [{ field: DevScopeFx.Secret, read: true }])) }, async fx =>
+        {
+            const source = fx.Source()
+            const result = await fx.Run("CREATE (w:Widget {label: 'later'}) SET w.secret = 'x'")
+            assert.equal(result.status, AppWriteStatus.Denied)
+            assert.equal(fx.Source(), source)
+        })
+    })
+
+    test('a SET on a node created in the same query is refused when the concept\'s Create is denied', async () =>
+    {
+        const update: [PrivilegeAction, AccessLevel][] = [Read, [PrivilegeAction.Update, AccessLevel.Organization]]
+        await ExecFx.With({ model: ExecFx.Security(update) }, async fx =>
+        {
+            const source = fx.Source()
+            const result = await fx.Run("CREATE (w:Widget {label: 'later'}) SET w.secret = 'x'")
+            assert.equal(result.status, AppWriteStatus.Denied)
+            assert.equal(fx.Source(), source)
         })
     })
 

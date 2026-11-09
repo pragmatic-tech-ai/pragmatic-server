@@ -61,7 +61,7 @@ import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { CypherExecuteResultDto, CypherAppDeployParamsDto, AppDeployResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { DevCypherExecute } from './host/engine/dev-cypher-execute.js'
+import { DevCypherExecute, LoggerDevExecuteDiagnostics } from './host/engine/dev-cypher-execute.js'
 import type { DevCypherRequest } from './host/engine/dev-cypher-execute.js'
 import { PragmaticAppsRegistry } from './host/apps/pragmatic-apps-registry.js'
 import { NullLogger, StructuredLogger } from './observability/logger.js'
@@ -974,7 +974,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     /** The dev `cypher/execute` on the engine, under each caller's dev scope (memoized, one per tenant). */
     private DevExecute(): DevCypherExecute
     {
-        this.devExecute ??= new DevCypherExecute(this.DevEngine(), () => this.DevScopes(), async () => (await this.LanguageService()).GraphRevision, this.options.writeLock ?? new InProcessWriteLock())
+        this.devExecute ??= new DevCypherExecute(this.DevEngine(), () => this.DevScopes(), async () => (await this.LanguageService()).GraphRevision, this.options.writeLock ?? new InProcessWriteLock(), new LoggerDevExecuteDiagnostics(this.options.logger ?? new NullLogger()))
         return this.devExecute
     }
 

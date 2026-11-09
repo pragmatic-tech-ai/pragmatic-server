@@ -10,8 +10,8 @@ import type { IDevSolution } from './dev-solution.js'
 import { DevSnapshotSource } from './dev-snapshot-source.js'
 import type { DevSnapshot } from './dev-snapshot-source.js'
 import { SavedMemberReader } from './saved-member-reader.js'
-import { ConsoleDevWriteDiagnostics, ServerModelWorkspace } from './server-model-workspace.js'
-import type { IDevWriteDiagnostics } from './server-model-workspace.js'
+import { ConsoleDevWriteDiagnostics, ServerModelWorkspace, WriteFenceSlot } from './server-model-workspace.js'
+import type { IDevWriteDiagnostics, IWriteFence } from './server-model-workspace.js'
 
 /**
  * The dev tenant's embedded graph engine, run from the saved solution. `Changed` is raised after each applied
@@ -30,6 +30,11 @@ export interface IDevGraphEngine
      * and a running pass is awaited. A writer calls it after its commit, whose saved files raised the change.
      */
     WhenUpgraded(): Promise<void>
+    /**
+     * Installs the writer's fence (its write lease) for the engine's own `.todl` writes until the handle is disposed:
+     * each draft session checks it before its first file write and refuses the write (Stale) once it no longer holds.
+     */
+    InstallWriteFence(fence: IWriteFence): IDisposable
     readonly Changed: ISignal<void>
 }
 
@@ -292,6 +297,7 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
 
     private readonly changed = new DevEngineChanged()
     private readonly writes = new EngineWriteTracker()
+    private readonly fences = new WriteFenceSlot()
     private opening: Promise<OpenedEngine> | undefined
     private debounce: IDisposable | undefined
     private draining: Promise<void> | undefined
@@ -348,6 +354,11 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         return this.draining ?? Promise.resolve()
     }
 
+    public InstallWriteFence(fence: IWriteFence): IDisposable
+    {
+        return this.fences.Install(fence)
+    }
+
     /** Cancels a pending upgrade, waits for a running one, then disposes the engine. Idempotent. */
     public dispose(): Promise<void>
     {
@@ -371,7 +382,7 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         const languageService = await this.languageService()
         const reader = new SavedMemberReader(languageService)
         const source = new DevSnapshotSource(this.solution, languageService, reader)
-        const workspace = new ServerModelWorkspace(this.solution, languageService, this.writeDiagnostics, reader)
+        const workspace = new ServerModelWorkspace(this.solution, languageService, this.writeDiagnostics, reader, this.fences)
         // subscribed before the first read, so a save racing the open is upgraded once it is open
         const subscription = languageService.GraphChanged.subscribe(() => this.Schedule())
         try
