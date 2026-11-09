@@ -87,7 +87,7 @@ class WorkerFixture
         {
             headers['authorization'] = `Bearer ${bearer}`
         }
-        return new WebSocket(`wss://${address.host}:${address.port}/`, { key: client?.key, cert: client?.cert, ca: client?.ca, rejectUnauthorized: true, servername: '127.0.0.1', headers })
+        return new WebSocket(`wss://${address.host}:${address.port}/`, { key: client?.key, cert: client?.cert, ca: client?.ca, rejectUnauthorized: true, headers })
     }
 
     public static readonly SettleMs = 300

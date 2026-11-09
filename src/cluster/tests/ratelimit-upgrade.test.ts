@@ -106,7 +106,7 @@ test('the worker host rejects a per-tenant upgrade breach with 429 + Retry-After
     const entries = new Map<string, TenantProvisioning>([['t1', { displayName: 't1' }]])
     const worker = await WorkerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: Fixtures.KeyEnv }, provisioning: new InMemoryTenantProvisioning(entries), tls: Fixtures.ServerTls(), rateLimit: Fixtures.Guard() })
     const client = MachineTls.Client(Fixtures.ClientTls())
-    const dial = (): WebSocket => new WebSocket(`wss://${worker.Address().host}:${worker.Address().port}/`, { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: '127.0.0.1', headers: { 'x-pragmatic-environment': 't1' } })
+    const dial = (): WebSocket => new WebSocket(`wss://${worker.Address().host}:${worker.Address().port}/`, { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, headers: { 'x-pragmatic-environment': 't1' } })
     try
     {
         const first = await Fixtures.Status(dial()).catch(() => ({ status: 0, retryAfter: undefined }))

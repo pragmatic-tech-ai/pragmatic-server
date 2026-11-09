@@ -12,6 +12,7 @@ import type { WebSocketAddress } from '../host/pragmatic-server-host.js'
 import type { IWorkerRouter, WorkerEndpoint } from './worker-router.js'
 import { HealthEndpoint } from '../host/health-endpoint.js'
 import { MachineTls } from './machine-tls.js'
+import { WorkerTlsName } from './worker-tls-name.js'
 import type { ClientTlsMaterial, MachineTlsRef } from './machine-tls.js'
 import { MachineCertIdentity } from '../host/machine-principal-map.js'
 import { MachineFingerprintHeader } from './machine-headers.js'
@@ -370,7 +371,7 @@ export class Gateway
     {
         const client = this.clientTls
         const headers = Gateway.OutboundHeaders(req, environmentId, authorization, this.machineTlsConfigured)
-        const wsOptions = { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: this.serverName, headers }
+        const wsOptions = { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, ...WorkerTlsName.OptionsFor(this.serverName), headers }
         const workerWs = new WebSocket(`${Gateway.WsScheme}${endpoint.host}:${endpoint.port}/`, wsOptions)
         this.workerSockets.add(workerWs)
         let opened = false
@@ -521,7 +522,7 @@ export class Gateway
             const headers: Record<string, string | string[] | undefined> = { ...req.headers, [Gateway.EnvironmentHeader]: environmentId }
             Gateway.StampMachineFingerprint(headers, req.socket as TLSSocket, this.machineTlsConfigured)
             const proxied = httpsRequest(
-                { host: endpoint.host, port: endpoint.port, method: req.method, path: req.url, headers, key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, servername: this.serverName },
+                { host: endpoint.host, port: endpoint.port, method: req.method, path: req.url, headers, key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, ...WorkerTlsName.OptionsFor(this.serverName) },
                 upstream =>
                 {
                     upstream.on(Gateway.ErrorEvent, () =>

@@ -40,7 +40,7 @@ class WorkerServeFixture
         const client = MachineTls.Client(WorkerServeFixture.Client())
         return new Promise<Reply>((resolve, reject) =>
         {
-            const req = request({ host: '127.0.0.1', port, path, method: 'GET', key: client.key, cert: client.cert, ca: client.ca, servername: '127.0.0.1' }, res =>
+            const req = request({ host: '127.0.0.1', port, path, method: 'GET', key: client.key, cert: client.cert, ca: client.ca }, res =>
             {
                 const chunks: Buffer[] = []
                 res.on('data', (c: Buffer) => chunks.push(c))
