@@ -5,6 +5,7 @@ import type { Repository } from '@pragmatic-tech-ai/todl'
 import { PolicyScopeCompiler, TodlNodePlacement } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
+import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
@@ -35,6 +36,11 @@ export interface IDevScope
 export interface IDevScopeSource
 {
     ScopeFor(context: AccessContext): Promise<IDevScope>
+    /**
+     * Raised after the source drops its compiled scopes (the security model was invalidated, or the engine upgraded):
+     * every digest handed out before may be superseded, so caches keyed by a digest can drop too.
+     */
+    readonly Dropped: ISignal<void>
 }
 
 /** The tenant security the scope source reads (TenantReadAuthorization): the cached evaluator and its reload signal. */
@@ -117,6 +123,22 @@ class NoPlacementDefaults implements IPlacementDefaults
     }
 }
 
+/** The subscribe side of the scope source's drop signal. */
+class ScopesDropped implements ISignal<void>
+{
+    private readonly signal = new Signal<void>()
+
+    public Subscribe(handler: (value: void) => void): ISubscription
+    {
+        return this.signal.subscribe(handler)
+    }
+
+    public Raise(): void
+    {
+        this.signal.emit(undefined)
+    }
+}
+
 /** A principal's compiled scope for one schema version and security generation (cached; placement is per call). */
 class CompiledScope
 {
@@ -180,6 +202,9 @@ export class DevAccessScopeSource implements IDevScopeSource, IDisposable
     private static readonly HashAlgorithm = 'sha256'
     private static readonly HexEncoding = 'hex'
 
+    public readonly Dropped: ISignal<void>
+
+    private readonly dropped = new ScopesDropped()
     private readonly scopes = new Map<string, Promise<CompiledScope>>()
     private readonly subscriptions: ISubscription[] = []
     private readonly reported = new Set<string>()
@@ -193,6 +218,7 @@ export class DevAccessScopeSource implements IDevScopeSource, IDisposable
         private readonly solutionName: () => Promise<string | undefined> = () => Promise.resolve(undefined),
         private readonly diagnostics: IDevScopeDiagnostics = new LoggerDevScopeDiagnostics())
     {
+        this.Dropped = this.dropped
         if (identityConfigured && readAuthorization === undefined) throw new DevAccessScopeError(DevAccessScopeErrorCode.MissingSecuritySource)
         this.subscriptions.push(host.Changed.Subscribe(() => this.Drop(true)))
         if (readAuthorization !== undefined)
@@ -242,6 +268,7 @@ export class DevAccessScopeSource implements IDevScopeSource, IDisposable
         this.scopes.clear()
         this.reported.clear()
         if (schema) this.schema = undefined
+        this.dropped.Raise()
     }
 
     private async Compile(context: AccessContext, schema: SchemaState, digest: string): Promise<CompiledScope>

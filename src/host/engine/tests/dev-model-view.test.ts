@@ -131,7 +131,18 @@ class DevWorld
     }
 
     /** Opens a solution holding `modelTodl` (none: no solution is opened), with identity and `security` seeded when given. */
-    public static async With(modelTodl: string | undefined, security: ISecurityModelConfig | undefined, body: (world: DevWorld) => Promise<void>): Promise<void>
+    public static With(modelTodl: string | undefined, security: ISecurityModelConfig | undefined, body: (world: DevWorld) => Promise<void>): Promise<void>
+    {
+        return DevWorld.Run(modelTodl, security !== undefined, security, body)
+    }
+
+    /** Identity configured; `security` seeded when given (none: the tenant has no security model, so DenyAll). */
+    public static WithIdentity(modelTodl: string, security: ISecurityModelConfig | undefined, body: (world: DevWorld) => Promise<void>): Promise<void>
+    {
+        return DevWorld.Run(modelTodl, true, security, body)
+    }
+
+    private static async Run(modelTodl: string | undefined, identity: boolean, security: ISecurityModelConfig | undefined, body: (world: DevWorld) => Promise<void>): Promise<void>
     {
         const solution = modelTodl === undefined ? undefined : mkdtempSync(join(tmpdir(), DevWorld.SolutionPrefix))
         const packages = mkdtempSync(join(tmpdir(), DevWorld.PackagesPrefix))
@@ -142,7 +153,7 @@ class DevWorld
             writeFileSync(join(solution, DevWorld.ModelsDir, DevWorld.ModelFileName), modelTodl!)
         }
         PpSecurityHarness.SetKey()
-        const server = security === undefined
+        const server = !identity
             ? new PragmaticServer({ packagesRoot: packages })
             : new PragmaticServer({ packagesRoot: packages, identity: PpSecurityHarness.Identity(identityRoot) })
         let world: DevWorld | undefined
@@ -458,6 +469,27 @@ class SurfaceFx
     public static readonly UnknownNode = 'no.such.node'
 }
 
+/** Typed class nodes: taxonomy term Big (annotated with an icon), classes Premium (eu) and Basic (us), all typed acme.Widget. */
+class ClassFx
+{
+    public static readonly Widget = 'acme.Widget'
+    public static readonly Big = 'acme.Kinds.Big'
+    public static readonly Premium = 'acme.Premium'
+    public static readonly Basic = 'acme.Basic'
+    public static readonly W1 = 'acme.w1'
+    public static readonly IconPath = 'resources/big.svg'
+
+    public static Todl(withPolicy: boolean): string
+    {
+        const policy = withPolicy ? 'policy Widget { allow read when entity.region == "eu"; } ' : ''
+        return 'namespace acme { concept Widget { region : string?; } '
+            + `taxonomy Kinds : represents Widget { term Big { annotate icon { path = "${ClassFx.IconPath}"; } } } `
+            + 'class Widget Premium { region = "eu"; } class Widget Basic { region = "us"; } '
+            + policy
+            + 'model Shop : acme { Widget w1 { region = "eu"; } } }'
+    }
+}
+
 /** The new depth case: w1 owned by `sales`, w2 by `root`; p1 reads Widget at BusinessUnit level from `sales`. */
 class DepthFx
 {
@@ -732,6 +764,10 @@ test('a via that resolves to a visible node is kept and masked by its localId', 
         const masked = FilterFixture.Member(await FilterFixture.All(view, world, DevWorld.Reader(ViewFx.OtherId)), FilterFixture.Eu1)
         assert.ok(masked.edges.every(e => e.via !== FilterFixture.Eu2))
         assert.ok(masked.edges.length > 0)
+        // not vacuous: eu2 itself is visible to p2, and p2 keeps eu1's peer edge to it
+        const otherPage = await FilterFixture.All(view, world, DevWorld.Reader(ViewFx.OtherId))
+        assert.ok(otherPage.items.some(m => m.id === FilterFixture.Eu2))
+        assert.ok(masked.edges.some(e => e.to === FilterFixture.Eu2 && e.via === FilterFixture.Peer))
     })
 })
 
@@ -846,21 +882,87 @@ test('depth hides an instance from model/view', async () =>
     })
 })
 
-test('resources of a hidden instance are empty', async () =>
+test('Hidden reports policy-hidden instances (the model/resources gate)', async () =>
 {
+    // TODL rejects annotations on concrete instances, so an instance holds no resources: this pins the Hidden decision
+    // model/resources asks; the annotated-term tests below show a non-empty result suppressed
     await DevWorld.With(WireFx.PolicyModelTodl, undefined, async world =>
     {
-        const client = world.Connect()
         const view = world.Server.DevModelView()
         for (const hidden of WireFx.HiddenServices)
         {
             assert.equal(await view.Hidden(DevWorld.Owner(), hidden), true)
-            assert.deepEqual(await client.Resources(hidden), [])
         }
         for (const shown of WireFx.VisibleServices)
         {
             assert.equal(await view.Hidden(DevWorld.Owner(), shown), false)
         }
+    })
+})
+
+test('a term and a class typed by a policy-governed concept are judged by its read policy', async () =>
+{
+    await DevWorld.With(ClassFx.Todl(true), undefined, async world =>
+    {
+        const client = world.Connect()
+        const ids = (await client.ModelView(world.MemberId)).items.map(m => m.id)
+        // the term has no region (the policy cannot admit it), Premium is eu, Basic is us
+        assert.ok(!ids.includes(ClassFx.Big))
+        assert.ok(ids.includes(ClassFx.Premium))
+        assert.ok(!ids.includes(ClassFx.Basic))
+        assert.ok(ids.includes(ClassFx.W1))
+        const view = world.Server.DevModelView()
+        assert.equal(await view.Hidden(DevWorld.Owner(), ClassFx.Big), true)
+        assert.equal(await view.Hidden(DevWorld.Owner(), ClassFx.Premium), false)
+        // resources of a hidden term are empty
+        assert.deepEqual(await client.Resources(ClassFx.Big), [])
+    })
+    // control: without the policy every one of them is shown and the term's resource resolves
+    await DevWorld.With(ClassFx.Todl(false), undefined, async world =>
+    {
+        const client = world.Connect()
+        const ids = (await client.ModelView(world.MemberId)).items.map(m => m.id)
+        for (const id of [ClassFx.Big, ClassFx.Premium, ClassFx.Basic]) assert.ok(ids.includes(id), id)
+        assert.deepEqual((await client.Resources(ClassFx.Big)).map(r => r.path), [ClassFx.IconPath])
+    })
+})
+
+test('an annotated term is admitted with its resources under an org read, and DenyAll hides terms and classes', async () =>
+{
+    await DevWorld.WithIdentity(ClassFx.Todl(false), SecurityFx.OrgRead(ClassFx.Widget, [ViewFx.OwnerId]), async world =>
+    {
+        const client = world.Connect()
+        const ids = (await client.ModelView(world.MemberId)).items.map(m => m.id)
+        for (const id of [ClassFx.Big, ClassFx.Premium, ClassFx.Basic, ClassFx.W1]) assert.ok(ids.includes(id), id)
+        assert.deepEqual((await client.Resources(ClassFx.Big)).map(r => r.path), [ClassFx.IconPath])
+    })
+    // identity with no security model: the tenant is DenyAll, so the Widget-typed term and classes are not admitted
+    await DevWorld.WithIdentity(ClassFx.Todl(false), undefined, async world =>
+    {
+        const client = world.Connect()
+        const ids = (await client.ModelView(world.MemberId)).items.map(m => m.id)
+        for (const id of [ClassFx.Big, ClassFx.Premium, ClassFx.Basic, ClassFx.W1]) assert.ok(!ids.includes(id), id)
+        assert.ok(ids.includes(ClassFx.Widget))
+        assert.deepEqual(await client.Resources(ClassFx.Big), [])
+        assert.equal(await world.Server.DevModelView().Hidden(DevWorld.Owner(), ClassFx.Big), true)
+    })
+})
+
+test('a role downgrade hides an instance on the next model/view and stales an old cursor', async () =>
+{
+    await DevWorld.WithIdentity(DepthFx.Todl, SecurityFx.Qualify(PpSecurityHarness.OrgSecurityModel(ViewFx.OwnerId), DepthFx.Widget), async world =>
+    {
+        const client = world.Connect()
+        assert.ok((await client.ModelView(world.MemberId)).items.some(m => m.id === DepthFx.W2))
+        const first = await client.ModelView(world.MemberId, { pageSize: 1 })
+        assert.ok(first.nextCursor !== undefined)
+        await PpSecurityHarness.Seed(world.Server, DepthFx.Bu())
+        const reload = await world.Server.SecurityModelReload()
+        reload.Invalidate(PpSecurityHarness.TenantId)
+        const ids = (await client.ModelView(world.MemberId)).items.map(m => m.id)
+        assert.ok(!ids.includes(DepthFx.W2))
+        assert.ok(ids.includes(DepthFx.W1))
+        await assert.rejects(() => client.ModelView(world.MemberId, { cursor: first.nextCursor, pageSize: 1 }), DevWorld.IsStale)
     })
 })
 

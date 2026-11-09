@@ -1,8 +1,8 @@
-import type { GraphEngine, GraphReader, ISubscription } from '@pragmatic-tech-ai/graph'
+import type { GraphEngine, GraphReader, ISubscription, MemberDef } from '@pragmatic-tech-ai/graph'
 import { ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ModelViewPageDto, PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { Node, Repository } from '@pragmatic-tech-ai/todl'
-import { TodlNames } from '@pragmatic-tech-ai/todl/engine'
+import { SnapshotDescriber, TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable, IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { PagingLimits } from '../../config/paging-limits.js'
@@ -104,11 +104,13 @@ class VisibleInstances
 }
 
 /**
- * The visible-instance sets of the latest engine state (schema version and commit), one per scope digest. A read at
- * another state drops them all; so does the host's `Changed` (an applied upgrade).
+ * The visible-instance sets of the latest engine state (schema version and commit), one per scope digest, at most
+ * {@link VisibleInstanceCache.MaxScopes} (least recently used dropped first). A read at another state drops them all;
+ * so do the host's `Changed` (an applied upgrade) and the scope source's `Dropped` (a security-model invalidation).
  */
 class VisibleInstanceCache
 {
+    public static readonly MaxScopes = 32
     private static readonly StateSeparator = '\u0000'
 
     private state: string | undefined
@@ -123,11 +125,18 @@ class VisibleInstanceCache
             this.state = state
         }
         let visible = this.byDigest.get(digest)
-        if (visible === undefined)
+        if (visible !== undefined)
+        {
+            // most recently used last
+            this.byDigest.delete(digest)
+            this.byDigest.set(digest, visible)
+        }
+        else
         {
             const built = VisibleInstances.Of(reader, root)
             visible = built
             this.byDigest.set(digest, built)
+            if (this.byDigest.size > VisibleInstanceCache.MaxScopes) this.byDigest.delete(this.byDigest.keys().next().value!)
             built.catch(() =>
             {
                 if (this.byDigest.get(digest) === built) this.byDigest.delete(digest)
@@ -144,46 +153,58 @@ class VisibleInstanceCache
 }
 
 /**
- * Maps the engine's answer for one caller onto the language-service structure. An INSTANCE (a typed, non-class node)
- * is kept iff the engine shows it to the scope with the same concept; terms and classes (typed class nodes) and
- * untyped nodes (schema, models, policies) are kept, as before. A kept instance's fields are masked by the scope's
- * hidden members for its concept (`GraphReader.HiddenMembers`, which includes HiddenExact); a typed non-instance is
- * masked by its type's hidden members when the engine knows that concept, else all its fields are masked (fail-closed).
+ * Maps the engine's answer for one caller onto the language-service structure; it decides nothing itself.
  *
- * Unsaved buffers: the structure may hold an instance the saved snapshot lacks (or whose concept the buffer changed).
- * Such an instance is hidden unless the scope restricts no read (no identity and no policy), where it is visible as
- * before: visibility of unsaved edits is never guessed.
+ * - Untyped nodes (schema, models, policies) are always kept, as before.
+ * - An INSTANCE (a typed node with `isClass` false) is kept iff the engine shows it to the scope with the same concept
+ *   (the scope's `ScanNodes('todl.Element')` + `ConceptOf`).
+ * - A typed CLASS node (a class, or a taxonomy term: TODL types a term with its taxonomy's represented concept) is not
+ *   an engine instance under that concept, so the engine is asked about it as a hypothetical node: `GraphReader.Admits
+ *   (node.type, its attrs as seed property values)` (R95; the values converted by TODL `SnapshotDescriber.SeedProperties`).
+ *   This is the legacy rule (each typed node judged by its concept's read rules on its own attrs) with the engine's
+ *   answer: identity and edge predicates are Unknown there and fail closed, an unknown concept is never admitted.
+ * - Fields of a kept typed node are masked by `GraphReader.HiddenMembers(node.type)` (HiddenExact included), for
+ *   instances and class nodes alike. A taxonomy term is held by the engine as a `todl.Term` node, but in the
+ *   structure it is typed by the represented concept, and the legacy mask asked that concept too, so its attrs are
+ *   masked by that concept's hidden members, not by todl.Term's. A typed node whose concept the engine lacks has every
+ *   field masked (fail-closed).
+ * - Under a scope that restricts no read (no identity and no policy) every node is kept and nothing is masked.
+ *
+ * Unsaved buffers (ruling T8-a): the structure may hold an instance the saved snapshot lacks (or whose concept the
+ * buffer changed). Such an instance is hidden unless the scope restricts no read, where it is visible as before:
+ * visibility of unsaved edits is never guessed. (Class nodes are judged on their buffer attrs: they are not engine
+ * instances, so there is no saved answer to prefer.)
  */
 class EngineModelGate implements IModelNodeGate, IMemberReadGate
 {
+    private static readonly NoMembers: readonly MemberDef[] = []
+
     public constructor(private readonly reader: GraphReader, private readonly visible: VisibleInstances)
     {
     }
 
     public Keeps(node: Node): boolean
     {
-        if (!EngineModelGate.IsInstance(node) || this.visible.Unrestricted) return true
+        if (node.type === null || this.visible.Unrestricted) return true
+        if (node.isClass) return this.reader.Admits(node.type, SnapshotDescriber.SeedProperties(this.MembersOf(node.type), node.attrs, node.class))
         return this.visible.ConceptOf(node.id) === node.type
     }
 
     public CanRead(node: Node, field: string): boolean
     {
         if (node.type === null || this.visible.Unrestricted) return true
-        const hidden = this.HiddenOf(node.type)
-        return hidden !== undefined && !hidden.has(field)
+        return this.IsConcept(node.type) && !this.reader.HiddenMembers(node.type).has(field)
     }
 
-    /** The members the scope hides on `concept`; undefined when the engine does not know it as a concept. */
-    private HiddenOf(concept: string): ReadonlySet<string> | undefined
+    private MembersOf(concept: string): readonly MemberDef[]
+    {
+        return this.IsConcept(concept) ? this.reader.Catalog.EffectiveMembers(concept) : EngineModelGate.NoMembers
+    }
+
+    private IsConcept(concept: string): boolean
     {
         const catalog = this.reader.Catalog
-        if (!catalog.Has(concept) || catalog.IsAspect(concept)) return undefined
-        return this.reader.HiddenMembers(concept)
-    }
-
-    private static IsInstance(node: Node): boolean
-    {
-        return node.type !== null && !node.isClass
+        return catalog.Has(concept) && !catalog.IsAspect(concept)
     }
 }
 
@@ -207,8 +228,8 @@ class EngineRead
  *   fingerprint = `modelView`, member id, `GraphRevision` (read once the view is in hand), engine schema version,
  *   engine commit, scope digest: a cursor is stale after any structure edit, upgrade or commit, and for another caller.
  * - Hidden: the first member whose structure resolves the id decides; an unknown id is not hidden.
- * - The visible-instance set (a `todl.Element` scan) is cached per scope digest for the latest engine state and
- *   dropped on the host's `Changed`. A read that saw the engine upgrade is repeated (`MaxAttempts`).
+ * - The visible-instance set (a `todl.Element` scan) is cached per scope digest for the latest engine state (an LRU of
+ *   at most 32 digests) and dropped on the host's `Changed` and the scope source's `Dropped`. A read that saw the engine upgrade is repeated (`MaxAttempts`).
  */
 export class DevModelView implements IDevModelView, IDisposable
 {
@@ -218,7 +239,9 @@ export class DevModelView implements IDevModelView, IDisposable
     private static readonly FingerprintTag = 'modelView'
 
     private readonly cache = new VisibleInstanceCache()
-    private readonly subscription: ISubscription
+    private readonly subscriptions: ISubscription[] = []
+    /** The scope source whose `Dropped` the cache follows (subscribed on first use: the source is built lazily). */
+    private followed: IDevScopeSource | undefined
 
     public constructor(
         private readonly host: IDevGraphEngine,
@@ -226,7 +249,7 @@ export class DevModelView implements IDevModelView, IDisposable
         private readonly solution: () => Promise<IDevModelSolution | undefined>,
         private readonly structure: () => Promise<IDevModelStructure>)
     {
-        this.subscription = host.Changed.Subscribe(() => this.cache.Clear())
+        this.subscriptions.push(host.Changed.Subscribe(() => this.cache.Clear()))
     }
 
     public async Page(context: AccessContext, memberId: string | undefined, page: IDevModelViewPage): Promise<ModelViewPageDto>
@@ -288,7 +311,8 @@ export class DevModelView implements IDevModelView, IDisposable
 
     public dispose(): void
     {
-        this.subscription.dispose()
+        for (const subscription of this.subscriptions.splice(0)) subscription.dispose()
+        this.followed = undefined
         this.cache.Clear()
     }
 
@@ -299,7 +323,7 @@ export class DevModelView implements IDevModelView, IDisposable
         {
             const engine = await this.host.Engine()
             const version = engine.SchemaVersion
-            const scope = await (await this.scopes()).ScopeFor(context)
+            const scope = await this.Follow(await this.scopes()).ScopeFor(context)
             let reader: GraphReader
             try
             {
@@ -325,6 +349,17 @@ export class DevModelView implements IDevModelView, IDisposable
             }
         }
         throw new DevModelViewError(DevModelViewErrorCode.Unsettled)
+    }
+
+    /** Subscribes the cache to `source.Dropped` once per source (a rebuilt source is followed afresh). */
+    private Follow(source: IDevScopeSource): IDevScopeSource
+    {
+        if (this.followed !== source)
+        {
+            this.followed = source
+            this.subscriptions.push(source.Dropped.Subscribe(() => this.cache.Clear()))
+        }
+        return source
     }
 
     private static Moved(engine: GraphEngine, version: string): boolean
