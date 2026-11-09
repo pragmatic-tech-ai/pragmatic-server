@@ -47,7 +47,7 @@ export class EnvironmentGraph
     public static async Build(storage: IStorage, graphName: string, refs: readonly PackageRef[]): Promise<EnvironmentGraph>
     {
         const domain = await RuntimeAppGraph.BuildDomainFromPackages(new StoragePackageSource(storage), refs)
-        const base = new GraphQuery(domain.graph)
+        const base = new GraphQuery(domain.Snapshot)
         const plan = await AppConnectorPlan.ForPackages(storage, refs, graphName, EnvironmentGraph.PlanVersion)
         const record: GraphLoadedDto = { name: graphName, packages: EnvironmentGraph.CopyRefs(refs), promotedAt: new Date().toISOString() }
         return new EnvironmentGraph(base, plan, domain, record)

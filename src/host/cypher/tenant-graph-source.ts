@@ -70,9 +70,9 @@ export class TenantGraphComposition
         {
             // BindSeed mutates nodes (folds edges into refs); clone so the cached artifact stays pristine.
             const seed: SeedGraph = { nodes: structuredClone(artifact.seedNodes), edges: structuredClone(artifact.seedEdges) }
-            domain.graph.BindSeed(seed, last.ref)
+            domain.Snapshot.BindSeed(seed, last.ref)
         }
-        return new GraphQuery(domain.graph)
+        return new GraphQuery(domain.Snapshot)
     }
 
     /** Key-order-independent serialization used to compare node data. */

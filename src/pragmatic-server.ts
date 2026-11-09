@@ -777,7 +777,7 @@ export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
         const packagesStorage = this.PackagesStorage()
         const domain = await RuntimeAppGraph.BuildDomain(new StoragePackageSource(packagesStorage), manifest)
         const plan = await AppConnectorPlan.For(packagesStorage, manifest)
-        const nativeBase = new GraphQuery(domain.graph)
+        const nativeBase = new GraphQuery(domain.Snapshot)
         const connectorName = `${PragmaticServer.BuiltinConnectorPrefix}${manifest.name}${PragmaticServer.AppGraphKeySeparator}${manifest.version}`
         const augmented = BuiltinBindings.Augment(plan, nativeBase, connectorName, this.DataRootFor(manifest.name), this.BuiltinEngine())
         return { domain, plan: augmented.plan, nativeBase, defaultConcepts: augmented.defaultConcepts, ownConcepts: PragmaticServer.OwnConcepts(domain, nativeBase, manifest) }

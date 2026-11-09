@@ -19,7 +19,7 @@ export class RuntimeAppGraph
 
     public static async BuildQueryFromPackages(source: StoragePackageSource, refs: readonly PragmaticAppPackageRef[]): Promise<IGraphQuery>
     {
-        return new GraphQuery((await RuntimeAppGraph.BuildDomainFromPackages(source, refs)).graph)
+        return new GraphQuery((await RuntimeAppGraph.BuildDomainFromPackages(source, refs)).Snapshot)
     }
 
     /** Loads every manifest package into a fresh Domain. */
@@ -30,6 +30,6 @@ export class RuntimeAppGraph
 
     public static async BuildQuery(source: StoragePackageSource, manifest: PragmaticAppManifest): Promise<IGraphQuery>
     {
-        return new GraphQuery((await RuntimeAppGraph.BuildDomain(source, manifest)).graph)
+        return new GraphQuery((await RuntimeAppGraph.BuildDomain(source, manifest)).Snapshot)
     }
 }
