@@ -12,7 +12,7 @@ class ServerGraphFixture
     private static readonly SolutionPrefix = 'sg-sol-'
     private static readonly PackagesPrefix = 'sg-pkgs-'
     private static readonly ModelFile = join('models', 'model.todl')
-    private static readonly ModelTodl = 'namespace acme { concept Widget { label : string?; } model Shop : acme { Widget w1 {} Widget w2 {} } }'
+    private static readonly ModelTodl = 'namespace acme { concept Widget { } model Shop : acme { Widget w1 {} Widget w2 {} } }'
     private static readonly ExpectedCount = 2
     private static readonly CountQuery = 'MATCH (x) RETURN count(x) AS c'
 

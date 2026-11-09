@@ -34,7 +34,7 @@ class RuntimeSurfaceFixture
     private static readonly Element = 'Element'
     private static readonly StringType = 'string'
     private static readonly SolutionModelFile = join('models', 'model.todl')
-    private static readonly SolutionModel = 'namespace acme { concept Service { label : string?; } model Shop : acme { Service s1 { label = "alpha"; } } }'
+    private static readonly SolutionModel = 'namespace acme { concept Service { } model Shop : acme { Service s1 { label = "alpha"; } } }'
     public static readonly Version = '1.0.0'
     public static readonly Widget = 'Widget'
     public static readonly Gadget = 'Gadget'

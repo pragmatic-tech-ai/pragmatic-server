@@ -31,13 +31,13 @@ namespace shop {
 `
     private static readonly PlainTodl = `
 namespace plain {
-  concept Widget { label : string; }
+  concept Widget { }
 }
 `
     // Same bare connector name "pg" as shop, but a different namespace -> a distinct qualified id.
     private static readonly InventoryTodl = `
 namespace inventory {
-  concept Item { label : string; }
+  concept Item { }
   datasource pg { kind = sql; database = "inv"; }
   model Inv : inventory {
     annotate entrypoint { }

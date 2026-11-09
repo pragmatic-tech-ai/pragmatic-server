@@ -32,7 +32,7 @@ class CypherSurfaceFixture
     private static readonly SecondMemberEntry = '{ "path": "models2", "type": "meta-model" }'
     private static readonly FirstMemberEntry = '{ "path": "models", "type": "meta-model" }'
     public static readonly SecondModelTodl = 'namespace acme { model Extra : acme { Service s3 { label = "gamma"; } } }'
-    public static readonly RegionModelTodl = 'namespace acme { concept Account { region : string?; label : string?; } policy Account { allow read when entity.region == "eu"; } model Bank : acme { Account a1 { region = "eu"; label = "visible"; } Account a2 { region = "us"; label = "hidden"; } } }'
+    public static readonly RegionModelTodl = 'namespace acme { concept Account { region : string?; } policy Account { allow read when entity.region == "eu"; } model Bank : acme { Account a1 { region = "eu"; label = "visible"; } Account a2 { region = "us"; label = "hidden"; } } }'
     public static readonly LabelQuery = 'MATCH (a:Service) RETURN a.label'
     public static readonly OrderedQuery = 'MATCH (a) RETURN a.label ORDER BY a.label'
     public static readonly CrossOrderedQuery = 'MATCH (a), (b) RETURN a.label ORDER BY a.label'
@@ -105,7 +105,7 @@ class CypherSurfaceFixture
     private static readonly SolutionPrefix = 'cs-sol-'
     private static readonly PackagesPrefix = 'cs-pkgs-'
     private static readonly ModelFile = join('models', 'model.todl')
-    private static readonly ModelTodl = 'namespace acme { concept Service { label : string?; } model Shop : acme { Service s1 { label = "alpha"; } Service s2 { label = "beta"; } } }'
+    private static readonly ModelTodl = 'namespace acme { concept Service { } model Shop : acme { Service s1 { label = "alpha"; } Service s2 { label = "beta"; } } }'
     private static readonly NoConnectors = 'no connectors'
     public static readonly NameQuery = 'MATCH (a) RETURN a.label'
     public static readonly ParamQuery = 'MATCH (a) WHERE a.label = $n RETURN a.label'

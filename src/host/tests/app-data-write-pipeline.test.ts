@@ -28,8 +28,8 @@ class WriteFixture
     private static readonly CreateGadget = 'CREATE TABLE "Gadget" (gadget_id text PRIMARY KEY, label text)'
     private static readonly Todl = `
 namespace shop {
-  concept Widget { label : string; }
-  concept Gadget { label : string; }
+  concept Widget { }
+  concept Gadget { }
   datasource pg { kind = sql; database = "app"; }
   model Shop : shop {
     annotate entrypoint { }

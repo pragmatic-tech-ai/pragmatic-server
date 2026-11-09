@@ -26,7 +26,7 @@ class IdFixture
     private static readonly Labels = 'MATCH (w:Widget) RETURN w.owningBu AS bu'
     private static readonly Todl = `
 namespace shop {
-  concept Widget { label : string; owningBu : string; }
+  concept Widget { owningBu : string; }
   model Shop : shop {
     annotate entrypoint { }
     Widget w0 { label = "seed"; owningBu = "root"; }

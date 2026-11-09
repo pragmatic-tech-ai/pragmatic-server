@@ -185,15 +185,15 @@ class WireWorld
     private static readonly NoGraph = 'no graph'
     public static readonly ServiceConcept = 'acme.Service'
     public static readonly Label = 'label'
-    public static readonly ModelTodl = 'namespace acme { concept Service { label : string?; } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } } }'
-    public static readonly PolicyModelTodl = 'namespace acme { concept Service { label : string?; } policy Service { allow read when entity.label == "a"; allow read when entity.label == "b"; allow read when entity.label == "c"; } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } } }'
+    public static readonly ModelTodl = 'namespace acme { concept Service { } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } } }'
+    public static readonly PolicyModelTodl = 'namespace acme { concept Service { } policy Service { allow read when entity.label == "a"; allow read when entity.label == "b"; allow read when entity.label == "c"; } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } } }'
     public static readonly HiddenServices = ['acme.s1', 'acme.s4']
     public static readonly VisibleServices = ['acme.s2', 'acme.s3', 'acme.s5']
     public static readonly RevisionMustMove = 'the edit must move the graph revision'
     private static readonly OwnerId = 'p1'
     private static readonly TenantId = 't1'
     private static readonly TenantName = 'Tenant One'
-    public static readonly EditedModelTodl = 'namespace acme { concept Service { label : string?; } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } Service s6 { label = "f"; } } }'
+    public static readonly EditedModelTodl = 'namespace acme { concept Service { } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } Service s6 { label = "f"; } } }'
 
     public readonly Language: SolutionLanguageService
     private readonly server: PragmaticServer

@@ -1,1 +1,1 @@
-namespace acme { concept Widget { label : string?; } }
+namespace acme { concept Widget { } }

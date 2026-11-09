@@ -102,7 +102,7 @@ class ModelScopedFixture
         const widget = PpSecurityHarness.Concept
         const ns = ModelScopedFixture.Namespace
         const row = (id: string, owner: string, label: string): string => `${widget} ${id} { ${bu} = "${owner}"; label = "${label}"; secret = "${ModelScopedFixture.Secret}"; } `
-        return `namespace ${ns} { concept ${widget} { ${bu} : string?; label : string?; secret : string?; } `
+        return `namespace ${ns} { concept ${widget} { ${bu} : string?; secret : string?; } `
             + `model ShopA : ${ns} { ${row('a1', sales, 'alpha')}${row('a2', root, 'beta')}${row('a3', sales, 'alpha2')} } `
             + `model ShopB : ${ns} { ${row('b1', sales, 'gamma')} } `
             + `model ShopC : ${ns} { ${row('c1', root, 'delta')} } }`

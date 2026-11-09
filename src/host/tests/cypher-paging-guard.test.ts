@@ -22,7 +22,7 @@ class PagingGuardFixture
     private static readonly PackagesPrefix = 'cpg-pkgs-'
     private static readonly ModelFile = join('models', 'model.todl')
     private static readonly NoConnectors = 'no connectors'
-    private static readonly ModelTodl = 'namespace acme { concept Service { label : string?; } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } } }'
+    private static readonly ModelTodl = 'namespace acme { concept Service { } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } } }'
 
     public static IsInvalidParams(error: { code?: number, message?: string }): boolean
     {

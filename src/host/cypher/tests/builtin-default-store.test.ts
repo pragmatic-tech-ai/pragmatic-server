@@ -41,8 +41,8 @@ class BuiltinFixture
     public static readonly GadgetConcept = 'shop.Gadget'
     public static readonly WithConnector = `
 namespace shop {
-  concept Widget { owningBu : string; label : string; }
-  concept Gadget { label : string; }
+  concept Widget { owningBu : string; }
+  concept Gadget { }
   datasource pg { kind = sql; database = "app"; }
   model Shop : shop {
     annotate entrypoint { }
@@ -55,7 +55,7 @@ namespace shop {
 `
     public static readonly NoConnector = `
 namespace shop {
-  concept Widget { owningBu : string; label : string; }
+  concept Widget { owningBu : string; }
   model Shop : shop {
     annotate entrypoint { }
     Widget w0 { owningBu = "sales"; label = "seed-W"; }

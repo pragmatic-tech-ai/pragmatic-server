@@ -32,7 +32,7 @@ class ServerGraphDepthFixture
         const instances = `${concept} w1 { ${field} = "${PpSecurityHarness.SalesBu}"; label = "${ServerGraphDepthFixture.SalesLabelA}"; } `
             + `${concept} w2 { ${field} = "${PpSecurityHarness.RootBu}"; label = "${ServerGraphDepthFixture.RootLabel}"; } `
             + `${concept} w3 { ${field} = "${PpSecurityHarness.SalesBu}"; label = "${ServerGraphDepthFixture.SalesLabelB}"; }`
-        return `namespace ${ServerGraphDepthFixture.Namespace} { concept ${concept} { ${field} : string?; label : string?; } ${policy}model Shop : ${ServerGraphDepthFixture.Namespace} { ${instances} } }`
+        return `namespace ${ServerGraphDepthFixture.Namespace} { concept ${concept} { ${field} : string?; } ${policy}model Shop : ${ServerGraphDepthFixture.Namespace} { ${instances} } }`
     }
 
     public static Labels(graph: GraphParam): string[]

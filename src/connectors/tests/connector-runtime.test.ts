@@ -179,7 +179,7 @@ namespace shop {
 
     private static readonly CrmMeta = `
 namespace crm {
-  concept Account { label : string; }
+  concept Account { }
   datasource acct { kind = sql; }
   model Crm : crm {
     annotate entrypoint { }

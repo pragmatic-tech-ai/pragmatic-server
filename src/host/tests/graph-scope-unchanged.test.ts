@@ -32,7 +32,7 @@ class ScopeFixture
     {
         const bu = PpSecurityHarness.OwningBuField
         const sales = PpSecurityHarness.SalesBu
-        return `namespace acme { concept Widget { ${bu} : string?; label : string?; } concept Gadget { ${bu} : string?; label : string?; } `
+        return `namespace acme { concept Widget { ${bu} : string?; } concept Gadget { ${bu} : string?; } `
             + `model Shop : acme { Widget w1 { ${bu} = "${sales}"; label = "W1"; } Gadget g1 { ${bu} = "${sales}"; label = "G1"; } } }`
     }
 

@@ -80,8 +80,8 @@ class CypherPagingFixture
     private static readonly ModelFile = join('models', 'model.todl')
     public static readonly ModelFileName = 'model.todl'
     public static readonly NoConnectors = 'no connectors'
-    public static readonly ModelTodl = 'namespace acme { concept Service { label : string?; } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } } }'
-    public static readonly EditedModelTodl = 'namespace acme { concept Service { label : string?; } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } Service s6 { label = "f"; } } }'
+    public static readonly ModelTodl = 'namespace acme { concept Service { } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } } }'
+    public static readonly EditedModelTodl = 'namespace acme { concept Service { } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } Service s6 { label = "f"; } } }'
     public static readonly OrderedLabels = 'MATCH (a:Service) RETURN a.label ORDER BY a.label'
     public static readonly UnorderedLabels = 'MATCH (a:Service) RETURN a.label'
     public static readonly UnwindQuery = 'UNWIND $xs AS x RETURN x'

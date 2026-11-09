@@ -6,7 +6,7 @@ import { SolutionConnectorPlanner } from '../solution-connector-planner.js'
 const META = `
 namespace shop {
   concept Customer { name : string; }
-  concept Lead { label : string; }
+  concept Lead { }
   datasource pg { kind = sql; }
   model Shop : shop {
     annotate entrypoint { }

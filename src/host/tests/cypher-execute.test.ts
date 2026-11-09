@@ -118,7 +118,7 @@ class ExecFixture
     public static SchemaTodl(): string
     {
         const bu = PpSecurityHarness.OwningBuField
-        return `namespace acme { concept ${PpSecurityHarness.Concept} { ${bu} : string?; label : string?; secret : string?; } model BaseM : acme { ${PpSecurityHarness.Concept} b1 { label = "basey"; } } }`
+        return `namespace acme { concept ${PpSecurityHarness.Concept} { ${bu} : string?; secret : string?; } model BaseM : acme { ${PpSecurityHarness.Concept} b1 { label = "basey"; } } }`
     }
 
     public static ModelTodl(): string
@@ -151,7 +151,7 @@ class ExecFixture
 
     public static CoLocatedConcept(): string
     {
-        return `concept ${PpSecurityHarness.Concept} { ${PpSecurityHarness.OwningBuField} : string?; label : string?; secret : string?; }`
+        return `concept ${PpSecurityHarness.Concept} { ${PpSecurityHarness.OwningBuField} : string?; secret : string?; }`
     }
 
     public static CoLocatedTodl(): string

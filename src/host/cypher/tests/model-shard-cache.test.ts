@@ -21,7 +21,7 @@ class CountingShardCache extends ModelShardCache
 
 class ShardFixture
 {
-    public static readonly Source = 'namespace acme { concept Widget { label : string?; } '
+    public static readonly Source = 'namespace acme { concept Widget { } '
         + 'model ShopA : acme { Widget a1 { label = "alpha"; } } model ShopB : acme { Widget b1 { label = "beta"; } } }'
 
     public static Repo(): Repository

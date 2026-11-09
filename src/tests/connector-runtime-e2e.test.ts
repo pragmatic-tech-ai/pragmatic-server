@@ -21,7 +21,7 @@ namespace shop {
   }
 }
 `
-    public static readonly PlainModelTodl = 'namespace acme { concept Widget { label : string?; } }'
+    public static readonly PlainModelTodl = 'namespace acme { concept Widget { } }'
 
     private static WriteSolution(dir: string, modelTodl: string): void
     {

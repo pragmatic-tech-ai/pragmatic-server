@@ -39,9 +39,9 @@ class ConnectorReadFixture
     private static readonly UpdateWidget = `UPDATE "Widget" SET label = 'S1-changed' WHERE widget_id = 'w1'`
     private static readonly Todl = `
 namespace shop {
-  concept Widget { owningBu : string; label : string; }
-  concept Gadget { label : string; }
-  concept Note { label : string; relationship link -> Widget?; relationship peer -> Note?; }
+  concept Widget { owningBu : string; }
+  concept Gadget { }
+  concept Note { relationship link -> Widget?; relationship peer -> Note?; }
   datasource pg { kind = sql; database = "app"; }
   datasource bad { kind = sql; database = "broken"; }
   model Shop : shop {
