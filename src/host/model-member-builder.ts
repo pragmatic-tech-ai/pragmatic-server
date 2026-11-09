@@ -5,23 +5,45 @@ import type { IFieldReadMask } from './cypher/field-masked-graph-query.js'
 import { WireScalar } from './wire-scalar.js'
 import type { WireScalarValue } from './wire-scalar.js'
 
+/** Which of a visible node's fields (attrs and edge-carrying members) the reader may read. */
+export interface IMemberReadGate
+{
+    CanRead(node: Node, field: string): boolean
+}
+
 /**
- * Maps a visible model Node plus its out-edges to a ModelMemberDto under a field-read mask. Used ONLY by
- * ModelReadFilter, which owns visibility: it hands over the set of visible node ids, so the builder never
- * decides which nodes are hidden, only which of a visible node's attrs and edges survive.
+ * The field-read mask as a member gate: untyped nodes are ontology definitions / model containers (never
+ * policy-governed instances), so field security does not apply to them; every typed node asks the mask for its type.
+ */
+export class FieldReadMaskGate implements IMemberReadGate
+{
+    public constructor(private readonly mask: IFieldReadMask)
+    {
+    }
+
+    public CanRead(node: Node, field: string): boolean
+    {
+        return node.type === null || this.mask.CanRead(node.type, field)
+    }
+}
+
+/**
+ * Maps a visible model Node plus its out-edges to a ModelMemberDto under a member gate (a field-read mask, or the dev
+ * engine scope's hidden members). Used ONLY by ModelProjection, which owns visibility: it hands over the set of visible
+ * node ids, so the builder never decides which nodes are hidden, only which of a visible node's attrs and edges survive.
  */
 export class ModelMemberBuilder
 {
     private static readonly Absent = ''
 
     private readonly model: Repository
-    private readonly mask: IFieldReadMask
+    private readonly gate: IMemberReadGate
     private readonly visible: ReadonlySet<string>
 
-    public constructor(model: Repository, mask: IFieldReadMask, visible: ReadonlySet<string>)
+    public constructor(model: Repository, gate: IMemberReadGate, visible: ReadonlySet<string>)
     {
         this.model = model
-        this.mask = mask
+        this.gate = gate
         this.visible = visible
     }
 
@@ -44,7 +66,7 @@ export class ModelMemberBuilder
         const attrs: Record<string, WireScalarValue> = {}
         for (const [name, value] of node.attrs)
         {
-            if (this.CanRead(node, name))
+            if (this.gate.CanRead(node, name))
             {
                 attrs[name] = WireScalar.Of(value)
             }
@@ -83,13 +105,6 @@ export class ModelMemberBuilder
         {
             return false
         }
-        return this.CanRead(node, viaNode?.localId ?? edge.via)
-    }
-
-    private CanRead(node: Node, field: string): boolean
-    {
-        // untyped nodes are ontology definitions / model containers (never policy-governed instances), so field
-        // security does not apply; matches ModelReadFilter.keep
-        return node.type === null || this.mask.CanRead(node.type, field)
+        return this.gate.CanRead(node, viaNode?.localId ?? edge.via)
     }
 }

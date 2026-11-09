@@ -1,21 +1,18 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, cpSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { InMemoryMessageSocket, PragmaticClient, CursorStaleError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { ModelViewPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { Repository, EdgeKind } from '@pragmatic-tech-ai/todl'
-import type { SolutionManagerService, Edge } from '@pragmatic-tech-ai/todl'
-import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
-import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+import type { Edge } from '@pragmatic-tech-ai/todl'
+import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { ModelReadFilter } from '../model-read-filter.js'
 import type { ModelMemberPage } from '../model-read-filter.js'
 import { AllowAllFieldReadMask } from '../cypher/field-masked-graph-query.js'
 import type { IFieldReadMask } from '../cypher/field-masked-graph-query.js'
-import type { IFieldReadMaskSource } from '../cypher/read-filter-source.js'
-import { PragmaticServer } from '../../pragmatic-server.js'
-import { ServerConnectionHandler } from '../server-connection-handler.js'
+
+/*
+ * The runtime (non-dev) ModelReadFilter over an in-memory repository. The dev tenant's model/view runs on the dev
+ * graph engine (DevModelView): this file's wire cases, and engine ports of every case here, live in
+ * host/engine/tests/dev-model-view.test.ts.
+ */
 
 /** Denies exactly one (concept, field) pair; every other field is readable. */
 class DenyOneFieldMask implements IFieldReadMask
@@ -44,16 +41,6 @@ class RecordingFieldMask implements IFieldReadMask
     {
         this.Asked.push(RecordingFieldMask.Key(concept, field))
         return true
-    }
-}
-
-class DenyOneFieldMaskSource implements IFieldReadMaskSource
-{
-    constructor(private readonly mask: IFieldReadMask) {}
-
-    public async FieldReadMaskFor(): Promise<IFieldReadMask>
-    {
-        return this.mask
     }
 }
 
@@ -174,129 +161,6 @@ class FilterFixture
     }
 }
 
-/** One open sample solution with five Services, plus attached client connections. */
-class WireWorld
-{
-    private static readonly SolutionPrefix = 'mv-sol-'
-    private static readonly PackagesPrefix = 'mv-pkgs-'
-    private static readonly ModelFile = join('models', 'model.todl')
-    private static readonly ModelFileName = 'model.todl'
-    private static readonly NoConnectors = 'no connectors'
-    private static readonly NoGraph = 'no graph'
-    public static readonly ServiceConcept = 'acme.Service'
-    public static readonly Label = 'label'
-    public static readonly ModelTodl = 'namespace acme { concept Service { } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } } }'
-    public static readonly PolicyModelTodl = 'namespace acme { concept Service { } policy Service { allow read when entity.label == "a"; allow read when entity.label == "b"; allow read when entity.label == "c"; } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } } }'
-    public static readonly HiddenServices = ['acme.s1', 'acme.s4']
-    public static readonly VisibleServices = ['acme.s2', 'acme.s3', 'acme.s5']
-    public static readonly RevisionMustMove = 'the edit must move the graph revision'
-    private static readonly OwnerId = 'p1'
-    private static readonly TenantId = 't1'
-    private static readonly TenantName = 'Tenant One'
-    public static readonly EditedModelTodl = 'namespace acme { concept Service { } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } Service s6 { label = "f"; } } }'
-
-    public readonly Language: SolutionLanguageService
-    private readonly server: PragmaticServer
-    private readonly manager: SolutionManagerService
-    private readonly connections: { client: PragmaticClient, handler: ServerConnectionHandler }[] = []
-
-    private constructor(server: PragmaticServer, language: SolutionLanguageService, manager: SolutionManagerService)
-    {
-        this.server = server
-        this.Language = language
-        this.manager = manager
-    }
-
-    public get MemberId(): string
-    {
-        return [...this.manager.ActiveSolution!.Members][0]!.Ref.path
-    }
-
-    public get ModelUri(): string
-    {
-        const member = [...this.manager.ActiveSolution!.Members][0]!
-        return `${member.Storage!.Root}/${WireWorld.ModelFileName}`
-    }
-
-    public static Permissive(): AccessContext
-    {
-        const tenant = new Tenant(WireWorld.TenantId, TenantKind.SelfHosted, WireWorld.TenantName)
-        const principal = new Principal(WireWorld.OwnerId, WireWorld.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant(WireWorld.OwnerId, Role.Owner, new ResourceRef(ResourceKind.Tenant, WireWorld.TenantId, []))]
-        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
-    }
-
-    public Connect(fieldMasks?: IFieldReadMaskSource): PragmaticClient
-    {
-        const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, WireWorld.Permissive(), () => Promise.reject(new Error(WireWorld.NoConnectors)), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, fieldMasks)
-        const client = PragmaticClient.CreateOverSocket(clientSocket)
-        this.connections.push({ client, handler })
-        return client
-    }
-
-    public static async With(body: (world: WireWorld) => Promise<void>, modelTodl: string = WireWorld.ModelTodl): Promise<void>
-    {
-        const solution = mkdtempSync(join(tmpdir(), WireWorld.SolutionPrefix))
-        const packages = mkdtempSync(join(tmpdir(), WireWorld.PackagesPrefix))
-        cpSync(join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution'), solution, { recursive: true })
-        writeFileSync(join(solution, WireWorld.ModelFile), modelTodl)
-        const server = new PragmaticServer({ packagesRoot: packages })
-        await server.Start()
-        await server.OpenSolution(solution)
-        const language = await server.LanguageService() as SolutionLanguageService
-        const manager = await server.Manager()
-        await language.WhenIdle()
-        const world = new WireWorld(server, language, manager)
-        try
-        {
-            await body(world)
-        }
-        finally
-        {
-            await world.Dispose()
-            rmSync(solution, { recursive: true, force: true })
-            rmSync(packages, { recursive: true, force: true })
-        }
-    }
-
-    public static async Walk(client: PragmaticClient, memberId: string, pageSize: number): Promise<ModelViewPageDto[]>
-    {
-        const pages: ModelViewPageDto[] = []
-        let cursor: string | undefined
-        do
-        {
-            const page = await client.ModelView(memberId, { cursor, pageSize })
-            pages.push(page)
-            cursor = page.nextCursor
-        }
-        while (cursor !== undefined)
-        return pages
-    }
-
-    public static IsStale(error: { code?: number }): boolean
-    {
-        return error.code === CursorStaleError.Code
-    }
-
-    public static IsInvalidParams(error: { code?: number }): boolean
-    {
-        return error.code === ErrorCodes.InvalidParams
-    }
-
-    private async Dispose(): Promise<void>
-    {
-        for (const connection of this.connections)
-        {
-            await connection.client.DisposeAsync()
-            connection.handler.Dispose()
-        }
-        await this.Language.WhenIdle()
-        await this.manager.CloseSolution()
-        await this.server.Dispose()
-    }
-}
-
 test('member carries localId/namespace/tier/isClass/attrs/edges', () =>
 {
     const filter = new ModelReadFilter(FilterFixture.Build(false), FilterFixture.Context(), AllowAllFieldReadMask.Instance)
@@ -315,25 +179,6 @@ test('member carries localId/namespace/tier/isClass/attrs/edges', () =>
     ])
     const structural = FilterFixture.Member(page, FilterFixture.Concept)
     assert.equal(structural.tier, FilterFixture.OntologyTier)
-})
-
-test('walks every visible member once in id order', async () =>
-{
-    await WireWorld.With(async world =>
-    {
-        const client = world.Connect()
-        const unpaged = await client.ModelView(world.MemberId)
-        assert.equal(unpaged.nextCursor, undefined)
-        const pages = await WireWorld.Walk(client, world.MemberId, 2)
-        const walked = pages.flatMap(p => p.items.map(m => m.id))
-        const expected = unpaged.items.map(m => m.id)
-        assert.deepEqual(walked, expected)
-        assert.equal(new Set(walked).size, walked.length)
-        assert.deepEqual(walked, [...walked].sort((a, b) => a < b ? -1 : a > b ? 1 : 0))
-        assert.equal(pages.length, Math.ceil(expected.length / 2))
-        assert.ok(pages.slice(0, -1).every(p => p.nextCursor !== undefined && p.items.length === 2))
-        assert.equal(pages[pages.length - 1]!.nextCursor, undefined)
-    })
 })
 
 test('hidden nodes are excluded before paging', () =>
@@ -359,21 +204,11 @@ test('hidden nodes are excluded before paging', () =>
     }
 })
 
-test('a field-masked attr is absent', async () =>
+test('a field-masked attr is absent', () =>
 {
     const filter = new ModelReadFilter(FilterFixture.Build(false), FilterFixture.Context(), new DenyOneFieldMask(FilterFixture.Concept, FilterFixture.Secret))
     const member = FilterFixture.Member(filter.Page(new Map(), 0, 100), FilterFixture.Eu1)
     assert.deepEqual(member.attrs, { [FilterFixture.Region]: FilterFixture.EuValue })
-    await WireWorld.With(async world =>
-    {
-        const client = world.Connect(new DenyOneFieldMaskSource(new DenyOneFieldMask(WireWorld.ServiceConcept, WireWorld.Label)))
-        const page = await client.ModelView(world.MemberId)
-        const services = page.items.filter(m => m.kind === WireWorld.ServiceConcept)
-        assert.equal(services.length, 5)
-        assert.ok(services.every(m => !(WireWorld.Label in m.attrs)))
-        const open = await world.Connect().ModelView(world.MemberId)
-        assert.ok(open.items.filter(m => m.kind === WireWorld.ServiceConcept).every(m => WireWorld.Label in m.attrs))
-    })
 })
 
 test('an edge to a hidden node is dropped', () =>
@@ -396,7 +231,7 @@ test('an edge whose via field is masked is dropped', () =>
     ])
 })
 
-test('provenanceOf holds only page members', async () =>
+test('provenanceOf holds only page members', () =>
 {
     const repo = FilterFixture.Build(true)
     const provenance = new Map(repo.allNodes().map(node => [node.id, `${node.id}.todl`] as [string, string]))
@@ -405,42 +240,6 @@ test('provenanceOf holds only page members', async () =>
     {
         assert.deepEqual(Object.keys(page.ProvenanceOf).sort(), page.Items.map(m => m.id).filter(id => provenance.has(id)).sort())
     }
-    await WireWorld.With(async world =>
-    {
-        const client = world.Connect()
-        for (const page of await WireWorld.Walk(client, world.MemberId, 2))
-        {
-            const ids = new Set(page.items.map(m => m.id))
-            assert.ok(Object.keys(page.provenanceOf).every(id => ids.has(id)))
-        }
-    })
-})
-
-test('a graph edit between pages makes the cursor stale', async () =>
-{
-    await WireWorld.With(async world =>
-    {
-        const client = world.Connect()
-        const first = await client.ModelView(world.MemberId, { pageSize: 2 })
-        assert.ok(first.nextCursor !== undefined)
-        const before = world.Language.GraphRevision
-        client.DidChange(world.ModelUri, WireWorld.EditedModelTodl)
-        // the notification is fire-and-forget: a round-trip request flushes it ahead of WhenIdle
-        await client.ModelView(world.MemberId, { pageSize: 1 })
-        await world.Language.WhenIdle()
-        assert.ok(world.Language.GraphRevision > before, WireWorld.RevisionMustMove)
-        await assert.rejects(() => client.ModelView(world.MemberId, { cursor: first.nextCursor, pageSize: 2 }), WireWorld.IsStale)
-    })
-})
-
-test('a non-positive pageSize is rejected', async () =>
-{
-    await WireWorld.With(async world =>
-    {
-        const client = world.Connect()
-        await assert.rejects(() => client.ModelView(world.MemberId, { pageSize: 0 }), WireWorld.IsInvalidParams)
-        await assert.rejects(() => client.ModelView(world.MemberId, { pageSize: 1.5 }), WireWorld.IsInvalidParams)
-    })
 })
 
 test('an edge to an unresolvable node is dropped', () =>
@@ -476,30 +275,4 @@ test('a via that resolves to a hidden node is dropped', () =>
     const member = FilterFixture.Member(filter.Page(new Map(), 0, 100), FilterFixture.Eu1)
     assert.ok(member.edges.length > 0)
     assert.ok(member.edges.every(e => e.via !== FilterFixture.Us2))
-})
-
-test('under a hiding policy the wire nextCursor is absent exactly on the last page', async () =>
-{
-    await WireWorld.With(async world =>
-    {
-        const client = world.Connect()
-        const unpaged = await client.ModelView(world.MemberId)
-        const ids = unpaged.items.map(m => m.id)
-        for (const hidden of WireWorld.HiddenServices)
-        {
-            assert.ok(!ids.includes(hidden))
-        }
-        for (const shown of WireWorld.VisibleServices)
-        {
-            assert.ok(ids.includes(shown))
-        }
-        for (const size of [1, 2, ids.length])
-        {
-            const pages = await WireWorld.Walk(client, world.MemberId, size)
-            assert.deepEqual(pages.flatMap(p => p.items.map(m => m.id)), ids, FilterFixture.SizeLabel(size))
-            assert.equal(pages.length, Math.ceil(ids.length / size), FilterFixture.SizeLabel(size))
-            assert.ok(pages.slice(0, -1).every(p => p.nextCursor !== undefined && p.items.length === size), FilterFixture.SizeLabel(size))
-            assert.equal(pages[pages.length - 1]!.nextCursor, undefined, FilterFixture.SizeLabel(size))
-        }
-    }, WireWorld.PolicyModelTodl)
 })

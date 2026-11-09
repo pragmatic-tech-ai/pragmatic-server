@@ -4,7 +4,8 @@ import { IdentityEnforcement } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { Repository, IInstanceFilter, Node } from '@pragmatic-tech-ai/todl'
 import type { ModelMemberDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { IFieldReadMask } from './cypher/field-masked-graph-query.js'
-import { ModelMemberBuilder } from './model-member-builder.js'
+import { FieldReadMaskGate, ModelMemberBuilder } from './model-member-builder.js'
+import type { IMemberReadGate } from './model-member-builder.js'
 
 /** One window of the visible member set, ordered by id. */
 export interface ModelMemberPage
@@ -14,22 +15,23 @@ export interface ModelMemberPage
     ProvenanceOf: Record<string, string>
 }
 
-/**
- * Authoritative in-memory read gate over a model Repository and the ONLY builder of ModelMemberDto: drops instances a
- * policy rule hides BEFORE paging (so pages count only visible members), masks attrs by the field-read mask, drops edges
- * whose target is hidden or whose via field is hidden or masked, and strips non-page ids from provenance.
- */
-export class ModelReadFilter
+/** Which model nodes a reader sees at all (the projection's only visibility input). */
+export interface IModelNodeGate
 {
-    private readonly model: Repository
-    private readonly filter: IInstanceFilter
-    private readonly mask: IFieldReadMask
+    Keeps(node: Node): boolean
+}
 
-    public constructor(model: Repository, context: AccessContext, mask: IFieldReadMask)
+/**
+ * The ONLY builder of ModelMemberDto pages: drops the nodes its node gate hides BEFORE paging (so pages count only
+ * visible members), masks attrs by its member gate, drops edges whose target is hidden or whose via field is hidden or
+ * masked (ModelMemberBuilder), and strips non-page ids from provenance. It decides nothing itself: the runtime path
+ * gates with the TODL policies and the field-read mask (ModelReadFilter), the dev path with the engine scope
+ * (DevModelView).
+ */
+export class ModelProjection
+{
+    public constructor(private readonly model: Repository, private readonly nodes: IModelNodeGate, private readonly members: IMemberReadGate)
     {
-        this.model = model
-        this.filter = IdentityEnforcement.ForRepository(model, context, Action.Read).InstanceFilter()
-        this.mask = mask
     }
 
     public Page(provenance: ReadonlyMap<string, string>, offset: number, size: number): ModelMemberPage
@@ -38,16 +40,16 @@ export class ModelReadFilter
         const visibleIds = new Set<string>()
         for (const node of this.model.allNodes())
         {
-            if (this.keep(node))
+            if (this.nodes.Keeps(node))
             {
                 visible.push(node)
                 visibleIds.add(node.id)
             }
         }
-        visible.sort(ModelReadFilter.ByOrdinalId)
+        visible.sort(ModelProjection.ByOrdinalId)
         const window = visible.slice(offset, offset + size + 1)
         const hasMore = window.length > size
-        const builder = new ModelMemberBuilder(this.model, this.mask, visibleIds)
+        const builder = new ModelMemberBuilder(this.model, this.members, visibleIds)
         const items = window.slice(0, size).map(node => builder.Build(node))
         const provenanceOf: Record<string, string> = {}
         for (const item of items)
@@ -61,6 +63,7 @@ export class ModelReadFilter
         return { Items: items, HasMore: hasMore, ProvenanceOf: provenanceOf }
     }
 
+    /** True when the model holds `nodeId` and the node gate hides it (false for an id the model cannot resolve). */
     public Hidden(nodeId: string): boolean
     {
         const node = this.model.resolve(nodeId)
@@ -68,7 +71,7 @@ export class ModelReadFilter
         {
             return false
         }
-        return !this.keep(node)
+        return !this.nodes.Keeps(node)
     }
 
     private static ByOrdinalId(a: Node, b: Node): number
@@ -79,8 +82,16 @@ export class ModelReadFilter
         }
         return a.id > b.id ? 1 : 0
     }
+}
 
-    private keep(node: Node): boolean
+/** Keeps untyped nodes and every instance the TODL read policies keep. */
+class PolicyNodeGate implements IModelNodeGate
+{
+    public constructor(private readonly filter: IInstanceFilter)
+    {
+    }
+
+    public Keeps(node: Node): boolean
     {
         if (node.type === null)
         {
@@ -88,5 +99,30 @@ export class ModelReadFilter
         }
         const concept = node.type
         return this.filter.Keep({ Concept: concept, Field: name => node.attrs.get(name) })
+    }
+}
+
+/**
+ * The runtime (non-dev) in-memory read gate over a model Repository: the TODL read policies decide visibility and the
+ * field-read mask decides attrs and edges (ModelProjection). The dev tenant's model/view uses DevModelView instead.
+ */
+export class ModelReadFilter
+{
+    private readonly projection: ModelProjection
+
+    public constructor(model: Repository, context: AccessContext, mask: IFieldReadMask)
+    {
+        const filter = IdentityEnforcement.ForRepository(model, context, Action.Read).InstanceFilter()
+        this.projection = new ModelProjection(model, new PolicyNodeGate(filter), new FieldReadMaskGate(mask))
+    }
+
+    public Page(provenance: ReadonlyMap<string, string>, offset: number, size: number): ModelMemberPage
+    {
+        return this.projection.Page(provenance, offset, size)
+    }
+
+    public Hidden(nodeId: string): boolean
+    {
+        return this.projection.Hidden(nodeId)
     }
 }

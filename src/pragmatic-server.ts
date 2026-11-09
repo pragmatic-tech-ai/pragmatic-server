@@ -84,6 +84,7 @@ import { DevGraphEngineHost } from './host/engine/dev-graph-engine-host.js'
 import type { IDevGraphEngine } from './host/engine/dev-graph-engine-host.js'
 import { DevAccessScopeSource, LoggerDevScopeDiagnostics } from './host/engine/dev-access-scope-source.js'
 import { DevCypherQuery } from './host/engine/dev-cypher-query.js'
+import { DevModelView } from './host/engine/dev-model-view.js'
 import { EnvironmentGraph, EnvironmentGraphOverlay, LoadedGraphStore, NoEnvironmentGraphError } from './host/graphs/environment-graph.js'
 import type { IEnvironmentGraphHost } from './host/graphs/environment-graph.js'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -190,6 +191,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private devEngine: DevGraphEngineHost | undefined
     private devScopes: Promise<DevAccessScopeSource> | undefined
     private devCypher: DevCypherQuery | undefined
+    private devModelView: DevModelView | undefined
     private environmentGraph: EnvironmentGraph | undefined
     private loadedGraphStore: LoadedGraphStore | undefined
     private readonly appGraphs = new Map<string, Promise<AppBase>>()
@@ -911,6 +913,16 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.devCypher
     }
 
+    /**
+     * The dev model/view and model/resources visibility: structure from the language service, instance visibility
+     * and masking from each caller's dev scope on the engine (memoized; disposed with the server).
+     */
+    public DevModelView(): DevModelView
+    {
+        this.devModelView ??= new DevModelView(this.DevEngine(), () => this.DevScopes(), async () => (await this.Manager()).ActiveSolution, () => this.LanguageService())
+        return this.devModelView
+    }
+
     private async BuildDevScopes(): Promise<DevAccessScopeSource>
     {
         const engine = this.DevEngine()
@@ -1031,7 +1043,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
             {
                 try
                 {
-                    // the scope source unsubscribes from the engine host and the security source before the engine goes
+                    // the model view and the scope source unsubscribe from the engine host and the security source before the engine goes
+                    this.devModelView?.dispose()
                     const scopes = await this.devScopes?.catch(() => undefined)
                     scopes?.dispose()
                     await this.devEngine?.dispose()
