@@ -1,5 +1,6 @@
 import { checkAgainst, toJSON, WikiOriginKind } from '@pragmatic-tech-ai/todl'
 import type { TodlDocument, WikiOrigin } from '@pragmatic-tech-ai/todl'
+import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IStorage, StorageEntry } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDevLanguageService } from '../../model/dev-model-writer.js'
 import type { IDevSolution, IDevSolutionMember } from '../dev-solution.js'
@@ -74,6 +75,13 @@ export class MemoryStorage implements IStorage
     }
 }
 
+/** The language service's graph-change payload, empty in the fake. */
+export class FakeGraphChange
+{
+    public readonly memberIds: readonly string[] = []
+    public readonly fileIds: readonly string[] = []
+}
+
 /** What the fake resolves for one member storage: its bases and their origins. */
 class ResolvedBases
 {
@@ -93,10 +101,22 @@ export class FakeLanguageService implements IDevLanguageService
     public readonly Deletes: string[] = []
     public readonly Buffers = new Map<string, string>()
     public Idles = 0
+    /** Raised by {@link FakeLanguageService.RaiseGraphChanged} only (the fake never reloads on its own). */
+    public readonly GraphChanged = new Signal<FakeGraphChange>()
+    /** Runs inside each WhenIdle, while a writer awaits it (a commit's per-file refresh). */
+    public OnIdle: () => void = () => undefined
+    /** Fails ResolveBasesFor while set. */
+    public ResolveFailure: Error | undefined
     private readonly basesOf = new Map<IStorage, ResolvedBases>()
+
+    public RaiseGraphChanged(): void
+    {
+        this.GraphChanged.emit(new FakeGraphChange())
+    }
 
     public async ResolveBasesFor(consumerStorage: IStorage): Promise<{ bases: TodlDocument[]; originOf: ReadonlyMap<string, WikiOrigin> }>
     {
+        if (this.ResolveFailure !== undefined) throw this.ResolveFailure
         const resolved = this.basesOf.get(consumerStorage) ?? new ResolvedBases([EngineHostFx.SchemaDocument()], new Map())
         return { bases: resolved.Bases, originOf: resolved.OriginOf }
     }
@@ -118,6 +138,7 @@ export class FakeLanguageService implements IDevLanguageService
     public async WhenIdle(): Promise<void>
     {
         this.Idles += 1
+        this.OnIdle()
     }
 
     /** Makes `consumer` resolve `producer`'s compiled sources as a live in-solution base (tagged OpenProject). */

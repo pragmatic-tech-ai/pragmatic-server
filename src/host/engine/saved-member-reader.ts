@@ -33,9 +33,38 @@ export class SavedMember
     }
 }
 
+/** One member's cached compile: the declared models of the sources hashing to `SourceHash`. */
+class DeclaredModels
+{
+    public constructor(public readonly SourceHash: string, public readonly Models: readonly string[])
+    {
+    }
+}
+
+/**
+ * The declared models of each member, kept per storage for the sources they were compiled from: an unchanged member
+ * (same `SourceHash`) is not recompiled. One entry per storage (the latest), dropped with the storage. The models a
+ * member's OWN sources declare do not depend on its bases (a base's models are never its own), so the source hash
+ * alone keys the entry.
+ */
+export class DeclaredModelCache
+{
+    private readonly entries = new WeakMap<IStorage, DeclaredModels>()
+
+    public ModelsOf(storage: IStorage, sourceHash: string, compile: () => readonly string[]): readonly string[]
+    {
+        const cached = this.entries.get(storage)
+        if (cached !== undefined && cached.SourceHash === sourceHash) return cached.Models
+        const models = compile()
+        this.entries.set(storage, new DeclaredModels(sourceHash, models))
+        return models
+    }
+}
+
 /**
  * Reads dev members from their storage, never from the language service's unsaved buffers. Shared by the model
- * workspace (which member owns a model) and the snapshot source (what the saved solution compiles to).
+ * workspace (which member owns a model) and the snapshot source (what the saved solution compiles to); share one
+ * reader between them so each unchanged member compiles once (see {@link DeclaredModelCache}).
  */
 export class SavedMemberReader
 {
@@ -44,6 +73,7 @@ export class SavedMemberReader
     public constructor(
         private readonly languageService: IDevLanguageService,
         private readonly collector: TodlSourceCollector = new TodlSourceCollector(),
+        private readonly cache: DeclaredModelCache = new DeclaredModelCache(),
     )
     {
     }
@@ -53,7 +83,8 @@ export class SavedMemberReader
         const sources = await this.collector.Collect(storage)
         const resolved = await this.languageService.ResolveBasesFor(storage)
         const originOf = resolved.originOf ?? new Map<string, WikiOrigin>()
-        return new SavedMember(storage, sources, resolved.bases, originOf, SavedMemberReader.DeclaredModels(resolved.bases, sources))
+        const models = this.cache.ModelsOf(storage, this.collector.SourceHash(sources), () => SavedMemberReader.DeclaredModels(resolved.bases, sources))
+        return new SavedMember(storage, sources, resolved.bases, originOf, models)
     }
 
     public SourceHash(sources: readonly SourceFile[]): string

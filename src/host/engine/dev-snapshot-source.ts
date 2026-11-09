@@ -1,4 +1,4 @@
-import type { Repository, TodlDocument } from '@pragmatic-tech-ai/todl'
+import type { Diagnostic, Repository, TodlDocument } from '@pragmatic-tech-ai/todl'
 import { SavedModelCompiler, SnapshotDescriber, TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import type { ISavedModel, ISnapshotDescription } from '@pragmatic-tech-ai/todl/engine'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
@@ -6,8 +6,11 @@ import type { IDevLanguageService } from '../model/dev-model-writer.js'
 import type { IDevSolution } from './dev-solution.js'
 import { SavedMember, SavedMemberReader } from './saved-member-reader.js'
 
-/** The engine description of the saved solution, with the repository it was compiled from. */
-export type DevSnapshot = ISnapshotDescription & { Repository: Repository }
+/**
+ * The engine description of the saved solution, with the repository it was compiled from and the compile's
+ * diagnostics (an error means the saved sources do not compile, for example a commit only half on disk).
+ */
+export type DevSnapshot = ISnapshotDescription & { Repository: Repository; CompileDiagnostics: readonly Diagnostic[] }
 
 /**
  * The dev tenant's engine snapshot: every member's SAVED `.todl` sources (never unsaved editor buffers) compiled by
@@ -21,9 +24,9 @@ export class DevSnapshotSource
 
     private readonly reader: SavedMemberReader
 
-    public constructor(private readonly solution: () => Promise<IDevSolution | undefined>, languageService: IDevLanguageService)
+    public constructor(private readonly solution: () => Promise<IDevSolution | undefined>, languageService: IDevLanguageService, reader?: SavedMemberReader)
     {
-        this.reader = new SavedMemberReader(languageService)
+        this.reader = reader ?? new SavedMemberReader(languageService)
     }
 
     public async Current(): Promise<DevSnapshot>
@@ -54,7 +57,7 @@ export class DevSnapshotSource
     {
         const saved = SavedModelCompiler.Compile(models, bases, solutionName)
         const described = SnapshotDescriber.Describe(saved.Snapshot, { DefaultConnector: TodlNames.FileConnector })
-        return { ...described, Repository: saved.Repository }
+        return { ...described, Repository: saved.Repository, CompileDiagnostics: saved.Diagnostics }
     }
 
     /**

@@ -112,9 +112,10 @@ export class ServerModelWorkspace implements ITodlModelWorkspace
         private readonly solution: () => Promise<IDevSolution | undefined>,
         private readonly languageService: IDevLanguageService,
         private readonly diagnostics: IDevWriteDiagnostics = new ConsoleDevWriteDiagnostics(),
+        reader?: SavedMemberReader,
     )
     {
-        this.reader = new SavedMemberReader(languageService)
+        this.reader = reader ?? new SavedMemberReader(languageService)
     }
 
     public async OpenDraft(model: string): Promise<ITodlDraftSession | undefined>

@@ -85,6 +85,8 @@ import { DevGraphStore } from './host/graphs/dev-graph-store.js'
 import { GraphPackageIngest } from './host/graphs/graph-package-ingest.js'
 import { GraphPackageReader } from './host/graphs/graph-package-reader.js'
 import { DevGraphService, type IDevGraphService } from './host/graphs/dev-graph-service.js'
+import { DevGraphEngineHost } from './host/engine/dev-graph-engine-host.js'
+import type { IDevGraphEngine } from './host/engine/dev-graph-engine-host.js'
 import { EnvironmentGraph, EnvironmentGraphOverlay, LoadedGraphStore, NoEnvironmentGraphError } from './host/graphs/environment-graph.js'
 import type { IEnvironmentGraphHost } from './host/graphs/environment-graph.js'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -190,6 +192,7 @@ export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
     private appsRegistry: PragmaticAppsRegistry | undefined
     private appIngest: AppIngestService | undefined
     private devGraphService: IDevGraphService | undefined
+    private devEngine: DevGraphEngineHost | undefined
     private environmentGraph: EnvironmentGraph | undefined
     private loadedGraphStore: LoadedGraphStore | undefined
     private readonly appGraphs = new Map<string, Promise<AppBase>>()
@@ -863,6 +866,17 @@ export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
         return this.root.Resolve(SolutionLanguageService.Key)
     }
 
+    /**
+     * The dev tenant's embedded graph engine over the active solution's SAVED sources, opened on first use and
+     * upgraded as saves recompile. Memoized: assumes LanguageService() resolves to a stable singleton for this
+     * server's lifetime.
+     */
+    public DevEngine(): IDevGraphEngine
+    {
+        this.devEngine ??= new DevGraphEngineHost(async () => (await this.Manager()).ActiveSolution, async () => await this.LanguageService() as SolutionLanguageService)
+        return this.devEngine
+    }
+
     public async OpenSolution(location: string): Promise<void>
     {
         const manager = await this.Manager()
@@ -1070,8 +1084,15 @@ export class PragmaticServer implements IEnvironmentGraphHost, IModelShardSource
             }
             finally
             {
-                await this.DrainLanguageService()
-                this.root.Services().dispose()
+                try
+                {
+                    await this.devEngine?.dispose()
+                }
+                finally
+                {
+                    await this.DrainLanguageService()
+                    this.root.Services().dispose()
+                }
             }
         }
     }

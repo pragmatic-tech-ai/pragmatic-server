@@ -549,12 +549,13 @@ export class WorkerHost
                 try
                 {
                     const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
+                    const development = ServerConnectionHandler.DevelopmentAttachArgs(server)
                     const resilience = this.wsResilience
                     const socket = new WsMessageSocket(ws, {
                         policy: new BackpressurePolicy(resilience.backpressureSoftBytes, resilience.backpressureHardBytes, resilience.backpressureGraceMs),
                         onShed: () => this.logger.Info(WorkerHost.ShedLine, { [WorkerHost.EventKey]: WorkerHost.ShedEvent }),
                     })
-                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider, this.paging, fieldMasks, ctx => server.ConnectorReadAuthorizationFor(ctx), (ctx, target) => server.ConnectorWriteAuthorizationFor(ctx, target), server, (ctx, id, request) => server.ExecuteCypher(ctx, id, request), runtime.deployProvider)
+                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, () => server.Connectors(), ctx => server.Graph(ctx), this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider, this.paging, fieldMasks, ctx => server.ConnectorReadAuthorizationFor(ctx), (ctx, target) => server.ConnectorWriteAuthorizationFor(ctx, target), server, (ctx, id, request) => server.ExecuteCypher(ctx, id, request), runtime.deployProvider, development.devGraphService, runtime.environmentGraphHost, development.devEngine)
                     this.handlers.add(handler)
                     const revocable: IRevocableConnection =
                     {
