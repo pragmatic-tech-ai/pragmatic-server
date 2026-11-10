@@ -57,6 +57,32 @@ test('ci workflow builds TODL like every other sibling (no DOM workaround)', () 
     assert.match(text, /for pkg in pragmatic-graph todl-runtime TODL Mural pragmatic-protocol/, 'the engine first, then TODL (then Mural, which the IdP sign-in app needs) stay in the common sibling build loop')
 })
 
+class SiblingLists
+{
+    private static readonly ClonePattern = /for pair in ([^;]+);/
+    private static readonly CopyPattern = /^COPY ([A-Za-z-]+)\/ \.\/\1\/$/gm
+
+    public static Cloned(workflow: string): readonly string[]
+    {
+        const match = SiblingLists.ClonePattern.exec(Workflows.Text(workflow))
+        assert.ok(match !== null, `no sibling clone loop in ${workflow}`)
+        return match[1].trim().split(/\s+/).map(pair => pair.split(':')[1]).sort()
+    }
+
+    public static Copied(): readonly string[]
+    {
+        const text = readFileSync(join(Workflows.Dir(), '..', '..', 'docker', 'Dockerfile'), 'utf8')
+        return [...text.matchAll(SiblingLists.CopyPattern)].map(m => m[1]).filter(name => name !== 'pragmatic-server').sort()
+    }
+}
+
+test('ci and image workflows clone exactly the siblings the Dockerfile copies', () =>
+{
+    const copied = SiblingLists.Copied()
+    assert.deepEqual(SiblingLists.Cloned('ci.yml'), copied)
+    assert.deepEqual(SiblingLists.Cloned('image.yml'), copied)
+})
+
 test('ci workflow clones the graph engine and points TODL at it before the server builds', () =>
 {
     const text = Workflows.Text('ci.yml')

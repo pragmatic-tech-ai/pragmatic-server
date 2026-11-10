@@ -1,5 +1,7 @@
 # OWNER is a placeholder: replace with the GitHub org/user once a remote exists.
 # The publish step is inert until repo variable ENABLE_IMAGE_PUBLISH=true and secret GHCR_TOKEN exist.
+# The Dockerfile's build context is the sibling workspace (see ci.yml): this repo is checked out to
+# $GITHUB_WORKSPACE/pragmatic-server and each sibling it COPYs is cloned (default branch) beside it.
 name: image
 on:
   workflow_dispatch:
@@ -8,10 +10,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: pragmatic-server
+      - name: Clone siblings
+        working-directory: ${{ github.workspace }}
+        run: |
+          for pair in pragmatic-graph:pragmatic-graph todl-runtime:todl-runtime todl:TODL mural:Mural pragmatic-protocol:pragmatic-protocol todl-identity:todl-identity todl-identity-local:todl-identity-local todl-identity-host:todl-identity-host todl-identity-cloud:todl-identity-cloud todl-identity-engine:todl-identity-engine todl-connectors-host:todl-connectors-host todl-platform-node:todl-platform-node todl-platform-cloud:todl-platform-cloud todl-platform-aws:todl-platform-aws todl-platform-azure:todl-platform-azure todl-platform-gcp:todl-platform-gcp todl-identity-node:todl-identity-node; do
+            git clone --depth 1 "https://github.com/pragmatic-tech-ai/${pair%%:*}.git" "${pair#*:}"
+          done
       - name: Build image
+        working-directory: ${{ github.workspace }}
         run: |
           printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.PACKAGES_TOKEN }}\n' > "$RUNNER_TEMP/npmrc"
-          DOCKER_BUILDKIT=1 docker build --secret id=npmrc,src="$RUNNER_TEMP/npmrc" -f pragmatic-server/docker/Dockerfile -t ghcr.io/OWNER/pragmatic-server:latest ..
+          DOCKER_BUILDKIT=1 docker build --secret id=npmrc,src="$RUNNER_TEMP/npmrc" -f pragmatic-server/docker/Dockerfile -t ghcr.io/OWNER/pragmatic-server:latest .
           rm -f "$RUNNER_TEMP/npmrc"
       - name: Publish to GHCR (inert until enabled)
         if: ${{ vars.ENABLE_IMAGE_PUBLISH == 'true' }}
