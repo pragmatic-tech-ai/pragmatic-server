@@ -2,6 +2,7 @@
 # large unrelated trees (Rust target/, research data, graph outputs). Exclude
 # everything, then re-include only the sibling dirs the Dockerfile COPYs.
 *
+!pragmatic-graph
 !todl-runtime
 !TODL
 !Mural

@@ -54,5 +54,14 @@ test('ci workflow builds TODL like every other sibling (no DOM workaround)', () 
     assert.doesNotMatch(text, /--lib/, 'the TODL --lib workaround must be gone')
     assert.doesNotMatch(text, /if /, 'no shell conditional - TODL builds like every other sibling')
     assert.doesNotMatch(text, /gen:prelude/, 'the inlined TODL generator mirror must be gone')
-    assert.match(text, /for pkg in todl-runtime TODL Mural pragmatic-protocol/, 'TODL (then Mural, which the IdP sign-in app needs) stays in the common sibling build loop')
+    assert.match(text, /for pkg in pragmatic-graph todl-runtime TODL Mural pragmatic-protocol/, 'the engine first, then TODL (then Mural, which the IdP sign-in app needs) stay in the common sibling build loop')
+})
+
+test('ci workflow clones the graph engine and points TODL at it before the server builds', () =>
+{
+    const text = Workflows.Text('ci.yml')
+    assert.match(text, /for pair in pragmatic-graph:pragmatic-graph /, 'the engine sibling is cloned')
+    const link = text.indexOf('link-graph-engine.sh')
+    const server = text.indexOf('name: Build pragmatic-server')
+    assert.ok(link !== -1 && server !== -1 && link < server, 'TODL is re-pointed at the sibling engine before the server builds')
 })

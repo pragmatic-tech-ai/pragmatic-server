@@ -7,6 +7,9 @@ WORKDIR /workspace
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
 
 # Copy each package, then install+build in dependency order.
+COPY pragmatic-graph/ ./pragmatic-graph/
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
+    cd pragmatic-graph && npm install --no-audit --no-fund && npm run build
 COPY todl-runtime/ ./todl-runtime/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-runtime && npm install --no-audit --no-fund && npm run build
@@ -56,8 +59,10 @@ COPY todl-identity-node/ ./todl-identity-node/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-identity-node && npm install --no-audit --no-fund && npm run build
 COPY pragmatic-server/ ./pragmatic-server/
+# TODL's lock pulls the engine from GitHub Packages; re-point it at the sibling before the server builds so
+# the image holds ONE engine (the server itself depends on file:../pragmatic-graph).
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
-    cd pragmatic-server && npm install --no-audit --no-fund && npm run build
+    sh pragmatic-server/docker/link-graph-engine.sh /workspace && cd pragmatic-server && npm install --no-audit --no-fund && npm run build
 
 # Tenant-admin container (node dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-admind.js): the control-plane tree compiles
 # separately from the main build (it lives outside src/), and serves the tenant-portal SPA from
@@ -82,10 +87,13 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
 # through the project-system import) imports both at module load (esbuild-bundler.js imports esbuild,
 # tsc-type-checker.js imports typescript), so the server cannot start without them. Stash those two
 # packages across TODL's prune and restore them afterwards; the rest of TODL's dev tooling is dropped.
+# The engine is a TODL devDependency (optional peer), so the prune drops TODL's link to it; the link is
+# removed first (a plain unlink, so the prune never walks into the sibling) and re-made afterwards.
 RUN set -e; mkdir /todl-dev-stash; for pkg in esbuild typescript; do \
       cp -a "/workspace/TODL/node_modules/$pkg" "/todl-dev-stash/$pkg"; \
     done; \
-    for d in todl-runtime TODL pragmatic-protocol todl-identity todl-identity-local \
+    rm /workspace/TODL/node_modules/@pragmatic-tech-ai/graph; \
+    for d in pragmatic-graph todl-runtime TODL pragmatic-protocol todl-identity todl-identity-local \
       todl-identity-host todl-identity-cloud todl-identity-engine todl-connectors-host \
       todl-platform-node todl-platform-cloud todl-platform-aws todl-platform-azure \
       todl-platform-gcp todl-identity-node pragmatic-server; do \
@@ -94,6 +102,7 @@ RUN set -e; mkdir /todl-dev-stash; for pkg in esbuild typescript; do \
     for pkg in esbuild typescript; do \
       cp -a "/todl-dev-stash/$pkg" "/workspace/TODL/node_modules/$pkg"; \
     done; rm -rf /todl-dev-stash; \
+    sh /workspace/pragmatic-server/docker/link-graph-engine.sh /workspace; \
     find /workspace -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete 2>/dev/null || true
 
 FROM node:22-slim AS runtime
