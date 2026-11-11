@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { InMemoryMessageSocket, PragmaticClient, AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
-import { compilePackage, BlobPackageStore, StoragePackageSink } from '@pragmatic-tech-ai/todl'
+import { compilePackage, BlobPackageStore, StoragePackageSink, PolicyNodeKind, PolicyRefRoot, PolicyCompareOp, type SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AccessLevel, PrivilegeAction, OwnershipSourceKind } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
@@ -19,6 +19,45 @@ import { PpSecurityHarness } from '../cypher/tests/pp-security-harness.js'
  * Tier 2 (per-app access policy files, TODL model policies, app-private concept governance) is retired: only the
  * tenant security model (tier 1) decides runtime and dev visibility.
  */
+
+/** One wire connection a fixture owns: the client and the handler it talks to, disposed together. */
+class WireConnection
+{
+    public constructor(public readonly Client: PragmaticClient, private readonly handler: ServerConnectionHandler)
+    {
+    }
+
+    public async Dispose(): Promise<void>
+    {
+        await this.Client.DisposeAsync()
+        this.handler.Dispose()
+    }
+}
+
+/** One development server with an opened solution and one connection to it, and the temp dirs it owns. */
+class DevSession
+{
+    public constructor(
+        public readonly Connection: WireConnection,
+        private readonly server: PragmaticServer,
+        private readonly language: SolutionLanguageService,
+        private readonly manager: SolutionManagerService,
+        private readonly dirs: readonly string[])
+    {
+    }
+
+    public async Dispose(): Promise<void>
+    {
+        await this.Connection.Dispose()
+        await this.language.WhenIdle()
+        await this.manager.CloseSolution()
+        await this.server.Dispose()
+        for (const dir of this.dirs)
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    }
+}
 
 /** A runtime tenant with identity: app `crm` binds packages crm (crm.Account, governed) and notes (notes.Note, NOT governed). */
 class RuntimeTierFixture
@@ -53,7 +92,7 @@ class RuntimeTierFixture
     private readonly packages = mkdtempSync(join(tmpdir(), RuntimeTierFixture.PackagesPrefix))
     private readonly apps = mkdtempSync(join(tmpdir(), RuntimeTierFixture.AppsPrefix))
     private readonly identityRoot = mkdtempSync(join(tmpdir(), RuntimeTierFixture.IdentityPrefix))
-    private readonly disposables: Array<() => Promise<void>> = []
+    private readonly connections: WireConnection[] = []
     private server: PragmaticServer | undefined
 
     public static async Run(body: (fx: RuntimeTierFixture) => Promise<void>): Promise<void>
@@ -72,11 +111,15 @@ class RuntimeTierFixture
 
     /**
      * Writes the retired per-app policy setting denying every read of crm.Account: `deny read when entity.owningBu ==
-     * "sales"`, which every seeded Account matches (the serialized policy AST: Compare = 2, Eq = 0, Ref = 0, Entity = 1, Literal = 1).
+     * "sales"`, which every seeded Account matches.
      */
     public DenyEveryAccount(): void
     {
-        const predicate = { kind: 2, op: 0, left: { kind: 0, root: 1, member: PpSecurityHarness.OwningBuField }, right: { kind: 1, value: PpSecurityHarness.SalesBu } }
+        const predicate = {
+            kind: PolicyNodeKind.Compare, op: PolicyCompareOp.Eq,
+            left: { kind: PolicyNodeKind.Ref, root: PolicyRefRoot.Entity, member: PpSecurityHarness.OwningBuField },
+            right: { kind: PolicyNodeKind.Literal, value: PpSecurityHarness.SalesBu },
+        }
         const rules = [{ effect: RuntimeTierFixture.Deny, action: RuntimeTierFixture.Read, predicate }]
         writeFileSync(join(this.apps, RuntimeTierFixture.AppName, RuntimeTierFixture.RetiredPolicyFile), JSON.stringify({ [RuntimeTierFixture.Account]: rules }))
     }
@@ -93,14 +136,10 @@ class RuntimeTierFixture
             server.Applications(), (ctx, name, labels) => server.GraphForPragmaticApp(ctx, name, labels),
             undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
             server)
-        const client = PragmaticClient.CreateOverSocket(clientSocket)
-        this.disposables.push(async () =>
-        {
-            await client.DisposeAsync()
-            handler.Dispose()
-        })
-        await client.OpenApplication(RuntimeTierFixture.AppName)
-        return client
+        const connection = new WireConnection(PragmaticClient.CreateOverSocket(clientSocket), handler)
+        this.connections.push(connection)
+        await connection.Client.OpenApplication(RuntimeTierFixture.AppName)
+        return connection.Client
     }
 
     public CreateNote(principal: string): ReturnType<PragmaticServer['WriteForPragmaticApp']>
@@ -152,9 +191,9 @@ class RuntimeTierFixture
 
     private async Dispose(): Promise<void>
     {
-        for (const d of this.disposables.reverse())
+        for (const connection of this.connections.reverse())
         {
-            await d()
+            await connection.Dispose()
         }
         await this.server?.Dispose()
         rmSync(this.packages, { recursive: true, force: true })
@@ -178,7 +217,7 @@ class DevTierFixture
     private static readonly SolutionModelFile = join('models', 'model.todl')
     private static readonly Policy = 'policy Order { allow read when entity.label == "a"; } '
 
-    private readonly disposables: Array<() => Promise<void>> = []
+    private readonly sessions: DevSession[] = []
 
     public static async Run(body: (fx: DevTierFixture) => Promise<void>): Promise<void>
     {
@@ -209,7 +248,7 @@ class DevTierFixture
         const server = new PragmaticServer({ packagesRoot: packages })
         await server.Start()
         await server.OpenSolution(solution)
-        const language = await server.LanguageService()
+        const language = await server.LanguageService() as SolutionLanguageService
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const development = ServerConnectionHandler.DevelopmentAttachArgs(server)
@@ -219,25 +258,16 @@ class DevTierFixture
                 undefined, undefined, undefined, undefined, development.devGraphService, undefined, development.devModelView)
             : ServerConnectionHandler.Attach(serverSocket, language, manager, PpSecurityHarness.Context(RuntimeTierFixture.Reader), () => Promise.reject(new Error(DevTierFixture.NoConnectors)), undefined,
                 undefined, undefined, undefined, undefined, undefined, undefined, purpose)
-        const client = PragmaticClient.CreateOverSocket(clientSocket)
-        this.disposables.push(async () =>
-        {
-            await client.DisposeAsync()
-            handler.Dispose()
-            await (language as SolutionLanguageService).WhenIdle()
-            await manager.CloseSolution()
-            await server.Dispose()
-            rmSync(solution, { recursive: true, force: true })
-            rmSync(packages, { recursive: true, force: true })
-        })
-        return client
+        const session = new DevSession(new WireConnection(PragmaticClient.CreateOverSocket(clientSocket), handler), server, language, manager, [solution, packages])
+        this.sessions.push(session)
+        return session.Connection.Client
     }
 
     private async Dispose(): Promise<void>
     {
-        for (const d of this.disposables.reverse())
+        for (const session of this.sessions.reverse())
         {
-            await d()
+            await session.Dispose()
         }
     }
 }

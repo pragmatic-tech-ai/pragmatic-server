@@ -133,7 +133,3 @@ test('TenantReadAuthorization.HasSecurityModelFor is false when the tenant has n
     assert.equal(await auth.HasSecurityModelFor(ReadFilterFixture.Context(ReadFilterFixture.PrincipalId)), false)
 })
 
-test('AllowAllReadFilterSource.HasSecurityModelFor is true (the depth axis is inactive)', async () =>
-{
-    assert.equal(await AllowAllReadFilterSource.Instance.HasSecurityModelFor(), true)
-})

@@ -15,9 +15,6 @@ import type { IWriteTargetSource } from '../write-target-source.js'
 export interface IReadFilterSource
 {
     ReadFilterFor(context: AccessContext): Promise<IInstanceFilter>
-
-    /** False when the tenant has NO security model (the depth filter is deny-all). */
-    HasSecurityModelFor(context: AccessContext): Promise<boolean>
 }
 
 /** Produces the FIELD-READ mask for a request. One of two impls is chosen by the server per the identity state. */
@@ -155,10 +152,10 @@ export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthori
         return new AccessDepthWriteAuthorizer(evaluator, context.Principal)
     }
 
-    public async WriteInstanceGateFor(context: AccessContext, predicate: IInstanceFilter, target: IWriteTargetSource): Promise<IWriteInstanceGate>
+    public async WriteInstanceGateFor(context: AccessContext, target: IWriteTargetSource): Promise<IWriteInstanceGate>
     {
         const evaluator = await this.EvaluatorFor(context.Tenant.Id)
-        return new AccessDepthWriteInstanceGate(evaluator, context.Principal, predicate, target)
+        return new AccessDepthWriteInstanceGate(evaluator, context.Principal, target)
     }
 
     public async FieldReadMaskFor(context: AccessContext): Promise<IFieldReadMask>
@@ -233,11 +230,6 @@ export class AllowAllReadFilterSource implements IReadFilterSource
     public async ReadFilterFor(): Promise<IInstanceFilter>
     {
         return new AllowAllInstanceFilter()
-    }
-
-    public async HasSecurityModelFor(): Promise<boolean>
-    {
-        return true
     }
 }
 
