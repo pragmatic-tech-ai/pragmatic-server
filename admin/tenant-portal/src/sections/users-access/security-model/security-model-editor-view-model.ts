@@ -9,7 +9,7 @@ import { AssignmentEditorViewModel, AssignmentSide } from './assignment-editor-v
 import { SecurityModelDraft } from './security-model-draft.js'
 import { SecurityModelPart, type ISecurityModelEditHost } from './security-model-edit-host.js'
 import { LevelCycle } from './security-model-enums.js'
-import { BusinessUnitRowViewModel, TeamRowViewModel, UnitChoices, UnitOptionViewModel } from './security-model-org-rows.js'
+import { BusinessUnitRowViewModel, NoneChoice, TeamRowViewModel, UnitChoices, UnitOptionViewModel } from './security-model-org-rows.js'
 import { FieldGrantRowViewModel, LegendEntryViewModel, PrivilegeRowViewModel, ProfileItemViewModel, RoleItemViewModel } from './security-model-role-rows.js'
 import { TabSelection } from './tab-selection.js'
 
@@ -168,7 +168,8 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         this.saveCommand = this.MutatingCommand(AdminCapability.Access, () => this.Save(), dirtyAndIdle)
         this.discardCommand = this.MutatingCommand(AdminCapability.Access, () => this.Discard(), dirtyAndIdle)
         this.addBusinessUnitCommand = this.EditCommand(() => this.AddBusinessUnit())
-        this.addTeamCommand = this.EditCommand(() => this.AddTeam())
+        // A team needs a unit to sit in: disabled until the root exists.
+        this.addTeamCommand = new RelayCommand(() => this.AddTeam(), () => this.CanEdit && this.draft?.Org.RootBusinessUnitId !== undefined)
         PendingWork.Register(this)
     }
 
@@ -678,7 +679,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private AddTeam(): void
     {
         const name = this.Input(NewInput.Team).trim()
-        if (name.length > 0 && this.Apply(d => { d.Org.AddTeam(name) }))
+        if (name.length > 0 && this.draft?.Org.RootBusinessUnitId !== undefined && this.Apply(d => { d.Org.AddTeam(name) }))
         {
             this.SetInput(NewInput.Team, SecurityModelEditorViewModel.Empty)
             this.Rebuild()
@@ -805,17 +806,22 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private RebuildBusinessUnits(): void
     {
         this.businessUnitRows = new ObservableCollection<BusinessUnitRowViewModel>()
-        for (const unit of this.draft?.Org.BusinessUnits ?? [])
+        const org = this.draft?.Org
+        if (org !== undefined)
         {
-            this.businessUnitRows.Add(new BusinessUnitRowViewModel(this, unit))
+            for (const unit of org.BusinessUnits)
+            {
+                this.businessUnitRows.Add(new BusinessUnitRowViewModel(this, unit, org))
+            }
         }
         this.SyncUnitTree(false)
+        this.addTeamCommand.RaiseCanExecuteChanged()
         this.Raise(SecurityModelEditorViewModel.BusinessUnitRowsProperty, SecurityModelEditorViewModel.HasNoBusinessUnitsProperty)
     }
 
     private RebuildTeams(): void
     {
-        const choices = this.AllUnitChoices()
+        const choices = new UnitChoices(this.noneUnit, this.unitOptions, (this.draft?.Org.BusinessUnits ?? []).map(u => u.id), NoneChoice.Omitted)
         this.teamRows = new ObservableCollection<TeamRowViewModel>()
         for (const team of this.draft?.Org.Teams ?? [])
         {
@@ -858,11 +864,6 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         }
     }
 
-    private AllUnitChoices(): UnitChoices
-    {
-        return new UnitChoices(this.noneUnit, this.unitOptions, (this.draft?.Org.BusinessUnits ?? []).map(u => u.id))
-    }
-
     // Each unit's depth and parent choices (every unit but itself and its
     // descendants, so the picker never offers a cycle).
     private SyncUnitTree(relabel: boolean): void
@@ -882,7 +883,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
             const excluded = SecurityModelEditorViewModel.DescendantsOf(row.Id, children)
             excluded.add(row.Id)
             const ids = rows.map(r => r.Id).filter(id => !excluded.has(id))
-            row.SetTree(SecurityModelEditorViewModel.DepthOf(row.Id, parents), new UnitChoices(this.noneUnit, this.unitOptions, ids), relabel)
+            row.SetTree(SecurityModelEditorViewModel.DepthOf(row.Id, parents), new UnitChoices(this.noneUnit, this.unitOptions, ids, NoneChoice.Offered), relabel)
         }
     }
 

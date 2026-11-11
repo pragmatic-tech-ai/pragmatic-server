@@ -150,7 +150,6 @@ resources SecurityModelResources {
                                             ColumnDefinition [ Width = GridLength.Star ]
                                             ColumnDefinition [ Width = GridLength.Star ]
                                             ColumnDefinition [ Width = GridLength.Star ]
-                                            ColumnDefinition [ Width = GridLength.Star ]
                                         }
                                         TextBlock [ Grid.Column = 0, Text = "Field", Style = @TenantTableHeader ]
                                         TextBlock [ Grid.Column = 1, Text = "Read", Style = @TenantTableHeader ]
@@ -310,7 +309,6 @@ resources SecurityModelResources {
     DataTemplate x:key="SecurityModelFieldGrantTemplate" [ DataType = FieldGrantRowViewModel ] {
         Grid [ Style = @TenantTableColumns ] {
             ColumnDefinitions {
-                ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]

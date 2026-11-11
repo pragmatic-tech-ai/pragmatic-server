@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import type { SecurityModelDto } from '../../../../tenant-types.js'
-import { SecurityModelDraft } from '../security-model-draft.js'
+import { PrivilegeAction, SecurityModelDraft } from '../security-model-draft.js'
 import { SecurityFixtures } from './security-fixtures.js'
 
 describe('SecurityModelDraft', () =>
@@ -22,6 +22,10 @@ describe('SecurityModelDraft', () =>
         draft.Assignments.RemoveTeam('projects.ProjectManager', 'team-a')
         assert.deepEqual(draft.ToDto().roleAssignments, [])
         assert.equal(draft.Dirty, true)
+        // Edits on the draft never reach the loaded model.
+        draft.Overrides.Reset('BasicUser', 'hr.Employee', PrivilegeAction.Read)
+        draft.Org.RenameBusinessUnit('sales', 'Field sales')
+        assert.deepEqual(model, SecurityFixtures.Model())
     })
 
     it('retired sections are not emitted', () =>

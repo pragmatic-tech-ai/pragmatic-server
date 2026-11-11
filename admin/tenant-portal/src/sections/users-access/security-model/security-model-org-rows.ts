@@ -2,6 +2,7 @@ import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/run
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import type { BusinessUnitDto, TeamDto } from '../../../tenant-types.js'
 import type { SecurityModelDraft } from './security-model-draft.js'
+import type { SecurityModelOrg } from './security-model-org.js'
 import { SecurityModelPart, type ISecurityModelEditHost } from './security-model-edit-host.js'
 
 // One business-unit choice in a ComboBox: a unit, or "(none)" (Id
@@ -33,16 +34,27 @@ export class UnitOptionViewModel extends Observable
     }
 }
 
-// One set of unit choices ("(none)" first, then units) and the lookup from a
-// unit id to its choice.
+// Whether a unit picker offers "(none)": a parent picker does (a root has
+// no parent), a team's does not (a team always sits in a unit).
+export enum NoneChoice
+{
+    Offered,
+    Omitted,
+}
+
+// One set of unit choices ("(none)" first when offered, then units) and the
+// lookup from a unit id to its choice.
 export class UnitChoices
 {
     public readonly Options: ObservableCollection<UnitOptionViewModel>
 
-    public constructor(private readonly none: UnitOptionViewModel, private readonly units: ReadonlyMap<string, UnitOptionViewModel>, ids: readonly string[])
+    public constructor(private readonly none: UnitOptionViewModel, private readonly units: ReadonlyMap<string, UnitOptionViewModel>, ids: readonly string[], noneChoice: NoneChoice)
     {
         this.Options = new ObservableCollection<UnitOptionViewModel>()
-        this.Options.Add(none)
+        if (noneChoice === NoneChoice.Offered)
+        {
+            this.Options.Add(none)
+        }
         for (const id of ids)
         {
             const option = units.get(id)
@@ -74,7 +86,13 @@ export abstract class OrgRowViewModel extends Observable
     protected constructor(protected readonly host: ISecurityModelEditHost)
     {
         super()
-        this.removeCommand = new RelayCommand(() => this.Remove(), () => this.host.CanEdit)
+        this.removeCommand = new RelayCommand(() => this.Remove(), () => this.host.CanEdit && this.CanRemove)
+    }
+
+    // Whether the row may be removed at all (beyond the permission).
+    protected get CanRemove(): boolean
+    {
+        return true
     }
 
     public get CanEdit(): boolean
@@ -90,7 +108,7 @@ export abstract class OrgRowViewModel extends Observable
     // Removes the row from the draft; the editor rebuilds (cascades included).
     public Remove(): void
     {
-        if (this.host.Apply(d => this.RemoveFrom(d)))
+        if (this.CanRemove && this.host.Apply(d => this.RemoveFrom(d)))
         {
             this.host.Rebuild()
         }
@@ -137,9 +155,15 @@ export class BusinessUnitRowViewModel extends OrgRowViewModel
     private depth = 0
     private choices: UnitChoices | undefined
 
-    public constructor(host: ISecurityModelEditHost, private readonly unit: BusinessUnitDto)
+    public constructor(host: ISecurityModelEditHost, private readonly unit: BusinessUnitDto, private readonly org: SecurityModelOrg)
     {
         super(host)
+    }
+
+    // Not the root, and no child units, teams or placed users reference it.
+    protected override get CanRemove(): boolean
+    {
+        return this.org.CanRemoveBusinessUnit(this.unit.id)
     }
 
     public get Id(): string
@@ -209,6 +233,8 @@ export class BusinessUnitRowViewModel extends OrgRowViewModel
         }
         this.RaisePropertyChanged(BusinessUnitRowViewModel.IndentProperty, oldIndent, this.Indent)
         this.RaisePropertyChanged(BusinessUnitRowViewModel.SelectedParentProperty, undefined, this.SelectedParent)
+        // A parent change can add or drop this unit's children.
+        this.RemoveCommand.RaiseCanExecuteChanged()
     }
 
     protected RemoveFrom(draft: SecurityModelDraft): void
@@ -257,11 +283,15 @@ export class TeamRowViewModel extends OrgRowViewModel
         return this.choices.OptionFor(this.team.businessUnitId)
     }
 
-    // A team always sits in a unit: picking "(none)" is refused and snaps back.
+    // The choices omit "(none)": a team always sits in a unit. A move
+    // changes which units can be removed, so the unit rows follow.
     public set SelectedUnit(value: UnitOptionViewModel)
     {
-        this.PickUnit(value, this.team.businessUnitId, (d, id) => { if (id !== undefined) d.Org.SetTeamBusinessUnit(this.team.id, id) },
-            TeamRowViewModel.SelectedUnitProperty, () => this.SelectedUnit)
+        if (this.PickUnit(value, this.team.businessUnitId, (d, id) => { if (id !== undefined) d.Org.SetTeamBusinessUnit(this.team.id, id) },
+            TeamRowViewModel.SelectedUnitProperty, () => this.SelectedUnit))
+        {
+            this.host.Rebuild(SecurityModelPart.Teams)
+        }
     }
 
     protected RemoveFrom(draft: SecurityModelDraft): void

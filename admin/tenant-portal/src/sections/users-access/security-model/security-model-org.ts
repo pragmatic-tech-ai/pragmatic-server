@@ -36,6 +36,23 @@ export class SecurityModelOrg
         return this.model.teams
     }
 
+    // The root unit (the one with no parent); undefined before any unit exists.
+    public get RootBusinessUnitId(): string | undefined
+    {
+        return this.model.businessUnits.find(u => u.parent === undefined)?.id
+    }
+
+    // A unit can be removed only when nothing depends on it: not the root,
+    // and no child units, teams or placed users reference it.
+    public CanRemoveBusinessUnit(id: string): boolean
+    {
+        const unit = this.model.businessUnits.find(u => u.id === id)
+        return unit !== undefined && unit.parent !== undefined
+            && !this.model.businessUnits.some(u => u.parent === id)
+            && !this.model.teams.some(t => t.businessUnitId === id)
+            && !this.model.users.some(p => p.businessUnitId === id)
+    }
+
     public AddBusinessUnit(name: string): string
     {
         const units = this.model.businessUnits
@@ -74,31 +91,29 @@ export class SecurityModelOrg
         this.dirty = true
     }
 
+    // A no-op unless CanRemoveBusinessUnit, so no reference is ever left dangling.
     public RemoveBusinessUnit(id: string): void
     {
-        const units = this.model.businessUnits
-        const i = units.findIndex(u => u.id === id)
-        if (i < 0)
+        if (!this.CanRemoveBusinessUnit(id))
         {
             return
         }
-        units.splice(i, 1)
-        for (const unit of units)
-        {
-            if (unit.parent === id)
-            {
-                delete unit.parent
-            }
-        }
+        const units = this.model.businessUnits
+        units.splice(units.findIndex(u => u.id === id), 1)
         this.dirty = true
     }
 
-    public AddTeam(name: string): string
+    // A team always sits in a unit: a new one starts in the root. Refused
+    // (undefined) while there is no unit at all.
+    public AddTeam(name: string): string | undefined
     {
+        const root = this.RootBusinessUnitId
+        if (root === undefined)
+        {
+            return undefined
+        }
         const teams = this.model.teams
         const id = SecurityModelOrg.NextId(SecurityModelOrg.TeamIdPrefix, name, SecurityModelOrg.FallbackTeamSlug, teams.map(t => t.id))
-        // A team always sits in a unit: a new one starts in the root.
-        const root = this.model.businessUnits.find(u => u.parent === undefined)?.id ?? SecurityModelOrg.EmptyString
         teams.push({ id, name, businessUnitId: root, idpGroups: [], manualMembers: [] })
         this.dirty = true
         return id

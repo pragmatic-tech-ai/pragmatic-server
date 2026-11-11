@@ -184,6 +184,9 @@ describe('SecurityModelEditorViewModel', () =>
         const editor = await Fixture.Editor()
         Fixture.Select(editor, 'projects.ProjectManager')
         assert.equal(editor.RoleAssignment.TeamRows.Count, 1)
+        // The root, and Sales (a team and a placed user sit in it), cannot be removed.
+        assert.deepEqual(editor.BusinessUnitRows.ToArray().map(r => r.RemoveCommand.CanExecute()), [false, false])
+        assert.deepEqual(editor.TeamRows.ToArray()[0].UnitOptions.ToArray().map(o => o.Label), ['Contoso', 'Sales'])
         editor.TeamRows.ToArray()[0].RemoveCommand.Execute()
         assert.equal(editor.TeamRows.Count, 0)
         assert.equal(editor.RoleAssignment.TeamRows.Count, 0)

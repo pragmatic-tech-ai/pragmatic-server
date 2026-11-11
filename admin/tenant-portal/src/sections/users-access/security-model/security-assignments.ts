@@ -29,7 +29,7 @@ export class SecurityAssignments
 
     public Holders(role: string): IAssignmentHolders
     {
-        return SecurityAssignments.HoldersOf(this.model.roleAssignments.find(a => a.role === role))
+        return SecurityAssignments.HoldersOf(SecurityAssignments.Find(this.model.roleAssignments, SecurityAssignments.RoleOf, role))
     }
 
     public AddPrincipal(role: string, id: string): void
@@ -39,7 +39,7 @@ export class SecurityAssignments
 
     public RemovePrincipal(role: string, id: string): void
     {
-        this.Remove(this.model.roleAssignments.find(a => a.role === role)?.principalIds, id)
+        this.Remove(SecurityAssignments.Find(this.model.roleAssignments, SecurityAssignments.RoleOf, role)?.principalIds, id)
     }
 
     public AddTeam(role: string, teamId: string): void
@@ -49,14 +49,14 @@ export class SecurityAssignments
 
     public RemoveTeam(role: string, teamId: string): void
     {
-        this.Remove(this.model.roleAssignments.find(a => a.role === role)?.teamIds, teamId)
+        this.Remove(SecurityAssignments.Find(this.model.roleAssignments, SecurityAssignments.RoleOf, role)?.teamIds, teamId)
     }
 
     // ---- Field profiles ------------------------------------------------
 
     public ProfileHolders(profile: string): IAssignmentHolders
     {
-        return SecurityAssignments.HoldersOf(this.model.profileAssignments.find(a => a.profile === profile))
+        return SecurityAssignments.HoldersOf(SecurityAssignments.Find(this.model.profileAssignments, SecurityAssignments.ProfileOf, profile))
     }
 
     public AddProfilePrincipal(profile: string, id: string): void
@@ -66,7 +66,7 @@ export class SecurityAssignments
 
     public RemoveProfilePrincipal(profile: string, id: string): void
     {
-        this.Remove(this.model.profileAssignments.find(a => a.profile === profile)?.principalIds, id)
+        this.Remove(SecurityAssignments.Find(this.model.profileAssignments, SecurityAssignments.ProfileOf, profile)?.principalIds, id)
     }
 
     public AddProfileTeam(profile: string, teamId: string): void
@@ -76,15 +76,43 @@ export class SecurityAssignments
 
     public RemoveProfileTeam(profile: string, teamId: string): void
     {
-        this.Remove(this.model.profileAssignments.find(a => a.profile === profile)?.teamIds, teamId)
+        this.Remove(SecurityAssignments.Find(this.model.profileAssignments, SecurityAssignments.ProfileOf, profile)?.teamIds, teamId)
     }
 
     // ---- Plumbing ------------------------------------------------------
 
     // Whether an assignment row still names anyone (the draft emits only those).
-    public static HasHolders(row: { principalIds: readonly string[]; teamIds: readonly string[] }): boolean
+    public static HasHolders(row: RoleAssignmentDto | ProfileAssignmentDto): boolean
     {
         return row.principalIds.length + row.teamIds.length > 0
+    }
+
+    private static RoleOf(row: RoleAssignmentDto): string
+    {
+        return row.role
+    }
+
+    private static ProfileOf(row: ProfileAssignmentDto): string
+    {
+        return row.profile
+    }
+
+    private static Find<T extends RoleAssignmentDto | ProfileAssignmentDto>(rows: readonly T[], keyOf: (row: T) => string, key: string): T | undefined
+    {
+        return rows.find(r => keyOf(r) === key)
+    }
+
+    // The row for `key`, appended (empty) when there is none yet.
+    private static Ensure<T extends RoleAssignmentDto | ProfileAssignmentDto>(rows: T[], keyOf: (row: T) => string, key: string, create: () => T): T
+    {
+        const found = SecurityAssignments.Find(rows, keyOf, key)
+        if (found !== undefined)
+        {
+            return found
+        }
+        const row = create()
+        rows.push(row)
+        return row
     }
 
     private static HoldersOf(row: RoleAssignmentDto | ProfileAssignmentDto | undefined): IAssignmentHolders
@@ -94,26 +122,12 @@ export class SecurityAssignments
 
     private RoleRow(role: string): RoleAssignmentDto
     {
-        const found = this.model.roleAssignments.find(a => a.role === role)
-        if (found !== undefined)
-        {
-            return found
-        }
-        const row: RoleAssignmentDto = { role, principalIds: [], teamIds: [] }
-        this.model.roleAssignments.push(row)
-        return row
+        return SecurityAssignments.Ensure(this.model.roleAssignments, SecurityAssignments.RoleOf, role, () => ({ role, principalIds: [], teamIds: [] }))
     }
 
     private ProfileRow(profile: string): ProfileAssignmentDto
     {
-        const found = this.model.profileAssignments.find(a => a.profile === profile)
-        if (found !== undefined)
-        {
-            return found
-        }
-        const row: ProfileAssignmentDto = { profile, principalIds: [], teamIds: [] }
-        this.model.profileAssignments.push(row)
-        return row
+        return SecurityAssignments.Ensure(this.model.profileAssignments, SecurityAssignments.ProfileOf, profile, () => ({ profile, principalIds: [], teamIds: [] }))
     }
 
     private Add(list: string[], id: string): void

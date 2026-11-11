@@ -64,14 +64,33 @@ describe('SecurityModelOrg', () =>
         assert.equal(org.Dirty, true)
     })
 
-    it('RemoveBusinessUnit detaches its child units', () =>
+    it('a unit something depends on cannot be removed', () =>
     {
-        const model = Fixtures.Referenced()
+        const model = Fixtures.Empty()
+        model.businessUnits = [{ id: 'root', name: 'Root' }, { id: 'teamed', name: 'Teamed', parent: 'root' },
+            { id: 'placed', name: 'Placed', parent: 'root' }, { id: 'parent', name: 'Parent', parent: 'root' }, { id: 'leaf', name: 'Leaf', parent: 'parent' }]
+        model.teams = [{ id: 't1', name: 'Team', businessUnitId: 'teamed', idpGroups: [], manualMembers: [] }]
+        model.users = [{ principalId: 'u1', businessUnitId: 'placed' }]
         const org = new SecurityModelOrg(model)
-        org.RemoveBusinessUnit('bu1')
-        assert.deepEqual(org.BusinessUnits.map(u => u.id), ['bu2'])
-        assert.equal(model.businessUnits[0].parent, undefined)
+        assert.deepEqual(model.businessUnits.map(u => org.CanRemoveBusinessUnit(u.id)), [false, false, false, false, true])
+        for (const id of ['root', 'teamed', 'placed', 'parent', 'nope'])
+        {
+            org.RemoveBusinessUnit(id)
+        }
+        assert.equal(model.businessUnits.length, 5)
+        assert.equal(org.Dirty, false)
+        org.RemoveBusinessUnit('leaf')
+        assert.deepEqual(model.businessUnits.map(u => u.id), ['root', 'teamed', 'placed', 'parent'])
+        assert.equal(org.CanRemoveBusinessUnit('parent'), true)
         assert.equal(org.Dirty, true)
+    })
+
+    it('a team is refused while there is no unit to place it in', () =>
+    {
+        const org = new SecurityModelOrg(Fixtures.Empty())
+        assert.equal(org.AddTeam('Ops'), undefined)
+        assert.equal(org.Teams.length, 0)
+        assert.equal(org.Dirty, false)
     })
 
     it('rejects self-parenting, deep cycles and survives a pre-existing cycle', () =>
@@ -113,7 +132,6 @@ describe('SecurityModelOrg', () =>
             o => o.AddBusinessUnit('n'),
             o => o.RenameBusinessUnit('bu1', 'n'),
             o => o.SetBusinessUnitParent('bu2', undefined),
-            o => o.RemoveBusinessUnit('bu2'),
             o => o.AddTeam('n'),
             o => o.RenameTeam('t1', 'n'),
             o => o.SetTeamBusinessUnit('t1', 'bu2'),
