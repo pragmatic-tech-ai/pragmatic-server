@@ -42,7 +42,7 @@ export interface IDepthCompileOptions
 {
     /**
      * Concepts outside the depth axis (ruling R6: connector-bound concepts are outside platform security): a skipped
-     * concept gets an explicit allow, Rows True and Create / Update / Delete True keyed on it (ruling R12: the depth
+     * concept gets an explicit allow, Rows True and Create / Update / Delete / Append / AppendTo True keyed on it (ruling R12: the depth
      * Default is Deny, so mere absence would fail closed), and no HiddenExact, ReadOnlyExact or create-default entry.
      */
     readonly Skip?: (concept: string) => boolean
@@ -105,7 +105,9 @@ class FieldSets
  *
  * - Every described concept K (but the reserved `todl.Element` root and `todl.Term`) gets a Rows entry and a
  *   Create / Update / Delete entry guarded as `Or(Not(ConceptIs K), rule)` (ruling R93), so it judges K's own
- *   instances only and never K's subconcepts. The rule is K's level: None → False, Organization → True, User → the
+ *   instances only and never K's subconcepts (engine security S2, R129: Append, the link rule on the edge's source,
+ *   is guarded by K's Update level; AppendTo, on its target, is True since a visible target is linkable, and
+ *   `todl.Term` gets that AppendTo alone). The rule is K's level: None → False, Organization → True, User → the
  *   owner is the principal or one of its teams, BusinessUnit → the owning unit is in the principal's reach (home unit
  *   plus its teams' units), BusinessUnitAndChildren → in the reach or under it. Ownership resolves as
  *   OwnershipResolver does: a fixed source is a constant; an unset, empty or unknown business-unit VALUE reads as the
@@ -131,11 +133,21 @@ export class DepthScopeCompiler
     private static readonly Placeholder = /\{(\d)\}/g
     private static readonly NoArgument = ''
     private static readonly SkipNone = (): boolean => false
-    private static readonly AllowWrites: IWriteRules = { Create: TruePredicate.Instance, Update: TruePredicate.Instance, Delete: TruePredicate.Instance }
+    private static readonly AllowWrites: IWriteRules = {
+        Create: TruePredicate.Instance,
+        Update: TruePredicate.Instance,
+        Delete: TruePredicate.Instance,
+        Append: TruePredicate.Instance,
+        AppendTo: TruePredicate.Instance,
+    }
+    /** A taxonomy term is never written, but records stay linkable to it (as the tier-1 compiler's Term entry). */
+    private static readonly TermWrites: IWriteRules = { AppendTo: TruePredicate.Instance }
     private static readonly Operations: readonly (readonly [WriteRule, PrivilegeAction])[] = [
         [WriteRule.Create, PrivilegeAction.Create],
         [WriteRule.Update, PrivilegeAction.Update],
         [WriteRule.Delete, PrivilegeAction.Delete],
+        // interim (until S4 Task 9's tier-1 compiler): a link from a record needs what a SET on it needs
+        [WriteRule.Append, PrivilegeAction.Update],
     ]
 
     private readonly catalog: EngineSchemaCatalog
@@ -196,10 +208,16 @@ export class DepthScopeCompiler
             rows.set(concept, this.Guarded(concept, PrivilegeAction.Read))
             const rules: Partial<Record<WriteRule, Predicate>> = {}
             for (const [rule, action] of DepthScopeCompiler.Operations) rules[rule] = this.Guarded(concept, action)
+            // a link to a record needs only that the record is visible (the engine checks visibility before AppendTo)
+            rules[WriteRule.AppendTo] = TruePredicate.Instance
             writes.set(concept, rules)
         }
         // ruling F-b: terms are readable under any security model, but a tenant with none (DenyAll) reads nothing
-        if (this.catalog.IsConcept(TodlNames.Term)) rows.set(TodlNames.Term, this.hasSecurityModel ? TruePredicate.Instance : FalsePredicate.Instance)
+        if (this.catalog.IsConcept(TodlNames.Term))
+        {
+            rows.set(TodlNames.Term, this.hasSecurityModel ? TruePredicate.Instance : FalsePredicate.Instance)
+            writes.set(TodlNames.Term, DepthScopeCompiler.TermWrites)
+        }
         const hidden = new Map<string, ReadonlySet<string>>()
         const readOnly = new Map<string, IReadOnlyMembers>()
         this.FieldSecurity(concepts, hidden, readOnly)

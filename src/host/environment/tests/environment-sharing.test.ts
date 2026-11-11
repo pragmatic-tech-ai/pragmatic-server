@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessError } from '@pragmatic-tech-ai/graph'
+import { AccessError, AccessErrorCode } from '@pragmatic-tech-ai/graph'
 import type { AccessScope, GraphEngine } from '@pragmatic-tech-ai/graph'
 import { ShareGrants, ShareRight, ShareSubject, SystemNames, SystemPackage } from '@pragmatic-tech-ai/todl/engine'
 import { AppWriteOpKind, AppWriteStatus, ErrorCodes, ShareStatus, ShareSubjectKind } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -18,8 +18,8 @@ class SharingFx
     public static readonly DetachDeleteR1 = "MATCH (a:`crm.Account`) WHERE a.name = 'r1' DETACH DELETE a"
     public static readonly CreateGrantCypher = "CREATE (g:`todl.system.ShareGrant` {subjectKind: 'principal', subjectId: 'p2', read: true}) RETURN g"
 
-    /** A grant of r1 to p2 created as `id` under `scope`; resolves with the commit. */
-    public static async CreateGrant(engine: GraphEngine, scope: AccessScope, id: string): Promise<bigint>
+    /** A grant of `record` (default r1) to p2 created as `id` under `scope`; resolves with the commit. */
+    public static async CreateGrant(engine: GraphEngine, scope: AccessScope, id: string, record: string = ShareFx.R1): Promise<bigint>
     {
         const transaction = await engine.Begin(scope)
         try
@@ -27,7 +27,7 @@ class SharingFx
             transaction.CreateNode(id, SystemNames.ShareGrant, { Owner: SystemPackage.Ref.model })
             transaction.SetProperty(id, SystemNames.SubjectKind, ShareSubject.Principal)
             transaction.SetProperty(id, SystemNames.SubjectId, ShareFx.P2)
-            transaction.Link(id, SystemNames.Record, ShareFx.R1)
+            transaction.Link(id, SystemNames.Record, record)
             return await transaction.Commit()
         }
         finally
@@ -143,8 +143,9 @@ describe('record shares as graph data', () =>
         {
             const engine = await fx.Server.EnvironmentEngine().Engine()
             const catalog = (await fx.Server.EnvironmentEngine().Snapshot()).SchemaCatalog
-            const scope = ShareServiceScope.For((await ShareFx.Scope(fx, ShareFx.P1)).Scope, new Set([SharingFx.G1]), catalog)
+            const scope = ShareServiceScope.For((await ShareFx.Scope(fx, ShareFx.P1)).Scope, new Set([SharingFx.G1]), ShareFx.R1, catalog)
             await assert.rejects(SharingFx.CreateGrant(engine, scope, SharingFx.G2), (error: unknown) => error instanceof AccessError, 'a grant other than the addressed one')
+            await assert.rejects(SharingFx.CreateGrant(engine, scope, SharingFx.G1, ShareFx.R2), (error: unknown) => error instanceof AccessError && error.Code === AccessErrorCode.AppendToDenied, 'a record other than the shared one')
             await SharingFx.CreateGrant(engine, scope, SharingFx.G1)
             assert.deepEqual(await ShareFx.GrantsOf(fx, ShareFx.R1), [SharingFx.G1])
         })

@@ -22,7 +22,7 @@ export class PredicateAny
 
 /**
  * A mutable copy of an engine scope's Rows and write predicates, for the runtime Finish steps (ruling S5) and the
- * service scopes. Hidden, HiddenExact and ReadOnly are carried unchanged; ReadOnlyExact too, unless `SetReadOnlyExact`
+ * service scopes. Hidden, HiddenExact, ReadOnly and Endpoints are carried unchanged; ReadOnlyExact too, unless `SetReadOnlyExact`
  * replaces a key's.
  *
  * `MaterializeDefault` makes a `Default: Deny` explicit (the M1 rule, ruling R93): every described concept none of
@@ -130,7 +130,7 @@ export class ScopeDraft
                 ...Object.fromEntries(rules),
             })
         }
-        return AccessScope.Build({ Default: this.scope.Default, Rows: this.rows, Writes: writes, Hidden: this.scope.Hidden, HiddenExact: this.scope.HiddenExact })
+        return AccessScope.Build({ Default: this.scope.Default, Rows: this.rows, Writes: writes, Hidden: this.scope.Hidden, HiddenExact: this.scope.HiddenExact, Endpoints: this.scope.Endpoints })
     }
 
     /** What the Default grants `key`'s own instances, as the entry an Or or And starts from. */

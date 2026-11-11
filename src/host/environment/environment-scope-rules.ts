@@ -45,8 +45,11 @@ class EnvironmentPlacement implements Cypher.INodePlacement
 /** The runtime rules against one environment schema (EnvironmentScopeRules). */
 class EnvironmentPreparedRules implements IPreparedRules
 {
-    private static readonly WriteRules: readonly WriteRule[] = [WriteRule.Create, WriteRule.Update, WriteRule.Delete]
-    private static readonly SeedRules: readonly WriteRule[] = [WriteRule.Update, WriteRule.Delete]
+    /** A grant is linked by no caller scope, from it or to it (the tier-1 compiler's ShareGrant entry). */
+    private static readonly GrantRules: readonly WriteRule[] = [WriteRule.Create, WriteRule.Update, WriteRule.Delete, WriteRule.Append, WriteRule.AppendTo]
+    /** A read-only binding's rows are not written or linked from; linking to them stays open. */
+    private static readonly WriteRules: readonly WriteRule[] = [WriteRule.Create, WriteRule.Update, WriteRule.Delete, WriteRule.Append]
+    private static readonly SeedRules: readonly WriteRule[] = [WriteRule.Update, WriteRule.Delete, WriteRule.Append]
     private static readonly NoOwnedConcepts: ReadonlySet<string> = new Set<string>()
     private static readonly NoPrincipal: IPrincipalFacts = { Id: '', HomeBusinessUnitId: '' }
 
@@ -84,7 +87,7 @@ class EnvironmentPreparedRules implements IPreparedRules
         // ruling R31: grants are written only by the share, assign and data-write service scopes, with or without identity
         if (this.schema.Catalog.IsConcept(SystemNames.ShareGrant))
         {
-            for (const rule of EnvironmentPreparedRules.WriteRules) draft.SetRule(SystemNames.ShareGrant, rule, FalsePredicate.Instance)
+            for (const rule of EnvironmentPreparedRules.GrantRules) draft.SetRule(SystemNames.ShareGrant, rule, FalsePredicate.Instance)
         }
         // (c) a read-only binding's rows are never created, updated or deleted (the gate judges the row's owner)
         for (const binding of this.catalog.Identity.ReadOnly())
@@ -132,9 +135,10 @@ class EnvironmentPreparedRules implements IPreparedRules
  *   security S4 Task 9 replaces DepthScopeCompiler with the tier-1 compiler.
  * - Finish, in order: (a)+(b) with identity only, GrantWidening (grants widen engine-stored concepts: a delivered
  *   package's own, never a built-in, system or connector-bound one; the caller sees its own grants); `Writes[ShareGrant]`
- *   Create / Update / Delete False with or without identity (ruling R31); (c) for every read-only external binding, `Not(OwnerIs({binding model}))` ANDed
- *   into Create / Update / Delete of its concept; (d) `Not(Seeded)` ANDed into the root `todl.Element` Update and
- *   Delete. (c) and (d) apply without identity too.
+ *   Create / Update / Delete / Append / AppendTo False with or without identity (ruling R31); (c) for every read-only
+ *   external binding, `Not(OwnerIs({binding model}))` ANDed into Create / Update / Delete / Append of its concept;
+ *   (d) `Not(Seeded)` ANDed into the root `todl.Element` Update, Delete and Append (a link from a node needs what a SET
+ *   on it needs, R129). (c) and (d) apply without identity too.
  * - Placement: TODL EnvironmentNodePlacement stamped with the depth create defaults; `modelId` is ignored (S6).
  * - Digest (the security generation), `Changed`, the security source guard and the snapshot read: SecuredScopeRules
  *   (the source itself drops on host `Changed`, an upgrade or reopen).

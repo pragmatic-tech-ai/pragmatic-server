@@ -27,7 +27,7 @@ enum GrantWrite
  * the same grant), Owner `todl.system`, the subject and every ShareRight as properties (`ShareGrants.Properties`), and
  * a `record` link to the shared record. The scope then widens the subject's reads and writes through it (S5 Finish).
  *
- * - Share / Unshare run in ONE transaction under `ShareServiceScope.For(callerScope, {grant id})`, the only scope that
+ * - Share / Unshare run in ONE transaction under `ShareServiceScope.For(callerScope, {grant id}, record)`, the only scope that
  *   writes grants: the engine confines the transaction's grant writes to that one grant. Inside it the record is read
  *   under the caller's rules (`reader.ConceptOf(id)` must be `params.concept` or a subconcept, else `not-found`); the
  *   caller may share when the tenant security model allows Share on the record (`Allows(principal, Share, view)`) or
@@ -118,7 +118,7 @@ export class EnvironmentShareService
         const evaluator = await (await this.security()).EvaluatorForContext(context)
         const scope = await (await this.scopes()).ScopeFor(context)
         const grant = ShareGrants.PublicId(params.id, kind, params.subject.id)
-        const transaction = await engine.Begin(ShareServiceScope.For(scope.Scope, new Set([grant]), snapshot.SchemaCatalog))
+        const transaction = await engine.Begin(ShareServiceScope.For(scope.Scope, new Set([grant]), params.id, snapshot.SchemaCatalog))
         try
         {
             const view = await RecordGrants.View(transaction, params.id, params.concept, snapshot.SchemaCatalog)
