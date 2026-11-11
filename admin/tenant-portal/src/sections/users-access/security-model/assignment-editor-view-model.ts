@@ -13,6 +13,82 @@ export enum AssignmentSide
     Profile,
 }
 
+// What differs between the two surfaces: which assignment list is read and
+// edited, and the text shown when it is empty.
+interface IAssignmentScope
+{
+    readonly EmptyText: string
+    Holders(assignments: SecurityAssignments, target: string): IAssignmentHolders
+    AddPrincipal(assignments: SecurityAssignments, target: string, principalId: string): void
+    RemovePrincipal(assignments: SecurityAssignments, target: string, principalId: string): void
+    AddTeam(assignments: SecurityAssignments, target: string, teamId: string): void
+    RemoveTeam(assignments: SecurityAssignments, target: string, teamId: string): void
+}
+
+class RoleAssignmentScope implements IAssignmentScope
+{
+    private static readonly NoHoldersText = 'No one is assigned this role yet. Add people or teams below.'
+
+    public readonly EmptyText = RoleAssignmentScope.NoHoldersText
+
+    public Holders(a: SecurityAssignments, target: string): IAssignmentHolders
+    {
+        return a.Holders(target)
+    }
+
+    public AddPrincipal(a: SecurityAssignments, target: string, id: string): void
+    {
+        a.AddPrincipal(target, id)
+    }
+
+    public RemovePrincipal(a: SecurityAssignments, target: string, id: string): void
+    {
+        a.RemovePrincipal(target, id)
+    }
+
+    public AddTeam(a: SecurityAssignments, target: string, id: string): void
+    {
+        a.AddTeam(target, id)
+    }
+
+    public RemoveTeam(a: SecurityAssignments, target: string, id: string): void
+    {
+        a.RemoveTeam(target, id)
+    }
+}
+
+class ProfileAssignmentScope implements IAssignmentScope
+{
+    private static readonly NoHoldersText = 'No one has this profile yet. Add people or teams below.'
+
+    public readonly EmptyText = ProfileAssignmentScope.NoHoldersText
+
+    public Holders(a: SecurityAssignments, target: string): IAssignmentHolders
+    {
+        return a.ProfileHolders(target)
+    }
+
+    public AddPrincipal(a: SecurityAssignments, target: string, id: string): void
+    {
+        a.AddProfilePrincipal(target, id)
+    }
+
+    public RemovePrincipal(a: SecurityAssignments, target: string, id: string): void
+    {
+        a.RemoveProfilePrincipal(target, id)
+    }
+
+    public AddTeam(a: SecurityAssignments, target: string, id: string): void
+    {
+        a.AddProfileTeam(target, id)
+    }
+
+    public RemoveTeam(a: SecurityAssignments, target: string, id: string): void
+    {
+        a.RemoveProfileTeam(target, id)
+    }
+}
+
 // One person granted the role / profile directly.
 export class AssignmentPrincipalRowViewModel extends Observable
 {
@@ -60,8 +136,10 @@ export class AssignmentEditorViewModel extends Observable
     private static readonly NewPrincipalProperty = 'NewPrincipal'
     private static readonly HasNoAssignmentsProperty = 'HasNoAssignments'
     private static readonly HasTeamOptionsProperty = 'HasTeamOptions'
-    private static readonly NoRoleHoldersText = 'No one is assigned this role yet. Add people or teams below.'
-    private static readonly NoProfileHoldersText = 'No one has this profile yet. Add people or teams below.'
+    private static readonly Scopes: ReadonlyMap<AssignmentSide, IAssignmentScope> = new Map<AssignmentSide, IAssignmentScope>([
+        [AssignmentSide.Role, new RoleAssignmentScope()],
+        [AssignmentSide.Profile, new ProfileAssignmentScope()],
+    ])
     private static readonly Empty = ''
 
     private draft: SecurityModelDraft | undefined
@@ -73,10 +151,12 @@ export class AssignmentEditorViewModel extends Observable
     private newPrincipal = AssignmentEditorViewModel.Empty
     private readonly addPersonCommand: RelayCommand
     private readonly addTeamCommand: RelayCommand
+    private readonly scope: IAssignmentScope
 
     public constructor(private readonly host: ISecurityModelEditHost, public readonly Side: AssignmentSide)
     {
         super()
+        this.scope = AssignmentEditorViewModel.Scopes.get(Side)!
         this.addPersonCommand = new RelayCommand(() => this.AddPerson(), () => this.CanEdit)
         this.addTeamCommand = new RelayCommand(() => this.AddTeam(), () => this.CanEdit)
     }
@@ -148,7 +228,7 @@ export class AssignmentEditorViewModel extends Observable
 
     public get NoAssignmentsText(): string
     {
-        return this.Side === AssignmentSide.Role ? AssignmentEditorViewModel.NoRoleHoldersText : AssignmentEditorViewModel.NoProfileHoldersText
+        return this.scope.EmptyText
     }
 
     public get AddPersonCommand(): RelayCommand
@@ -174,7 +254,7 @@ export class AssignmentEditorViewModel extends Observable
         this.selectedTeamOption = undefined
         if (draft !== undefined && targetId !== undefined)
         {
-            const holders = this.HoldersOf(draft.Assignments, targetId)
+            const holders = this.scope.Holders(draft.Assignments, targetId)
             for (const principal of holders.PrincipalIds)
             {
                 this.principalRows.Add(new AssignmentPrincipalRowViewModel(this, principal))
@@ -212,7 +292,7 @@ export class AssignmentEditorViewModel extends Observable
         {
             return
         }
-        if (this.host.Apply(d => this.AddPrincipalTo(d.Assignments, target, principal)))
+        if (this.host.Apply(d => this.scope.AddPrincipal(d.Assignments, target, principal)))
         {
             this.NewPrincipal = AssignmentEditorViewModel.Empty
             this.host.Rebuild()
@@ -221,7 +301,7 @@ export class AssignmentEditorViewModel extends Observable
 
     public RemovePrincipal(principalId: string): void
     {
-        this.Restructure((a, target) => this.Side === AssignmentSide.Role ? a.RemovePrincipal(target, principalId) : a.RemoveProfilePrincipal(target, principalId))
+        this.Restructure((a, target) => this.scope.RemovePrincipal(a, target, principalId))
     }
 
     // Grants the team picked in the picker.
@@ -232,12 +312,12 @@ export class AssignmentEditorViewModel extends Observable
         {
             return
         }
-        this.Restructure((a, target) => this.Side === AssignmentSide.Role ? a.AddTeam(target, picked.Value) : a.AddProfileTeam(target, picked.Value))
+        this.Restructure((a, target) => this.scope.AddTeam(a, target, picked.Value))
     }
 
     public RemoveTeam(teamId: string): void
     {
-        this.Restructure((a, target) => this.Side === AssignmentSide.Role ? a.RemoveTeam(target, teamId) : a.RemoveProfileTeam(target, teamId))
+        this.Restructure((a, target) => this.scope.RemoveTeam(a, target, teamId))
     }
 
     private Restructure(change: (assignments: SecurityAssignments, target: string) => void): void
@@ -250,23 +330,6 @@ export class AssignmentEditorViewModel extends Observable
         if (this.host.Apply(d => change(d.Assignments, target)))
         {
             this.host.Rebuild()
-        }
-    }
-
-    private HoldersOf(assignments: SecurityAssignments, target: string): IAssignmentHolders
-    {
-        return this.Side === AssignmentSide.Role ? assignments.Holders(target) : assignments.ProfileHolders(target)
-    }
-
-    private AddPrincipalTo(assignments: SecurityAssignments, target: string, principal: string): void
-    {
-        if (this.Side === AssignmentSide.Role)
-        {
-            assignments.AddPrincipal(target, principal)
-        }
-        else
-        {
-            assignments.AddProfilePrincipal(target, principal)
         }
     }
 }

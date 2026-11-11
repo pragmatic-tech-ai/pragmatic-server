@@ -7,6 +7,7 @@ import type { TenantSessionService } from '../../../shell/tenant-session-service
 import { EnvironmentScopedPageViewModel } from '../environment-scoped-page-view-model.js'
 import type { UsersAccessSectionService } from '../users-access-section-service.js'
 import { AssignmentEditorViewModel, AssignmentSide } from './assignment-editor-view-model.js'
+import { SecurityChangesViewModel } from './security-changes-view-model.js'
 import { SecurityModelDraft } from './security-model-draft.js'
 import { SecurityModelPart, TeamInputField, type ISecurityModelEditHost } from './security-model-edit-host.js'
 import { BaseRole, LevelCycle } from './security-model-enums.js'
@@ -187,6 +188,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private readonly legend = new ObservableCollection<LegendEntryViewModel>()
     private readonly roleAssignment: AssignmentEditorViewModel
     private readonly profileAssignment: AssignmentEditorViewModel
+    private readonly securityChanges: SecurityChangesViewModel
     private readonly saveCommand: RelayCommand
     private readonly discardCommand: RelayCommand
     private readonly addBusinessUnitCommand: RelayCommand
@@ -198,6 +200,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         super(session)
         this.roleAssignment = new AssignmentEditorViewModel(this, AssignmentSide.Role)
         this.profileAssignment = new AssignmentEditorViewModel(this, AssignmentSide.Profile)
+        this.securityChanges = new SecurityChangesViewModel(session, this)
         for (const level of LevelCycle)
         {
             this.legend.Add(new LegendEntryViewModel(level))
@@ -282,12 +285,22 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         {
             const P = SecurityModelEditorViewModel
             this.Raise(P.SelectedModeProperty, P.IsRolesModeProperty, P.IsProfilesModeProperty, P.IsOrganizationModeProperty, P.IsChangesModeProperty)
+            if (this.IsChangesMode)
+            {
+                void this.securityChanges.Refresh()
+            }
         }
     }
 
     public get IsProfilesMode(): boolean
     {
         return this.mode.Is(SecurityModelMode.Profiles)
+    }
+
+    // The security change log (Changes mode); reloaded each time the mode is opened.
+    public get SecurityChanges(): SecurityChangesViewModel
+    {
+        return this.securityChanges
     }
 
     public get IsChangesMode(): boolean
@@ -942,12 +955,18 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         this.Raise(P.HasSelectedProfileProperty, P.HasNoSelectedProfileProperty)
     }
 
+    // Ordinal (code-unit) comparison: the catalog order is the same in every locale.
+    private static Ordinal(a: string, b: string): number
+    {
+        return a < b ? -1 : a > b ? 1 : 0
+    }
+
     // Base roles first in BaseRole order, then package roles by name.
     private static OrderedRoles(roles: readonly SecurityRoleDto[]): SecurityRoleDto[]
     {
         const base = Object.values(BaseRole) as string[]
         const rank = (r: SecurityRoleDto): number => r.kind === SecurityRoleKind.Base && base.includes(r.name) ? base.indexOf(r.name) : base.length
-        return [...roles].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
+        return [...roles].sort((a, b) => rank(a) - rank(b) || SecurityModelEditorViewModel.Ordinal(a.name, b.name))
     }
 
     private RebuildRoles(): void
@@ -986,7 +1005,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         const role = this.selectedRoleId
         if (draft !== undefined && role !== undefined)
         {
-            for (const concept of draft.Catalog.concepts.map(c => c.name).sort())
+            for (const concept of draft.Catalog.concepts.map(c => c.name).sort(SecurityModelEditorViewModel.Ordinal))
             {
                 this.privilegeRows.Add(new PrivilegeRowViewModel(this, draft, role, concept))
             }
@@ -1028,7 +1047,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         const profile = this.selectedProfileId
         if (draft !== undefined && profile !== undefined)
         {
-            const secured = [...draft.Catalog.securedFields].sort((a, b) => a.concept.localeCompare(b.concept) || a.field.localeCompare(b.field))
+            const secured = [...draft.Catalog.securedFields].sort((a, b) => SecurityModelEditorViewModel.Ordinal(a.concept, b.concept) || SecurityModelEditorViewModel.Ordinal(a.field, b.field))
             for (const field of secured)
             {
                 this.fieldRows.Add(new FieldGrantRowViewModel(this, draft, profile, field.concept, field.field))

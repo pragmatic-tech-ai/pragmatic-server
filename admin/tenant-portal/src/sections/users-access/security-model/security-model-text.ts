@@ -50,6 +50,24 @@ export class SecurityModelText
     private static readonly ManualText = 'Added here'
     private static readonly UnsavedManualText = 'Added here (not saved)'
 
+    // The security change log: one plain sentence per change.
+    public static readonly NoChangesText = 'No deploy has changed security in this environment.'
+    private static readonly RoleDefaultTemplate = '{role}: {action} on {concept} changed from {before} to {after}'
+    private static readonly ProfileDefaultTemplate = '{profile}: access to {concept}.{field} changed from {before} to {after}'
+    private static readonly SecuredFieldAddedTemplate = '{concept}.{field} is now secured: only people whose field profile grants it can read it'
+    private static readonly SecuredFieldRemovedTemplate = '{concept}.{field} is no longer secured: everyone who can read the record can read it'
+    private static readonly RoleOverrideDroppedTemplate = '{role}: your override of {action} on {concept} was dropped'
+    private static readonly ProfileOverrideDroppedTemplate = '{profile}: your override of {concept}.{field} was dropped'
+    private static readonly RoleRemovedTemplate = 'Role {role} was removed with its assignments'
+    private static readonly ProfileRemovedTemplate = 'Profile {profile} was removed with its assignments'
+    private static readonly ChangeHeadingTemplate = '{delivery} {version}, {time}'
+    private static readonly UtcSuffix = ' UTC'
+    private static readonly NotListedText = 'not listed'
+    private static readonly TimePrefixLength = 16
+    private static readonly IsoTimeSeparator = 'T'
+    private static readonly SpaceText = ' '
+    private static readonly PlaceholderPattern = /\{(\w+)\}/g
+
     private static readonly Symbols: ReadonlyMap<AccessLevel, string> = new Map<AccessLevel, string>([
         [AccessLevel.None, SecurityModelText.NoneSymbol],
         [AccessLevel.User, SecurityModelText.UserSymbol],
@@ -149,6 +167,91 @@ export class SecurityModelText
             return SecurityModelText.SyncedText
         }
         return unsaved ? SecurityModelText.UnsavedManualText : SecurityModelText.ManualText
+    }
+
+    // The heading of one change-log entry: the delivery, its version and the UTC time (never locale-dependent).
+    public static ChangeHeading(delivery: string, version: string, at: string): string
+    {
+        return SecurityModelText.Fill(SecurityModelText.ChangeHeadingTemplate, { delivery, version, time: SecurityModelText.UtcTime(at) })
+    }
+
+    public static RoleDefaultChange(role: string, concept: string, action: string, before: string, after: string): string
+    {
+        return SecurityModelText.Fill(SecurityModelText.RoleDefaultTemplate, {
+            role, concept, action: SecurityModelText.ActionName(action), before: SecurityModelText.LevelNameOf(before), after: SecurityModelText.LevelNameOf(after),
+        })
+    }
+
+    public static ProfileDefaultChange(profile: string, concept: string, field: string, before: FieldAccess | null, after: FieldAccess | null): string
+    {
+        return SecurityModelText.Fill(SecurityModelText.ProfileDefaultTemplate, {
+            profile, concept, field, before: SecurityModelText.FieldAccessText(before), after: SecurityModelText.FieldAccessText(after),
+        })
+    }
+
+    public static SecuredFieldAdded(concept: string, field: string): string
+    {
+        return SecurityModelText.Fill(SecurityModelText.SecuredFieldAddedTemplate, { concept, field })
+    }
+
+    public static SecuredFieldRemoved(concept: string, field: string): string
+    {
+        return SecurityModelText.Fill(SecurityModelText.SecuredFieldRemovedTemplate, { concept, field })
+    }
+
+    public static RoleOverrideDropped(role: string, concept: string, action: string): string
+    {
+        return SecurityModelText.Fill(SecurityModelText.RoleOverrideDroppedTemplate, { role, concept, action: SecurityModelText.ActionName(action) })
+    }
+
+    public static ProfileOverrideDropped(profile: string, concept: string, field: string): string
+    {
+        return SecurityModelText.Fill(SecurityModelText.ProfileOverrideDroppedTemplate, { profile, concept, field })
+    }
+
+    public static RoleRemoved(role: string): string
+    {
+        return SecurityModelText.Fill(SecurityModelText.RoleRemovedTemplate, { role })
+    }
+
+    public static ProfileRemoved(profile: string): string
+    {
+        return SecurityModelText.Fill(SecurityModelText.ProfileRemovedTemplate, { profile })
+    }
+
+    // Fills every {name} placeholder from `values`; an unknown placeholder stays as written.
+    private static Fill(template: string, values: Readonly<Record<string, string>>): string
+    {
+        return template.replace(SecurityModelText.PlaceholderPattern, (whole, name: string) => values[name] ?? whole)
+    }
+
+    private static UtcTime(at: string): string
+    {
+        const ms = Date.parse(at)
+        if (Number.isNaN(ms))
+        {
+            return at
+        }
+        return new Date(ms).toISOString().slice(0, SecurityModelText.TimePrefixLength).replace(SecurityModelText.IsoTimeSeparator, SecurityModelText.SpaceText) + SecurityModelText.UtcSuffix
+    }
+
+    private static ActionName(action: string): string
+    {
+        return SecurityModelText.ActionVerbs.get(action as PrivilegeAction) ?? action
+    }
+
+    private static LevelNameOf(level: string): string
+    {
+        return SecurityModelText.LevelNames.get(level as AccessLevel) ?? level
+    }
+
+    private static FieldAccessText(access: FieldAccess | null): string
+    {
+        if (access === null)
+        {
+            return SecurityModelText.NotListedText
+        }
+        return SecurityModelText.FieldDefaultText(access).slice(SecurityModelText.DefaultPrefix.length)
     }
 
     private static JoinParts(parts: readonly string[]): string

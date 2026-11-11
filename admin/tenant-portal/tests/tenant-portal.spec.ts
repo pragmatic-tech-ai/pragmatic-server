@@ -21,6 +21,10 @@ class TenantText
     public static readonly RightNow = 'Right now'
     public static readonly RolesTab = 'Roles & permissions'
     public static readonly AccessLevels = 'Access levels'
+    public static readonly BasicUserRole = 'BasicUser · 0 direct'
+    public static readonly UserGlyph = '◔'
+    public static readonly BusinessUnitGlyph = '◑'
+    public static readonly SaveButton = 'Save'
     public static readonly TokensTab = 'Tokens'
     public static readonly IssueToken = 'Issue token'
     public static readonly PrincipalPlaceholder = 'e.g. ci-bot'
@@ -263,9 +267,30 @@ test.describe('tenant admin portal', () =>
         await TenantSteps.OpenSection(page, RailEntry.UsersAccess)
         await expect(TenantSteps.Visible(page, FakeTenantControlPlane.UserEmail)).toBeVisible()
         await TenantSteps.Click(page, TenantText.RolesTab)
+        await TenantSteps.Click(page, TenantText.BasicUserRole)
         await expect(TenantSteps.Visible(page, TenantText.AccessLevels)).toBeVisible()
         await TenantSteps.Click(page, TenantText.TokensTab)
         await expect(TenantSteps.Visible(page, 'ref-1')).toBeVisible()
+        await TenantSteps.ExpectNoBrokenText(page)
+    })
+
+    test('Users & Access: a role override saved on a Runtime environment persists across a reload', async ({ page }) =>
+    {
+        await TenantSteps.Boot(page, base)
+        await TenantSteps.OpenSection(page, RailEntry.UsersAccess)
+        await TenantSteps.Click(page, TenantText.RolesTab)
+        await TenantSteps.Click(page, TenantText.BasicUserRole)
+        await expect(TenantSteps.Visible(page, TenantText.UserGlyph)).toBeVisible()
+        await TenantSteps.Click(page, TenantText.UserGlyph)
+        await expect(TenantSteps.Visible(page, TenantText.BusinessUnitGlyph)).toBeVisible()
+        await TenantSteps.Click(page, TenantText.SaveButton)
+        await expect.poll(() => fake.SecurityModel.roleOverrides.length).toBe(1)
+        await page.reload()
+        await expect(TenantSteps.Text(page, TenantText.OverviewSubtitle)).toBeVisible()
+        await TenantSteps.OpenSection(page, RailEntry.UsersAccess)
+        await TenantSteps.Click(page, TenantText.RolesTab)
+        await TenantSteps.Click(page, TenantText.BasicUserRole)
+        await expect(TenantSteps.Visible(page, TenantText.BusinessUnitGlyph)).toBeVisible()
         await TenantSteps.ExpectNoBrokenText(page)
     })
 

@@ -51,6 +51,7 @@ export class FakeTenantControlPlane
     private static readonly FontExt = '.woff2'
     private static readonly ProfilePath = '/tenant-api/profile'
     private static readonly HivesPath = '/tenant-api/hives'
+    private static readonly EmailDomainsPath = '/tenant-api/settings/email-domains'
     private static readonly EnvironmentsPath = '/tenant-api/environments'
     private static readonly BadRequestMessage = 'bad request'
     private static readonly CreatedIdSuffix = '-created-id'
@@ -437,6 +438,11 @@ export class FakeTenantControlPlane
                 ownerContact: FakeTenantControlPlane.OwnerContact
             }
             FakeTenantControlPlane.Json(res, 200, profile)
+            return
+        }
+        if (path === FakeTenantControlPlane.EmailDomainsPath)
+        {
+            FakeTenantControlPlane.Json(res, 200, { domains: [], editable: true, inHive: false, pending: [] })
             return
         }
         if (path === FakeTenantControlPlane.HivesPath)

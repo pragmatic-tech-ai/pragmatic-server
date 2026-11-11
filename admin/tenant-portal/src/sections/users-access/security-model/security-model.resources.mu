@@ -18,6 +18,9 @@ import SecurityModelEditorViewModel from "./security-model-editor-view-model.js"
 import AssignmentEditorViewModel from "./assignment-editor-view-model.js"
 import AssignmentPrincipalRowViewModel from "./assignment-editor-view-model.js"
 import AssignmentTeamRowViewModel from "./assignment-editor-view-model.js"
+import SecurityChangesViewModel from "./security-changes-view-model.js"
+import SecurityChangeEntryViewModel from "./security-changes-view-model.js"
+import SecurityChangeLineViewModel from "./security-changes-view-model.js"
 import RoleItemViewModel from "./security-model-role-rows.js"
 import ProfileItemViewModel from "./security-model-role-rows.js"
 import PrivilegeRowViewModel from "./security-model-role-rows.js"
@@ -204,9 +207,9 @@ resources SecurityModelResources {
                         }
                     }
 
-                    // ---- Changes mode (content arrives with the changes view) ----
+                    // ---- Changes mode: what each deploy changed, newest first ----
                     StackPanel [ Orientation = Vertical, Visibility = $IsChangesMode << ToVisibility ] {
-                        TextBlock [ Text = "Security changes from deliveries will be listed here.", Foreground = @Fg2, TextWrapping = Wrap ]
+                        ContentControl [ Content = $SecurityChanges ]
                     }
 
                     // ---- Organization mode ----
@@ -424,6 +427,29 @@ resources SecurityModelResources {
                 Button [ Variant = Ghost, Command = $ResetCommand, Visibility = $IsOverridden << ToVisibility ] { TextBlock [ Text = "↺" ] }
             }
         }
+    }
+
+    // ---- The security change log ----
+
+    DataTemplate [ DataType = SecurityChangesViewModel ] {
+        StackPanel [ Orientation = Vertical ] {
+            TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,8), Visibility = $HasError << ToVisibility ]
+            TextBlock [ Text = $NoEntriesText, Foreground = @Fg2, TextWrapping = Wrap, Visibility = $HasNoEntries << ToVisibility ]
+            ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $Entries,
+                      ItemTemplate = @SecurityModelChangeEntryTemplate ]
+        }
+    }
+
+    DataTemplate x:key="SecurityModelChangeEntryTemplate" [ DataType = SecurityChangeEntryViewModel ] {
+        StackPanel [ Orientation = Vertical, Margin = (0,0,0,8) ] {
+            TextBlock [ Text = $HeadingText, Style = @TenantSectionCaption ]
+            ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $LineRows,
+                      ItemTemplate = @SecurityModelChangeLineTemplate ]
+        }
+    }
+
+    DataTemplate x:key="SecurityModelChangeLineTemplate" [ DataType = SecurityChangeLineViewModel ] {
+        TextBlock [ Text = $Text, Foreground = @Fg0, TextWrapping = Wrap ]
     }
 
     // ---- Who holds a role / profile ----
