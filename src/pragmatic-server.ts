@@ -3,7 +3,7 @@ import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech
 import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
 import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog, Cypher } from '@pragmatic-tech-ai/todl'
-import type { ModelConnectorPlan, IDataSourceAdapterProvider, IConnectorQueryFilterProvider } from '@pragmatic-tech-ai/todl'
+import type { ModelConnectorPlan, IDataSourceAdapterProvider, IConnectorQueryFilterProvider, IDataSourceAdapterFactory } from '@pragmatic-tech-ai/todl'
 import type { Domain } from '@pragmatic-tech-ai/todl/domain'
 import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-system'
 import { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -84,7 +84,11 @@ import { AccessScopeSource, LoggerScopeDiagnostics } from './host/engine/access-
 import { DevScopeRules } from './host/engine/dev-scope-rules.js'
 import { EngineCypherQuery } from './host/engine/engine-cypher-query.js'
 import { DevModelView, LoggerDevModelViewDiagnostics } from './host/engine/dev-model-view.js'
-import { EnvironmentGraph, EnvironmentGraphOverlay, LoadedGraphStore, NoEnvironmentGraphError } from './host/graphs/environment-graph.js'
+import { EnvironmentGraph, EnvironmentGraphOverlay, NoEnvironmentGraphError } from './host/graphs/environment-graph.js'
+import { PromoteRecordStore } from './host/environment/promote-record-store.js'
+import { EnvironmentDeliveries } from './host/environment/environment-deliveries.js'
+import { EnvironmentEngineHost, LoggerEnvironmentDiagnostics } from './host/environment/environment-engine-host.js'
+import { StorageKind } from '@pragmatic-tech-ai/graph'
 import type { IEnvironmentGraphHost } from './host/graphs/environment-graph.js'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
@@ -139,6 +143,13 @@ export interface PragmaticServerOptions
     writeLock?: IWriteLock
     /** The host's logger (dev access-scope diagnostics, ...); absent => nothing is logged. */
     logger?: ILogger
+    /** The runtime environment engine's store kind (ruling S2); absent => LMDB at `<graphsRoot>/environment-engine`. */
+    environmentEngineStorage?: StorageKind
+    /**
+     * Extra data-source adapter factories registered on this tenant's adapter catalog after the built-in ones (a factory
+     * replaces the built-in one of its kind); absent => the built-ins only. Test sources plug in here.
+     */
+    adapterFactories?: readonly IDataSourceAdapterFactory[]
 }
 
 /** The node labels a Cypher query references; wildcard when any node pattern is unlabeled; parseFailed when the text is not valid Cypher (nothing is prefetched). */
@@ -192,7 +203,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private devCypher: EngineCypherQuery | undefined
     private devModelView: DevModelView | undefined
     private environmentGraph: EnvironmentGraph | undefined
-    private loadedGraphStore: LoadedGraphStore | undefined
+    private promoteRecords: PromoteRecordStore | undefined
+    private environmentEngine: EnvironmentEngineHost | undefined
     private readonly appGraphs = new Map<string, Promise<AppBase>>()
     private readonly shareStores = new Map<string, ShareStore>()
     private readAuth: Promise<TenantReadAuthorization> | undefined
@@ -209,6 +221,10 @@ export class PragmaticServer implements IEnvironmentGraphHost
         this.root = builder.Build()
         this.connectorsHost = new ConnectorsHost(PragmaticServer.ConnectorsOptions(options))
         this.connectorsHost.Catalog.Register(new BuiltinAdapterFactory((dataRoot, engine) => this.platform.CreateAppDataStore(dataRoot, engine)))
+        for (const factory of options.adapterFactories ?? [])
+        {
+            this.connectorsHost.Catalog.Register(factory)
+        }
         this.RegisterInfrastructure(options.packagesRoot ?? PragmaticServer.DefaultPackagesDir)
     }
 
@@ -460,7 +476,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         const graph = await EnvironmentGraph.Build(this.PackagesStorage(), params.graphName, refs)
         const record = graph.Record()
         // Persist first: a Save failure leaves the prior live instance and the persisted record both intact and consistent.
-        await this.LoadedGraphStore().Save(record)
+        await this.PromoteRecords().Save(record)
         this.environmentGraph = graph
         return record
     }
@@ -476,7 +492,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     {
         if (this.environmentGraph === undefined)
         {
-            const record = await this.LoadedGraphStore().Read()
+            const record = await this.PromoteRecords().Read()
             if (record === null)
             {
                 throw new NoEnvironmentGraphError()
@@ -493,13 +509,36 @@ export class PragmaticServer implements IEnvironmentGraphHost
         {
             return this.environmentGraph.Record()
         }
-        return this.LoadedGraphStore().Read()
+        return this.PromoteRecords().Read()
     }
 
-    private LoadedGraphStore(): LoadedGraphStore
+    /**
+     * The runtime environment's ONE graph engine (rulings S2-S4), over every live app plus the promote record, opened
+     * on first use (LMDB at `<graphsRoot>/environment-engine` unless `environmentEngineStorage` says otherwise; Q7: the
+     * graphs root must be on storage the next lease holder reaches). Memoized; disposed with the server before the
+     * connectors host (its connectors borrow that host's adapters). Runtime tenants only.
+     */
+    public EnvironmentEngine(): EnvironmentEngineHost
     {
-        this.loadedGraphStore ??= new LoadedGraphStore(this.GraphsStorage())
-        return this.loadedGraphStore
+        if (this.disposing !== undefined)
+        {
+            throw new Error(PragmaticServer.DisposedMessage)
+        }
+        this.AssertRuntimePurpose()
+        if (this.environmentEngine === undefined)
+        {
+            const storage = { Kind: this.options.environmentEngineStorage ?? StorageKind.Lmdb, Path: join(this.options.graphsRoot ?? PragmaticServer.DefaultGraphsDir, EnvironmentEngineHost.StoreDir) }
+            this.environmentEngine = new EnvironmentEngineHost(new EnvironmentDeliveries(this.Applications(), this.PromoteRecords()), this.PackagesStorage(), this.root.Services(), storage,
+                new LoggerEnvironmentDiagnostics(this.options.logger ?? new NullLogger()))
+        }
+        return this.environmentEngine
+    }
+
+    /** The environment's promote record (`graphs/loaded-graph.json`, ruling S3). */
+    private PromoteRecords(): PromoteRecordStore
+    {
+        this.promoteRecords ??= new PromoteRecordStore(this.GraphsStorage())
+        return this.promoteRecords
     }
 
     /** Throws unless this is a Development tenant: the graph catalog exists only there. */
@@ -989,33 +1028,41 @@ export class PragmaticServer implements IEnvironmentGraphHost
     {
         try
         {
-            await this.connectorsHost.Dispose()
+            // the environment engine's connectors borrow adapters from the connectors host's catalog: it closes first
+            await this.environmentEngine?.dispose()
         }
         finally
         {
-            this.appGraphs.clear()
             try
             {
-                const disposable = this.options.identity?.flowStateStore as { Dispose?: () => Promise<void> } | undefined
-                if (disposable?.Dispose !== undefined)
-                {
-                    await disposable.Dispose()
-                }
+                await this.connectorsHost.Dispose()
             }
             finally
             {
+                this.appGraphs.clear()
                 try
                 {
-                    // the model view and the scope source unsubscribe from the engine host and the security source before the engine goes
-                    this.devModelView?.dispose()
-                    const scopes = await this.devScopes?.catch(() => undefined)
-                    scopes?.dispose()
-                    await this.devEngine?.dispose()
+                    const disposable = this.options.identity?.flowStateStore as { Dispose?: () => Promise<void> } | undefined
+                    if (disposable?.Dispose !== undefined)
+                    {
+                        await disposable.Dispose()
+                    }
                 }
                 finally
                 {
-                    await this.DrainLanguageService()
-                    this.root.Services().dispose()
+                    try
+                    {
+                        // the model view and the scope source unsubscribe from the engine host and the security source before the engine goes
+                        this.devModelView?.dispose()
+                        const scopes = await this.devScopes?.catch(() => undefined)
+                        scopes?.dispose()
+                        await this.devEngine?.dispose()
+                    }
+                    finally
+                    {
+                        await this.DrainLanguageService()
+                        this.root.Services().dispose()
+                    }
                 }
             }
         }

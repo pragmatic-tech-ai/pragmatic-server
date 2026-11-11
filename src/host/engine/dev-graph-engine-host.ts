@@ -2,11 +2,12 @@ import { CommitKind, GraphEngine, StorageKind, WriteOp } from '@pragmatic-tech-a
 import type { BatchOp, ConnectorChangeSet, ICommitApplied, IConnectorTransaction, IGraphConnector, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { EnvironmentCatalogError, TodlFileConnector } from '@pragmatic-tech-ai/todl/engine'
-import { Disposable, ServiceProvider, Signal } from '@pragmatic-tech-ai/todl-runtime'
+import { Disposable, ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable, IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
 import { ConnectorSetKey } from './connector-set-key.js'
+import { EngineHostChanged } from './engine-host-changed.js'
 import type { IDevLanguageService } from './dev-language-service.js'
 import type { IDevSolution } from './dev-solution.js'
 import { DevSnapshotCompileError, DevSnapshotSource } from './dev-snapshot-source.js'
@@ -440,22 +441,6 @@ class TrackedTransaction implements IConnectorTransaction
     }
 }
 
-/** The subscribe side of the host's change signal. */
-class DevEngineChanged implements ISignal<void>
-{
-    private readonly signal = new Signal<void>()
-
-    public Subscribe(handler: (value: void) => void): ISubscription
-    {
-        return this.signal.subscribe(handler)
-    }
-
-    public Raise(): void
-    {
-        this.signal.emit(undefined)
-    }
-}
-
 /**
  * One running engine: the GraphEngine, the CommitApplied subscription that tells the write tracker it finalized, its
  * tracked `.todl` file connector, and the key of the external connector set it was opened with.
@@ -558,7 +543,7 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
 
     public readonly Changed: ISignal<void>
 
-    private readonly changed = new DevEngineChanged()
+    private readonly changed = new EngineHostChanged()
     private readonly writes = new EngineWriteTracker()
     private readonly fences = new WriteFenceSlot()
     private opening: Promise<OpenedEngine> | undefined

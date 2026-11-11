@@ -8,7 +8,8 @@ import {
     type WriteBatch, type WriteResult, type ResolvedConnection,
 } from '@pragmatic-tech-ai/todl'
 import type { GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { EnvironmentGraph, EnvironmentGraphOverlay, LoadedGraphStore } from '../environment-graph.js'
+import { EnvironmentGraph, EnvironmentGraphOverlay } from '../environment-graph.js'
+import { PromoteRecordStore } from '../../environment/promote-record-store.js'
 
 /** Seeds a packages store with one queryable package, laid out as publish writes it (`<id>/<version>/model.json`). */
 class SeededPackages
@@ -73,10 +74,10 @@ test('Build over an empty package set yields an empty instance', async () =>
     assert.ok(graph.Base())
 })
 
-test('LoadedGraphStore round-trips a record', async () =>
+test('PromoteRecordStore round-trips a record', async () =>
 {
     const storage = new FakeStorage()
-    const store = new LoadedGraphStore(storage)
+    const store = new PromoteRecordStore(storage)
     assert.equal(await store.Read(), null)
     const record: GraphLoadedDto = { name: SeededPackages.GraphName, packages: [{ id: SeededPackages.Id, version: SeededPackages.Version }], promotedAt: new Date().toISOString() }
     await store.Save(record)

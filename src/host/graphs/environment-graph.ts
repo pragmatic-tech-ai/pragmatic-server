@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import { StoragePackageSource, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
 import type { ModelConnectorPlan } from '@pragmatic-tech-ai/todl'
 import type { Domain } from '@pragmatic-tech-ai/todl/domain'
@@ -92,33 +91,5 @@ export class EnvironmentGraphOverlay
         const concepts = plan.Bindings.map(b => b.Concept)
         const snapshot = await ConnectorPrefetch.ForConcepts(concepts, plan, services.getRequired(DataSourceAdapterCatalog.ServiceKey), services, graph.Domain())
         return new ConnectorRuntimeGraphQuery(graph.Base(), snapshot)
-    }
-}
-
-/** Persists the loaded-manifest record to the graphs volume so `graph/loaded` survives a restart; replace-on-promote overwrites it. */
-export class LoadedGraphStore
-{
-    private static readonly FileName = 'loaded-graph.json'
-    private static readonly TempPrefix = '.loaded-graph-'
-    private static readonly TempSuffix = '.tmp'
-
-    public constructor(private readonly storage: IStorage)
-    {
-    }
-
-    public async Save(record: GraphLoadedDto): Promise<void>
-    {
-        const temp = LoadedGraphStore.TempPrefix + randomUUID() + LoadedGraphStore.TempSuffix
-        await this.storage.WriteText(temp, JSON.stringify(record, null, 2))
-        await this.storage.Rename(temp, LoadedGraphStore.FileName)
-    }
-
-    public async Read(): Promise<GraphLoadedDto | null>
-    {
-        if (!(await this.storage.Exists(LoadedGraphStore.FileName)))
-        {
-            return null
-        }
-        return JSON.parse(await this.storage.ReadText(LoadedGraphStore.FileName)) as GraphLoadedDto
     }
 }

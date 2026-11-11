@@ -38,10 +38,6 @@ class ModelScopedWorld
         this.ModelIds = modelIds
     }
 
-    /**
-     * The dev engine's schema version and latest commit (they replace GraphRevision in a dev cursor's fingerprint), then
-     * the caller's scope digest (every dev cursor carries it).
-     */
     /** The engine part of a cursor fingerprint: the schema version and the caller's scope digest (no commit, S11). */
     public async EngineState(context: AccessContext): Promise<string[]>
     {
