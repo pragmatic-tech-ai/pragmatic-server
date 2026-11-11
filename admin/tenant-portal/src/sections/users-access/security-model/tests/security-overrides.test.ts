@@ -47,7 +47,7 @@ describe('SecurityOverrides', () =>
         assert.equal(o.EffectiveLevel('BasicUser', 'hr.Employee', PrivilegeAction.Read), AccessLevel.User)
         o.Reset('BasicUser', 'hr.Employee', PrivilegeAction.Read)
         assert.equal(o.EffectiveLevel('BasicUser', 'hr.Employee', PrivilegeAction.Read), AccessLevel.BusinessUnit)
-        assert.deepEqual(draft.ToDto().roleOverrides.map(r => r.role), ['legacy.Auditor'])
+        assert.deepEqual(draft.ToDto().roleOverrides, [])
         o.ResetField('hr.Payroll', 'hr.Employee', 'Salary')
         assert.deepEqual(draft.ToDto().profileOverrides, [])
         assert.deepEqual(o.EffectiveField('hr.Payroll', 'hr.Employee', 'Salary'), new FieldAccess(true, false, false))

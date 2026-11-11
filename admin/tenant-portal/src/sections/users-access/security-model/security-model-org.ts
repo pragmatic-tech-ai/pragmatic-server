@@ -58,11 +58,20 @@ export class SecurityModelOrg
             && !this.model.users.some(p => p.businessUnitId === id)
     }
 
+    // Whether `id` is the root unit (the tree has exactly one).
+    public IsRoot(id: string): boolean
+    {
+        return id === this.RootBusinessUnitId
+    }
+
+    // The tree is single-rooted: the first unit becomes the root, every
+    // later one starts under it.
     public AddBusinessUnit(name: string): string
     {
         const units = this.model.businessUnits
+        const root = this.RootBusinessUnitId
         const id = SecurityModelOrg.NextId(SecurityModelOrg.BusinessUnitIdPrefix, name, SecurityModelOrg.FallbackBusinessUnitSlug, units.map(u => u.id))
-        units.push({ id, name })
+        units.push(root === undefined ? { id, name } : { id, name, parent: root })
         this.dirty = true
         return id
     }
@@ -78,21 +87,16 @@ export class SecurityModelOrg
         this.dirty = true
     }
 
+    // Moves a unit under another. The root is never re-parented and no other
+    // unit may become parentless (a second root), nor form a cycle.
     public SetBusinessUnitParent(id: string, parent: string | undefined): void
     {
         const unit = this.model.businessUnits.find(u => u.id === id)
-        if (unit === undefined || this.UnknownUnit(parent) || this.WouldCycle(id, parent))
+        if (unit === undefined || parent === undefined || this.IsRoot(id) || unit.parent === parent || this.UnknownUnit(parent) || this.WouldCycle(id, parent))
         {
             return
         }
-        if (parent === undefined)
-        {
-            delete unit.parent
-        }
-        else
-        {
-            unit.parent = parent
-        }
+        unit.parent = parent
         this.dirty = true
     }
 

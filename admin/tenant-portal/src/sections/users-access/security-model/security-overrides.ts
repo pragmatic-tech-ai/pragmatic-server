@@ -45,8 +45,9 @@ export class FieldAccess
 
 // The setting's role and profile overrides over the catalog's defaults. An
 // override equal to its default is never stored: setting one removes the row.
-// Rows naming a role, concept or profile the catalog lacks are left untouched
-// (the server prunes them on deploy). Edits the live model in place.
+// Rows naming a role, concept or profile the catalog lacks are never shown
+// and SecurityModelDraft.ToDto() drops them (ruling R22). Edits the live
+// model in place.
 export class SecurityOverrides
 {
     private static readonly OrganizationOwnedLevels: readonly AccessLevel[] = [AccessLevel.None, AccessLevel.Organization]

@@ -13,7 +13,7 @@ class Fixtures
     public static Referenced(): SecurityModelDto
     {
         return {
-            businessUnits: [{ id: 'bu1', name: 'Root' }, { id: 'bu2', name: 'Child', parent: 'bu1' }],
+            businessUnits: [{ id: 'bu1', name: 'Root' }, { id: 'bu2', name: 'Child', parent: 'bu1' }, { id: 'bu3', name: 'Other child', parent: 'bu1' }],
             users: [],
             teams: [
                 { id: 't1', name: 'Team', businessUnitId: 'bu1', idpGroups: [], manualMembers: [] },
@@ -51,9 +51,23 @@ describe('SecurityModelOrg', () =>
         org.SetBusinessUnitParent('bu1', 'bu2')
         assert.equal(org.BusinessUnits.find(u => u.id === 'bu1')?.parent, undefined)
         assert.equal(org.Dirty, false)
-        org.SetBusinessUnitParent('bu2', undefined)
-        assert.equal(org.BusinessUnits.find(u => u.id === 'bu2')?.parent, undefined)
+        org.SetBusinessUnitParent('bu3', 'bu2')
+        assert.equal(org.BusinessUnits.find(u => u.id === 'bu3')?.parent, 'bu2')
         assert.equal(org.Dirty, true)
+    })
+
+    it('added unit sits under the root', () =>
+    {
+        const model = Fixtures.Empty()
+        const org = new SecurityModelOrg(model)
+        const root = org.AddBusinessUnit('Contoso')
+        const child = org.AddBusinessUnit('Sales')
+        assert.deepEqual(model.businessUnits, [{ id: root, name: 'Contoso' }, { id: child, name: 'Sales', parent: root }])
+        assert.equal(org.RootBusinessUnitId, root)
+        // A non-root cannot be made parentless (a second root), and the root cannot be re-parented.
+        org.SetBusinessUnitParent(child, undefined)
+        org.SetBusinessUnitParent(root, child)
+        assert.deepEqual(model.businessUnits, [{ id: root, name: 'Contoso' }, { id: child, name: 'Sales', parent: root }])
     })
 
     it('RenameBusinessUnit renames and marks dirty', () =>
@@ -122,7 +136,7 @@ describe('SecurityModelOrg', () =>
     {
         const noop = new SecurityModelOrg(Fixtures.Referenced())
         noop.RenameBusinessUnit('nope', 'x')
-        noop.SetBusinessUnitParent('nope', undefined)
+        noop.SetBusinessUnitParent('nope', 'bu1')
         noop.RemoveBusinessUnit('nope')
         noop.RenameTeam('nope', 'x')
         noop.SetTeamBusinessUnit('nope', 'bu1')
@@ -131,7 +145,7 @@ describe('SecurityModelOrg', () =>
         const mutations: ((o: SecurityModelOrg) => void)[] = [
             o => o.AddBusinessUnit('n'),
             o => o.RenameBusinessUnit('bu1', 'n'),
-            o => o.SetBusinessUnitParent('bu2', undefined),
+            o => o.SetBusinessUnitParent('bu3', 'bu2'),
             o => o.AddTeam('n'),
             o => o.RenameTeam('t1', 'n'),
             o => o.SetTeamBusinessUnit('t1', 'bu2'),

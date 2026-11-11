@@ -1317,7 +1317,7 @@ export class SecurityModelResources extends ResourceDictionary {
             _comboBox304.set_property_value(Grid.ColumnKey, 1);
             _comboBox304.set_property_value(ComboBox.ItemsSourceKey, DataContextBinding(_comboBox304, "ParentOptions"));
             _comboBox304.set_property_value(ComboBox.SelectedItemKey, DataContextBinding(_comboBox304, "SelectedParent"));
-            _comboBox304.set_property_value(ComboBox.IsEnabledKey, DataContextBinding(_comboBox304, "CanEdit"));
+            _comboBox304.set_property_value(ComboBox.IsEnabledKey, DataContextBinding(_comboBox304, "CanPickParent"));
             _comboBox304.set_property_value(ComboBox.HorizontalAlignmentKey, HorizontalAlignment.Stretch);
             _comboBox304.set_property_value(ComboBox.MarginKey, new Thickness(0, 0, 8, 0));
             _grid297.AddChild(_comboBox304);

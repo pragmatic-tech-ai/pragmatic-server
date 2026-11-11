@@ -144,22 +144,21 @@ describe('SecurityModelEditorViewModel', () =>
         assert.equal(department.Level, AccessLevel.None)
     })
 
-    it('offers a unit no parent among itself or its descendants and refuses a cycle', async () =>
+    it('offers (none) only on the root and a unit no parent among itself or its descendants', async () =>
     {
         const editor = await Fixture.Editor()
-        const [root, child] = editor.BusinessUnitRows.ToArray()
+        editor.NewBusinessUnitName = 'East'
+        editor.AddBusinessUnitCommand.Execute()
+        const [root, sales, east] = editor.BusinessUnitRows.ToArray()
         assert.deepEqual(root.ParentOptions.ToArray().map(o => o.Label), ['(none)'])
-        assert.deepEqual(child.ParentOptions.ToArray().map(o => o.Label), ['(none)', 'Contoso'])
+        assert.equal(root.CanPickParent, false)
+        assert.deepEqual(sales.ParentOptions.ToArray().map(o => o.Label), ['Contoso', 'East'])
         const rows = editor.BusinessUnitRows
-        root.SelectedParent = child.SelectedParent
-        assert.equal(root.Parent, undefined)
-        assert.equal(editor.IsDirty, false)
-        child.SelectedParent = child.ParentOptions.ToArray()[0]
-        assert.equal(child.Parent, undefined)
-        assert.equal(child.Depth, 0)
+        east.SelectedParent = east.ParentOptions.ToArray().find(o => o.Label === 'Sales')
+        assert.equal(east.Parent, 'sales')
+        assert.equal(east.Depth, 2)
         assert.equal(editor.BusinessUnitRows, rows)
-        assert.deepEqual(root.ParentOptions.ToArray().map(o => o.Label), ['(none)', 'Sales'])
-        assert.equal(editor.IsDirty, true)
+        assert.deepEqual(sales.ParentOptions.ToArray().map(o => o.Label), ['Contoso'])
     })
 
     it('a rename edits in place and relabels the unit everywhere else', async () =>

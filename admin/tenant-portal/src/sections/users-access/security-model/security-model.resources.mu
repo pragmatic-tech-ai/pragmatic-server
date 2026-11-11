@@ -529,7 +529,7 @@ resources SecurityModelResources {
                 TextBlock [ DockPanel.Dock = Left, Text = $Indent, VerticalAlignment = Center ]
                 TextBox [ UsesNativeInput = true, Text = $Name, Placeholder = "Business unit name", IsEnabled = $CanEdit ]
             }
-            ComboBox [ Grid.Column = 1, ItemsSource = $ParentOptions, SelectedItem = $SelectedParent, IsEnabled = $CanEdit,
+            ComboBox [ Grid.Column = 1, ItemsSource = $ParentOptions, SelectedItem = $SelectedParent, IsEnabled = $CanPickParent,
                        HorizontalAlignment = Stretch, Margin = (0,0,8,0) ]
             StackPanel [ Grid.Column = 2, Orientation = Vertical ] {
                 Button [ Variant = Ghost, Command = $RemoveCommand ] {

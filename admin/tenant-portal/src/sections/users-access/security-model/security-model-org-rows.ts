@@ -35,8 +35,8 @@ export class UnitOptionViewModel extends Observable
     }
 }
 
-// Whether a unit picker offers "(none)": a parent picker does (a root has
-// no parent), a team's does not (a team always sits in a unit).
+// Whether a unit picker offers "(none)": only the root's parent picker does
+// (the root has no parent); every other unit, user and team sits in a unit.
 export enum NoneChoice
 {
     Offered,
@@ -144,13 +144,15 @@ export abstract class OrgRowViewModel extends Observable
 }
 
 // One business unit: rename, parent (any unit but itself and its
-// descendants; a cycle is refused), remove. Indented by its depth.
+// descendants; a cycle is refused; the root keeps no parent), remove.
+// Indented by its depth.
 export class BusinessUnitRowViewModel extends OrgRowViewModel
 {
     private static readonly NameProperty = 'Name'
     private static readonly IndentProperty = 'Indent'
     private static readonly ParentOptionsProperty = 'ParentOptions'
     private static readonly SelectedParentProperty = 'SelectedParent'
+    private static readonly CanPickParentProperty = 'CanPickParent'
     private static readonly IndentUnit = '\u00a0\u00a0\u00a0\u00a0'
     private static readonly RemoveBlockedProperty = 'IsRemoveBlocked'
     private static readonly CannotRemoveUnitText = 'Move its units, people and teams first.'
@@ -189,6 +191,18 @@ export class BusinessUnitRowViewModel extends OrgRowViewModel
     public get Parent(): string | undefined
     {
         return this.unit.parent
+    }
+
+    // The root unit: its picker offers only "(none)" and is disabled.
+    public get IsRoot(): boolean
+    {
+        return this.org.IsRoot(this.unit.id)
+    }
+
+    // Whether the parent picker is enabled: the operator may edit and this is not the root.
+    public get CanPickParent(): boolean
+    {
+        return this.CanEdit && !this.IsRoot
     }
 
     public get Name(): string
@@ -248,6 +262,7 @@ export class BusinessUnitRowViewModel extends OrgRowViewModel
         }
         this.RaisePropertyChanged(BusinessUnitRowViewModel.IndentProperty, oldIndent, this.Indent)
         this.RaisePropertyChanged(BusinessUnitRowViewModel.SelectedParentProperty, undefined, this.SelectedParent)
+        this.RaisePropertyChanged(BusinessUnitRowViewModel.CanPickParentProperty, undefined, this.CanPickParent)
         // A parent change can add or drop this unit's children.
         this.RemoveCommand.RaiseCanExecuteChanged()
         this.RaisePropertyChanged(BusinessUnitRowViewModel.RemoveBlockedProperty, undefined, this.IsRemoveBlocked)

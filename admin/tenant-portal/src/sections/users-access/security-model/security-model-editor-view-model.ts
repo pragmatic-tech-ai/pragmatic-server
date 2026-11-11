@@ -1134,8 +1134,10 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         }
     }
 
-    // Each unit's depth and parent choices (every unit but itself and its
-    // descendants, so the picker never offers a cycle).
+    // Each unit's depth and parent choices: the root's offers only "(none)";
+    // any other unit's offers every unit but itself and its descendants (no
+    // "(none)", so the tree stays single-rooted and the picker never offers a
+    // cycle).
     private SyncUnitTree(relabel: boolean): void
     {
         const rows = this.businessUnitRows.ToArray()
@@ -1150,10 +1152,16 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         }
         for (const row of rows)
         {
+            const depth = SecurityModelEditorViewModel.DepthOf(row.Id, parents)
+            if (row.IsRoot)
+            {
+                row.SetTree(depth, new UnitChoices(this.noneUnit, this.unitOptions, [], NoneChoice.Offered), relabel)
+                continue
+            }
             const excluded = SecurityModelEditorViewModel.DescendantsOf(row.Id, children)
             excluded.add(row.Id)
             const ids = rows.map(r => r.Id).filter(id => !excluded.has(id))
-            row.SetTree(SecurityModelEditorViewModel.DepthOf(row.Id, parents), new UnitChoices(this.noneUnit, this.unitOptions, ids, NoneChoice.Offered), relabel)
+            row.SetTree(depth, new UnitChoices(this.noneUnit, this.unitOptions, ids, NoneChoice.Omitted), relabel)
         }
     }
 

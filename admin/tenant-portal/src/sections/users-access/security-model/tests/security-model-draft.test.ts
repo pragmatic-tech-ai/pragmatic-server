@@ -35,4 +35,19 @@ describe('SecurityModelDraft', () =>
         assert.deepEqual(Object.keys(draft.ToDto()).sort(),
             ['businessUnits', 'profileAssignments', 'profileOverrides', 'roleAssignments', 'roleOverrides', 'teams', 'users'])
     })
+
+    it('rows the catalog cannot mean are dropped', () =>
+    {
+        const model = SecurityFixtures.Model()
+        model.roleOverrides.push(
+            { role: 'legacy.Auditor', concept: 'hr.Employee', action: 'read', level: 'organization' },
+            { role: 'BasicUser', concept: 'legacy.Case', action: 'read', level: 'organization' },
+            { role: 'SystemAdministrator', concept: 'hr.Employee', action: 'delete', level: 'none' })
+        model.profileOverrides.push(
+            { profile: 'legacy.Profile', concept: 'hr.Employee', field: 'Salary', read: true, update: false, create: false },
+            { profile: 'hr.Payroll', concept: 'hr.Employee', field: 'Name', read: true, update: false, create: false })
+        model.roleAssignments.push({ role: 'legacy.Auditor', principalIds: ['alice'], teamIds: [] })
+        model.profileAssignments.push({ profile: 'legacy.Profile', principalIds: ['alice'], teamIds: [] })
+        assert.deepEqual(new SecurityModelDraft(model, SecurityFixtures.Catalog()).ToDto(), SecurityFixtures.Model())
+    })
 })

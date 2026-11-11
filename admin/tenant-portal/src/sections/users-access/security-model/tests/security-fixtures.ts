@@ -33,11 +33,7 @@ export class SecurityFixtures
             teams: [{ id: 'team-a', name: 'Alpha', businessUnitId: 'sales', idpGroups: ['grp-alpha'], manualMembers: ['bob'] }],
             roleAssignments: [{ role: 'projects.ProjectManager', principalIds: ['alice'], teamIds: ['team-a'] }],
             profileAssignments: [{ profile: 'hr.Payroll', principalIds: ['carol'], teamIds: [] }],
-            // The second row names a role and concept the catalog lacks: kept untouched (the server prunes on deploy).
-            roleOverrides: [
-                { role: 'BasicUser', concept: 'hr.Employee', action: 'read', level: 'user' },
-                { role: 'legacy.Auditor', concept: 'legacy.Case', action: 'read', level: 'organization' },
-            ],
+            roleOverrides: [{ role: 'BasicUser', concept: 'hr.Employee', action: 'read', level: 'user' }],
             profileOverrides: [{ profile: 'hr.Payroll', concept: 'hr.Employee', field: 'Salary', read: true, update: true, create: false }],
         }
     }
