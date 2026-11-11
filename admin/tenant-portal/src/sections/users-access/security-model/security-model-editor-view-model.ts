@@ -114,7 +114,6 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly HasNoProfilesProperty = 'HasNoProfiles'
     private static readonly SelectedProfileProperty = 'SelectedProfile'
     private static readonly HasSelectedProfileProperty = 'HasSelectedProfile'
-    private static readonly HasNoSelectedProfileProperty = 'HasNoSelectedProfile'
     private static readonly FieldRowsProperty = 'FieldRows'
     private static readonly HasNoFieldRowsProperty = 'HasNoFieldRows'
     private static readonly BusinessUnitRowsProperty = 'BusinessUnitRows'
@@ -540,11 +539,6 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         return this.SelectedProfile !== undefined
     }
 
-    public get HasNoSelectedProfile(): boolean
-    {
-        return !this.HasSelectedProfile
-    }
-
     // The catalog's secured-field grid for the selected profile.
     public get FieldRows(): ObservableCollection<FieldGrantRowViewModel>
     {
@@ -897,7 +891,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         this.RebuildFieldGrants()
         this.RebuildPart(SecurityModelPart.ProfileAssignment)
         const P = SecurityModelEditorViewModel
-        this.Raise(P.HasSelectedProfileProperty, P.HasNoSelectedProfileProperty)
+        this.Raise(P.HasSelectedProfileProperty)
     }
 
     // Ordinal (code-unit) comparison: the catalog order is the same in every locale.
@@ -988,7 +982,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
             this.profiles.Add(item)
         }
         const P = SecurityModelEditorViewModel
-        this.Raise(P.ProfilesProperty, P.HasProfilesProperty, P.HasNoProfilesProperty, P.SelectedProfileProperty, P.HasSelectedProfileProperty, P.HasNoSelectedProfileProperty)
+        this.Raise(P.ProfilesProperty, P.HasProfilesProperty, P.HasNoProfilesProperty, P.SelectedProfileProperty, P.HasSelectedProfileProperty)
     }
 
     private RebuildFieldGrants(): void
