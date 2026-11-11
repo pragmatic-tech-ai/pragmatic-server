@@ -89,7 +89,7 @@ namespace shop {
     {
         const store = { Get: async () => ({ SecurityModel: WriteFixture.Model() }) } as unknown as ITenantConfigStore
         const auth = new TenantReadAuthorization(store)
-        return new ConnectorService(() => Promise.resolve(this.Runtime()), async (ctx, target) => ({ authorizer: await auth.WriteAuthorizerFor(ctx), gate: await auth.WriteInstanceGateFor(ctx, { Keep: () => true }, target) }))
+        return new ConnectorService(() => Promise.resolve(this.Runtime()), async (ctx, target) => ({ authorizer: await auth.WriteAuthorizerFor(ctx), gate: await auth.WriteInstanceGateFor(ctx, target) }))
     }
 
     public static Ctx(id: string): AccessContext

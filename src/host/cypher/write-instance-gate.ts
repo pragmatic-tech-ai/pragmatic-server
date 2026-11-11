@@ -1,9 +1,9 @@
-import type { IInstanceView, IInstanceFilter } from '@pragmatic-tech-ai/todl'
+import type { IInstanceView } from '@pragmatic-tech-ai/todl'
 import type { Principal, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { IWriteTargetSource } from '../write-target-source.js'
 
-/** Per-record write authorizer: write-depth AND the Action.Write attribute predicate, deny-wins. */
+/** Per-record write authorizer: the tenant security model's write depth. */
 export interface IWriteInstanceGate
 {
     CreateDefaults(concept: string): readonly { field: string; value: string }[]
@@ -13,13 +13,12 @@ export interface IWriteInstanceGate
     CanWriteField(concept: string, field: string, action: PrivilegeAction): boolean
 }
 
-/** Identity-configured gate: depth via the tenant evaluator, predicate via the request's Action.Write filter. */
+/** Identity-configured gate: write depth via the tenant evaluator. */
 export class AccessDepthWriteInstanceGate implements IWriteInstanceGate
 {
     constructor(
         private readonly evaluator: AccessDepthEvaluator,
         private readonly principal: Principal,
-        private readonly predicate: IInstanceFilter,
         private readonly target: IWriteTargetSource)
     {
     }
@@ -31,7 +30,7 @@ export class AccessDepthWriteInstanceGate implements IWriteInstanceGate
 
     public Authorize(action: PrivilegeAction, view: IInstanceView): boolean
     {
-        return this.evaluator.Allows(this.principal, action, view) && this.predicate.Keep(view)
+        return this.evaluator.Allows(this.principal, action, view)
     }
 
     public async AuthorizeById(action: PrivilegeAction, concept: string, id: string): Promise<boolean>

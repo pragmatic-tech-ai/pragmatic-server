@@ -34,7 +34,6 @@ import { ConnectorRuntime } from './connectors/connector-runtime.js'
 import { PolicyConnectionResolver } from './host/policy-connection-resolver.js'
 import type { ConnectorsPolicy } from './host/connector-policy.js'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { AllowAllInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
 import { TenantReadAuthorization, AllowAllReadFilterSource, AllowAllFieldReadMaskSource } from './host/cypher/read-filter-source.js'
 import { FieldMaskedGraphQuery, AllowAllFieldReadMask } from './host/cypher/field-masked-graph-query.js'
 import { AllowAllWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
@@ -327,8 +326,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /** Per-request connector write authorization over the KEYED write target: allow-all without identity, else the tenant's
-     *  depth authorizer plus the depth gate (the gate's predicate is allow-all, as for every write: ownership is decided by
-     *  the depth evaluator alone, mirroring the connector read filter). */
+     *  depth authorizer plus the depth gate (ownership is decided by the depth evaluator alone, mirroring the connector
+     *  read filter). */
     public async ConnectorWriteAuthorizationFor(context: AccessContext, target: IWriteTargetSource): Promise<IHydrateAuthorization>
     {
         if (this.identity === undefined)
@@ -336,7 +335,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
             return ConnectorHydrateWriter.AllowAll()
         }
         const auth = await this.ReadAuthorization()
-        return { authorizer: await auth.WriteAuthorizerFor(context), gate: await auth.WriteInstanceGateFor(context, new AllowAllInstanceFilter(), target) }
+        return { authorizer: await auth.WriteAuthorizerFor(context), gate: await auth.WriteInstanceGateFor(context, target) }
     }
 
     private async DepthFilterSource(): Promise<IReadFilterSource>
@@ -365,7 +364,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         }
         const target = new FilteredReadWriteTargetSource(this, context, name)
         const auth = await this.ReadAuthorization()
-        const gate = await auth.WriteInstanceGateFor(context, new AllowAllInstanceFilter(), target)
+        const gate = await auth.WriteInstanceGateFor(context, target)
         const shareIndex = await this.ShareIndexFor(context, name)
         if (shareIndex.IsEmpty())
         {
@@ -562,8 +561,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
 
     /**
      * The source filter a runtime pull may push down: the query's own WHERE / inline-property equalities
-     * (CypherPushDown), a SUPERSET of what the in-memory filters keep. Nothing is pushed for a non-query build (writes,
-     * write-target reads).
+     * (CypherPushDown), a SUPERSET of the rows the query itself can match. Nothing is pushed for a non-query build
+     * (writes, write-target reads).
      */
     private static PushDownFor(query: CypherScanQuery | undefined, schema: IGraphQuery): IConnectorQueryFilterProvider | undefined
     {
