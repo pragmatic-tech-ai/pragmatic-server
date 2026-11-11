@@ -1,5 +1,5 @@
 import { TenantEventType } from './tenant-types.js'
-import type { AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, CreateGraphParams, EmailDomainsDto, EnvironmentDto, GrantMutationDto, GraphDto, HiveDto, HiveHealthDto, HiveRolloutDto, IReleasesSource, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, PasswordChangedDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from './tenant-types.js'
+import type { AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, CreateGraphParams, EmailDomainsDto, EnvironmentDto, GrantMutationDto, GraphDto, HiveDto, HiveHealthDto, HiveRolloutDto, IReleasesSource, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, PasswordChangedDto, SecurityCatalogDto, SecurityChangesDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TeamMemberDto, TenantProfileDto, TokenIssuedDto } from './tenant-types.js'
 
 // Thrown for non-2xx tenant-surface responses; Message carries the server's error text.
 export class TenantApiError extends Error
@@ -91,6 +91,9 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
     private static readonly AdminGrantsLeaf = '/admin/grants'
     private static readonly AdminTokensLeaf = '/admin/tokens'
     private static readonly AdminSecurityModelLeaf = '/admin/security-model'
+    private static readonly AdminSecurityCatalogLeaf = '/admin/security-catalog'
+    private static readonly AdminTeamMembersLeaf = '/admin/team-members'
+    private static readonly AdminSecurityChangesLeaf = '/admin/security-changes'
     private static readonly CredentialsMode = 'same-origin'
     private static readonly ContentTypeHeader = 'content-type'
     private static readonly JsonType = 'application/json'
@@ -291,6 +294,21 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
     public async SetSecurityModel(env: string, model: SecurityModelDto): Promise<void>
     {
         await this.Send<unknown>(this.EnvRoute(env) + TenantApiClient.AdminSecurityModelLeaf, { method: TenantApiClient.MethodPut, body: JSON.stringify({ securityModel: model }) })
+    }
+
+    public async GetSecurityCatalog(env: string): Promise<SecurityCatalogDto>
+    {
+        return await this.Send<SecurityCatalogDto>(this.EnvRoute(env) + TenantApiClient.AdminSecurityCatalogLeaf, undefined)
+    }
+
+    public async ListTeamMembers(env: string, teamId: string): Promise<TeamMemberDto[]>
+    {
+        return await this.Send<TeamMemberDto[]>(this.EnvRoute(env) + TenantApiClient.AdminTeamMembersLeaf + TenantApiClient.PathSeparator + encodeURIComponent(teamId), undefined)
+    }
+
+    public async ListSecurityChanges(env: string): Promise<SecurityChangesDto[]>
+    {
+        return await this.Send<SecurityChangesDto[]>(this.EnvRoute(env) + TenantApiClient.AdminSecurityChangesLeaf, undefined)
     }
 
     // A Development environment's graphs. A refusal (Runtime environment, no reach, unknown environment) is a

@@ -1,8 +1,9 @@
-// security-model.resources.mu - the Roles & permissions tab: the security-model
+// security-model.resources.mu - the Roles & permissions tab: the security-setting
 // editor for the environment the Users & Access page selected. Merged by
-// UsersAccessModule.
+// UsersAccessModule. Roles, concepts, secured fields and field profiles come
+// from the environment's catalog; the editor stores overrides and assignments.
 //
-// One draft, one save bar (bottom) for the whole model. Mode tabs Roles |
+// One draft, one save bar (bottom) for the whole setting. Mode tabs Roles |
 // Organization and each mode's sub-tabs are SegmentedButtons over label
 // collections; each tab's content shows by a Visibility flag. Every list is a
 // ListBox (Style = @TenantTableList) with an explicit keyed ItemTemplate: the
@@ -16,20 +17,14 @@
 import SecurityModelEditorViewModel from "./security-model-editor-view-model.js"
 import AssignmentEditorViewModel from "./assignment-editor-view-model.js"
 import AssignmentPrincipalRowViewModel from "./assignment-editor-view-model.js"
-import AssignmentClaimRowViewModel from "./assignment-editor-view-model.js"
 import AssignmentTeamRowViewModel from "./assignment-editor-view-model.js"
 import RoleItemViewModel from "./security-model-role-rows.js"
 import ProfileItemViewModel from "./security-model-role-rows.js"
 import PrivilegeRowViewModel from "./security-model-role-rows.js"
 import LegendEntryViewModel from "./security-model-role-rows.js"
 import FieldGrantRowViewModel from "./security-model-role-rows.js"
-import RecordSharingRowViewModel from "./security-model-role-rows.js"
 import BusinessUnitRowViewModel from "./security-model-org-rows.js"
 import TeamRowViewModel from "./security-model-org-rows.js"
-import TeamToggleViewModel from "./security-model-org-rows.js"
-import MembershipRuleRowViewModel from "./security-model-org-rows.js"
-import MembershipOverrideRowViewModel from "./security-model-org-rows.js"
-import OwnershipRuleRowViewModel from "./security-model-org-rows.js"
 
 resources SecurityModelResources {
     DataTemplate [ DataType = SecurityModelEditorViewModel ] {
@@ -87,20 +82,11 @@ resources SecurityModelResources {
                         // The role list.
                         StackPanel [ Grid.Column = 0, Orientation = Vertical, Margin = (0,0,16,0) ] {
                             TextBlock [ Text = "Roles", Style = @TenantSectionCaption ]
-                            TextBlock [ Text = "No roles yet. Add a role to start.", Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,8),
+                            TextBlock [ Text = "This environment's catalog lists no roles yet.", Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,8),
                                         Visibility = $HasNoRoles << ToVisibility ]
                             ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $Roles,
                                       SelectedItem = $SelectedRole, ItemTemplate = @SecurityModelRoleItemTemplate,
                                       Visibility = $HasRoles << ToVisibility ]
-                            TextBox [ UsesNativeInput = true, Text = $NewRoleName, Placeholder = "New role name", IsEnabled = $CanEdit, Margin = (0,8,0,4) ]
-                            StackPanel [ Orientation = Horizontal ] {
-                                Button [ Variant = Secondary, Command = $AddRoleCommand, Margin = (0,0,8,0) ] {
-                                    TextBlock [ Text = "Add role" ]
-                                }
-                                Button [ Variant = Danger, Command = $DeleteRoleCommand, Visibility = $HasSelectedRole << ToVisibility ] {
-                                    TextBlock [ Text = "Delete role" ]
-                                }
-                            }
                         }
 
                         // The selected role's tabs.
@@ -113,11 +99,12 @@ resources SecurityModelResources {
 
                             // What they can do: the privilege matrix.
                             StackPanel [ Orientation = Vertical, Visibility = $IsPrivilegesTab << ToVisibility ] {
-                                TextBlock [ Text = "Select or add a role to edit what it can do.", Foreground = @Fg2,
+                                TextBlock [ Text = "Select a role to edit what it can do.", Foreground = @Fg2,
                                             Visibility = $HasNoSelectedRole << ToVisibility ]
                                 StackPanel [ Orientation = Vertical, Visibility = $HasSelectedRole << ToVisibility ] {
                                     Grid [ Style = @TenantTableColumns ] {
                                         ColumnDefinitions {
+                                            ColumnDefinition [ Width = GridLength.Star ]
                                             ColumnDefinition [ Width = GridLength.Star ]
                                             ColumnDefinition [ Width = GridLength.Star ]
                                             ColumnDefinition [ Width = GridLength.Star ]
@@ -137,19 +124,10 @@ resources SecurityModelResources {
                                         TextBlock [ Grid.Column = 6, Text = "Append to", Style = @TenantTableHeader ]
                                         TextBlock [ Grid.Column = 7, Text = "Assign", Style = @TenantTableHeader ]
                                         TextBlock [ Grid.Column = 8, Text = "Share", Style = @TenantTableHeader ]
+                                        TextBlock [ Grid.Column = 9, Text = "Invoke", Style = @TenantTableHeader ]
                                     }
                                     ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $PrivilegeRows,
                                               ItemTemplate = @SecurityModelPrivilegeRowTemplate ]
-                                    Grid [ Margin = (0,8,0,0) ] {
-                                        ColumnDefinitions {
-                                            ColumnDefinition [ Width = GridLength.Star ]
-                                            ColumnDefinition [ Width = GridLength.Auto ]
-                                        }
-                                        TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $NewConceptName, Placeholder = "New concept name", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-                                        Button [ Grid.Column = 1, Variant = Secondary, Command = $AddConceptCommand ] {
-                                            TextBlock [ Text = "Add concept" ]
-                                        }
-                                    }
                                     TextBlock [ Text = "Access levels", Style = @TenantSectionCaption, Margin = (0,16,0,4) ]
                                     ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $Legend,
                                               ItemTemplate = @SecurityModelLegendTemplate ]
@@ -161,26 +139,11 @@ resources SecurityModelResources {
                                 TextBlock [ Text = "Field profiles", Style = @TenantSectionCaption ]
                                 ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $Profiles,
                                           SelectedItem = $SelectedProfile, ItemTemplate = @SecurityModelProfileItemTemplate ]
-                                Grid [ Margin = (0,8,0,0) ] {
-                                    ColumnDefinitions {
-                                        ColumnDefinition [ Width = GridLength.Star ]
-                                        ColumnDefinition [ Width = GridLength.Auto ]
-                                        ColumnDefinition [ Width = GridLength.Auto ]
-                                    }
-                                    TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $NewProfileName, Placeholder = "New profile name", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-                                    Button [ Grid.Column = 1, Variant = Secondary, Command = $AddProfileCommand, Margin = (0,0,8,0) ] {
-                                        TextBlock [ Text = "Add profile" ]
-                                    }
-                                    Button [ Grid.Column = 2, Variant = Danger, Command = $DeleteProfileCommand,
-                                             Visibility = $HasSelectedProfile << ToVisibility ] {
-                                        TextBlock [ Text = "Delete profile" ]
-                                    }
-                                }
-                                TextBlock [ Text = "Select or add a field profile to edit its field access.", Foreground = @Fg2, Margin = (0,12,0,0),
+                                TextBlock [ Text = "Select a field profile to edit its field access.", Foreground = @Fg2, Margin = (0,12,0,0),
                                             Visibility = $HasNoSelectedProfile << ToVisibility ]
                                 StackPanel [ Orientation = Vertical, Margin = (0,16,0,0), Visibility = $HasSelectedProfile << ToVisibility ] {
                                     TextBlock [ Text = "Secured fields", Style = @TenantSectionCaption ]
-                                    TextBlock [ Text = "No secured fields yet.", Foreground = @Fg2, Visibility = $HasNoFieldRows << ToVisibility ]
+                                    TextBlock [ Text = "This environment's catalog has no secured fields.", Foreground = @Fg2, Visibility = $HasNoFieldRows << ToVisibility ]
                                     Grid [ Style = @TenantTableColumns ] {
                                         ColumnDefinitions {
                                             ColumnDefinition [ Width = GridLength.Star ]
@@ -196,40 +159,16 @@ resources SecurityModelResources {
                                     }
                                     ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $FieldRows,
                                               ItemTemplate = @SecurityModelFieldGrantTemplate ]
-                                    Grid [ Margin = (0,8,0,0) ] {
-                                        ColumnDefinitions {
-                                            ColumnDefinition [ Width = GridLength.Star ]
-                                            ColumnDefinition [ Width = GridLength.Star ]
-                                            ColumnDefinition [ Width = GridLength.Auto ]
-                                        }
-                                        TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $NewFieldConcept, Placeholder = "Concept", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-                                        TextBox [ UsesNativeInput = true, Grid.Column = 1, Text = $NewFieldName, Placeholder = "Field", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-                                        Button [ Grid.Column = 2, Variant = Secondary, Command = $AddSecuredFieldCommand ] {
-                                            TextBlock [ Text = "Add secured field" ]
-                                        }
-                                    }
                                     TextBlock [ Text = "Who has this profile", Style = @TenantSectionCaption, Margin = (0,16,0,6) ]
                                     ContentControl [ Content = $ProfileAssignment ]
                                 }
                             }
 
-                            // Record sharing: derived from the role's privileges, read-only.
-                            StackPanel [ Orientation = Vertical, Visibility = $IsRecordSharingTab << ToVisibility ] {
-                                TextBlock [ Text = "Select or add a role to see what records it reaches.", Foreground = @Fg2,
-                                            Visibility = $HasNoSelectedRole << ToVisibility ]
-                                StackPanel [ Orientation = Vertical, Visibility = $HasSelectedRole << ToVisibility ] {
-                                    TextBlock [ Text = $NoRecordSharingText, Foreground = @Fg2, Visibility = $HasNoRecordSharing << ToVisibility ]
-                                    ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $RecordSharingRows,
-                                              ItemTemplate = @SecurityModelRecordSharingTemplate, Visibility = $HasRecordSharing << ToVisibility ]
-                                }
-                            }
-
                             // People: who holds the role.
                             StackPanel [ Orientation = Vertical, Visibility = $IsPeopleTab << ToVisibility ] {
-                                TextBlock [ Text = "Select or add a role to see who holds it.", Foreground = @Fg2,
+                                TextBlock [ Text = "Select a role to see who holds it.", Foreground = @Fg2,
                                             Visibility = $HasNoSelectedRole << ToVisibility ]
                                 StackPanel [ Orientation = Vertical, Visibility = $HasSelectedRole << ToVisibility ] {
-                                    TextBlock [ Text = $RoleHoldersHeadline, Foreground = @Fg1, TextWrapping = Wrap, Margin = (0,0,0,12) ]
                                     ContentControl [ Content = $RoleAssignment ]
                                 }
                             }
@@ -280,7 +219,7 @@ resources SecurityModelResources {
                                     ColumnDefinition [ Width = GridLength.Auto ]
                                 }
                                 TextBlock [ Grid.Column = 0, Text = "Team", Style = @TenantTableHeader ]
-                                TextBlock [ Grid.Column = 1, Text = "Owning business unit", Style = @TenantTableHeader ]
+                                TextBlock [ Grid.Column = 1, Text = "Business unit", Style = @TenantTableHeader ]
                             }
                             ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $TeamRows,
                                       ItemTemplate = @SecurityModelTeamTemplate ]
@@ -292,65 +231,6 @@ resources SecurityModelResources {
                                 TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $NewTeamName, Placeholder = "New team name", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
                                 Button [ Grid.Column = 1, Variant = Secondary, Command = $AddTeamCommand ] {
                                     TextBlock [ Text = "Add team" ]
-                                }
-                            }
-                        }
-
-                        // Membership: claim rules and per-person overrides.
-                        StackPanel [ Orientation = Vertical, Visibility = $IsMembershipTab << ToVisibility ] {
-                            TextBlock [ Text = "Claim rules", Style = @TenantSectionCaption ]
-                            Border [ Style = @TenantPanel ] {
-                                StackPanel [ Orientation = Vertical ] {
-                                    TextBlock [ Text = "No claim rules yet.", Foreground = @Fg2, Visibility = $HasNoMembershipRules << ToVisibility ]
-                                    ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $MembershipRuleRows,
-                                              ItemTemplate = @SecurityModelMembershipRuleTemplate ]
-                                    Button [ Variant = Secondary, Command = $AddMembershipRuleCommand, HorizontalAlignment = Left, Margin = (0,8,0,0) ] {
-                                        TextBlock [ Text = "Add claim rule" ]
-                                    }
-                                }
-                            }
-                            TextBlock [ Text = "Per-person overrides", Style = @TenantSectionCaption ]
-                            Border [ Style = @TenantPanel ] {
-                                StackPanel [ Orientation = Vertical ] {
-                                    TextBlock [ Text = "No per-person overrides yet.", Foreground = @Fg2, Visibility = $HasNoMembershipOverrides << ToVisibility ]
-                                    ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $MembershipOverrideRows,
-                                              ItemTemplate = @SecurityModelMembershipOverrideTemplate ]
-                                    Button [ Variant = Secondary, Command = $AddMembershipOverrideCommand, HorizontalAlignment = Left, Margin = (0,8,0,0) ] {
-                                        TextBlock [ Text = "Add override" ]
-                                    }
-                                }
-                            }
-                        }
-
-                        // Ownership rules.
-                        StackPanel [ Orientation = Vertical, Visibility = $IsOwnershipTab << ToVisibility ] {
-                            TextBlock [ Text = "No ownership rules yet. Add one per concept.", Foreground = @Fg2,
-                                        Visibility = $HasNoOwnershipRules << ToVisibility ]
-                            Grid [ Style = @TenantTableColumns ] {
-                                ColumnDefinitions {
-                                    ColumnDefinition [ Width = GridLength.Star ]
-                                    ColumnDefinition [ Width = GridLength.Star ]
-                                    ColumnDefinition [ Width = GridLength.Star ]
-                                    ColumnDefinition [ Width = GridLength.Star ]
-                                    ColumnDefinition [ Width = GridLength.Star ]
-                                    ColumnDefinition [ Width = GridLength.Auto ]
-                                }
-                                TextBlock [ Grid.Column = 0, Text = "Concept", Style = @TenantTableHeader ]
-                                TextBlock [ Grid.Column = 1, Text = "Owning unit from", Style = @TenantTableHeader ]
-                                TextBlock [ Grid.Column = 2, Text = "Owning unit value", Style = @TenantTableHeader ]
-                                TextBlock [ Grid.Column = 3, Text = "Owner from", Style = @TenantTableHeader ]
-                                TextBlock [ Grid.Column = 4, Text = "Owner value", Style = @TenantTableHeader ]
-                            }
-                            ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $OwnershipRuleRows,
-                                      ItemTemplate = @SecurityModelOwnershipRuleTemplate ]
-                            Grid [ Margin = (0,8,0,0) ] {
-                                ColumnDefinitions {
-                                    ColumnDefinition [ Width = GridLength.Star ]
-                                    ColumnDefinition [ Width = GridLength.Auto ]
-                                }
-                                TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $NewOwnershipConcept, Placeholder = "Concept to own", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-                                Button [ Grid.Column = 1, Variant = Secondary, Command = $AddOwnershipRuleCommand ] {
-                                    TextBlock [ Text = "Add ownership rule" ]
                                 }
                             }
                         }
@@ -370,11 +250,12 @@ resources SecurityModelResources {
         TextBlock [ Text = $Label, Foreground = @Fg0, Margin = (8,6,8,6) ]
     }
 
-    // A concept row: the concept, a level button per action (same nine
+    // A concept row: the concept, a level button per action (same ten
     // columns as the header), then the plain-words sentence beneath.
     DataTemplate x:key="SecurityModelPrivilegeRowTemplate" [ DataType = PrivilegeRowViewModel ] {
         Grid [ Style = @TenantTableColumns ] {
             ColumnDefinitions {
+                ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
@@ -414,7 +295,10 @@ resources SecurityModelResources {
             Border [ Grid.Column = 8, DataContext = $Share ] {
                 Button [ Variant = Ghost, Command = $CycleCommand, HorizontalAlignment = Left ] { TextBlock [ Text = $Glyph ] }
             }
-            TextBlock [ Grid.Row = 1, Grid.Column = 0, Grid.ColumnSpan = 9, Text = $Sentence, Style = @BodySm, Foreground = @Fg2,
+            Border [ Grid.Column = 9, DataContext = $Invoke ] {
+                Button [ Variant = Ghost, Command = $CycleCommand, HorizontalAlignment = Left ] { TextBlock [ Text = $Glyph ] }
+            }
+            TextBlock [ Grid.Row = 1, Grid.Column = 0, Grid.ColumnSpan = 10, Text = $Sentence, Style = @BodySm, Foreground = @Fg2,
                         TextWrapping = Wrap, Margin = (0,2,0,4) ]
         }
     }
@@ -436,30 +320,6 @@ resources SecurityModelResources {
             Checkbox [ HorizontalAlignment = Left, Grid.Column = 1, IsChecked = $CanRead, IsEnabled = $CanEdit, VerticalAlignment = Center ]
             Checkbox [ HorizontalAlignment = Left, Grid.Column = 2, IsChecked = $CanUpdate, IsEnabled = $CanEdit, VerticalAlignment = Center ]
             Checkbox [ HorizontalAlignment = Left, Grid.Column = 3, IsChecked = $CanCreate, IsEnabled = $CanEdit, VerticalAlignment = Center ]
-            Button [ Grid.Column = 4, Variant = Ghost, Command = $RemoveCommand, HorizontalAlignment = Left ] {
-                TextBlock [ Text = "Remove" ]
-            }
-        }
-    }
-
-    DataTemplate x:key="SecurityModelRecordSharingTemplate" [ DataType = RecordSharingRowViewModel ] {
-        Grid [ Style = @TenantTableColumns ] {
-            ColumnDefinitions {
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Auto ]
-                ColumnDefinition [ Width = GridLength.Auto ]
-            }
-            TextBlock [ Grid.Column = 0, Text = $Concept, Style = @UiLabel, Foreground = @Fg0 ]
-            TextBlock [ Grid.Column = 1, Text = $ScopeText, Foreground = @Fg1, TextWrapping = Wrap ]
-            Border [ Grid.Column = 2, Fill = @StateSuccessSoft, Padding = (8,2,8,2), Margin = (8,0,0,0),
-                     Visibility = $CanShare << ToVisibility ] {
-                TextBlock [ Text = "Can share", Style = @UiCaption, Foreground = @StateSuccessInk ]
-            }
-            Border [ Grid.Column = 3, Fill = @StateSuccessSoft, Padding = (8,2,8,2), Margin = (8,0,0,0),
-                     Visibility = $CanAssign << ToVisibility ] {
-                TextBlock [ Text = "Can assign", Style = @UiCaption, Foreground = @StateSuccessInk ]
-            }
         }
     }
 
@@ -482,13 +342,6 @@ resources SecurityModelResources {
                 Button [ Grid.Column = 1, Variant = Secondary, Command = $AddPersonCommand ] {
                     TextBlock [ Text = "Add person" ]
                 }
-            }
-
-            TextBlock [ Text = "By claim", Style = @TenantSectionCaption ]
-            ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $ClaimRows,
-                      ItemTemplate = @SecurityModelClaimGrantTemplate ]
-            Button [ Variant = Secondary, Command = $AddClaimCommand, HorizontalAlignment = Left, Margin = (0,4,0,12) ] {
-                TextBlock [ Text = "Add claim" ]
             }
 
             TextBlock [ Text = "By team", Style = @TenantSectionCaption ]
@@ -516,21 +369,6 @@ resources SecurityModelResources {
             }
             TextBlock [ Grid.Column = 0, Text = $PrincipalId, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
             Button [ Grid.Column = 1, Variant = Ghost, Command = $RemoveCommand ] {
-                TextBlock [ Text = "Remove" ]
-            }
-        }
-    }
-
-    DataTemplate x:key="SecurityModelClaimGrantTemplate" [ DataType = AssignmentClaimRowViewModel ] {
-        Grid [ Style = @TenantTableColumns ] {
-            ColumnDefinitions {
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Auto ]
-            }
-            TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $Claim, Placeholder = "Claim", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-            TextBox [ UsesNativeInput = true, Grid.Column = 1, Text = $Value, Placeholder = "Value", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-            Button [ Grid.Column = 2, Variant = Ghost, Command = $RemoveCommand ] {
                 TextBlock [ Text = "Remove" ]
             }
         }
@@ -581,74 +419,6 @@ resources SecurityModelResources {
             ComboBox [ Grid.Column = 1, ItemsSource = $UnitOptions, SelectedItem = $SelectedUnit, IsEnabled = $CanEdit,
                        HorizontalAlignment = Stretch, Margin = (0,0,8,0) ]
             Button [ Grid.Column = 2, Variant = Ghost, Command = $RemoveCommand ] {
-                TextBlock [ Text = "Remove" ]
-            }
-        }
-    }
-
-    DataTemplate x:key="SecurityModelTeamToggleTemplate" [ DataType = TeamToggleViewModel ] {
-        StackPanel [ Orientation = Horizontal, Margin = (0,2,0,2) ] {
-            Checkbox [ HorizontalAlignment = Left, IsChecked = $IsChecked, IsEnabled = $CanEdit, VerticalAlignment = Center, Margin = (0,0,6,0) ]
-            TextBlock [ Text = $TeamName, Foreground = @Fg1, VerticalAlignment = Center ]
-        }
-    }
-
-    DataTemplate x:key="SecurityModelMembershipRuleTemplate" [ DataType = MembershipRuleRowViewModel ] {
-        Grid [ Style = @TenantTableColumns ] {
-            ColumnDefinitions {
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Auto ]
-            }
-            TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $Claim, Placeholder = "Claim", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-            TextBox [ UsesNativeInput = true, Grid.Column = 1, Text = $Value, Placeholder = "Value", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-            ComboBox [ Grid.Column = 2, ItemsSource = $UnitOptions, SelectedItem = $SelectedHomeUnit, IsEnabled = $CanEdit,
-                       HorizontalAlignment = Stretch, Margin = (0,0,8,0) ]
-            ListBox [ Grid.Column = 3, Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $TeamToggles,
-                      ItemTemplate = @SecurityModelTeamToggleTemplate, Visibility = $HasTeams << ToVisibility ]
-            Button [ Grid.Column = 4, Variant = Ghost, Command = $RemoveCommand ] {
-                TextBlock [ Text = "Remove" ]
-            }
-        }
-    }
-
-    DataTemplate x:key="SecurityModelMembershipOverrideTemplate" [ DataType = MembershipOverrideRowViewModel ] {
-        Grid [ Style = @TenantTableColumns ] {
-            ColumnDefinitions {
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Auto ]
-            }
-            TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $PrincipalId, Placeholder = "Principal id", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-            ComboBox [ Grid.Column = 1, ItemsSource = $UnitOptions, SelectedItem = $SelectedHomeUnit, IsEnabled = $CanEdit,
-                       HorizontalAlignment = Stretch, Margin = (0,0,8,0) ]
-            ListBox [ Grid.Column = 2, Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $TeamToggles,
-                      ItemTemplate = @SecurityModelTeamToggleTemplate, Visibility = $HasTeams << ToVisibility ]
-            Button [ Grid.Column = 3, Variant = Ghost, Command = $RemoveCommand ] {
-                TextBlock [ Text = "Remove" ]
-            }
-        }
-    }
-
-    DataTemplate x:key="SecurityModelOwnershipRuleTemplate" [ DataType = OwnershipRuleRowViewModel ] {
-        Grid [ Style = @TenantTableColumns ] {
-            ColumnDefinitions {
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Star ]
-                ColumnDefinition [ Width = GridLength.Auto ]
-            }
-            TextBlock [ Grid.Column = 0, Text = $Concept, Style = @UiLabel, Foreground = @Fg0, VerticalAlignment = Center ]
-            TextBox [ UsesNativeInput = true, Grid.Column = 1, Text = $OwningKind, Placeholder = "Source kind", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-            TextBox [ UsesNativeInput = true, Grid.Column = 2, Text = $OwningValue, Placeholder = "Source value", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-            TextBox [ UsesNativeInput = true, Grid.Column = 3, Text = $OwnerKind, Placeholder = "Source kind", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-            TextBox [ UsesNativeInput = true, Grid.Column = 4, Text = $OwnerValue, Placeholder = "Source value", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-            Button [ Grid.Column = 5, Variant = Ghost, Command = $RemoveCommand ] {
                 TextBlock [ Text = "Remove" ]
             }
         }

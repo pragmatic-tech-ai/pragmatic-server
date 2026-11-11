@@ -1,13 +1,13 @@
 import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import type { IRecordSharingRow } from './record-sharing.js'
 import type { SecurityModelDraft } from './security-model-draft.js'
-import { SecurityModelPart, type ISecurityModelEditHost } from './security-model-edit-host.js'
+import type { ISecurityModelEditHost } from './security-model-edit-host.js'
 import { AccessLevel, Actions, FieldPermission, PrivilegeAction } from './security-model-enums.js'
 import { SecurityModelText } from './security-model-text.js'
 
-// One role in the role list: its name and how many people hold it directly.
-// Kept per role id across rebuilds, so the list's selection survives them.
+// One catalog role in the role list: its name and how many people hold it
+// directly. Kept per role name across rebuilds, so the list's selection
+// survives them.
 export class RoleItemViewModel extends Observable
 {
     private static readonly LabelProperty = 'Label'
@@ -44,7 +44,7 @@ export class RoleItemViewModel extends Observable
     }
 }
 
-// One field profile in the profile list. Kept per profile id across rebuilds.
+// One catalog field profile in the profile list. Kept per profile name across rebuilds.
 export class ProfileItemViewModel extends Observable
 {
     private static readonly LabelProperty = 'Label'
@@ -69,9 +69,10 @@ export class ProfileItemViewModel extends Observable
     }
 }
 
-// One cell of the privilege matrix: the selected role's level for one
-// concept and action. Its command cycles the level None -> User -> Business
-// unit -> Business unit and children -> Organization -> None.
+// One cell of the privilege matrix: the selected role's effective level (its
+// override, else the catalog default) for one concept and action. Its command
+// cycles through the levels the concept allows; landing on the default clears
+// the override.
 export class PrivilegeCellViewModel extends Observable
 {
     private static readonly GlyphProperty = 'Glyph'
@@ -91,7 +92,7 @@ export class PrivilegeCellViewModel extends Observable
 
     public get Level(): AccessLevel
     {
-        return this.draft.LevelFor(this.row.Concept, this.Action)
+        return this.draft.Overrides.EffectiveLevel(this.row.Role, this.row.Concept, this.Action)
     }
 
     public get Glyph(): string
@@ -113,14 +114,15 @@ export class PrivilegeCellViewModel extends Observable
     public Cycle(): void
     {
         const before = [this.Glyph, this.LevelName] as const
-        if (!this.host.Apply(d => { d.CycleLevel(this.row.Concept, this.Action) }))
+        const levels = this.draft.Overrides.AllowedLevels(this.row.Concept)
+        const next = levels[(levels.indexOf(this.Level) + 1) % levels.length]
+        if (!this.host.Apply(d => { d.Overrides.SetLevel(this.row.Role, this.row.Concept, this.Action, next) }))
         {
             return
         }
         this.RaisePropertyChanged(PrivilegeCellViewModel.GlyphProperty, before[0], this.Glyph)
         this.RaisePropertyChanged(PrivilegeCellViewModel.LevelNameProperty, before[1], this.LevelName)
         this.row.LevelsChanged()
-        this.host.RebuildPart(SecurityModelPart.RecordSharing)
     }
 }
 
@@ -133,7 +135,7 @@ export class PrivilegeRowViewModel extends Observable
 
     private readonly cells = new Map<PrivilegeAction, PrivilegeCellViewModel>()
 
-    public constructor(host: ISecurityModelEditHost, private readonly draft: SecurityModelDraft, public readonly Concept: string)
+    public constructor(host: ISecurityModelEditHost, private readonly draft: SecurityModelDraft, public readonly Role: string, public readonly Concept: string)
     {
         super()
         for (const action of Actions)
@@ -144,7 +146,7 @@ export class PrivilegeRowViewModel extends Observable
 
     public get Sentence(): string
     {
-        return SecurityModelText.Sentence(action => this.draft.LevelFor(this.Concept, action))
+        return SecurityModelText.Sentence(action => this.draft.Overrides.EffectiveLevel(this.Role, this.Concept, action))
     }
 
     public Cell(action: PrivilegeAction): PrivilegeCellViewModel
@@ -192,6 +194,11 @@ export class PrivilegeRowViewModel extends Observable
         return this.Cell(PrivilegeAction.Share)
     }
 
+    public get Invoke(): PrivilegeCellViewModel
+    {
+        return this.Cell(PrivilegeAction.Invoke)
+    }
+
     // A cell of this row changed level: the sentence follows.
     public LevelsChanged(): void
     {
@@ -213,8 +220,9 @@ export class LegendEntryViewModel extends Observable
     }
 }
 
-// One secured field of the selected field profile: a checkbox per permission
-// (Read / Update / Create) and Remove (drops the field from every profile).
+// One catalog secured field of the selected field profile: a checkbox per
+// permission (Read / Update / Create) over the effective access (the
+// profile's override, else its catalog default).
 export class FieldGrantRowViewModel extends Observable
 {
     private static readonly LabelSeparator = '.'
@@ -222,16 +230,14 @@ export class FieldGrantRowViewModel extends Observable
     private static readonly CanUpdateProperty = 'CanUpdate'
     private static readonly CanCreateProperty = 'CanCreate'
 
-    private readonly removeCommand: RelayCommand
-
     public constructor(
         private readonly host: ISecurityModelEditHost,
         private readonly draft: SecurityModelDraft,
+        public readonly Profile: string,
         public readonly Concept: string,
         public readonly Field: string)
     {
         super()
-        this.removeCommand = new RelayCommand(() => this.Remove(), () => this.host.CanEdit)
     }
 
     public get Label(): string
@@ -246,7 +252,7 @@ export class FieldGrantRowViewModel extends Observable
 
     public get CanRead(): boolean
     {
-        return this.draft.FieldGrant(this.Concept, this.Field, FieldPermission.Read)
+        return this.Granted(FieldPermission.Read)
     }
 
     public set CanRead(value: boolean)
@@ -256,7 +262,7 @@ export class FieldGrantRowViewModel extends Observable
 
     public get CanUpdate(): boolean
     {
-        return this.draft.FieldGrant(this.Concept, this.Field, FieldPermission.Update)
+        return this.Granted(FieldPermission.Update)
     }
 
     public set CanUpdate(value: boolean)
@@ -266,7 +272,7 @@ export class FieldGrantRowViewModel extends Observable
 
     public get CanCreate(): boolean
     {
-        return this.draft.FieldGrant(this.Concept, this.Field, FieldPermission.Create)
+        return this.Granted(FieldPermission.Create)
     }
 
     public set CanCreate(value: boolean)
@@ -274,58 +280,19 @@ export class FieldGrantRowViewModel extends Observable
         this.SetGrant(FieldPermission.Create, value, FieldGrantRowViewModel.CanCreateProperty)
     }
 
-    public get RemoveCommand(): RelayCommand
+    private Granted(permission: FieldPermission): boolean
     {
-        return this.removeCommand
-    }
-
-    public Remove(): void
-    {
-        if (this.host.Apply(d => { d.RemoveSecuredField(this.Concept, this.Field) }))
-        {
-            this.host.Rebuild()
-        }
+        return this.draft.Overrides.EffectiveField(this.Profile, this.Concept, this.Field).Has(permission)
     }
 
     // A refused edit re-raises the draft's value, so the checkbox snaps back.
     private SetGrant(permission: FieldPermission, value: boolean, property: string): void
     {
-        const current = this.draft.FieldGrant(this.Concept, this.Field, permission)
-        if (typeof value !== 'boolean' || value === current)
+        if (typeof value !== 'boolean' || value === this.Granted(permission))
         {
             return
         }
-        this.host.Apply(d => { d.SetFieldGrant(this.Concept, this.Field, permission, value) })
-        this.RaisePropertyChanged(property, value, this.draft.FieldGrant(this.Concept, this.Field, permission))
-    }
-}
-
-// One read-only record-sharing line: the concept, how far the role reaches
-// in plain words, and whether it may share / assign those records.
-export class RecordSharingRowViewModel extends Observable
-{
-    public constructor(private readonly data: IRecordSharingRow)
-    {
-        super()
-    }
-
-    public get Concept(): string
-    {
-        return this.data.Concept
-    }
-
-    public get ScopeText(): string
-    {
-        return this.data.ScopeText
-    }
-
-    public get CanShare(): boolean
-    {
-        return this.data.CanShare
-    }
-
-    public get CanAssign(): boolean
-    {
-        return this.data.CanAssign
+        this.host.Apply(d => { d.Overrides.SetField(this.Profile, this.Concept, this.Field, permission, value) })
+        this.RaisePropertyChanged(property, value, this.Granted(permission))
     }
 }

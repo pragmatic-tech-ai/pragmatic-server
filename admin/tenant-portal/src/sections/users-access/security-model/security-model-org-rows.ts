@@ -1,6 +1,6 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import type { BusinessUnitDto, MembershipClaimRuleDto, MembershipOverrideDto, OwnershipRuleDto, TeamDto } from '../../../tenant-types.js'
+import type { BusinessUnitDto, TeamDto } from '../../../tenant-types.js'
 import type { SecurityModelDraft } from './security-model-draft.js'
 import { SecurityModelPart, type ISecurityModelEditHost } from './security-model-edit-host.js'
 
@@ -133,7 +133,6 @@ export class BusinessUnitRowViewModel extends OrgRowViewModel
     private static readonly ParentOptionsProperty = 'ParentOptions'
     private static readonly SelectedParentProperty = 'SelectedParent'
     private static readonly IndentUnit = '\u00a0\u00a0\u00a0\u00a0'
-    private static readonly IdSeparator = '|'
 
     private depth = 0
     private choices: UnitChoices | undefined
@@ -218,7 +217,7 @@ export class BusinessUnitRowViewModel extends OrgRowViewModel
     }
 }
 
-// One team: rename, owning business unit, remove.
+// One team: rename, business unit, remove.
 export class TeamRowViewModel extends OrgRowViewModel
 {
     private static readonly NameProperty = 'Name'
@@ -239,7 +238,7 @@ export class TeamRowViewModel extends OrgRowViewModel
         return this.team.name
     }
 
-    // A rename relabels the team in membership and the grant pickers.
+    // A rename relabels the team in the grant pickers.
     public set Name(next: string)
     {
         if (this.EditText(next, () => this.team.name, d => d.Org.RenameTeam(this.team.id, next), TeamRowViewModel.NameProperty))
@@ -255,279 +254,18 @@ export class TeamRowViewModel extends OrgRowViewModel
 
     public get SelectedUnit(): UnitOptionViewModel
     {
-        return this.choices.OptionFor(this.team.owningBusinessUnit)
+        return this.choices.OptionFor(this.team.businessUnitId)
     }
 
+    // A team always sits in a unit: picking "(none)" is refused and snaps back.
     public set SelectedUnit(value: UnitOptionViewModel)
     {
-        this.PickUnit(value, this.team.owningBusinessUnit, (d, id) => d.Org.SetTeamOwningBusinessUnit(this.team.id, id), TeamRowViewModel.SelectedUnitProperty, () => this.SelectedUnit)
+        this.PickUnit(value, this.team.businessUnitId, (d, id) => { if (id !== undefined) d.Org.SetTeamBusinessUnit(this.team.id, id) },
+            TeamRowViewModel.SelectedUnitProperty, () => this.SelectedUnit)
     }
 
     protected RemoveFrom(draft: SecurityModelDraft): void
     {
         draft.Org.RemoveTeam(this.team.id)
-    }
-}
-
-// What a team checkbox toggles: a membership rule or override.
-export interface ITeamMembershipRow
-{
-    HasTeam(teamId: string): boolean
-    ToggleTeam(teamId: string): boolean
-}
-
-// One team checkbox on a membership rule or override.
-export class TeamToggleViewModel extends Observable
-{
-    private static readonly IsCheckedProperty = 'IsChecked'
-
-    public constructor(private readonly owner: ITeamMembershipRow, public readonly TeamId: string, public readonly TeamName: string, private readonly host: ISecurityModelEditHost)
-    {
-        super()
-    }
-
-    public get CanEdit(): boolean
-    {
-        return this.host.CanEdit
-    }
-
-    public get IsChecked(): boolean
-    {
-        return this.owner.HasTeam(this.TeamId)
-    }
-
-    // A refused toggle re-raises the draft's value, so the box snaps back.
-    public set IsChecked(value: boolean)
-    {
-        if (typeof value !== 'boolean' || value === this.IsChecked)
-        {
-            return
-        }
-        this.owner.ToggleTeam(this.TeamId)
-        this.RaisePropertyChanged(TeamToggleViewModel.IsCheckedProperty, value, this.IsChecked)
-    }
-}
-
-// Base for a membership rule / override: home unit and team checkboxes.
-export abstract class MembershipRowViewModel extends OrgRowViewModel implements ITeamMembershipRow
-{
-    private static readonly SelectedHomeUnitProperty = 'SelectedHomeUnit'
-
-    private readonly toggles = new ObservableCollection<TeamToggleViewModel>()
-
-    protected constructor(host: ISecurityModelEditHost, protected readonly Index: number, private readonly choices: UnitChoices, teams: readonly TeamDto[])
-    {
-        super(host)
-        for (const team of teams)
-        {
-            this.toggles.Add(new TeamToggleViewModel(this, team.id, team.name, host))
-        }
-    }
-
-    protected abstract get Entry(): MembershipClaimRuleDto | MembershipOverrideDto
-
-    public get UnitOptions(): ObservableCollection<UnitOptionViewModel>
-    {
-        return this.choices.Options
-    }
-
-    public get SelectedHomeUnit(): UnitOptionViewModel
-    {
-        return this.choices.OptionFor(this.Entry.homeBusinessUnit)
-    }
-
-    public set SelectedHomeUnit(value: UnitOptionViewModel)
-    {
-        this.PickUnit(value, this.Entry.homeBusinessUnit, (d, id) => this.SetHome(d, id), MembershipRowViewModel.SelectedHomeUnitProperty, () => this.SelectedHomeUnit)
-    }
-
-    public get TeamToggles(): ObservableCollection<TeamToggleViewModel>
-    {
-        return this.toggles
-    }
-
-    public get HasTeams(): boolean
-    {
-        return this.toggles.Count > 0
-    }
-
-    public HasTeam(teamId: string): boolean
-    {
-        return this.Entry.teams?.includes(teamId) ?? false
-    }
-
-    public ToggleTeam(teamId: string): boolean
-    {
-        return this.host.Apply(d => this.Toggle(d, teamId))
-    }
-
-    protected abstract SetHome(draft: SecurityModelDraft, id: string | undefined): void
-    protected abstract Toggle(draft: SecurityModelDraft, teamId: string): void
-}
-
-// One claim-to-membership rule: claim, value, home unit, teams.
-export class MembershipRuleRowViewModel extends MembershipRowViewModel
-{
-    private static readonly ClaimProperty = 'Claim'
-    private static readonly ValueProperty = 'Value'
-
-    public constructor(host: ISecurityModelEditHost, index: number, private readonly rule: MembershipClaimRuleDto, choices: UnitChoices, teams: readonly TeamDto[])
-    {
-        super(host, index, choices, teams)
-    }
-
-    protected get Entry(): MembershipClaimRuleDto
-    {
-        return this.rule
-    }
-
-    public get Claim(): string
-    {
-        return this.rule.claim
-    }
-
-    public set Claim(next: string)
-    {
-        this.EditText(next, () => this.rule.claim, d => d.Org.SetMembershipRuleClaim(this.Index, next), MembershipRuleRowViewModel.ClaimProperty)
-    }
-
-    public get Value(): string
-    {
-        return this.rule.value
-    }
-
-    public set Value(next: string)
-    {
-        this.EditText(next, () => this.rule.value, d => d.Org.SetMembershipRuleValue(this.Index, next), MembershipRuleRowViewModel.ValueProperty)
-    }
-
-    protected SetHome(draft: SecurityModelDraft, id: string | undefined): void
-    {
-        draft.Org.SetMembershipRuleHomeBusinessUnit(this.Index, id)
-    }
-
-    protected Toggle(draft: SecurityModelDraft, teamId: string): void
-    {
-        draft.Org.ToggleMembershipRuleTeam(this.Index, teamId)
-    }
-
-    protected RemoveFrom(draft: SecurityModelDraft): void
-    {
-        draft.Org.RemoveMembershipRule(this.Index)
-    }
-}
-
-// One per-person membership override: principal, home unit, teams.
-export class MembershipOverrideRowViewModel extends MembershipRowViewModel
-{
-    private static readonly PrincipalIdProperty = 'PrincipalId'
-
-    public constructor(host: ISecurityModelEditHost, index: number, private readonly entry: MembershipOverrideDto, choices: UnitChoices, teams: readonly TeamDto[])
-    {
-        super(host, index, choices, teams)
-    }
-
-    protected get Entry(): MembershipOverrideDto
-    {
-        return this.entry
-    }
-
-    public get PrincipalId(): string
-    {
-        return this.entry.principalId
-    }
-
-    public set PrincipalId(next: string)
-    {
-        this.EditText(next, () => this.entry.principalId, d => d.Org.SetMembershipOverridePrincipal(this.Index, next), MembershipOverrideRowViewModel.PrincipalIdProperty)
-    }
-
-    protected SetHome(draft: SecurityModelDraft, id: string | undefined): void
-    {
-        draft.Org.SetMembershipOverrideHomeBusinessUnit(this.Index, id)
-    }
-
-    protected Toggle(draft: SecurityModelDraft, teamId: string): void
-    {
-        draft.Org.ToggleMembershipOverrideTeam(this.Index, teamId)
-    }
-
-    protected RemoveFrom(draft: SecurityModelDraft): void
-    {
-        draft.Org.RemoveMembershipOverride(this.Index)
-    }
-}
-
-// One per-concept ownership rule: where the owning unit and the owner come
-// from (each a source kind and value). Record sharing follows its edits.
-export class OwnershipRuleRowViewModel extends OrgRowViewModel
-{
-    private static readonly OwningKindProperty = 'OwningKind'
-    private static readonly OwningValueProperty = 'OwningValue'
-    private static readonly OwnerKindProperty = 'OwnerKind'
-    private static readonly OwnerValueProperty = 'OwnerValue'
-    private static readonly Unset = ''
-
-    public constructor(host: ISecurityModelEditHost, private readonly rule: OwnershipRuleDto)
-    {
-        super(host)
-    }
-
-    public get Concept(): string
-    {
-        return this.rule.concept
-    }
-
-    public get OwningKind(): string
-    {
-        return this.rule.owningBusinessUnit.kind
-    }
-
-    public set OwningKind(next: string)
-    {
-        this.Edit(next, () => this.OwningKind, d => d.Org.SetOwningSourceKind(this.rule.concept, next), OwnershipRuleRowViewModel.OwningKindProperty)
-    }
-
-    public get OwningValue(): string
-    {
-        return this.rule.owningBusinessUnit.value
-    }
-
-    public set OwningValue(next: string)
-    {
-        this.Edit(next, () => this.OwningValue, d => d.Org.SetOwningSourceValue(this.rule.concept, next), OwnershipRuleRowViewModel.OwningValueProperty)
-    }
-
-    public get OwnerKind(): string
-    {
-        return this.rule.owner?.kind ?? OwnershipRuleRowViewModel.Unset
-    }
-
-    public set OwnerKind(next: string)
-    {
-        this.Edit(next, () => this.OwnerKind, d => d.Org.SetOwnerSourceKind(this.rule.concept, next), OwnershipRuleRowViewModel.OwnerKindProperty)
-    }
-
-    public get OwnerValue(): string
-    {
-        return this.rule.owner?.value ?? OwnershipRuleRowViewModel.Unset
-    }
-
-    public set OwnerValue(next: string)
-    {
-        this.Edit(next, () => this.OwnerValue, d => d.Org.SetOwnerSourceValue(this.rule.concept, next), OwnershipRuleRowViewModel.OwnerValueProperty)
-    }
-
-    protected RemoveFrom(draft: SecurityModelDraft): void
-    {
-        draft.Org.RemoveOwnershipRule(this.rule.concept)
-    }
-
-    private Edit(next: unknown, read: () => string, apply: (draft: SecurityModelDraft) => void, property: string): void
-    {
-        if (this.EditText(next, read, apply, property))
-        {
-            this.host.RebuildPart(SecurityModelPart.RecordSharing)
-        }
     }
 }

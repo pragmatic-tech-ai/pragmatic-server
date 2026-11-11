@@ -32,6 +32,7 @@ export class SecurityModelText
     private static readonly AppendToVerb = 'append to'
     private static readonly AssignVerb = 'assign'
     private static readonly ShareVerb = 'share'
+    private static readonly InvokeVerb = 'invoke'
     private static readonly UserScope = 'user'
     private static readonly BusinessUnitScope = 'business unit'
     private static readonly BusinessUnitAndChildrenScope = 'business unit and children'
@@ -63,6 +64,7 @@ export class SecurityModelText
         [PrivilegeAction.AppendTo, SecurityModelText.AppendToVerb],
         [PrivilegeAction.Assign, SecurityModelText.AssignVerb],
         [PrivilegeAction.Share, SecurityModelText.ShareVerb],
+        [PrivilegeAction.Invoke, SecurityModelText.InvokeVerb],
     ])
 
     private static readonly LevelScopes: ReadonlyMap<AccessLevel, string> = new Map<AccessLevel, string>([

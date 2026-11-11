@@ -7,7 +7,7 @@ import { TenantPageViewModel, PageState } from '../../../shell/tenant-page-view-
 import { TenantSectionService } from '../../../shell/tenant-section-service.js'
 import type { TenantSessionService } from '../../../shell/tenant-session-service.js'
 import { FakeTenantApi, Inspect, TenantTestHost, TestRail, Tick, type FakeDialogService } from '../../../shell/tests/tenant-test-fixtures.js'
-import { TenantRole, type AdminCapabilitiesDto } from '../../../tenant-types.js'
+import { EnvType, TenantRole, type AdminCapabilitiesDto } from '../../../tenant-types.js'
 import { AccountDetailPageViewModel } from '../account-detail-page-view-model.js'
 import { CreateAccountDialogViewModel } from '../create-account-dialog-view-model.js'
 import { IssueTokenDialogViewModel } from '../issue-token-dialog-view-model.js'
@@ -293,6 +293,32 @@ describe('UsersAccessPageViewModel', () =>
         page.SelectedEnvironment = page.Environments.ToArray()[1]
         await Tick.Settle()
         assert.equal(f.Dialogs.Shown.length, 0)
+        assert.equal(page.UsersTab.Environment, 'beta')
+    })
+
+    it('development environment hides the editor', async () =>
+    {
+        const f = new Fixture()
+        f.Api.Environments[1].type = EnvType.Development
+        const page = await f.Open()
+        page.SelectedTab = 'Roles & permissions'
+        await Tick.Settle()
+        assert.equal(page.IsCurrentTabShown, true)
+        assert.equal(page.IsDevelopmentNoticeShown, false)
+        assert.equal(page.SecurityModelEditor.Environment, 'alpha')
+
+        page.SelectedEnvironment = page.Environments.ToArray()[1]
+        await Tick.Settle()
+        assert.equal(page.IsCurrentTabShown, false)
+        assert.equal(page.IsDevelopmentNoticeShown, true)
+        assert.equal(page.DevelopmentEnvironmentText, 'Development environments are governed by tenant access, not by a security setting.')
+        assert.equal(page.SecurityModelEditor.Environment, undefined)
+        assert.deepEqual(f.Api.Calls.filter(c => c[0] === 'GetSecurityModel' || c[0] === 'GetSecurityCatalog').map(c => c[1]), ['alpha', 'alpha'])
+
+        // The other tabs still show for a Development environment.
+        page.SelectedTab = 'Users'
+        await Tick.Settle()
+        assert.equal(page.IsCurrentTabShown, true)
         assert.equal(page.UsersTab.Environment, 'beta')
     })
 })

@@ -6,7 +6,7 @@ import { DialogService, type DialogOptions } from '@pragmatic-tech-ai/mural/fram
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import { TenantApiError, type TenantApiClient } from '../../tenant-api-client.js'
 import { EnvStatus, EnvType, Template } from '../../tenant-types.js'
-import type { AdminCapabilitiesDto, AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, CreateGraphParams, EmailDomainsDto, EnvironmentDto, GrantMutationDto, GraphDto, HiveDto, HiveHealthDto, HiveRolloutDto, IssueTokenParams, ManifestDto, PasswordChangedDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from '../../tenant-types.js'
+import type { AdminCapabilitiesDto, AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, CreateGraphParams, EmailDomainsDto, EnvironmentDto, GrantMutationDto, GraphDto, HiveDto, HiveHealthDto, HiveRolloutDto, IssueTokenParams, ManifestDto, PasswordChangedDto, SecurityCatalogDto, SecurityChangesDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TeamMemberDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from '../../tenant-types.js'
 import type { IPageReloader } from '../page-reloader.js'
 import { TenantSessionService } from '../tenant-session-service.js'
 
@@ -146,6 +146,11 @@ export class FakeTenantApi
     public Snapshots = new Map<string, AdminSnapshotDto>()
     public Tokens = new Map<string, ServiceTokenSummaryDto[]>()
     public SecurityModels = new Map<string, SecurityModelDto | null>()
+    // Per environment; a missing one answers an empty catalog.
+    public SecurityCatalogs = new Map<string, SecurityCatalogDto>()
+    // Keyed by environment, then team id.
+    public TeamMembers = new Map<string, Map<string, TeamMemberDto[]>>()
+    public SecurityChanges = new Map<string, SecurityChangesDto[]>()
     public Graphs = new Map<string, GraphDto[]>()
     public ProfileDto: TenantProfileDto | undefined
     public EmailDomains: EmailDomainsDto = { domains: ['acme.test'], editable: true, inHive: false, pending: [] }
@@ -443,6 +448,24 @@ export class FakeTenantApi
     {
         await this.Enter('SetSecurityModel', env, model)
         this.SecurityModels.set(env, structuredClone(model))
+    }
+
+    public async GetSecurityCatalog(env: string): Promise<SecurityCatalogDto>
+    {
+        await this.Enter('GetSecurityCatalog', env)
+        return structuredClone(this.SecurityCatalogs.get(env) ?? { roles: [], concepts: [], securedFields: [], profiles: [] })
+    }
+
+    public async ListTeamMembers(env: string, teamId: string): Promise<TeamMemberDto[]>
+    {
+        await this.Enter('ListTeamMembers', env, teamId)
+        return structuredClone(this.TeamMembers.get(env)?.get(teamId) ?? [])
+    }
+
+    public async ListSecurityChanges(env: string): Promise<SecurityChangesDto[]>
+    {
+        await this.Enter('ListSecurityChanges', env)
+        return structuredClone(this.SecurityChanges.get(env) ?? [])
     }
 
     // Recorded as ['ListGraphs', env]; answers copies of Graphs[env].

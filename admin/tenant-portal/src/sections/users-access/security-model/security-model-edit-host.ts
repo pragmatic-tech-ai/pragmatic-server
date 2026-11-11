@@ -6,16 +6,12 @@ export enum SecurityModelPart
 {
     Roles,
     Privileges,
-    RecordSharing,
     RoleAssignment,
     Profiles,
     FieldGrants,
     ProfileAssignment,
     BusinessUnits,
     Teams,
-    MembershipRules,
-    MembershipOverrides,
-    OwnershipRules,
 }
 
 // What a row view-model edits through: the editor owning the one draft.

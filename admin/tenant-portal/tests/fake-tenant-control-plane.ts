@@ -4,8 +4,8 @@ import { readFile } from 'node:fs/promises'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer, type WebSocket } from 'ws'
-import { EnvStatus, EnvType, Template, TenantEventType } from '../src/tenant-types.js'
-import type { AccountDto, EnvironmentDto, GrantDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, ManifestDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TenantProfileDto } from '../src/tenant-types.js'
+import { EnvStatus, EnvType, SecurityRoleKind, Template, TeamMemberOrigin, TenantEventType } from '../src/tenant-types.js'
+import type { AccountDto, EnvironmentDto, GrantDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, ManifestDto, SecurityCatalogDto, SecurityChangesDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TeamMemberDto, TenantEvent, TenantProfileDto } from '../src/tenant-types.js'
 
 // Serves the built dist/ statically and fakes the 7a tenant surface with canned
 // data, recording every mutating call. GATED: used only by the Playwright spec.
@@ -67,6 +67,9 @@ export class FakeTenantControlPlane
     private static readonly GrantsLeaf = 'grants'
     private static readonly TokensLeaf = 'tokens'
     private static readonly SecurityModelLeaf = 'security-model'
+    private static readonly SecurityCatalogLeaf = 'security-catalog'
+    private static readonly TeamMembersLeaf = 'team-members'
+    private static readonly SecurityChangesLeaf = 'security-changes'
     public static readonly IssuedTokenValue = 'fake-secret-token'
     public static readonly MethodDelete = 'DELETE'
     private static readonly MethodPut = 'PUT'
@@ -137,21 +140,52 @@ export class FakeTenantControlPlane
     [
         { tokenRef: 'ref-1', principalId: 'svc-1', scopes: ['read'], expiresAt: null, revoked: false },
     ]
+    // The C5 setting: a root unit holding the owner as System Administrator, one team.
     public SecurityModel: SecurityModelDto =
     {
-        businessUnits: [{ id: 'bu-1', name: 'Root' }],
-        teams: [{ id: 'team-1', name: 'Core', owningBusinessUnit: 'bu-1' }],
-        membership: { claimsMapping: [], overrides: [] },
-        ownershipRules: [{ concept: 'Order', owningBusinessUnit: { kind: 'literal', value: 'bu-1' } }],
-        roles: [{ id: 'role-1', name: 'Editor', privileges: [{ action: 'read', concept: 'Order', level: 'organization' }] }],
-        roleAssignment: { claimsMapping: [], overrides: [], teamRoles: [] },
-        fieldSecurity:
-        {
-            securedFields: [{ concept: 'Order', field: 'total' }],
-            profiles: [{ id: 'fp-1', name: 'Finance', grants: [{ concept: 'Order', field: 'total', read: true }] }],
-            profileAssignment: { claimsMapping: [], overrides: [], teamProfiles: [] },
-        },
+        businessUnits: [{ id: 'root', name: 'Root' }],
+        users: [{ principalId: 'owner-1', businessUnitId: 'root' }],
+        teams: [{ id: 'team-1', name: 'Core', businessUnitId: 'root', idpGroups: ['core-group'], manualMembers: ['editor-1'] }],
+        roleAssignments: [{ role: 'SystemAdministrator', principalIds: ['owner-1'], teamIds: [] }],
+        profileAssignments: [],
+        roleOverrides: [],
+        profileOverrides: [],
     }
+    // The environment's catalog: the three base roles and the `projects` package's roles.
+    public SecurityCatalog: SecurityCatalogDto =
+    {
+        roles:
+        [
+            { name: 'SystemAdministrator', kind: SecurityRoleKind.Base, defaults: [] },
+            { name: 'BasicUser', kind: SecurityRoleKind.Base, defaults: [{ action: 'read', concept: 'projects.Project', level: 'user' }] },
+            { name: 'Reader', kind: SecurityRoleKind.Base, defaults: [{ action: 'read', concept: 'projects.Project', level: 'organization' }] },
+            { name: 'projects.ProjectManager', kind: SecurityRoleKind.Package, package: 'projects', defaults: [{ action: 'read', concept: 'projects.Project', level: 'businessUnitAndChildren' }] },
+            { name: 'projects.ProjectMember', kind: SecurityRoleKind.Package, package: 'projects', defaults: [{ action: 'read', concept: 'projects.Task', level: 'user' }] },
+        ],
+        concepts:
+        [
+            { name: 'projects.Project', package: 'projects', owned: true },
+            { name: 'projects.Task', package: 'projects', owned: true },
+            { name: 'projects.Category', package: 'projects', owned: false },
+        ],
+        securedFields: [{ concept: 'projects.Project', field: 'Budget' }],
+        profiles: [{ name: 'projects.Finance', package: 'projects', defaults: [{ concept: 'projects.Project', field: 'Budget', read: true, update: false, create: false }] }],
+    }
+    // Each team's members as the server reports them (synced via an IdP group link, or manual).
+    public readonly TeamMembers = new Map<string, TeamMemberDto[]>(
+    [
+        ['team-1', [{ principalId: 'owner-1', origin: TeamMemberOrigin.Synced }, { principalId: 'editor-1', origin: TeamMemberOrigin.Manual }]],
+    ])
+    // The change log: what each deploy changed in the security defaults.
+    public readonly SecurityChanges: SecurityChangesDto[] =
+    [
+        {
+            at: '2026-01-02T00:00:00.000Z', delivery: 'projects', version: '1.1.0',
+            roleDefaults: [{ role: 'BasicUser', concept: 'projects.Project', action: 'read', before: 'none', after: 'user' }],
+            profileDefaults: [], securedFieldsAdded: [{ concept: 'projects.Project', field: 'Budget' }], securedFieldsRemoved: [],
+            roleOverridesDropped: [], profileOverridesDropped: [], rolesRemoved: [], profilesRemoved: [],
+        },
+    ]
     public readonly AdminCalls: Array<{ env: string; method: string; leaf: string; body: unknown }> = []
     public readonly LifecycleCalls: Array<{ subject: string; action: string }> = []
     private readonly root = fileURLToPath(new URL('../dist/', import.meta.url))
@@ -528,7 +562,7 @@ export class FakeTenantControlPlane
         FakeTenantControlPlane.Json(res, 200, env)
     }
 
-    // /tenant-api/environments/:name/admin/(snapshot|accounts[/:id]|grants)
+    // /tenant-api/environments/:name/admin/(snapshot|accounts[/:id]|grants|tokens|security-model|security-catalog|team-members/:id|security-changes)
     private async HandleAdmin(method: string, path: string, req: IncomingMessage, res: ServerResponse): Promise<void>
     {
         const [rawName, admin, leaf, rawId] = path.slice(FakeTenantControlPlane.EnvPrefix.length).split(FakeTenantControlPlane.PathSeparator)
@@ -616,6 +650,18 @@ export class FakeTenantControlPlane
             this.SecurityModel = (body as { securityModel: SecurityModelDto }).securityModel
             this.AdminCalls.push({ env, method, leaf, body })
             FakeTenantControlPlane.Json(res, 200, { ok: true })
+        }
+        else if (leaf === FakeTenantControlPlane.SecurityCatalogLeaf && method === FakeTenantControlPlane.MethodGet)
+        {
+            FakeTenantControlPlane.Json(res, 200, this.SecurityCatalog)
+        }
+        else if (leaf === FakeTenantControlPlane.TeamMembersLeaf && method === FakeTenantControlPlane.MethodGet && rawId !== undefined)
+        {
+            FakeTenantControlPlane.Json(res, 200, this.TeamMembers.get(decodeURIComponent(rawId)) ?? [])
+        }
+        else if (leaf === FakeTenantControlPlane.SecurityChangesLeaf && method === FakeTenantControlPlane.MethodGet)
+        {
+            FakeTenantControlPlane.Json(res, 200, this.SecurityChanges)
         }
         else
         {

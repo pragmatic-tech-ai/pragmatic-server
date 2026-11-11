@@ -71,7 +71,9 @@ resources UsersAccessResources {
                 }
                 SegmentedButton [ DockPanel.Dock = Top, ItemsSource = $TabLabels, SelectedItem = $SelectedTab, SelectionMode = Single,
                                   HorizontalAlignment = Left, Margin = (0,0,0,16) ]
-                ContentControl [ Content = $CurrentTab ]
+                TextBlock [ DockPanel.Dock = Top, Text = $DevelopmentEnvironmentText, Foreground = @Fg2, TextWrapping = Wrap,
+                            Visibility = $IsDevelopmentNoticeShown << ToVisibility ]
+                ContentControl [ Content = $CurrentTab, Visibility = $IsCurrentTabShown << ToVisibility ]
             }
         }
     }

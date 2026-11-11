@@ -338,7 +338,7 @@ describe('TenantApiClient admin (users and access)', () =>
 
     it('GetSecurityModel GETs the security-model route and returns the body', async () =>
     {
-        const model = { businessUnits: [], teams: [], membership: { claimsMapping: [], overrides: [] }, ownershipRules: [] }
+        const model = { businessUnits: [], users: [], teams: [], roleAssignments: [], profileAssignments: [], roleOverrides: [], profileOverrides: [] }
         FetchStub.Install(model)
         const got = await new TestClient(new FakeWebSocketFactory()).GetSecurityModel('e')
         assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/e/admin/security-model')
@@ -355,12 +355,30 @@ describe('TenantApiClient admin (users and access)', () =>
 
     it('SetSecurityModel PUTs the wrapped model', async () =>
     {
-        const model = { businessUnits: [], teams: [], membership: { claimsMapping: [], overrides: [] }, ownershipRules: [] }
+        const model = { businessUnits: [], users: [], teams: [], roleAssignments: [], profileAssignments: [], roleOverrides: [], profileOverrides: [] }
         FetchStub.Install({ ok: true })
         await new TestClient(new FakeWebSocketFactory()).SetSecurityModel('e', model)
         assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/e/admin/security-model')
         assert.equal(FetchStub.Calls[0]!.init?.method, 'PUT')
         assert.deepEqual(JSON.parse(FetchStub.Calls[0]!.init?.body as string), { securityModel: model })
+    })
+
+    it('client routes', async () =>
+    {
+        const c = new TestClient(new FakeWebSocketFactory())
+        const catalog = { roles: [], concepts: [], securedFields: [], profiles: [] }
+        FetchStub.Install(catalog)
+        assert.deepEqual(await c.GetSecurityCatalog('dev'), catalog)
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/dev/admin/security-catalog')
+        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+        FetchStub.Install([{ principalId: 'a', origin: 'synced' }])
+        assert.deepEqual(await c.ListTeamMembers('dev', 't 1'), [{ principalId: 'a', origin: 'synced' }])
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/dev/admin/team-members/t%201')
+        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+        FetchStub.Install([])
+        assert.deepEqual(await c.ListSecurityChanges('dev'), [])
+        assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/dev/admin/security-changes')
+        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
     })
 
     it('encodes the env and principalId path segments', async () =>

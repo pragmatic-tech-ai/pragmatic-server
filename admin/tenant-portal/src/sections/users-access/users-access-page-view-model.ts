@@ -5,6 +5,7 @@ import { OptionViewModel } from '../../shell/option-view-model.js'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
 import { TenantApiError } from '../../tenant-api-client.js'
+import { EnvType } from '../../tenant-types.js'
 import type { EnvironmentScopedPageViewModel } from './environment-scoped-page-view-model.js'
 import { SecurityModelEditorViewModel } from './security-model/security-model-editor-view-model.js'
 import { TokensTabViewModel } from './tokens-tab-view-model.js'
@@ -26,7 +27,9 @@ export enum UsersAccessTab
 // follows every later environment change. Switching environment while the
 // security-model editor holds unsaved changes asks first; declined, the
 // picker snaps back. Without the Manage users & access permission the whole
-// page is Denied and nothing loads.
+// page is Denied and nothing loads. Only a Runtime environment has a security
+// setting: for any other the Roles & permissions tab shows a notice instead
+// of the editor, and the editor holds no environment (nothing loads).
 export class UsersAccessPageViewModel extends TenantPageViewModel
 {
     private static readonly EnvironmentsProperty = 'Environments'
@@ -35,6 +38,9 @@ export class UsersAccessPageViewModel extends TenantPageViewModel
     private static readonly CurrentTabProperty = 'CurrentTab'
     private static readonly IsUsersTabProperty = 'IsUsersTab'
     private static readonly IsTokensTabProperty = 'IsTokensTab'
+    private static readonly IsCurrentTabShownProperty = 'IsCurrentTabShown'
+    private static readonly IsDevelopmentNoticeShownProperty = 'IsDevelopmentNoticeShown'
+    private static readonly DevelopmentEnvironmentText = 'Development environments are governed by tenant access, not by a security setting.'
     private static readonly UsersLabel = 'Users'
     private static readonly RolesLabel = 'Roles & permissions'
     private static readonly TokensLabel = 'Tokens'
@@ -55,6 +61,7 @@ export class UsersAccessPageViewModel extends TenantPageViewModel
     private readonly tabLabels = new ObservableCollection<string>()
     private tab = UsersAccessTab.Users
     private environments = new ObservableCollection<OptionViewModel<string>>()
+    private readonly environmentTypes = new Map<string, EnvType>()
     private selectedEnvironment: OptionViewModel<string> | undefined
     private confirmingSwitch = false
 
@@ -172,6 +179,29 @@ export class UsersAccessPageViewModel extends TenantPageViewModel
         return this.tab === UsersAccessTab.Tokens
     }
 
+    // Whether the selected environment has a security setting (Runtime only).
+    public get HasSecuritySetting(): boolean
+    {
+        const name = this.EnvironmentName
+        return name !== undefined && this.environmentTypes.get(name) === EnvType.Runtime
+    }
+
+    // The current tab shows, except Roles & permissions on a non-Runtime environment.
+    public get IsCurrentTabShown(): boolean
+    {
+        return !this.IsDevelopmentNoticeShown
+    }
+
+    public get IsDevelopmentNoticeShown(): boolean
+    {
+        return this.tab === UsersAccessTab.Roles && this.EnvironmentName !== undefined && !this.HasSecuritySetting
+    }
+
+    public get DevelopmentEnvironmentText(): string
+    {
+        return UsersAccessPageViewModel.DevelopmentEnvironmentText
+    }
+
     // The header's primary action on the Users tab.
     public get CreateAccountCommand(): RelayCommand
     {
@@ -198,6 +228,7 @@ export class UsersAccessPageViewModel extends TenantPageViewModel
             this.RaisePropertyChanged(P.CurrentTabProperty, before[1], this.CurrentTab)
             this.RaisePropertyChanged(P.IsUsersTabProperty, before[2], this.IsUsersTab)
             this.RaisePropertyChanged(P.IsTokensTabProperty, before[3], this.IsTokensTab)
+            this.RaiseNotice()
         }
         await this.SyncTabs(false)
     }
@@ -234,6 +265,11 @@ export class UsersAccessPageViewModel extends TenantPageViewModel
         {
             return false
         }
+        this.environmentTypes.clear()
+        for (const environment of environments)
+        {
+            this.environmentTypes.set(environment.name, environment.type)
+        }
         this.ApplyEnvironments(environments.map(e => e.name))
         if (this.selectedEnvironment === undefined)
         {
@@ -245,7 +281,8 @@ export class UsersAccessPageViewModel extends TenantPageViewModel
 
     // Points the tabs at the selected environment: the current tab always
     // (reloaded when asked and it holds no unsaved work), the others only
-    // once they have loaded before.
+    // once they have loaded before. The editor is pointed at no environment
+    // when the selected one has no security setting.
     private async SyncTabs(reloadCurrent: boolean): Promise<void>
     {
         const environment = this.EnvironmentName
@@ -257,16 +294,24 @@ export class UsersAccessPageViewModel extends TenantPageViewModel
         const loads: Promise<void>[] = []
         for (const tab of [this.usersTab, this.editor, this.tokensTab])
         {
-            if (tab.Environment !== environment && (tab === current || tab.Environment !== undefined))
+            const target = tab === this.editor && !this.HasSecuritySetting ? undefined : environment
+            if (tab.Environment !== target && (tab === current || tab.Environment !== undefined))
             {
-                loads.push(tab.UseEnvironment(environment))
+                loads.push(tab.UseEnvironment(target))
             }
-            else if (tab === current && reloadCurrent && !PendingWork.IsHeldBy(tab))
+            else if (tab === current && target !== undefined && reloadCurrent && !PendingWork.IsHeldBy(tab))
             {
                 loads.push(tab.Refresh())
             }
         }
         await Promise.all(loads)
+    }
+
+    private RaiseNotice(): void
+    {
+        const P = UsersAccessPageViewModel
+        this.RaisePropertyChanged(P.IsCurrentTabShownProperty, undefined, this.IsCurrentTabShown)
+        this.RaisePropertyChanged(P.IsDevelopmentNoticeShownProperty, undefined, this.IsDevelopmentNoticeShown)
     }
 
     // A fresh option collection each load (a realized ComboBox ignores
@@ -288,6 +333,7 @@ export class UsersAccessPageViewModel extends TenantPageViewModel
         this.selectedEnvironment = selected
         this.RaisePropertyChanged(P.EnvironmentsProperty, oldOptions, options)
         this.RaisePropertyChanged(P.SelectedEnvironmentProperty, oldSelected, selected)
+        this.RaiseNotice()
     }
 
     private ApplyEnvironment(value: OptionViewModel<string>): void
@@ -295,6 +341,7 @@ export class UsersAccessPageViewModel extends TenantPageViewModel
         const old = this.selectedEnvironment
         this.selectedEnvironment = value
         this.RaisePropertyChanged(UsersAccessPageViewModel.SelectedEnvironmentProperty, old, value)
+        this.RaiseNotice()
         void this.SyncTabs(false)
     }
 

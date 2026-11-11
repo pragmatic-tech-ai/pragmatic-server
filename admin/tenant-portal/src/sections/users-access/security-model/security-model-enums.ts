@@ -7,7 +7,8 @@ export enum PrivilegeAction
     Append = 'append',
     AppendTo = 'appendTo',
     Assign = 'assign',
-    Share = 'share'
+    Share = 'share',
+    Invoke = 'invoke'
 }
 
 export enum AccessLevel
@@ -40,7 +41,8 @@ export const Actions: readonly PrivilegeAction[] = [
     PrivilegeAction.Append,
     PrivilegeAction.AppendTo,
     PrivilegeAction.Assign,
-    PrivilegeAction.Share
+    PrivilegeAction.Share,
+    PrivilegeAction.Invoke
 ]
 
 export const LevelCycle: readonly AccessLevel[] = [

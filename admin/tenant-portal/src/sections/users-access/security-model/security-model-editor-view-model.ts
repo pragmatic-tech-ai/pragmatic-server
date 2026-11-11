@@ -9,13 +9,8 @@ import { AssignmentEditorViewModel, AssignmentSide } from './assignment-editor-v
 import { SecurityModelDraft } from './security-model-draft.js'
 import { SecurityModelPart, type ISecurityModelEditHost } from './security-model-edit-host.js'
 import { LevelCycle } from './security-model-enums.js'
-import {
-    BusinessUnitRowViewModel, MembershipOverrideRowViewModel, MembershipRuleRowViewModel, OwnershipRuleRowViewModel, TeamRowViewModel,
-    UnitChoices, UnitOptionViewModel,
-} from './security-model-org-rows.js'
-import {
-    FieldGrantRowViewModel, LegendEntryViewModel, PrivilegeRowViewModel, ProfileItemViewModel, RecordSharingRowViewModel, RoleItemViewModel,
-} from './security-model-role-rows.js'
+import { BusinessUnitRowViewModel, TeamRowViewModel, UnitChoices, UnitOptionViewModel } from './security-model-org-rows.js'
+import { FieldGrantRowViewModel, LegendEntryViewModel, PrivilegeRowViewModel, ProfileItemViewModel, RoleItemViewModel } from './security-model-role-rows.js'
 import { TabSelection } from './tab-selection.js'
 
 // The editor's two modes.
@@ -30,7 +25,6 @@ export enum RoleTab
 {
     Privileges,
     Fields,
-    RecordSharing,
     People,
 }
 
@@ -39,26 +33,19 @@ export enum OrgTab
 {
     BusinessUnits,
     Teams,
-    Membership,
-    OwnershipRules,
 }
 
 // The typed-in values the Add actions read.
 enum NewInput
 {
-    Role,
-    Concept,
-    Profile,
-    FieldConcept,
-    Field,
     BusinessUnit,
     Team,
-    OwnershipConcept,
 }
 
-// The Roles & permissions tab: the security-model editor for the selected
-// environment. ONE draft backs every surface (roles and their privileges,
-// field profiles, who holds what, the organization), so one dirty flag and
+// The Roles & permissions tab: the security-setting editor for the selected
+// environment. ONE draft (the setting over the environment's catalog) backs
+// every surface (the catalog's roles and their privilege overrides, field
+// profiles, who holds what, the organization), so one dirty flag and
 // one save bar (Save / Discard) cover the whole model. Rows are view-models
 // editing the draft in place through Apply; a structural change (add /
 // remove) rebuilds the row collections (new instances, raised), while a text
@@ -73,28 +60,15 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly OrganizationLabel = 'Organization'
     private static readonly PrivilegesLabel = 'What they can do'
     private static readonly FieldsLabel = 'Fields'
-    private static readonly RecordSharingLabel = 'Record sharing'
     private static readonly PeopleLabel = 'People'
     private static readonly BusinessUnitsLabel = 'Business units'
     private static readonly TeamsLabel = 'Teams'
-    private static readonly MembershipLabel = 'Membership'
-    private static readonly OwnershipRulesLabel = 'Ownership rules'
     private static readonly NoneChoice = '(none)'
     private static readonly UnsavedText = 'Unsaved changes'
     private static readonly NoChangesText = 'No unsaved changes'
-    private static readonly NoRecordSharingText = 'This role has no concepts to share yet.'
-    private static readonly NoOneAssignedText = 'No one is assigned this role yet.'
-    private static readonly AssignedDirectlySuffix = ' assigned directly'
-    private static readonly AlsoGrantedPrefix = ', also granted by '
-    private static readonly ClaimRuleOne = ' claim rule'
-    private static readonly ClaimRuleMany = ' claim rules'
-    private static readonly TeamOne = ' team'
-    private static readonly TeamMany = ' teams'
-    private static readonly AndWord = ' and '
     private static readonly IdOpen = ' ('
     private static readonly IdClose = ')'
     private static readonly Empty = ''
-    private static readonly NoRoleId = ''
     private static readonly MaxDepth = 64
 
     private static readonly SelectedModeProperty = 'SelectedMode'
@@ -103,13 +77,10 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly SelectedRoleTabProperty = 'SelectedRoleTab'
     private static readonly IsPrivilegesTabProperty = 'IsPrivilegesTab'
     private static readonly IsFieldsTabProperty = 'IsFieldsTab'
-    private static readonly IsRecordSharingTabProperty = 'IsRecordSharingTab'
     private static readonly IsPeopleTabProperty = 'IsPeopleTab'
     private static readonly SelectedOrgTabProperty = 'SelectedOrgTab'
     private static readonly IsBusinessUnitsTabProperty = 'IsBusinessUnitsTab'
     private static readonly IsTeamsTabProperty = 'IsTeamsTab'
-    private static readonly IsMembershipTabProperty = 'IsMembershipTab'
-    private static readonly IsOwnershipTabProperty = 'IsOwnershipTab'
     private static readonly RolesProperty = 'Roles'
     private static readonly HasRolesProperty = 'HasRoles'
     private static readonly HasNoRolesProperty = 'HasNoRoles'
@@ -118,10 +89,6 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly HasNoSelectedRoleProperty = 'HasNoSelectedRole'
     private static readonly SelectedRoleNameProperty = 'SelectedRoleName'
     private static readonly PrivilegeRowsProperty = 'PrivilegeRows'
-    private static readonly RecordSharingRowsProperty = 'RecordSharingRows'
-    private static readonly HasRecordSharingProperty = 'HasRecordSharing'
-    private static readonly HasNoRecordSharingProperty = 'HasNoRecordSharing'
-    private static readonly RoleHoldersHeadlineProperty = 'RoleHoldersHeadline'
     private static readonly ProfilesProperty = 'Profiles'
     private static readonly SelectedProfileProperty = 'SelectedProfile'
     private static readonly HasSelectedProfileProperty = 'HasSelectedProfile'
@@ -132,32 +99,19 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly HasNoBusinessUnitsProperty = 'HasNoBusinessUnits'
     private static readonly TeamRowsProperty = 'TeamRows'
     private static readonly HasNoTeamsProperty = 'HasNoTeams'
-    private static readonly MembershipRuleRowsProperty = 'MembershipRuleRows'
-    private static readonly HasNoMembershipRulesProperty = 'HasNoMembershipRules'
-    private static readonly MembershipOverrideRowsProperty = 'MembershipOverrideRows'
-    private static readonly HasNoMembershipOverridesProperty = 'HasNoMembershipOverrides'
-    private static readonly OwnershipRuleRowsProperty = 'OwnershipRuleRows'
-    private static readonly HasNoOwnershipRulesProperty = 'HasNoOwnershipRules'
     private static readonly IsDirtyProperty = 'IsDirty'
     private static readonly HasPendingWorkProperty = 'HasPendingWork'
     private static readonly SaveStateTextProperty = 'SaveStateText'
     private static readonly IsBusyProperty = 'IsBusy'
     private static readonly InputProperties: ReadonlyMap<NewInput, string> = new Map<NewInput, string>([
-        [NewInput.Role, 'NewRoleName'],
-        [NewInput.Concept, 'NewConceptName'],
-        [NewInput.Profile, 'NewProfileName'],
-        [NewInput.FieldConcept, 'NewFieldConcept'],
-        [NewInput.Field, 'NewFieldName'],
         [NewInput.BusinessUnit, 'NewBusinessUnitName'],
         [NewInput.Team, 'NewTeamName'],
-        [NewInput.OwnershipConcept, 'NewOwnershipConcept'],
     ])
 
     private static readonly Parts: readonly SecurityModelPart[] = [
-        SecurityModelPart.Roles, SecurityModelPart.Privileges, SecurityModelPart.RecordSharing, SecurityModelPart.RoleAssignment,
+        SecurityModelPart.Roles, SecurityModelPart.Privileges, SecurityModelPart.RoleAssignment,
         SecurityModelPart.Profiles, SecurityModelPart.FieldGrants, SecurityModelPart.ProfileAssignment,
-        SecurityModelPart.BusinessUnits, SecurityModelPart.Teams, SecurityModelPart.MembershipRules,
-        SecurityModelPart.MembershipOverrides, SecurityModelPart.OwnershipRules,
+        SecurityModelPart.BusinessUnits, SecurityModelPart.Teams,
     ]
 
     private readonly mode = new TabSelection<SecurityModelMode>([
@@ -167,17 +121,17 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private readonly roleTab = new TabSelection<RoleTab>([
         [RoleTab.Privileges, SecurityModelEditorViewModel.PrivilegesLabel],
         [RoleTab.Fields, SecurityModelEditorViewModel.FieldsLabel],
-        [RoleTab.RecordSharing, SecurityModelEditorViewModel.RecordSharingLabel],
         [RoleTab.People, SecurityModelEditorViewModel.PeopleLabel],
     ])
     private readonly orgTab = new TabSelection<OrgTab>([
         [OrgTab.BusinessUnits, SecurityModelEditorViewModel.BusinessUnitsLabel],
         [OrgTab.Teams, SecurityModelEditorViewModel.TeamsLabel],
-        [OrgTab.Membership, SecurityModelEditorViewModel.MembershipLabel],
-        [OrgTab.OwnershipRules, SecurityModelEditorViewModel.OwnershipRulesLabel],
     ])
 
     private draft: SecurityModelDraft | undefined
+    // The selected catalog role / profile (by name); kept across a save.
+    private selectedRoleId: string | undefined
+    private selectedProfileId: string | undefined
     private dirty = false
     private busy = 0
     private discarding = false
@@ -189,30 +143,17 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private readonly noneUnit = new UnitOptionViewModel(undefined, SecurityModelEditorViewModel.NoneChoice)
     private roles = new ObservableCollection<RoleItemViewModel>()
     private privilegeRows = new ObservableCollection<PrivilegeRowViewModel>()
-    private recordSharingRows = new ObservableCollection<RecordSharingRowViewModel>()
     private profiles = new ObservableCollection<ProfileItemViewModel>()
     private fieldRows = new ObservableCollection<FieldGrantRowViewModel>()
     private businessUnitRows = new ObservableCollection<BusinessUnitRowViewModel>()
     private teamRows = new ObservableCollection<TeamRowViewModel>()
-    private membershipRuleRows = new ObservableCollection<MembershipRuleRowViewModel>()
-    private membershipOverrideRows = new ObservableCollection<MembershipOverrideRowViewModel>()
-    private ownershipRuleRows = new ObservableCollection<OwnershipRuleRowViewModel>()
     private readonly legend = new ObservableCollection<LegendEntryViewModel>()
     private readonly roleAssignment: AssignmentEditorViewModel
     private readonly profileAssignment: AssignmentEditorViewModel
     private readonly saveCommand: RelayCommand
     private readonly discardCommand: RelayCommand
-    private readonly addRoleCommand: RelayCommand
-    private readonly deleteRoleCommand: RelayCommand
-    private readonly addConceptCommand: RelayCommand
-    private readonly addProfileCommand: RelayCommand
-    private readonly deleteProfileCommand: RelayCommand
-    private readonly addSecuredFieldCommand: RelayCommand
     private readonly addBusinessUnitCommand: RelayCommand
     private readonly addTeamCommand: RelayCommand
-    private readonly addMembershipRuleCommand: RelayCommand
-    private readonly addMembershipOverrideCommand: RelayCommand
-    private readonly addOwnershipRuleCommand: RelayCommand
 
     public constructor(session: TenantSessionService, protected readonly section: UsersAccessSectionService)
     {
@@ -226,17 +167,8 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         const dirtyAndIdle = (): boolean => this.dirty && this.busy === 0
         this.saveCommand = this.MutatingCommand(AdminCapability.Access, () => this.Save(), dirtyAndIdle)
         this.discardCommand = this.MutatingCommand(AdminCapability.Access, () => this.Discard(), dirtyAndIdle)
-        this.addRoleCommand = this.EditCommand(() => this.AddRole())
-        this.deleteRoleCommand = this.EditCommand(() => this.DeleteRole())
-        this.addConceptCommand = this.EditCommand(() => this.AddConcept())
-        this.addProfileCommand = this.EditCommand(() => this.AddProfile())
-        this.deleteProfileCommand = this.EditCommand(() => this.DeleteProfile())
-        this.addSecuredFieldCommand = this.EditCommand(() => this.AddSecuredField())
         this.addBusinessUnitCommand = this.EditCommand(() => this.AddBusinessUnit())
         this.addTeamCommand = this.EditCommand(() => this.AddTeam())
-        this.addMembershipRuleCommand = this.EditCommand(() => this.AddMembershipRule())
-        this.addMembershipOverrideCommand = this.EditCommand(() => this.AddMembershipOverride())
-        this.addOwnershipRuleCommand = this.EditCommand(() => this.AddOwnershipRule())
         PendingWork.Register(this)
     }
 
@@ -336,7 +268,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         if (this.roleTab.Select(label))
         {
             const P = SecurityModelEditorViewModel
-            this.Raise(P.SelectedRoleTabProperty, P.IsPrivilegesTabProperty, P.IsFieldsTabProperty, P.IsRecordSharingTabProperty, P.IsPeopleTabProperty)
+            this.Raise(P.SelectedRoleTabProperty, P.IsPrivilegesTabProperty, P.IsFieldsTabProperty, P.IsPeopleTabProperty)
         }
     }
 
@@ -348,11 +280,6 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     public get IsFieldsTab(): boolean
     {
         return this.roleTab.Is(RoleTab.Fields)
-    }
-
-    public get IsRecordSharingTab(): boolean
-    {
-        return this.roleTab.Is(RoleTab.RecordSharing)
     }
 
     public get IsPeopleTab(): boolean
@@ -375,7 +302,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         if (this.orgTab.Select(label))
         {
             const P = SecurityModelEditorViewModel
-            this.Raise(P.SelectedOrgTabProperty, P.IsBusinessUnitsTabProperty, P.IsTeamsTabProperty, P.IsMembershipTabProperty, P.IsOwnershipTabProperty)
+            this.Raise(P.SelectedOrgTabProperty, P.IsBusinessUnitsTabProperty, P.IsTeamsTabProperty)
         }
     }
 
@@ -387,16 +314,6 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     public get IsTeamsTab(): boolean
     {
         return this.orgTab.Is(OrgTab.Teams)
-    }
-
-    public get IsMembershipTab(): boolean
-    {
-        return this.orgTab.Is(OrgTab.Membership)
-    }
-
-    public get IsOwnershipTab(): boolean
-    {
-        return this.orgTab.Is(OrgTab.OwnershipRules)
     }
 
     // ---- Roles ---------------------------------------------------------
@@ -411,8 +328,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         return this.roles.Count > 0
     }
 
-    // Whether the model has no roles yet: the template then shows the hint
-    // "No roles yet. Add a role to start." (the model stays editable).
+    // Whether the catalog lists no roles (none loaded yet).
     public get HasNoRoles(): boolean
     {
         return !this.HasRoles
@@ -420,7 +336,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
 
     public get SelectedRole(): RoleItemViewModel | undefined
     {
-        const id = this.draft?.SelectedRoleId
+        const id = this.selectedRoleId
         return id === undefined ? undefined : this.roleItems.get(id)
     }
 
@@ -429,13 +345,13 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     public set SelectedRole(item: RoleItemViewModel | undefined)
     {
         const draft = this.draft
-        if (!(item instanceof RoleItemViewModel) || draft === undefined || item.Id === draft.SelectedRoleId)
+        if (!(item instanceof RoleItemViewModel) || draft === undefined || item.Id === this.selectedRoleId)
         {
             return
         }
         if (this.busy === 0)
         {
-            draft.SelectedRoleId = item.Id
+            this.selectedRoleId = item.Id
             this.RebuildRoleScope()
         }
         this.Raise(SecurityModelEditorViewModel.SelectedRoleProperty)
@@ -456,105 +372,15 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         return this.SelectedRole?.Name ?? SecurityModelEditorViewModel.Empty
     }
 
-    public get NewRoleName(): string
-    {
-        return this.Input(NewInput.Role)
-    }
-
-    public set NewRoleName(value: string)
-    {
-        this.SetInput(NewInput.Role, value)
-    }
-
-    public get AddRoleCommand(): RelayCommand
-    {
-        return this.addRoleCommand
-    }
-
-    public get DeleteRoleCommand(): RelayCommand
-    {
-        return this.deleteRoleCommand
-    }
-
-    // The privilege matrix: one row per concept for the selected role.
+    // The privilege matrix: one row per catalog concept for the selected role.
     public get PrivilegeRows(): ObservableCollection<PrivilegeRowViewModel>
     {
         return this.privilegeRows
     }
 
-    public get NewConceptName(): string
-    {
-        return this.Input(NewInput.Concept)
-    }
-
-    public set NewConceptName(value: string)
-    {
-        this.SetInput(NewInput.Concept, value)
-    }
-
-    public get AddConceptCommand(): RelayCommand
-    {
-        return this.addConceptCommand
-    }
-
     public get Legend(): ObservableCollection<LegendEntryViewModel>
     {
         return this.legend
-    }
-
-    // Record sharing: derived from the selected role's privileges, read-only.
-    public get RecordSharingRows(): ObservableCollection<RecordSharingRowViewModel>
-    {
-        return this.recordSharingRows
-    }
-
-    public get HasRecordSharing(): boolean
-    {
-        return this.recordSharingRows.Count > 0
-    }
-
-    public get HasNoRecordSharing(): boolean
-    {
-        return !this.HasRecordSharing
-    }
-
-    public get NoRecordSharingText(): string
-    {
-        return SecurityModelEditorViewModel.NoRecordSharingText
-    }
-
-    // People: who holds the selected role (counts only; claim rules and team
-    // grants assign dynamically, so no names are invented).
-    public get RoleHoldersHeadline(): string
-    {
-        const id = this.draft?.SelectedRoleId
-        if (this.draft === undefined || id === undefined)
-        {
-            return SecurityModelEditorViewModel.Empty
-        }
-        const holders = this.draft.RoleHoldersFor(id)
-        const claims = holders.ByClaim.length
-        const teams = holders.ByTeam.length
-        if (holders.DirectCount === 0 && claims === 0 && teams === 0)
-        {
-            return SecurityModelEditorViewModel.NoOneAssignedText
-        }
-        const P = SecurityModelEditorViewModel
-        let text = holders.DirectCount + P.AssignedDirectlySuffix
-        const parts: string[] = []
-        if (claims > 0)
-        {
-            parts.push(claims + (claims === 1 ? P.ClaimRuleOne : P.ClaimRuleMany))
-        }
-        if (teams > 0)
-        {
-            parts.push(teams + (teams === 1 ? P.TeamOne : P.TeamMany))
-        }
-        if (parts.length > 0)
-        {
-            text += P.AlsoGrantedPrefix + parts.join(P.AndWord)
-        }
-        return text
     }
 
     public get RoleAssignment(): AssignmentEditorViewModel
@@ -571,20 +397,20 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
 
     public get SelectedProfile(): ProfileItemViewModel | undefined
     {
-        const id = this.draft?.SelectedProfileId
+        const id = this.selectedProfileId
         return id === undefined ? undefined : this.profileItems.get(id)
     }
 
     public set SelectedProfile(item: ProfileItemViewModel | undefined)
     {
         const draft = this.draft
-        if (!(item instanceof ProfileItemViewModel) || draft === undefined || item.Id === draft.SelectedProfileId)
+        if (!(item instanceof ProfileItemViewModel) || draft === undefined || item.Id === this.selectedProfileId)
         {
             return
         }
         if (this.busy === 0)
         {
-            draft.SelectedProfileId = item.Id
+            this.selectedProfileId = item.Id
             this.RebuildProfileScope()
         }
         this.Raise(SecurityModelEditorViewModel.SelectedProfileProperty)
@@ -600,27 +426,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         return !this.HasSelectedProfile
     }
 
-    public get NewProfileName(): string
-    {
-        return this.Input(NewInput.Profile)
-    }
-
-    public set NewProfileName(value: string)
-    {
-        this.SetInput(NewInput.Profile, value)
-    }
-
-    public get AddProfileCommand(): RelayCommand
-    {
-        return this.addProfileCommand
-    }
-
-    public get DeleteProfileCommand(): RelayCommand
-    {
-        return this.deleteProfileCommand
-    }
-
-    // The secured-field grid for the selected profile.
+    // The catalog's secured-field grid for the selected profile.
     public get FieldRows(): ObservableCollection<FieldGrantRowViewModel>
     {
         return this.fieldRows
@@ -629,31 +435,6 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     public get HasNoFieldRows(): boolean
     {
         return this.fieldRows.Count === 0
-    }
-
-    public get NewFieldConcept(): string
-    {
-        return this.Input(NewInput.FieldConcept)
-    }
-
-    public set NewFieldConcept(value: string)
-    {
-        this.SetInput(NewInput.FieldConcept, value)
-    }
-
-    public get NewFieldName(): string
-    {
-        return this.Input(NewInput.Field)
-    }
-
-    public set NewFieldName(value: string)
-    {
-        this.SetInput(NewInput.Field, value)
-    }
-
-    public get AddSecuredFieldCommand(): RelayCommand
-    {
-        return this.addSecuredFieldCommand
     }
 
     public get ProfileAssignment(): AssignmentEditorViewModel
@@ -713,61 +494,6 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         return this.addTeamCommand
     }
 
-    public get MembershipRuleRows(): ObservableCollection<MembershipRuleRowViewModel>
-    {
-        return this.membershipRuleRows
-    }
-
-    public get HasNoMembershipRules(): boolean
-    {
-        return this.membershipRuleRows.Count === 0
-    }
-
-    public get AddMembershipRuleCommand(): RelayCommand
-    {
-        return this.addMembershipRuleCommand
-    }
-
-    public get MembershipOverrideRows(): ObservableCollection<MembershipOverrideRowViewModel>
-    {
-        return this.membershipOverrideRows
-    }
-
-    public get HasNoMembershipOverrides(): boolean
-    {
-        return this.membershipOverrideRows.Count === 0
-    }
-
-    public get AddMembershipOverrideCommand(): RelayCommand
-    {
-        return this.addMembershipOverrideCommand
-    }
-
-    public get OwnershipRuleRows(): ObservableCollection<OwnershipRuleRowViewModel>
-    {
-        return this.ownershipRuleRows
-    }
-
-    public get HasNoOwnershipRules(): boolean
-    {
-        return this.ownershipRuleRows.Count === 0
-    }
-
-    public get NewOwnershipConcept(): string
-    {
-        return this.Input(NewInput.OwnershipConcept)
-    }
-
-    public set NewOwnershipConcept(value: string)
-    {
-        this.SetInput(NewInput.OwnershipConcept, value)
-    }
-
-    public get AddOwnershipRuleCommand(): RelayCommand
-    {
-        return this.addOwnershipRuleCommand
-    }
-
     // ---- ISecurityModelEditHost ----------------------------------------
 
     public Apply(change: (draft: SecurityModelDraft) => void): boolean
@@ -809,12 +535,8 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
             case SecurityModelPart.Privileges:
                 this.RebuildPrivileges()
                 break
-            case SecurityModelPart.RecordSharing:
-                this.RebuildRecordSharing()
-                break
             case SecurityModelPart.RoleAssignment:
-                this.roleAssignment.Rebuild(this.draft, this.draft?.SelectedRoleId)
-                this.Raise(SecurityModelEditorViewModel.RoleHoldersHeadlineProperty)
+                this.roleAssignment.Rebuild(this.draft, this.selectedRoleId)
                 break
             case SecurityModelPart.Profiles:
                 this.RebuildProfiles()
@@ -823,22 +545,13 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
                 this.RebuildFieldGrants()
                 break
             case SecurityModelPart.ProfileAssignment:
-                this.profileAssignment.Rebuild(this.draft, this.draft?.SelectedProfileId)
+                this.profileAssignment.Rebuild(this.draft, this.selectedProfileId)
                 break
             case SecurityModelPart.BusinessUnits:
                 this.RebuildBusinessUnits()
                 break
             case SecurityModelPart.Teams:
                 this.RebuildTeams()
-                break
-            case SecurityModelPart.MembershipRules:
-                this.RebuildMembershipRules()
-                break
-            case SecurityModelPart.MembershipOverrides:
-                this.RebuildMembershipOverrides()
-                break
-            case SecurityModelPart.OwnershipRules:
-                this.RebuildOwnershipRules()
                 break
         }
     }
@@ -855,9 +568,10 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         this.SetDraft(undefined)
     }
 
-    // A loaded model (null from the server: an empty one) is always shown, so
-    // the organization stays editable with no roles yet. A background reload
-    // (a live update) keeps unsaved changes; Discard reloads regardless.
+    // The setting and the catalog load together (a null setting from the
+    // server: an empty one) and the draft is built from both, so the
+    // organization stays editable before anything is assigned. A background
+    // reload (a live update) keeps unsaved changes; Discard reloads regardless.
     protected override async LoadFor(environment: string): Promise<boolean>
     {
         const failure = this.pendingFailure
@@ -874,10 +588,11 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         this.EnterBusy()
         try
         {
-            const model = await this.Session.Client.GetSecurityModel(environment)
+            const client = this.Session.Client
+            const [model, catalog] = await Promise.all([client.GetSecurityModel(environment), client.GetSecurityCatalog(environment)])
             if (generation === this.LoadGeneration)
             {
-                this.SetDraft(SecurityModelDraft.From(model))
+                this.SetDraft(new SecurityModelDraft(model ?? SecurityModelDraft.EmptyModel(), catalog))
             }
             return true
         }
@@ -887,8 +602,8 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         }
     }
 
-    // PUTs the whole model, then rebases the draft onto what was saved (dirty
-    // clears, both selections kept). A 403 shows the Denied state.
+    // PUTs the whole setting, then rebases the draft onto what was saved
+    // (dirty clears, both selections kept). A 403 shows the Denied state.
     private async Save(): Promise<void>
     {
         const environment = this.Environment
@@ -930,10 +645,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         }
         if (this.draft === draft)
         {
-            const rebased = SecurityModelDraft.From(dto)
-            rebased.SelectedRoleId = draft.SelectedRoleId
-            rebased.SelectedProfileId = draft.SelectedProfileId
-            this.SetDraft(rebased)
+            this.SetDraft(new SecurityModelDraft(dto, draft.Catalog))
         }
     }
 
@@ -952,66 +664,6 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     }
 
     // ---- Add / delete --------------------------------------------------
-
-    private AddRole(): void
-    {
-        const name = this.Input(NewInput.Role).trim()
-        if (name.length > 0 && this.Apply(d => { d.AddRole(name) }))
-        {
-            this.SetInput(NewInput.Role, SecurityModelEditorViewModel.Empty)
-            this.Rebuild()
-        }
-    }
-
-    private DeleteRole(): void
-    {
-        const id = this.draft?.SelectedRoleId
-        if (id !== undefined && this.Apply(d => d.DeleteRole(id)))
-        {
-            this.Rebuild()
-        }
-    }
-
-    private AddConcept(): void
-    {
-        const name = this.Input(NewInput.Concept).trim()
-        if (name.length > 0 && this.Apply(d => d.AddConcept(name)))
-        {
-            this.SetInput(NewInput.Concept, SecurityModelEditorViewModel.Empty)
-            this.Rebuild()
-        }
-    }
-
-    private AddProfile(): void
-    {
-        const name = this.Input(NewInput.Profile).trim()
-        if (name.length > 0 && this.Apply(d => { d.AddProfile(name) }))
-        {
-            this.SetInput(NewInput.Profile, SecurityModelEditorViewModel.Empty)
-            this.Rebuild()
-        }
-    }
-
-    private DeleteProfile(): void
-    {
-        const id = this.draft?.SelectedProfileId
-        if (id !== undefined && this.Apply(d => d.DeleteProfile(id)))
-        {
-            this.Rebuild()
-        }
-    }
-
-    private AddSecuredField(): void
-    {
-        const concept = this.Input(NewInput.FieldConcept).trim()
-        const field = this.Input(NewInput.Field).trim()
-        if (concept.length > 0 && field.length > 0 && this.Apply(d => d.AddSecuredField(concept, field)))
-        {
-            this.SetInput(NewInput.FieldConcept, SecurityModelEditorViewModel.Empty)
-            this.SetInput(NewInput.Field, SecurityModelEditorViewModel.Empty)
-            this.Rebuild()
-        }
-    }
 
     private AddBusinessUnit(): void
     {
@@ -1033,45 +685,24 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         }
     }
 
-    private AddMembershipRule(): void
-    {
-        if (this.Apply(d => d.Org.AddMembershipRule()))
-        {
-            this.Rebuild()
-        }
-    }
-
-    private AddMembershipOverride(): void
-    {
-        if (this.Apply(d => d.Org.AddMembershipOverride()))
-        {
-            this.Rebuild()
-        }
-    }
-
-    private AddOwnershipRule(): void
-    {
-        const concept = this.Input(NewInput.OwnershipConcept).trim()
-        if (concept.length > 0 && this.Apply(d => d.Org.AddOwnershipRule(concept)))
-        {
-            this.SetInput(NewInput.OwnershipConcept, SecurityModelEditorViewModel.Empty)
-            this.Rebuild()
-        }
-    }
-
     // ---- Rebuilding ----------------------------------------------------
 
+    // A new draft keeps the selected role / profile while the catalog still
+    // lists it, else selects the first.
     private SetDraft(draft: SecurityModelDraft | undefined): void
     {
         this.draft = draft
+        const roles = draft?.Catalog.roles ?? []
+        const profiles = draft?.Catalog.profiles ?? []
+        this.selectedRoleId = roles.some(r => r.name === this.selectedRoleId) ? this.selectedRoleId : roles[0]?.name
+        this.selectedProfileId = profiles.some(p => p.name === this.selectedProfileId) ? this.selectedProfileId : profiles[0]?.name
         this.Rebuild()
     }
 
-    // The selected role changed: its matrix, record sharing and holders follow.
+    // The selected role changed: its matrix and holders follow.
     private RebuildRoleScope(): void
     {
         this.RebuildPrivileges()
-        this.RebuildRecordSharing()
         this.RebuildPart(SecurityModelPart.RoleAssignment)
         const P = SecurityModelEditorViewModel
         this.Raise(P.HasSelectedRoleProperty, P.HasNoSelectedRoleProperty, P.SelectedRoleNameProperty)
@@ -1088,8 +719,8 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private RebuildRoles(): void
     {
         const draft = this.draft
-        const roles = draft?.Roles ?? []
-        const live = new Set<string>(roles.map(r => r.id))
+        const roles = draft?.Catalog.roles ?? []
+        const live = new Set<string>(roles.map(r => r.name))
         for (const id of [...this.roleItems.keys()])
         {
             if (!live.has(id))
@@ -1100,13 +731,13 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         this.roles = new ObservableCollection<RoleItemViewModel>()
         for (const role of roles)
         {
-            let item = this.roleItems.get(role.id)
+            let item = this.roleItems.get(role.name)
             if (item === undefined)
             {
-                item = new RoleItemViewModel(role.id)
-                this.roleItems.set(role.id, item)
+                item = new RoleItemViewModel(role.name)
+                this.roleItems.set(role.name, item)
             }
-            item.Update(role.name, draft?.DirectHolderCount(role.id) ?? 0)
+            item.Update(role.name, draft?.Assignments.Holders(role.name).PrincipalIds.length ?? 0)
             this.roles.Add(item)
         }
         const P = SecurityModelEditorViewModel
@@ -1118,32 +749,21 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     {
         const draft = this.draft
         this.privilegeRows = new ObservableCollection<PrivilegeRowViewModel>()
-        if (draft !== undefined && draft.SelectedRoleId !== undefined)
+        const role = this.selectedRoleId
+        if (draft !== undefined && role !== undefined)
         {
-            for (const concept of draft.Concepts)
+            for (const concept of draft.Catalog.concepts.map(c => c.name).sort())
             {
-                this.privilegeRows.Add(new PrivilegeRowViewModel(this, draft, concept))
+                this.privilegeRows.Add(new PrivilegeRowViewModel(this, draft, role, concept))
             }
         }
         this.Raise(SecurityModelEditorViewModel.PrivilegeRowsProperty)
     }
 
-    private RebuildRecordSharing(): void
-    {
-        const draft = this.draft
-        this.recordSharingRows = new ObservableCollection<RecordSharingRowViewModel>()
-        for (const row of draft?.RecordSharingFor(draft.SelectedRoleId ?? SecurityModelEditorViewModel.NoRoleId) ?? [])
-        {
-            this.recordSharingRows.Add(new RecordSharingRowViewModel(row))
-        }
-        const P = SecurityModelEditorViewModel
-        this.Raise(P.RecordSharingRowsProperty, P.HasRecordSharingProperty, P.HasNoRecordSharingProperty)
-    }
-
     private RebuildProfiles(): void
     {
-        const profiles = this.draft?.Profiles ?? []
-        const live = new Set<string>(profiles.map(p => p.id))
+        const profiles = this.draft?.Catalog.profiles ?? []
+        const live = new Set<string>(profiles.map(p => p.name))
         for (const id of [...this.profileItems.keys()])
         {
             if (!live.has(id))
@@ -1154,11 +774,11 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         this.profiles = new ObservableCollection<ProfileItemViewModel>()
         for (const profile of profiles)
         {
-            let item = this.profileItems.get(profile.id)
+            let item = this.profileItems.get(profile.name)
             if (item === undefined)
             {
-                item = new ProfileItemViewModel(profile.id)
-                this.profileItems.set(profile.id, item)
+                item = new ProfileItemViewModel(profile.name)
+                this.profileItems.set(profile.name, item)
             }
             item.Update(profile.name)
             this.profiles.Add(item)
@@ -1171,11 +791,12 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     {
         const draft = this.draft
         this.fieldRows = new ObservableCollection<FieldGrantRowViewModel>()
-        if (draft !== undefined && draft.SelectedProfileId !== undefined)
+        const profile = this.selectedProfileId
+        if (draft !== undefined && profile !== undefined)
         {
-            for (const field of draft.SecuredFields)
+            for (const field of draft.Catalog.securedFields)
             {
-                this.fieldRows.Add(new FieldGrantRowViewModel(this, draft, field.concept, field.field))
+                this.fieldRows.Add(new FieldGrantRowViewModel(this, draft, profile, field.concept, field.field))
             }
         }
         this.Raise(SecurityModelEditorViewModel.FieldRowsProperty, SecurityModelEditorViewModel.HasNoFieldRowsProperty)
@@ -1201,40 +822,6 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
             this.teamRows.Add(new TeamRowViewModel(this, team, choices))
         }
         this.Raise(SecurityModelEditorViewModel.TeamRowsProperty, SecurityModelEditorViewModel.HasNoTeamsProperty)
-    }
-
-    private RebuildMembershipRules(): void
-    {
-        const org = this.draft?.Org
-        const choices = this.AllUnitChoices()
-        this.membershipRuleRows = new ObservableCollection<MembershipRuleRowViewModel>()
-        org?.Membership.claimsMapping.forEach((rule, index) =>
-        {
-            this.membershipRuleRows.Add(new MembershipRuleRowViewModel(this, index, rule, choices, org.Teams))
-        })
-        this.Raise(SecurityModelEditorViewModel.MembershipRuleRowsProperty, SecurityModelEditorViewModel.HasNoMembershipRulesProperty)
-    }
-
-    private RebuildMembershipOverrides(): void
-    {
-        const org = this.draft?.Org
-        const choices = this.AllUnitChoices()
-        this.membershipOverrideRows = new ObservableCollection<MembershipOverrideRowViewModel>()
-        org?.Membership.overrides.forEach((entry, index) =>
-        {
-            this.membershipOverrideRows.Add(new MembershipOverrideRowViewModel(this, index, entry, choices, org.Teams))
-        })
-        this.Raise(SecurityModelEditorViewModel.MembershipOverrideRowsProperty, SecurityModelEditorViewModel.HasNoMembershipOverridesProperty)
-    }
-
-    private RebuildOwnershipRules(): void
-    {
-        this.ownershipRuleRows = new ObservableCollection<OwnershipRuleRowViewModel>()
-        for (const rule of this.draft?.Org.OwnershipRules ?? [])
-        {
-            this.ownershipRuleRows.Add(new OwnershipRuleRowViewModel(this, rule))
-        }
-        this.Raise(SecurityModelEditorViewModel.OwnershipRuleRowsProperty, SecurityModelEditorViewModel.HasNoOwnershipRulesProperty)
     }
 
     // Keeps one choice object per unit (labels follow renames; a duplicate

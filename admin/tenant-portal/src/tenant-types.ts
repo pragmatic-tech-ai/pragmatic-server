@@ -201,6 +201,7 @@ export interface ITokensSource
     RevokeToken(env: string, tokenRef: string): Promise<void>
 }
 
+// The C5 environment security setting and its catalog, mirrored by hand from the protocol's wire-dtos.ts.
 export interface BusinessUnitDto
 {
     id: string
@@ -208,45 +209,68 @@ export interface BusinessUnitDto
     parent?: string
 }
 
+export interface UserPlacementDto
+{
+    principalId: string
+    businessUnitId: string
+}
+
 export interface TeamDto
 {
     id: string
     name: string
-    owningBusinessUnit?: string
+    businessUnitId: string
+    idpGroups: string[]
+    manualMembers: string[]
 }
 
-export interface MembershipClaimRuleDto
+export interface RoleAssignmentDto
 {
-    claim: string
-    value: string
-    homeBusinessUnit?: string
-    teams?: string[]
+    role: string
+    principalIds: string[]
+    teamIds: string[]
 }
 
-export interface MembershipOverrideDto
+export interface ProfileAssignmentDto
 {
-    principalId: string
-    homeBusinessUnit?: string
-    teams?: string[]
+    profile: string
+    principalIds: string[]
+    teamIds: string[]
 }
 
-export interface MembershipDto
+export interface RoleOverrideDto
 {
-    claimsMapping: MembershipClaimRuleDto[]
-    overrides: MembershipOverrideDto[]
-}
-
-export interface OwnershipSourceDto
-{
-    kind: string
-    value: string
-}
-
-export interface OwnershipRuleDto
-{
+    role: string
     concept: string
-    owningBusinessUnit: OwnershipSourceDto
-    owner?: OwnershipSourceDto
+    action: string
+    level: string
+}
+
+export interface ProfileOverrideDto
+{
+    profile: string
+    concept: string
+    field: string
+    read: boolean
+    update: boolean
+    create: boolean
+}
+
+export interface SecurityModelDto
+{
+    businessUnits: BusinessUnitDto[]
+    users: UserPlacementDto[]
+    teams: TeamDto[]
+    roleAssignments: RoleAssignmentDto[]
+    profileAssignments: ProfileAssignmentDto[]
+    roleOverrides: RoleOverrideDto[]
+    profileOverrides: ProfileOverrideDto[]
+}
+
+export enum SecurityRoleKind
+{
+    Base = 'base',
+    Package = 'package',
 }
 
 export interface PrivilegeDto
@@ -256,37 +280,19 @@ export interface PrivilegeDto
     level: string
 }
 
-export interface RoleConfigDto
+export interface SecurityRoleDto
 {
-    id: string
     name: string
-    privileges: PrivilegeDto[]
+    kind: SecurityRoleKind
+    package?: string
+    defaults: PrivilegeDto[]
 }
 
-export interface RoleClaimRuleDto
+export interface SecurityConceptDto
 {
-    claim: string
-    value: string
-    roles: string[]
-}
-
-export interface RoleOverrideDto
-{
-    principalId: string
-    roles: string[]
-}
-
-export interface TeamRoleGrantDto
-{
-    teamId: string
-    roles: string[]
-}
-
-export interface RoleAssignmentDto
-{
-    claimsMapping: RoleClaimRuleDto[]
-    overrides: RoleOverrideDto[]
-    teamRoles: TeamRoleGrantDto[]
+    name: string
+    package: string
+    owned: boolean
 }
 
 export interface SecuredFieldDto
@@ -295,70 +301,87 @@ export interface SecuredFieldDto
     field: string
 }
 
-export interface FieldGrantDto
+export interface FieldAccessDto
 {
     concept: string
     field: string
-    read?: boolean
-    update?: boolean
-    create?: boolean
+    read: boolean
+    update: boolean
+    create: boolean
 }
 
-export interface FieldProfileDto
+export interface SecurityProfileDto
 {
-    id: string
     name: string
-    grants: FieldGrantDto[]
+    package: string
+    defaults: FieldAccessDto[]
 }
 
-export interface FieldProfileClaimRuleDto
+export interface SecurityCatalogDto
 {
-    claim: string
-    value: string
-    profiles: string[]
+    roles: SecurityRoleDto[]
+    concepts: SecurityConceptDto[]
+    securedFields: SecuredFieldDto[]
+    profiles: SecurityProfileDto[]
 }
 
-export interface FieldProfileOverrideDto
+export enum TeamMemberOrigin
+{
+    Synced = 'synced',
+    Manual = 'manual',
+}
+
+export interface TeamMemberDto
 {
     principalId: string
-    profiles: string[]
+    origin: TeamMemberOrigin
 }
 
-export interface FieldProfileTeamGrantDto
+export interface ListTeamMembersParams
 {
     teamId: string
-    profiles: string[]
 }
 
-export interface FieldProfileAssignmentDto
+export interface RoleDefaultChangeDto
 {
-    claimsMapping: FieldProfileClaimRuleDto[]
-    overrides: FieldProfileOverrideDto[]
-    teamProfiles: FieldProfileTeamGrantDto[]
+    role: string
+    concept: string
+    action: string
+    before: string
+    after: string
 }
 
-export interface FieldSecurityDto
+export interface ProfileDefaultChangeDto
 {
-    securedFields: SecuredFieldDto[]
-    profiles: FieldProfileDto[]
-    profileAssignment: FieldProfileAssignmentDto
+    profile: string
+    concept: string
+    field: string
+    before: FieldAccessDto | null
+    after: FieldAccessDto | null
 }
 
-export interface SecurityModelDto
+export interface SecurityChangesDto
 {
-    businessUnits: BusinessUnitDto[]
-    teams: TeamDto[]
-    membership: MembershipDto
-    ownershipRules: OwnershipRuleDto[]
-    roles?: RoleConfigDto[]
-    roleAssignment?: RoleAssignmentDto
-    fieldSecurity?: FieldSecurityDto
+    at: string // ISO
+    delivery: string
+    version: string
+    roleDefaults: RoleDefaultChangeDto[]
+    profileDefaults: ProfileDefaultChangeDto[]
+    securedFieldsAdded: SecuredFieldDto[]
+    securedFieldsRemoved: SecuredFieldDto[]
+    roleOverridesDropped: RoleOverrideDto[]
+    profileOverridesDropped: ProfileOverrideDto[]
+    rolesRemoved: RoleAssignmentDto[]
+    profilesRemoved: ProfileAssignmentDto[]
 }
 
 export interface ISecurityModelSource
 {
     GetSecurityModel(env: string): Promise<SecurityModelDto | null>
     SetSecurityModel(env: string, model: SecurityModelDto): Promise<void>
+    GetSecurityCatalog(env: string): Promise<SecurityCatalogDto>
+    ListTeamMembers(env: string, teamId: string): Promise<TeamMemberDto[]>
+    ListSecurityChanges(env: string): Promise<SecurityChangesDto[]>
 }
 
 // The slice of TenantApiClient the Connection status page needs.
