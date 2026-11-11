@@ -5,6 +5,8 @@ import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { Disposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { DataChangedPayload } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { StructuredLogger } from '../../observability/logger.js'
+import type { ILogger } from '../../observability/logger.js'
 import { TimeoutUpgradeTimer } from '../engine/bounded-wait.js'
 import type { IUpgradeTimer } from '../engine/bounded-wait.js'
 import type { IGraphScope } from '../engine/access-scope-source.js'
@@ -19,6 +21,53 @@ import type { EnvironmentEngineHost } from './environment-engine-host.js'
 export interface IEnvironmentDataChanges
 {
     Subscribe(context: AccessContext, send: (payload: DataChangedPayload) => void): IDisposable
+}
+
+/** Where the push reports a window it could not deliver (it never throws at the engine). */
+export interface IDataChangedDiagnostics
+{
+    /** A window was dropped: no running engine snapshot, no commit to name, or a receipt / flush step threw. */
+    FlushFailed(error: unknown): void
+}
+
+/** Reports each dropped window as one line on the server logger (the error name only: messages can carry paths). */
+export class LoggerDataChangedDiagnostics implements IDataChangedDiagnostics
+{
+    private static readonly FlushLine = 'a data/changed window was not pushed: '
+    private static readonly UnknownName = 'UnknownError'
+
+    public constructor(private readonly logger: ILogger = StructuredLogger.ToStdout())
+    {
+    }
+
+    public FlushFailed(error: unknown): void
+    {
+        this.logger.Error(LoggerDataChangedDiagnostics.FlushLine + (error instanceof Error ? error.name : LoggerDataChangedDiagnostics.UnknownName))
+    }
+}
+
+/** Why a window was dropped (reported to IDataChangedDiagnostics). */
+export enum DataChangedDropCode
+{
+    /** The engine is reopening (or the host went): no snapshot to filter with. */
+    NoSnapshot = 1,
+    /** No receipt named a commit (every snapshot read failed) and nothing was pushed before. */
+    NoCommit = 2,
+}
+
+export class DataChangedDropError extends Error
+{
+    private static readonly ErrorName = 'DataChangedDropError'
+    private static readonly Messages: Readonly<Record<DataChangedDropCode, string>> = {
+        [DataChangedDropCode.NoSnapshot]: 'no running environment engine snapshot to filter the window with',
+        [DataChangedDropCode.NoCommit]: 'no commit to name the window with',
+    }
+
+    public constructor(public readonly Code: DataChangedDropCode)
+    {
+        super(DataChangedDropError.Messages[Code])
+        this.name = DataChangedDropError.ErrorName
+    }
 }
 
 /** One connection's subscription: its scope (resolved per push) and its sink. */
@@ -65,9 +114,10 @@ class PendingChange
     public Commit = 0n
     public readonly Concepts = new Set<string>()
 
-    public Add(commit: bigint, concepts: Iterable<string>): void
+    /** `commit` undefined: the concepts join without naming a commit. */
+    public Add(commit: bigint | undefined, concepts: Iterable<string>): void
     {
-        if (commit > this.Commit) this.Commit = commit
+        if (commit !== undefined && commit > this.Commit) this.Commit = commit
         for (const concept of concepts) this.Concepts.add(concept)
     }
 }
@@ -82,13 +132,19 @@ class PendingChange
  * one `AccessScope.System` reader opened on receipt (a stub keeps its identity; an id it cannot resolve, e.g. deleted,
  * is the root). External ops never reach the log (R103): external concepts come only from `ConnectorApplied`, whose
  * commit is `IConnectorApplied.Commit` when the write-through also committed engine ops, else the `SnapshotCommit` of
- * a System reader opened on receipt. Receipts are processed in arrival order, and a write-through's ConnectorApplied
- * (raised after its engine commit) joins the same window, so one commit is reported once.
+ * a System reader opened on receipt (when that read fails, the concepts join without naming a commit). Receipts are
+ * processed in arrival order, and a write-through's ConnectorApplied (raised after its engine commit) normally joins
+ * the same window, so one commit is reported once. Should a window end between the two, the ConnectorApplied's
+ * concepts merge into the next payload, whose commit is never older than the last one pushed: the external part may
+ * then arrive in a follow-up payload naming the same commit, but no change is ever lost.
  *
- * Coalescing: the first receipt starts one `CoalesceMs` window; when it ends, every live subscriber gets `{ commit:
- * latest, concepts: union }` filtered by `ScopeReach.MayRead` under its scope (resolved then) and the snapshot's
- * catalog, sorted; nothing is sent when the filtered set is empty. A concept covers its subconcepts. External sources
- * changed outside the engine are not pushed (no changefeed, spec §5.2). A failing scope or send skips that subscriber.
+ * Coalescing: the first receipt starts one `CoalesceMs` window (closed synchronously when its timer fires, so a
+ * receipt queued behind a running step opens the next); when it ends, every live subscriber gets `{ commit: latest,
+ * concepts: union }` filtered by `ScopeReach.MayRead` under its scope (resolved then) and the running snapshot's
+ * catalog (read without opening or redelivering), sorted; nothing is sent when the filtered set is empty. A concept
+ * covers its subconcepts. External sources changed outside the engine are not pushed (no changefeed, spec §5.2). A
+ * failing scope or send skips that subscriber; a window that cannot be pushed at all is reported to
+ * `IDataChangedDiagnostics`.
  */
 export class DataChangedPush implements IDisposable
 {
@@ -99,11 +155,17 @@ export class DataChangedPush implements IDisposable
     private follow: EngineFollow | undefined
     private pending = new PendingChange()
     private window: IDisposable | undefined
+    /** The latest commit pushed: a later window never names an older one. */
+    private pushed = 0n
     /** Receipt processing and flushes, in arrival order. */
     private work: Promise<void> = Promise.resolve()
     private disposed = false
 
-    public constructor(private readonly host: EnvironmentEngineHost, private readonly timer: IUpgradeTimer = new TimeoutUpgradeTimer())
+    public constructor(
+        private readonly host: EnvironmentEngineHost,
+        private readonly timer: IUpgradeTimer = new TimeoutUpgradeTimer(),
+        private readonly diagnostics: IDataChangedDiagnostics = new LoggerDataChangedDiagnostics(),
+    )
     {
         this.opened = host.Opened.Subscribe(engine => this.Follow(engine))
         const running = host.Running()
@@ -142,7 +204,7 @@ export class DataChangedPush implements IDisposable
     }
 
     /** Queues one receipt in arrival order and opens the window if none is open. */
-    private Receive(resolve: () => Promise<readonly [bigint, readonly string[]]>): void
+    private Receive(resolve: () => Promise<readonly [bigint | undefined, readonly string[]]>): void
     {
         if (this.disposed) return
         this.Enqueue(async () =>
@@ -150,12 +212,17 @@ export class DataChangedPush implements IDisposable
             const [commit, concepts] = await resolve()
             this.pending.Add(commit, concepts)
         })
-        this.window ??= this.timer.Start(DataChangedPush.CoalesceMs, () => this.Enqueue(() => this.Flush()))
+        this.window ??= this.timer.Start(DataChangedPush.CoalesceMs, () =>
+        {
+            // closed now, not when the flush step runs: a receipt queued meanwhile opens the next window
+            this.window = undefined
+            this.Enqueue(() => this.Flush())
+        })
     }
 
     private Enqueue(step: () => Promise<void>): void
     {
-        this.work = this.work.then(step).catch(() => {})
+        this.work = this.work.then(step).catch(error => this.diagnostics.FlushFailed(error))
     }
 
     private async CommitConcepts(engine: GraphEngine, applied: ICommitApplied): Promise<readonly [bigint, readonly string[]]>
@@ -200,7 +267,7 @@ export class DataChangedPush implements IDisposable
         return [applied.Commit, [...concepts]]
     }
 
-    private async ConnectorConcepts(engine: GraphEngine, applied: IConnectorApplied): Promise<readonly [bigint, readonly string[]]>
+    private async ConnectorConcepts(engine: GraphEngine, applied: IConnectorApplied): Promise<readonly [bigint | undefined, readonly string[]]>
     {
         const concepts = [...applied.Connectors.values()].flat()
         if (applied.Commit !== undefined) return [applied.Commit, concepts]
@@ -218,8 +285,8 @@ export class DataChangedPush implements IDisposable
         }
         catch
         {
-            // no snapshot to name: the window's latest commit stands
-            return [this.pending.Commit, concepts]
+            // no snapshot to name: the concepts join, the window's other commits (or the last pushed) name it
+            return [undefined, concepts]
         }
     }
 
@@ -227,10 +294,14 @@ export class DataChangedPush implements IDisposable
     {
         const change = this.pending
         this.pending = new PendingChange()
-        this.window = undefined
         if (this.disposed || change.Concepts.size === 0) return
-        const catalog = (await this.host.Snapshot()).SchemaCatalog
-        const commit = String(change.Commit)
+        const latest = change.Commit > this.pushed ? change.Commit : this.pushed
+        if (latest === 0n) throw new DataChangedDropError(DataChangedDropCode.NoCommit)
+        const snapshot = this.host.RunningSnapshot()
+        if (snapshot === undefined) throw new DataChangedDropError(DataChangedDropCode.NoSnapshot)
+        this.pushed = latest
+        const catalog = snapshot.SchemaCatalog
+        const commit = String(latest)
         for (const subscriber of [...this.subscribers])
         {
             try

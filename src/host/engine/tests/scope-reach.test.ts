@@ -18,35 +18,41 @@ class ReachFx
 
 describe('ScopeReach', () =>
 {
-    test('False entry, deny default without entry are unreachable; a conditional entry is reachable', () =>
+    test('False entry is unreachable', () =>
     {
         const catalog = new EngineSchemaCatalog(DevScopeFx.Description())
-        // a constant False entry on the concept (or an ancestor) hides every instance
         const falseEntry = ReachFx.Scope(AccessDefault.Allow, [[DevScopeFx.Gadget, FalsePredicate.Instance]])
-        assert.equal(ScopeReach.MayRead(falseEntry, DevScopeFx.Gadget, catalog), false, 'False entry is unreachable')
+        assert.equal(ScopeReach.MayRead(falseEntry, DevScopeFx.Gadget, catalog), false, 'a constant False entry hides every instance')
         assert.equal(ScopeReach.MayRead(falseEntry, DevScopeFx.Widget, catalog), true, 'an unrelated concept falls to Default Allow')
-        // Default Deny with no applicable entry
-        const deny = ReachFx.Scope(AccessDefault.Deny, [[DevScopeFx.Widget, TruePredicate.Instance]])
-        assert.equal(ScopeReach.MayRead(deny, DevScopeFx.Gadget, catalog), false, 'deny default without entry is unreachable')
-        assert.equal(ScopeReach.MayRead(deny, DevScopeFx.Gizmo, catalog), true, 'an ancestor entry applies')
-        // a predicate the scope decides per node is "maybe"
-        const conditional = ReachFx.Scope(AccessDefault.Deny, [[DevScopeFx.Gadget, new IsNull(ReachFx.Owner)]])
-        assert.equal(ScopeReach.MayRead(conditional, DevScopeFx.Gadget, catalog), true, 'conditional entry is reachable')
-        // the depth compiler's own-concept guard (R93): Not(ConceptIs K) denies K's instances only
+        // the depth compiler's own-concept guard (R93) folds to False for the concept's own instances
         const guarded = ReachFx.Scope(AccessDefault.Deny, [
+            [DevScopeFx.Widget, new Not(new ConceptIs(DevScopeFx.Widget))],
+            [DevScopeFx.Gizmo, new Or([new Not(new ConceptIs(DevScopeFx.Gizmo)), FalsePredicate.Instance])],
+            [DevScopeFx.Gear, new Not(new ConceptIs(DevScopeFx.Gear))],
+        ])
+        assert.equal(ScopeReach.MayRead(guarded, DevScopeFx.Widget, catalog), false, 'every own-concept guard denies: unreachable')
+    })
+
+    test('deny default without entry is unreachable', () =>
+    {
+        const catalog = new EngineSchemaCatalog(DevScopeFx.Description())
+        const deny = ReachFx.Scope(AccessDefault.Deny, [[DevScopeFx.Widget, TruePredicate.Instance]])
+        assert.equal(ScopeReach.MayRead(deny, DevScopeFx.Gadget, catalog), false, 'no applicable entry under Default Deny')
+        assert.equal(ScopeReach.MayRead(deny, DevScopeFx.Gizmo, catalog), true, 'an ancestor entry applies')
+        assert.equal(ScopeReach.MayRead(deny, DevScopeFx.Element, catalog), true, 'the root covers a readable Widget')
+        assert.equal(ScopeReach.MayRead(ReachFx.Scope(AccessDefault.Deny, []), DevScopeFx.Element, catalog), false, 'nothing readable: not even the root')
+    })
+
+    test('conditional entry is reachable', () =>
+    {
+        const catalog = new EngineSchemaCatalog(DevScopeFx.Description())
+        const conditional = ReachFx.Scope(AccessDefault.Deny, [[DevScopeFx.Gadget, new IsNull(ReachFx.Owner)]])
+        assert.equal(ScopeReach.MayRead(conditional, DevScopeFx.Gadget, catalog), true, 'a per-node predicate is "maybe"')
+        const subconcept = ReachFx.Scope(AccessDefault.Deny, [
             [DevScopeFx.Widget, new Not(new ConceptIs(DevScopeFx.Widget))],
             [DevScopeFx.Gizmo, new Or([new Not(new ConceptIs(DevScopeFx.Gizmo)), FalsePredicate.Instance])],
             [DevScopeFx.Gear, TruePredicate.Instance],
         ])
-        assert.equal(ScopeReach.MayRead(guarded, DevScopeFx.Gizmo, catalog), true, 'a Gizmo concept covers its readable Gear subconcept')
-        const noGear = ReachFx.Scope(AccessDefault.Deny, [
-            [DevScopeFx.Widget, new Not(new ConceptIs(DevScopeFx.Widget))],
-            [DevScopeFx.Gizmo, new Not(new ConceptIs(DevScopeFx.Gizmo))],
-            [DevScopeFx.Gear, new Not(new ConceptIs(DevScopeFx.Gear))],
-        ])
-        assert.equal(ScopeReach.MayRead(noGear, DevScopeFx.Widget, catalog), false, 'every own-concept guard denies: unreachable')
-        // the root covers every concept: reachable when any subconcept is
-        assert.equal(ScopeReach.MayRead(deny, DevScopeFx.Element, catalog), true, 'the root covers a readable Widget')
-        assert.equal(ScopeReach.MayRead(ReachFx.Scope(AccessDefault.Deny, []), DevScopeFx.Element, catalog), false, 'nothing readable: not even the root')
+        assert.equal(ScopeReach.MayRead(subconcept, DevScopeFx.Gizmo, catalog), true, 'a Gizmo concept covers its readable Gear subconcept')
     })
 })

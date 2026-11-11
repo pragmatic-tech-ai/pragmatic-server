@@ -15,6 +15,7 @@ import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
 import type { IGraphScope } from '../../engine/access-scope-source.js'
 import type { IUpgradeTimer } from '../../engine/bounded-wait.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
+import { ScopedAccessContext, TokenScope } from '../../token-scope.js'
 import { DataChangedPush } from '../data-changed-push.js'
 import { EnvironmentFixture } from './environment-fixture.js'
 import type { IEnvironmentFixtureOptions } from './environment-fixture.js'
@@ -129,6 +130,7 @@ class PushFx
     public static readonly A = 'a'
     public static readonly R1 = 'r1'
     public static readonly R2 = 'r2'
+    public static readonly R3 = 'r3'
     public static readonly K5 = 'k5'
     public static readonly P1 = 'p1'
     public static readonly DevPrefix = 'ps-push-dev-'
@@ -290,6 +292,65 @@ describe('data/changed push', () =>
             {
                 push.dispose()
             }
+        })
+    })
+
+    test('a commit received while a flush is queued opens the next window', async () =>
+    {
+        await PushFx.Run({}, async fx =>
+        {
+            const timer = new ManualTimer()
+            const host = fx.Server.EnvironmentEngine()
+            const push = new DataChangedPush(host, timer)
+            try
+            {
+                const context = fx.ContextFor(PushFx.Principal(PushFx.P1))
+                let release: () => void = () => {}
+                const gate = new Promise<void>(resolve => { release = resolve })
+                let calls = 0
+                // the first flush blocks in its scope until released, so the steps behind it stay queued
+                const scope = async () =>
+                {
+                    if (calls++ === 0) await gate
+                    return (await fx.Server.EnvironmentScopes()).ScopeFor(context)
+                }
+                const inbox = new Inbox()
+                push.Subscribe(scope, payload => inbox.Receive(payload))
+                await host.Engine()
+                const a = await fx.Seed([{ Concept: PushFx.Account, Id: PushFx.R1 }])
+                timer.Fire()
+                await Inbox.Quiet()
+                const b = await fx.Seed([{ Concept: PushFx.Contact, Id: PushFx.R2 }])
+                timer.Fire()
+                // received while the second window's flush is still queued behind the blocked first one
+                const c = await fx.Seed([{ Concept: PushFx.Account, Id: PushFx.R3 }])
+                release()
+                await Inbox.Quiet()
+                timer.Fire()
+                assert.deepEqual((await inbox.Await(3)).map(payload => payload.commit), [String(a), String(b), String(c)], 'the late commit is pushed')
+            }
+            finally
+            {
+                push.dispose()
+            }
+        })
+    })
+
+    test('a connection without cypher/query, or disposed, gets nothing', async () =>
+    {
+        await PushFx.Run({}, async fx =>
+        {
+            const context = fx.ContextFor(PushFx.Principal(PushFx.P1))
+            const control = new Inbox((await fx.ConnectWith(context)).Client)
+            const scoped = new Inbox((await fx.ConnectWith(new ScopedAccessContext(context, [TokenScope.GraphContribute]))).Client)
+            const closing = await fx.ConnectWith(context)
+            const closed = new Inbox(closing.Client)
+            closing.Handler.Dispose()
+            await fx.Seed([{ Concept: PushFx.Account, Id: PushFx.R1 }])
+            assert.deepEqual((await control.Await()).map(payload => payload.concepts), [[PushFx.Account]])
+            await Inbox.Quiet()
+            assert.deepEqual(scoped.Payloads, [], 'a token scope without cypher/query gets nothing')
+            assert.deepEqual(closed.Payloads, [], 'a disposed connection gets nothing')
         })
     })
 

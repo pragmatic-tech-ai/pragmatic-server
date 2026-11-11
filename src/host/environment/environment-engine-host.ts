@@ -291,6 +291,12 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
         return this.disposing === undefined ? this.opened?.Engine : undefined
     }
 
+    /** The snapshot the running engine runs, without opening or redelivering (undefined when `Running()` is). */
+    public RunningSnapshot(): EnvironmentSnapshot | undefined
+    {
+        return this.disposing === undefined ? this.opened?.Snapshot : undefined
+    }
+
     public async Engine(): Promise<GraphEngine>
     {
         return (await this.Current()).Engine

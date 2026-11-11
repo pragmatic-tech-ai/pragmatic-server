@@ -204,8 +204,13 @@ export class EnvironmentFixture
     /** A client attached to the started server as `principal` (`ContextFor`). */
     public async Connect(principal: Principal): Promise<PragmaticClient>
     {
+        return (await this.ConnectWith(this.ContextFor(principal))).Client
+    }
+
+    /** A client attached to the started server under `context` (passed through unchanged), with its server handler. */
+    public async ConnectWith(context: AccessContext): Promise<{ Client: PragmaticClient; Handler: ServerConnectionHandler }>
+    {
         const server = this.Server
-        const context = this.ContextFor(principal)
         const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
         const development = ServerConnectionHandler.DevelopmentAttachArgs(server)
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
@@ -215,7 +220,7 @@ export class EnvironmentFixture
             development.devGraphService, runtime.environmentGraphHost, runtime.modelView ?? development.modelView, runtime.dataChanges)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.clients.push({ Client: client, Handler: handler })
-        return client
+        return { Client: client, Handler: handler }
     }
 
     /** Closes every client, host and the server, then removes the temp root. */

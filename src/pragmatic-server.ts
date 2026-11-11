@@ -63,7 +63,7 @@ import type { IEnvironmentGraphHost } from './host/environment/environment-engin
 import { EnvironmentCypherExecute } from './host/environment/environment-cypher-execute.js'
 import { EnvironmentModelView } from './host/environment/environment-model-view.js'
 import { EnvironmentDataWriter } from './host/environment/environment-data-writer.js'
-import { DataChangedPush } from './host/environment/data-changed-push.js'
+import { DataChangedPush, LoggerDataChangedDiagnostics } from './host/environment/data-changed-push.js'
 import { EnvironmentShareService } from './host/environment/environment-share-service.js'
 import { EnvironmentAssignService } from './host/environment/environment-assign-service.js'
 import { EnvironmentScopeRules } from './host/environment/environment-scope-rules.js'
@@ -509,7 +509,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
             throw new Error(PragmaticServer.DisposedMessage)
         }
         this.AssertRuntimePurpose()
-        this.dataChanges ??= new DataChangedPush(this.EnvironmentEngine())
+        this.dataChanges ??= new DataChangedPush(this.EnvironmentEngine(), undefined, new LoggerDataChangedDiagnostics(this.options.logger ?? new NullLogger()))
         return this.dataChanges
     }
 
