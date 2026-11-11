@@ -3,8 +3,8 @@ import type { CellValue, GraphTransaction } from '@pragmatic-tech-ai/graph'
 import { ShareGrants, ShareRight, ShareSubject, SystemNames, SystemPackage } from '@pragmatic-tech-ai/todl/engine'
 import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { AppWriteStatus, ErrorCodes, ResponseError, ShareStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { ListSharesParams, ListSharesResultDto, ShareGrantDto, ShareParams, ShareResultDto, ShareSubjectKind, UnshareParams, UnshareResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { AppWriteStatus, ErrorCodes, ResponseError, ShareStatus, ShareSubjectKind } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ListSharesParams, ListSharesResultDto, ShareGrantDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { IGraphScopeSource, ITenantSecuritySource } from '../engine/access-scope-source.js'
 import { EngineWriteFailure } from '../engine/engine-write-failure.js'
 import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
@@ -50,12 +50,15 @@ export class EnvironmentShareService
     private static readonly NoRights = 'at least one valid right is required'
     private static readonly UnknownTeam = 'unknown team subject'
     private static readonly UnknownSubjectKind = 'unknown subject kind'
+    private static readonly SubjectIdRequired = 'subject id is required'
     /** The protocol's ShareSubjectKind values (equal to ShareSubject's) to the grant subject kind. */
-    private static readonly Kinds: ReadonlyMap<string, ShareSubject> = new Map<string, ShareSubject>([[ShareSubject.Principal, ShareSubject.Principal], [ShareSubject.Team, ShareSubject.Team]])
+    private static readonly Kinds: ReadonlyMap<string, ShareSubject> = new Map<string, ShareSubject>([[ShareSubjectKind.Principal, ShareSubject.Principal], [ShareSubjectKind.Team, ShareSubject.Team]])
+    /** A grant subject kind as the protocol names it. */
+    private static readonly WireKinds: ReadonlyMap<ShareSubject, ShareSubjectKind> = new Map<ShareSubject, ShareSubjectKind>([[ShareSubject.Principal, ShareSubjectKind.Principal], [ShareSubject.Team, ShareSubjectKind.Team]])
     private static readonly Rights: ReadonlySet<string> = new Set<string>(ShareGrants.Rights)
 
     public constructor(
-        private readonly host: EnvironmentEngineHost,
+        private readonly host: Pick<EnvironmentEngineHost, 'Settled'>,
         private readonly scopes: () => Promise<IGraphScopeSource>,
         private readonly security: () => Promise<ITenantSecuritySource>)
     {
@@ -89,11 +92,12 @@ export class EnvironmentShareService
             {
                 const grant = await reader.ReadNode(link.PublicId)
                 if (grant === undefined || grant.Concept !== SystemNames.ShareGrant) continue
-                const kind = grant.Properties.get(SystemNames.SubjectKind)
+                const kind = EnvironmentShareService.KindOf(grant.Properties.get(SystemNames.SubjectKind))
                 const subject = grant.Properties.get(SystemNames.SubjectId)
-                if (typeof kind !== 'string' || typeof subject !== 'string') continue
+                // a grant with no known subject kind or no subject id addresses no one: never listed
+                if (kind === undefined || typeof subject !== 'string' || subject.length === 0) continue
                 const rights = ShareGrants.Rights.filter(right => grant.Properties.get(right) === true)
-                grants.push({ concept: view.Concept, recordId: params.id, subject: { kind: kind as ShareSubjectKind, id: subject }, rights })
+                grants.push({ concept: view.Concept, recordId: params.id, subject: { kind: EnvironmentShareService.WireKinds.get(kind)!, id: subject }, rights })
             }
             return { grants }
         }
@@ -108,8 +112,9 @@ export class EnvironmentShareService
     {
         const [engine, snapshot] = await this.host.Settled()
         if (RecordGrants.IsExternal(snapshot.Catalog.Identity, params.id)) return { status: ShareStatus.Invalid, reason: RecordGrants.ExternalRecordReason }
-        const kind = EnvironmentShareService.Kinds.get(params.subject?.kind)
-        if (kind === undefined || typeof params.subject.id !== 'string') return { status: ShareStatus.Invalid, reason: EnvironmentShareService.UnknownSubjectKind }
+        const kind = EnvironmentShareService.KindOf(params.subject?.kind)
+        if (kind === undefined) return { status: ShareStatus.Invalid, reason: EnvironmentShareService.UnknownSubjectKind }
+        if (typeof params.subject.id !== 'string' || params.subject.id.length === 0) return { status: ShareStatus.Invalid, reason: EnvironmentShareService.SubjectIdRequired }
         const evaluator = await (await this.security()).EvaluatorForContext(context)
         const scope = await (await this.scopes()).ScopeFor(context)
         const grant = ShareGrants.PublicId(params.id, kind, params.subject.id)
@@ -168,6 +173,12 @@ export class EnvironmentShareService
             return { status: outcome.Status === AppWriteStatus.Invalid ? ShareStatus.Invalid : ShareStatus.Denied, reason: outcome.Reason }
         }
         return { status: ShareStatus.Applied }
+    }
+
+    /** The grant subject kind a protocol (or stored) kind value names; undefined for any other value. */
+    private static KindOf(value: unknown): ShareSubject | undefined
+    {
+        return typeof value === 'string' ? EnvironmentShareService.Kinds.get(value) : undefined
     }
 
     /** The known ShareRights of `rights`, once each, in the order given. */

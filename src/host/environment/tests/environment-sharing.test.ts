@@ -14,6 +14,8 @@ class SharingFx
     public static readonly UnknownTeam = 'nope'
     public static readonly G1 = 'g1'
     public static readonly G2 = 'g2'
+    public static readonly SubjectIdRequired = 'subject id is required'
+    public static readonly DetachDeleteR1 = "MATCH (a:`crm.Account`) WHERE a.name = 'r1' DETACH DELETE a"
     public static readonly CreateGrantCypher = "CREATE (g:`todl.system.ShareGrant` {subjectKind: 'principal', subjectId: 'p2', read: true}) RETURN g"
 
     /** A grant of r1 to p2 created as `id` under `scope`; resolves with the commit. */
@@ -170,6 +172,56 @@ describe('record shares as graph data', () =>
             await ShareFx.SeedAccounts(fx, [ShareFx.R1])
             assert.deepEqual(await ShareFx.GrantsOf(fx, ShareFx.R1), [], 'no grant links the new record')
             assert.deepEqual(await ShareFx.Names(fx, ShareFx.P2), [], 'the recreated record is not shared')
+        })
+    })
+
+    test('team share widens for members', async () =>
+    {
+        await ShareFx.Run(async fx =>
+        {
+            const p1 = ShareFx.Context(fx, ShareFx.P1)
+            const p3 = ShareFx.Context(fx, ShareFx.P3)
+            await fx.Server.ShareForPragmaticApp(p1, ShareFx.App, ShareFx.Params(ShareFx.R1, ShareFx.T1, [ShareRight.Read], ShareSubjectKind.Team))
+            assert.deepEqual(await ShareFx.Names(fx, ShareFx.P3), [ShareFx.R1], 'a t1 member reads through the team grant')
+            assert.deepEqual(await ShareFx.Names(fx, ShareFx.P2), [], 'a non-member does not')
+            assert.equal((await fx.Server.ShareForPragmaticApp(p3, ShareFx.App, ShareFx.Params(ShareFx.R1, ShareFx.P2, [ShareRight.Read]))).status, ShareStatus.Denied, 'read alone does not reshare')
+            await fx.Server.ShareForPragmaticApp(p1, ShareFx.App, ShareFx.Params(ShareFx.R1, ShareFx.T1, [ShareRight.Read, ShareRight.Share], ShareSubjectKind.Team))
+            const reshared = await fx.Server.ShareForPragmaticApp(p3, ShareFx.App, ShareFx.Params(ShareFx.R1, ShareFx.P2, [ShareRight.Read]))
+            assert.equal(reshared.status, ShareStatus.Applied, 'the team grant holds share: ' + JSON.stringify(reshared))
+            assert.deepEqual(await ShareFx.Names(fx, ShareFx.P2), [ShareFx.R1])
+        })
+    })
+
+    test('a record deleted through cypher is not widened when recreated', async () =>
+    {
+        await ShareFx.Run(async fx =>
+        {
+            const p1 = ShareFx.Context(fx, ShareFx.P1)
+            const grant = ShareGrants.PublicId(ShareFx.R1, ShareSubject.Principal, ShareFx.P2)
+            await fx.Server.ShareForPragmaticApp(p1, ShareFx.App, ShareFx.Params(ShareFx.R1, ShareFx.P2, [ShareRight.Read, ShareRight.Update, ShareRight.Delete]))
+            const client = await fx.Connect(ShareFx.Principal(ShareFx.P1))
+            const deleted = await client.CypherExecute(SharingFx.DetachDeleteR1, {})
+            assert.equal(deleted.status, AppWriteStatus.Applied, JSON.stringify(deleted))
+            assert.equal((await ShareFx.Node(fx, grant))?.Concept, SystemNames.ShareGrant, 'the grant is orphaned, not deleted')
+            await ShareFx.SeedAccounts(fx, [ShareFx.R1])
+            assert.deepEqual(await ShareFx.GrantsOf(fx, ShareFx.R1), [], 'the orphan links nothing')
+            assert.deepEqual(await ShareFx.Names(fx, ShareFx.P2), [], 'the recreated record is not shared')
+            assert.equal((await fx.Server.UnshareForPragmaticApp(p1, ShareFx.App, ShareFx.Params(ShareFx.R1, ShareFx.P2, []))).status, ShareStatus.NotFound, 'unshare of an orphan')
+            // a re-share relinks the orphan with only the new rights
+            assert.equal((await fx.Server.ShareForPragmaticApp(p1, ShareFx.App, ShareFx.Params(ShareFx.R1, ShareFx.P2, [ShareRight.Read]))).status, ShareStatus.Applied)
+            assert.deepEqual(await ShareFx.GrantsOf(fx, ShareFx.R1), [grant])
+            const rights = (await ShareFx.Node(fx, grant))!.Properties
+            assert.deepEqual(ShareGrants.Rights.filter(right => rights.get(right) === true), [ShareRight.Read], 'no stale update or delete')
+            assert.deepEqual(await ShareFx.Names(fx, ShareFx.P2), [ShareFx.R1])
+        })
+    })
+
+    test('a share needs a subject id', async () =>
+    {
+        await ShareFx.Run(async fx =>
+        {
+            const result = await fx.Server.ShareForPragmaticApp(ShareFx.Context(fx, ShareFx.P1), ShareFx.App, ShareFx.Params(ShareFx.R1, '', [ShareRight.Read]))
+            assert.deepEqual(result, { status: ShareStatus.Invalid, reason: SharingFx.SubjectIdRequired })
         })
     })
 

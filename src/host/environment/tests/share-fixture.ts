@@ -12,7 +12,7 @@ import { EnvironmentFixture } from './environment-fixture.js'
  * A runtime tenant with identity delivering `crm` (crm.Account, engine-stored, owned through its `owner` field) through
  * `crm-app` and `ext` (ext.Customer bound over the fixture's MemorySourceAdapter, one row k1) through `ext-app`;
  * accounts r1 and r2 are owned by p1. Security: p1 holds Read / Update / Delete / Share / Assign on its own accounts
- * (User level); p2 and p3 hold Read and Update on their own only (no Share, no Assign); team t1 exists.
+ * (User level); p2 and p3 hold Read and Update on their own only (no Share, no Assign); p3 is a member of team t1.
  */
 export class ShareFx
 {
@@ -49,11 +49,11 @@ export class ShareFx
     public static Model(): ISecurityModelConfig
     {
         const privileges = (actions: readonly PrivilegeAction[]) => actions.map(action => ({ action, level: AccessLevel.User, concept: ShareFx.Account }))
-        const member = (principalId: string) => ({ principalId, homeBusinessUnit: ShareFx.Root, teams: [] })
+        const member = (principalId: string, teams: string[] = []) => ({ principalId, homeBusinessUnit: ShareFx.Root, teams })
         return {
             businessUnits: [{ id: ShareFx.Root, name: ShareFx.RootName }],
             teams: [{ id: ShareFx.T1, name: ShareFx.T1, owningBusinessUnit: ShareFx.Root }],
-            membership: { claimsMapping: [], overrides: [member(ShareFx.P1), member(ShareFx.P2), member(ShareFx.P3)] },
+            membership: { claimsMapping: [], overrides: [member(ShareFx.P1), member(ShareFx.P2), member(ShareFx.P3, [ShareFx.T1])] },
             ownershipRules: [{ concept: ShareFx.Account, owner: { kind: OwnershipSourceKind.FromField, value: ShareFx.Owner }, owningBusinessUnit: { kind: OwnershipSourceKind.Fixed, value: ShareFx.Root } }],
             roles: [
                 { id: ShareFx.OwnerRole, name: ShareFx.OwnerRole, privileges: privileges([PrivilegeAction.Read, PrivilegeAction.Update, PrivilegeAction.Delete, PrivilegeAction.Share, PrivilegeAction.Assign]) },

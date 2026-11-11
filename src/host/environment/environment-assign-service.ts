@@ -43,7 +43,7 @@ export class EnvironmentAssignService
     private static readonly NoOwnershipColumns = 'no ownership columns to write'
 
     public constructor(
-        private readonly host: EnvironmentEngineHost,
+        private readonly host: Pick<EnvironmentEngineHost, 'Settled'>,
         private readonly scopes: () => Promise<IGraphScopeSource>,
         private readonly security: () => Promise<ITenantSecuritySource>)
     {

@@ -29,13 +29,14 @@ export class RecordGrants
     }
 
     /**
-     * The record `id` as `reader` sees it when its concept is `concept` or a subconcept; undefined when it does not
-     * exist, is not visible or is of another concept (the services answer `not-found` for all three).
+     * The record `id` as `reader` sees it when its concept is `concept` or a subconcept (an aspect the record carries
+     * does not qualify); undefined when it does not exist, is not visible or is of another concept (the services answer
+     * `not-found` for all three).
      */
     public static async View(reader: GraphReader, id: string, concept: string, catalog: EngineSchemaCatalog): Promise<EngineInstanceView | undefined>
     {
         const actual = await reader.ConceptOf(id)
-        if (actual === undefined || !catalog.Applicable(actual).has(concept)) return undefined
+        if (actual === undefined || (actual !== concept && !catalog.Ancestors(actual).includes(concept))) return undefined
         return EngineInstanceView.Of(reader, id)
     }
 
