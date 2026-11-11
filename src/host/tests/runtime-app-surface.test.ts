@@ -124,9 +124,9 @@ class RuntimeSurfaceFixture
         const development = ServerConnectionHandler.DevelopmentAttachArgs(server)
         const handler = ServerConnectionHandler.Attach(
             serverSocket, await server.LanguageService(), await server.Manager(), RuntimeSurfaceFixture.Permissive(),
-            () => Promise.reject(new Error(RuntimeSurfaceFixture.NoConnectors)), runtime.cypherQuery ?? development.cypherQuery,
+            undefined, runtime.cypherQuery ?? development.cypherQuery,
             undefined, undefined, undefined, undefined, undefined, undefined, server.Purpose(), runtime.applications,
-            undefined, undefined, undefined, undefined, undefined, runtime.cypherExecute ?? development.cypherExecute,
+            undefined, undefined, undefined, runtime.cypherExecute ?? development.cypherExecute,
             undefined, development.devGraphService, runtime.environmentGraphHost)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.disposables.push(async () =>

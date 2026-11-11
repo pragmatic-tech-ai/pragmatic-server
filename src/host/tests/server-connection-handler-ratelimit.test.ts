@@ -54,7 +54,7 @@ test('a per-principal breach rejects the RPC and audits a RateLimited Rpc event'
     const languageService = await server.LanguageService()
     const manager = await server.Manager()
     const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.OwnerContext(), () => Promise.reject(new Error('no connectors')), undefined, undefined, undefined, sink, guard)
+    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.OwnerContext(), undefined, undefined, undefined, undefined, sink, guard)
     const client = PragmaticClient.CreateOverSocket(clientSocket)
     try
     {

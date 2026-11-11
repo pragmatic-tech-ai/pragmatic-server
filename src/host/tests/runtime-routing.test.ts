@@ -33,7 +33,7 @@ class RuntimeRoutingFixture
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, RuntimeRoutingFixture.Permissive(), () => Promise.reject(new Error(RuntimeRoutingFixture.NoConnectors)), server.DevCypher(), undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development)
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, RuntimeRoutingFixture.Permissive(), undefined, server.DevCypher(), undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

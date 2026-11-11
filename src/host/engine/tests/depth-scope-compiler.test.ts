@@ -55,7 +55,7 @@ class DepthCase
         return Instances.Names.filter(name => DevScopeFx.Admits(scope, concept, axis, Instances.All[name]!))
     }
 
-    /** Today's per-instance decision (AccessDepthInstanceFilter / AccessDepthWriteInstanceGate) on the node's own concept. */
+    /** The per-instance depth decision (AccessDepthInstanceFilter; the retired write-instance gate decided writes alike) on the node's own concept. */
     public Expected(action: PrivilegeAction, concept: string = DevScopeFx.Widget): string[]
     {
         return Instances.Names.filter(name => this.evaluator.Allows(this.principal, action, { Concept: concept, Field: (field: string) => Instances.All[name]![field] as string | undefined }))

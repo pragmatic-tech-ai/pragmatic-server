@@ -74,6 +74,11 @@ class ProbeHost implements IDevGraphEngine
         return this.Inner.Engine()
     }
 
+    public ResetConnectors(): void
+    {
+        this.Inner.ResetConnectors()
+    }
+
     public Description(): Promise<ISchemaDescription>
     {
         return this.Inner.Description()

@@ -407,7 +407,8 @@ class TrackedTransaction implements IConnectorTransaction
 
 /**
  * One running engine: the GraphEngine, the CommitApplied subscription that tells the write tracker it finalized, its
- * tracked `.todl` file connector, and the key of the external connector set it was opened with.
+ * tracked `.todl` file connector, the key of the external connector set it was opened with and its lazy external
+ * connectors (kept so a refresh can reset them, R23).
  */
 class RunningEngine implements IDisposable
 {
@@ -417,8 +418,14 @@ class RunningEngine implements IDisposable
         private readonly file: IGraphConnector,
         private readonly writes: EngineWriteTracker,
         public readonly ConnectorKey: string,
+        private readonly connectors: readonly LazyExternalConnector[],
     )
     {
+    }
+
+    public ResetConnectors(): void
+    {
+        for (const connector of this.connectors) connector.Reset()
     }
 
     public async dispose(): Promise<void>
@@ -511,6 +518,8 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
     private readonly writes = new EngineWriteTracker()
     private readonly fences = new WriteFenceSlot()
     private opening: Promise<OpenedEngine> | undefined
+    /** The engine `opening` resolved to (ResetConnectors reads it synchronously). */
+    private openedEngine: OpenedEngine | undefined
     private openSucceeded = false
     private debounce: IDisposable | undefined
     private draining: Promise<void> | undefined
@@ -594,6 +603,16 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         return this.fences.Install(fence)
     }
 
+    /**
+     * Forgets every opened external connector of the running engine (R23), so the next use of each opens it again;
+     * nothing when the engine is not open (or still opening: its connectors have not opened anything yet). A retired
+     * engine's connectors are not reset: it serves only the readers already handed out until its grace ends.
+     */
+    public ResetConnectors(): void
+    {
+        this.openedEngine?.Running.ResetConnectors()
+    }
+
     /** Cancels a pending upgrade, waits for a running one, then disposes the engine. Idempotent. */
     public dispose(): Promise<void>
     {
@@ -627,6 +646,7 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
             const snapshot = await source.Current()
             const opened = new OpenedEngine(await this.Launch(snapshot, workspace), source, workspace, subscription, snapshot)
             this.openSucceeded = true
+            this.openedEngine = opened
             return opened
         }
         catch (error)
@@ -640,21 +660,22 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
     private async Launch(snapshot: DevSnapshot, workspace: ServerModelWorkspace): Promise<RunningEngine>
     {
         const file = this.writes.Track(new TodlFileConnector(workspace))
+        const external = this.ExternalConnectors(snapshot)
         const engine = await GraphEngine.Open({
             Description: snapshot.Description,
             Storage: { Kind: StorageKind.Memory },
-            Connectors: [file, ...this.ExternalConnectors(snapshot)],
+            Connectors: [file, ...external],
             PrepareTimeoutMs: this.prepareTimeoutMs,
         })
         const applied = engine.CommitApplied.Subscribe(commit => this.writes.Finalized(commit))
-        return new RunningEngine(engine, applied, file, this.writes, ConnectorSetKey.Of(snapshot.Connectors, snapshot.Identity))
+        return new RunningEngine(engine, applied, file, this.writes, ConnectorSetKey.Of(snapshot.Connectors, snapshot.Identity), external)
     }
 
     /**
      * One lazily opened DataSourceConnector per external plan (ruling R21: a source that cannot be reached fails only
      * the calls touching its bindings, never the engine open; each borrows its adapter from the catalog).
      */
-    private ExternalConnectors(snapshot: DevSnapshot): IGraphConnector[]
+    private ExternalConnectors(snapshot: DevSnapshot): LazyExternalConnector[]
     {
         if (snapshot.Connectors.length === 0) return []
         const identity = snapshot.Identity

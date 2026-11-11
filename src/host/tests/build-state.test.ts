@@ -148,7 +148,7 @@ class BuildStateFixture
         const attach = (): PragmaticClient =>
         {
             const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-            handlers.push(ServerConnectionHandler.Attach(serverSocket, languageService, manager, context, () => Promise.reject(new Error('no connectors in this test')), undefined))
+            handlers.push(ServerConnectionHandler.Attach(serverSocket, languageService, manager, context, undefined, undefined))
             const client = PragmaticClient.CreateOverSocket(clientSocket)
             clients.push(client)
             return client

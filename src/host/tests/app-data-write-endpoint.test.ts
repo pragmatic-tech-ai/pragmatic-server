@@ -95,7 +95,7 @@ class EndpointFixture
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const runtime = purpose === TenantPurpose.Runtime
         const applications = { List: async () => [], LiveApplicationFor: async (name: string) => ({ Manifest: { name, version: '1.0.0' } }) } as unknown as PragmaticAppsRegistry
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, context, () => Promise.reject(new Error(EndpointFixture.NoConnectors)), server.DevCypher(), undefined, undefined, undefined, undefined, undefined, undefined, purpose, runtime ? applications : undefined, runtime ? new WriteOnlyData(write) : undefined)
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, context, undefined, server.DevCypher(), undefined, undefined, undefined, undefined, undefined, undefined, purpose, runtime ? applications : undefined, runtime ? new WriteOnlyData(write) : undefined)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

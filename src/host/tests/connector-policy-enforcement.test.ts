@@ -7,6 +7,7 @@ import { newDb } from 'pg-mem'
 import { DataSourceKind } from '@pragmatic-tech-ai/todl'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ConnectorsPolicy } from '../connector-policy.js'
+import { DevConnectorRead } from '../engine/tests/dev-connector-read.js'
 
 class Fixture
 {
@@ -59,9 +60,7 @@ namespace shop {
         {
             await server.Start()
             await server.OpenSolution(dir)
-            const runtime = await server.Connectors()
-            const models = runtime.ModelsWithConnectors()
-            await body(async () => (await runtime.ReadEntities(models[0]!.ModelId, Fixture.ConceptId)).Entities)
+            await body(() => DevConnectorRead.Rows(server, Fixture.ConceptId))
         }
         finally
         {

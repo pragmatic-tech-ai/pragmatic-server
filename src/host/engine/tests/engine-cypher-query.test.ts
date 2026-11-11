@@ -388,6 +388,10 @@ class FixedSchemaWorld implements IGraphEngineHost
         return this.snapshot
     }
 
+    public ResetConnectors(): void
+    {
+    }
+
     public async Description(): Promise<ISchemaDescription>
     {
         return this.snapshot.Description

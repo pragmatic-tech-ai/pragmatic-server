@@ -27,5 +27,11 @@ export interface IGraphEngineHost
     Engine(): Promise<GraphEngine>
     Snapshot(): Promise<IEngineSnapshot>
     Description(): Promise<ISchemaDescription>
+    /**
+     * Forgets every opened external connector of the running engine, so the next use of each opens it again (ruling
+     * R23: after the adapter catalog disposed and dropped their adapters, e.g. `connector/refresh`). Nothing when the
+     * engine is not open.
+     */
+    ResetConnectors(): void
     readonly Changed: ISignal<void>
 }

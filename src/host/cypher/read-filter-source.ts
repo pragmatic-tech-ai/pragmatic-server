@@ -1,5 +1,5 @@
 import type { AccessContext, ITenantConfigStore, ISecurityModelConfig, Principal } from '@pragmatic-tech-ai/todl-identity'
-import { PrivilegeAction, AccessLevel } from '@pragmatic-tech-ai/todl-identity'
+import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { IInstanceFilter } from '@pragmatic-tech-ai/todl'
 import { AccessDepthEvaluator, AccessDepthInstanceFilter, AllowAllInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
@@ -7,9 +7,6 @@ import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { FieldSecurityEvaluator, IMembership } from '@pragmatic-tech-ai/todl-identity-engine'
 import { AllowAllFieldReadMask } from './field-read-mask.js'
 import type { IFieldReadMask } from './field-read-mask.js'
-import { AccessDepthWriteInstanceGate } from './write-instance-gate.js'
-import type { IWriteInstanceGate } from './write-instance-gate.js'
-import type { IWriteTargetSource } from '../write-target-source.js'
 
 /** Produces the ACCESS-DEPTH read filter for a request. One of two impls is chosen by the server per the identity state. */
 export interface IReadFilterSource
@@ -23,26 +20,10 @@ export interface IFieldReadMaskSource
     FieldReadMaskFor(context: AccessContext): Promise<IFieldReadMask>
 }
 
-/** Coarse (view-free) per-concept write gate: EffectiveLevel !== None. Per-instance depth is SP-3d. */
-export interface IWriteAuthorizer
-{
-    Allows(concept: string, action: PrivilegeAction): boolean
-}
-
 /** Drops a tenant's cached access evaluator so the next request re-reads its SecurityModel from the store (live reload, no restart). */
 export interface ISecurityModelReload
 {
     Invalidate(environmentId: string): void
-}
-
-class AccessDepthWriteAuthorizer implements IWriteAuthorizer
-{
-    constructor(private readonly evaluator: AccessDepthEvaluator, private readonly principal: Principal) {}
-
-    public Allows(concept: string, action: PrivilegeAction): boolean
-    {
-        return this.evaluator.EffectiveLevel(this.principal, action, concept) !== AccessLevel.None
-    }
 }
 
 class AccessFieldReadMask implements IFieldReadMask
@@ -117,18 +98,6 @@ export class TenantReadAuthorization implements IReadFilterSource, IFieldReadMas
     public async HasSecurityModelFor(context: AccessContext): Promise<boolean>
     {
         return (await this.SecurityOf(context.Tenant.Id)).HasSecurityModel
-    }
-
-    public async WriteAuthorizerFor(context: AccessContext): Promise<IWriteAuthorizer>
-    {
-        const evaluator = await this.EvaluatorFor(context.Tenant.Id)
-        return new AccessDepthWriteAuthorizer(evaluator, context.Principal)
-    }
-
-    public async WriteInstanceGateFor(context: AccessContext, target: IWriteTargetSource): Promise<IWriteInstanceGate>
-    {
-        const evaluator = await this.EvaluatorFor(context.Tenant.Id)
-        return new AccessDepthWriteInstanceGate(evaluator, context.Principal, target)
     }
 
     public async FieldReadMaskFor(context: AccessContext): Promise<IFieldReadMask>

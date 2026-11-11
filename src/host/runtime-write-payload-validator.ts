@@ -2,25 +2,11 @@ import { ValueType } from '@pragmatic-tech-ai/graph'
 import type { CellValue } from '@pragmatic-tech-ai/graph'
 import { Cardinality } from '@pragmatic-tech-ai/todl'
 import { CellConverter } from '@pragmatic-tech-ai/todl/engine'
+import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import type { EngineSchemaCatalog } from './engine/engine-schema-catalog.js'
 
-/** The subset of a TODL reflection field the legacy check reads (the real FieldInfo is structurally assignable). */
-export interface IConceptField
-{
-    name: string
-    cardinality: Cardinality
-    fieldType: IConceptType | undefined
-}
-
-/** The subset of a TODL reflection type the legacy check reads (the real TypeInfo is structurally assignable). */
-export interface IConceptType
-{
-    name: string
-    baseType: IConceptType | undefined
-    getField(name: string): IConceptField | undefined
-    getFields(): IConceptField[]
-    getRelationships(): { name: string }[]
-}
+/** The TODL metadata snapshot whose reflected types say which fields a create requires (R39). */
+type ReflectedTypes = IEnvironmentCatalog['Snapshot']
 
 /** A checked write payload: the refusal reason, else the fields as engine cells (absent when refused). */
 export interface ICheckedPayload
@@ -35,9 +21,8 @@ export interface ICheckedPayload
  * member (not writable through data/write), a non-scalar value, a value its property's ValueType cannot hold (String
  * takes a string, Boolean a boolean, Float64 a finite number, Int64 a safe integer); null clears any property. The accepted fields come back as engine
  * cells (Int64 as bigint). Required-ness is not in the description (TODL describes every property nullable): on create
- * it is read from the concept's TODL reflected type (a field of cardinality One or OneOrMore left out, ruling R39).
- * `Validate` is the whole check over a TODL reflected type, kept for the connector hydrate writer until `connector/*`
- * moves to the engine (Task 11). The reasons are shared and unchanged.
+ * it is read from the concept's TODL reflected type in `types` (a field of cardinality One or OneOrMore left out, ruling
+ * R39); `connector/writePaged` passes none (its upserts are partial). The reasons are unchanged.
  */
 export class RuntimeWritePayloadValidator
 {
@@ -51,7 +36,7 @@ export class RuntimeWritePayloadValidator
     private static readonly NumberPrimitive = 'number'
     private static readonly BooleanPrimitive = 'boolean'
 
-    public Check(catalog: EngineSchemaCatalog, type: IConceptType | undefined, concept: string, create: boolean, fields: Record<string, unknown> | undefined): ICheckedPayload
+    public Check(catalog: EngineSchemaCatalog, types: ReflectedTypes | undefined, concept: string, create: boolean, fields: Record<string, unknown> | undefined): ICheckedPayload
     {
         if (!catalog.IsConcept(concept))
         {
@@ -67,30 +52,9 @@ export class RuntimeWritePayloadValidator
                 return { Reason: reason }
             }
         }
-        const missing = create && type !== undefined ? this.ValidateRequired(type, payload) : undefined
+        const type = create ? types?.getType(concept) : undefined
+        const missing = type === undefined ? undefined : this.ValidateRequired(type, payload)
         return missing === undefined ? { Cells: cells } : { Reason: missing }
-    }
-
-    public Validate(type: IConceptType | undefined, create: boolean, fields: Record<string, unknown> | undefined): string | undefined
-    {
-        if (type === undefined)
-        {
-            return RuntimeWritePayloadValidator.UnknownConcept
-        }
-        const payload = fields ?? {}
-        for (const key of Object.keys(payload))
-        {
-            const reason = this.ValidateField(type, key, payload[key])
-            if (reason !== undefined)
-            {
-                return reason
-            }
-        }
-        if (create)
-        {
-            return this.ValidateRequired(type, payload)
-        }
-        return undefined
     }
 
     private CheckField(catalog: EngineSchemaCatalog, concept: string, key: string, value: unknown, cells: Map<string, CellValue>): string | undefined
@@ -136,34 +100,7 @@ export class RuntimeWritePayloadValidator
         }
     }
 
-    private ValidateField(type: IConceptType, key: string, value: unknown): string | undefined
-    {
-        const field = type.getField(key)
-        if (field === undefined)
-        {
-            if (type.getRelationships().some(r => r.name === key))
-            {
-                return RuntimeWritePayloadValidator.ReferenceMemberPrefix + key
-            }
-            return RuntimeWritePayloadValidator.UnknownFieldPrefix + key
-        }
-        if (value === null)
-        {
-            return undefined
-        }
-        if (!this.IsScalar(value))
-        {
-            return RuntimeWritePayloadValidator.NotScalarPrefix + key
-        }
-        const expected = this.BasePrimitive(field.fieldType)
-        if (expected !== undefined && typeof value !== expected)
-        {
-            return RuntimeWritePayloadValidator.TypeMismatchPrefix + key
-        }
-        return undefined
-    }
-
-    private ValidateRequired(type: IConceptType, payload: Record<string, unknown>): string | undefined
+    private ValidateRequired(type: NonNullable<ReturnType<ReflectedTypes['getType']>>, payload: Record<string, unknown>): string | undefined
     {
         for (const field of type.getFields())
         {
@@ -183,22 +120,5 @@ export class RuntimeWritePayloadValidator
     private IsScalar(value: unknown): value is string | number | boolean
     {
         return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
-    }
-
-    private BasePrimitive(type: IConceptType | undefined): string | undefined
-    {
-        let current = type
-        while (current !== undefined)
-        {
-            const name = current.name
-            if (name === RuntimeWritePayloadValidator.StringPrimitive
-                || name === RuntimeWritePayloadValidator.NumberPrimitive
-                || name === RuntimeWritePayloadValidator.BooleanPrimitive)
-            {
-                return name
-            }
-            current = current.baseType
-        }
-        return undefined
     }
 }

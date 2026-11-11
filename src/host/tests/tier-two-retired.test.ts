@@ -224,9 +224,9 @@ class DevTierFixture
         const language = await server.LanguageService() as SolutionLanguageService
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, language, manager, PpSecurityHarness.Context(RuntimeTierFixture.Reader), () => Promise.reject(new Error(DevTierFixture.NoConnectors)), undefined,
+        const handler = ServerConnectionHandler.Attach(serverSocket, language, manager, PpSecurityHarness.Context(RuntimeTierFixture.Reader), undefined, undefined,
             undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Runtime, undefined, undefined, undefined,
-            await server.FieldReadMaskSource(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, await server.DepthFilterSource())
+            await server.FieldReadMaskSource(), undefined, undefined, undefined, undefined, undefined, await server.DepthFilterSource())
         const session = new DevSession(new WireConnection(PragmaticClient.CreateOverSocket(clientSocket), handler), server, language, manager, [solution, packages, identityRoot])
         this.sessions.push(session)
         return session.Connection.Client

@@ -1,15 +1,16 @@
-import { AccessError, AccessScope, ConnectorError, EdgeDirection, ValueType } from '@pragmatic-tech-ai/graph'
-import type { CellValue, Cypher, GraphEngine, GraphReader, GraphTransaction, IFetchKey, IFetchedView } from '@pragmatic-tech-ai/graph'
-import { EngineBridgeErrorCode, ExternalWriteError, SystemNames } from '@pragmatic-tech-ai/todl/engine'
+import { AccessScope, EdgeDirection, ValueType } from '@pragmatic-tech-ai/graph'
+import type { CellValue, Cypher, GraphEngine, GraphReader, GraphTransaction, IFetchedView } from '@pragmatic-tech-ai/graph'
+import { SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import type { ExternalIdentity, IEnvironmentCatalog, IExternalBinding } from '@pragmatic-tech-ai/todl/engine'
 import { AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppWriteOpDto, AppWriteOpResultDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { IGraphScopeSource } from '../engine/access-scope-source.js'
 import type { EngineSchemaCatalog } from '../engine/engine-schema-catalog.js'
+import { EngineWriteAttribution, RecordedBatch } from '../engine/recorded-batch.js'
 import { EngineWriteFailure } from '../engine/engine-write-failure.js'
 import type { IWriteFailureOutcome } from '../engine/engine-write-failure.js'
-import type { IConceptType, RuntimeWritePayloadValidator } from '../runtime-write-payload-validator.js'
+import type { RuntimeWritePayloadValidator } from '../runtime-write-payload-validator.js'
 import type { EnvironmentEngineHost } from './environment-engine-host.js'
 import { DeleteGrantsScope } from './service-scopes.js'
 
@@ -39,62 +40,6 @@ interface IPreRead
     readonly Grants: ReadonlyMap<string, string>
     /** Client ids of engine creates that already name a node. */
     readonly Taken: ReadonlySet<string>
-}
-
-/**
- * The batch as recorded on the transaction: which data/write op each recorded engine op belongs to (the index an
- * engine AccessError names), the op of each target public id (its first), and each create's id.
- */
-class RecordedBatch
-{
-    public readonly Placed: (string | undefined)[] = []
-    private readonly opOfBatch: number[] = []
-    private readonly opOfId = new Map<string, number>()
-
-    public constructor(private readonly transaction: GraphTransaction)
-    {
-    }
-
-    public CreateNode(op: number, publicId: string, concept: string, owner: string | undefined): void
-    {
-        this.Target(op, publicId)
-        this.Placed[op] = publicId
-        this.transaction.CreateNode(publicId, concept, owner === undefined ? undefined : { Owner: owner })
-        this.opOfBatch.push(op)
-    }
-
-    public SetProperty(op: number, publicId: string, member: string, value: CellValue): void
-    {
-        this.transaction.SetProperty(publicId, member, value)
-        this.opOfBatch.push(op)
-    }
-
-    public SetDefault(op: number, publicId: string, member: string, value: CellValue): void
-    {
-        this.transaction.SetDefault(publicId, member, value)
-        this.opOfBatch.push(op)
-    }
-
-    public DeleteNode(op: number, publicId: string): void
-    {
-        this.Target(op, publicId)
-        this.transaction.DeleteNode(publicId)
-        this.opOfBatch.push(op)
-    }
-
-    /** Records `publicId` as `op`'s target when no earlier op targets it. */
-    public Target(op: number, publicId: string): void
-    {
-        if (!this.opOfId.has(publicId)) this.opOfId.set(publicId, op)
-    }
-
-    /** The data/write op of the recorded engine op at `index`, else the first op targeting `publicId`. */
-    public OpOf(index: number | undefined, publicId: string | undefined): number | undefined
-    {
-        const byIndex = index === undefined ? undefined : this.opOfBatch[index]
-        if (byIndex !== undefined) return byIndex
-        return publicId === undefined ? undefined : this.opOfId.get(publicId)
-    }
 }
 
 /**
@@ -145,8 +90,6 @@ export class EnvironmentDataWriter
     private static readonly NoOwner = ''
     private static readonly NoIdMember = 'the binding has no id field to take the id'
     private static readonly DuplicateId = 'duplicate id in batch'
-    /** An engine AccessError: "Access denied: op N (Op) on '<id>' (<concept>): <reason>" (N the recorded op index). */
-    private static readonly DeniedPattern = /^Access denied: op (\d+) \(\w+\) on '(.*?)' \(/s
     private static readonly NumericPattern = /^-?\d+(\.\d+)?$/
     private static readonly Kinds: ReadonlySet<string> = new Set<string>([AppWriteOpKind.Create, AppWriteOpKind.Update, AppWriteOpKind.Delete])
     private static readonly Invisible: IWriteFailureOutcome = { Status: AppWriteStatus.Denied, Reason: EngineWriteFailure.RecordDenied }
@@ -191,7 +134,7 @@ export class EnvironmentDataWriter
             {
                 const outcome = EngineWriteFailure.Map(error)
                 if (outcome === undefined) throw error
-                return EnvironmentDataWriter.Refused(operations.length, { Op: EnvironmentDataWriter.Attribute(error, snapshot.Catalog.Identity, batch), Outcome: outcome })
+                return EnvironmentDataWriter.Refused(operations.length, { Op: EngineWriteAttribution.Attribute(error, snapshot.Catalog.Identity, batch), Outcome: outcome })
             }
             return { results: planned.map((op, index) => ({ status: AppWriteStatus.Applied, id: op.Id ?? batch.Placed[index] })) }
         }
@@ -221,8 +164,7 @@ export class EnvironmentDataWriter
             if (typeof keyed === 'string') return EnvironmentDataWriter.Invalid(keyed)
             fields = keyed
         }
-        const type = environment.Snapshot.getType(op.concept) as IConceptType | undefined
-        const checked = this.validator.Check(catalog, type, op.concept, create, fields)
+        const checked = this.validator.Check(catalog, environment.Snapshot, op.concept, create, fields)
         if (checked.Cells === undefined) return EnvironmentDataWriter.Invalid(checked.Reason!)
         // ruling R38: a client id on an engine create is its public id; on an external one it keyed the fields above
         return { Kind: op.op, Concept: op.concept, Id: create && binding !== undefined ? undefined : id, Cells: checked.Cells }
@@ -295,7 +237,7 @@ export class EnvironmentDataWriter
     private static async Record(transaction: GraphTransaction, batch: RecordedBatch, planned: readonly IPlannedOp[], grants: ReadonlyMap<string, string>,
         placement: Cypher.INodePlacement, identity: ExternalIdentity, catalog: EngineSchemaCatalog): Promise<IRefusal | undefined>
     {
-        const fetched = await transaction.Fetch(planned.filter(op => op.Kind !== AppWriteOpKind.Create).map(op => EnvironmentDataWriter.FetchKey(op.Id!, identity)))
+        const fetched = await transaction.Fetch(planned.filter(op => op.Kind !== AppWriteOpKind.Create).map(op => EngineWriteAttribution.FetchKey(op.Id!, identity)))
         const deletedGrants = new Set<string>()
         for (let index = 0; index < planned.length; index++)
         {
@@ -357,29 +299,6 @@ export class EnvironmentDataWriter
     private static IsRecordOf(view: IFetchedView | undefined, concept: string, catalog: EngineSchemaCatalog): boolean
     {
         return view !== undefined && catalog.Applicable(view.Concept).has(concept)
-    }
-
-    /** An external id is fetched as its binding's concept and model (TODL ids are opaque to the engine); any other by id. */
-    private static FetchKey(id: string, identity: ExternalIdentity): IFetchKey
-    {
-        const parsed = identity.Parse(id)
-        return parsed === undefined ? { PublicId: id } : { PublicId: id, Concept: parsed.Binding.Binding.Concept, Owner: parsed.Binding.Model }
-    }
-
-    /** The op a commit failure names (see the class remarks), else undefined (unattributed). */
-    private static Attribute(error: unknown, identity: ExternalIdentity, batch: RecordedBatch): number | undefined
-    {
-        if (error instanceof AccessError)
-        {
-            const denied = EnvironmentDataWriter.DeniedPattern.exec(error.message)
-            return denied === null ? undefined : batch.OpOf(Number(denied[1]), denied[2])
-        }
-        if (!(error instanceof ConnectorError) || !(error.cause instanceof ExternalWriteError)) return undefined
-        const cause = error.cause
-        const failure = cause.Failures[0]
-        if (cause.Code !== EngineBridgeErrorCode.ExternalWriteFailed || failure === undefined || failure.Key === null) return undefined
-        // the placed id was minted from the id member's text (EnvironmentNodePlacement: String of a bigint / number / string)
-        return batch.OpOf(undefined, identity.Mint(cause.Binding, String(failure.Key)))
     }
 
     /** Every op's result for a refused batch: the attributed op gets the outcome, the others are rolled back. */

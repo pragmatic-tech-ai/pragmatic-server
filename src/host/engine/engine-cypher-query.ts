@@ -1,18 +1,16 @@
-import { AccessDefault, AccessScope, ConceptIs, Cypher, Or, OwnerIs } from '@pragmatic-tech-ai/graph'
-import type { GraphEngine, GraphReader, ISchemaDescription } from '@pragmatic-tech-ai/graph'
+import { Cypher } from '@pragmatic-tech-ai/graph'
+import type { GraphEngine, GraphReader } from '@pragmatic-tech-ai/graph'
 import { CursorStaleError, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherQueryPageDto, PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { PagingLimits } from '../../config/paging-limits.js'
 import { CypherResultMapper } from '../cypher/cypher-result-mapper.js'
 import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
 import { PageFingerprint } from '../paging/page-request.js'
-import { AccessScopeConjunction } from './access-scope-conjunction.js'
 import type { IGraphScope, IGraphScopeSource } from './access-scope-source.js'
 import { CypherKeysetPage } from './cypher-keyset-page.js'
-import { EngineSchemaCatalog } from './engine-schema-catalog.js'
 import type { IGraphEngineHost } from './graph-engine-host.js'
+import { ModelScopes } from './model-scopes.js'
 
 /** The page a dev query asks for: the wire paging params, the connection's paging limits and the row cap. */
 export interface IDevCypherPage
@@ -84,9 +82,7 @@ class Attempt
  * alone decides what the query sees (rows, hidden members); this class never filters or masks a result itself.
  *
  * - `ModelId` must be one of {@link EngineCypherQuery.Models} (else InvalidParams "model not found", the same error for
- *   every unknown id). It ANDs `Or(ConceptIs todl.Term, OwnerIs(modelId))` into the `todl.Element` rows entry of the
- *   caller's scope (AccessScopeConjunction, deny-wins): the model filter reaches every concept but the taxonomy terms
- *   (owned by the solution package), which the caller's own scope alone governs, so term refs survive.
+ *   every unknown id). It ANDs the S12 model filter ({@link ModelScopes}) into the caller's scope.
  * - The result cells are mapped to TODL's wire shape by the running snapshot's EngineCellMapper, with a reader under
  *   the same scope telling it which relationship-held fields are hidden; then to the wire page (CypherResultMapper).
  * - Pages are keyset pages ({@link CypherKeysetPage}, ruling S11; offset pages only for an order over no returned column,
@@ -104,10 +100,9 @@ export class EngineCypherQuery implements IGraphCypherQuery
     public static readonly MaxAttempts = 5
     private static readonly FingerprintTag = 'cypher'
     private static readonly ModelScopeTag = 'model'
-    private static readonly ModelNotFoundMessage = `${InvalidParamsPrefix.Text}model not found`
+    public static readonly ModelNotFoundMessage = `${InvalidParamsPrefix.Text}model not found`
 
-    private catalog: { readonly Description: ISchemaDescription; readonly Catalog: EngineSchemaCatalog } | undefined
-    private readonly modelScopes = new WeakMap<AccessScope, Map<string, AccessScope>>()
+    private readonly modelScopes = new ModelScopes()
 
     public constructor(private readonly host: IGraphEngineHost, private readonly scopes: () => Promise<IGraphScopeSource>)
     {
@@ -145,7 +140,7 @@ export class EngineCypherQuery implements IGraphCypherQuery
             throw new ResponseError(ErrorCodes.InvalidParams, EngineCypherQuery.ModelNotFoundMessage)
         }
         const graphScope = await (await this.scopes()).ScopeFor(context)
-        const scope = request.ModelId === undefined ? graphScope.Scope : this.ModelScope(graphScope.Scope, request.ModelId, snapshot.Description)
+        const scope = request.ModelId === undefined ? graphScope.Scope : this.modelScopes.For(graphScope.Scope, request.ModelId, snapshot.Description)
         const page = CypherKeysetPage.Resolve(request.Page.Params, EngineCypherQuery.Fingerprint(request, before, graphScope), request.Page.Limits, request.Page.RowCap)
         let mapped: CypherQueryPageDto
         let reader: GraphReader | undefined
@@ -174,34 +169,6 @@ export class EngineCypherQuery implements IGraphCypherQuery
             if (EngineCypherQuery.Continues(request.Page.Params)) throw new ResponseError(CursorStaleError.Code, CursorStaleError.Message)
         }
         return Attempt.Done(mapped)
-    }
-
-    /** The caller's scope AND the model's own instances (cached per scope object, which is per schema version). */
-    private ModelScope(scope: AccessScope, modelId: string, description: ISchemaDescription): AccessScope
-    {
-        let byModel = this.modelScopes.get(scope)
-        if (byModel === undefined)
-        {
-            byModel = new Map<string, AccessScope>()
-            this.modelScopes.set(scope, byModel)
-        }
-        let scoped = byModel.get(modelId)
-        if (scoped === undefined)
-        {
-            const rows = new Map([[TodlNames.Element, new Or([new ConceptIs(TodlNames.Term), new OwnerIs(new Set([modelId]))])]])
-            scoped = AccessScopeConjunction.And(scope, AccessScope.Build({ Default: AccessDefault.Allow, Rows: rows }), this.CatalogOf(description))
-            byModel.set(modelId, scoped)
-        }
-        return scoped
-    }
-
-    private CatalogOf(description: ISchemaDescription): EngineSchemaCatalog
-    {
-        if (this.catalog === undefined || this.catalog.Description !== description)
-        {
-            this.catalog = { Description: description, Catalog: new EngineSchemaCatalog(description) }
-        }
-        return this.catalog.Catalog
     }
 
     private static Fingerprint(request: IDevCypherRequest, schemaVersion: string, scope: IGraphScope): string

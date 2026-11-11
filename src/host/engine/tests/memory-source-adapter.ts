@@ -1,6 +1,9 @@
 import { DataSourceKind, QueryFilterEvaluator, WriteConcurrency, WriteFailureKind, WriteOperationKind } from '@pragmatic-tech-ai/todl'
 import type { ExternalFieldValue, ExternalRecord, IDataSourceAdapter, IDataSourceAdapterFactory, PageQuery, PageSlice, QueryRequest, ResolvedConnection, WriteBatch, WriteFailure, WriteResult } from '@pragmatic-tech-ai/todl'
 
+/** One version a write reported (`WriteResult.Versions` entry). */
+type ReportedVersion = { Key: ExternalFieldValue; Version: ExternalFieldValue }
+
 /**
  * A test-only external data source held in memory, as a SQL adapter behaves: `Query` filters by the pushed `Where`
  * (SQL null semantics, TODL's QueryFilterEvaluator) and projects `Fields`; `QueryPage` serves keyset pages by
@@ -9,7 +12,8 @@ import type { ExternalFieldValue, ExternalRecord, IDataSourceAdapter, IDataSourc
  * Every read is logged in `Requests` and every batch in `Batches`, so a test sees exactly what reached the source
  * (nothing is cached across queries). `IgnoreWhere` answers every read as if no Where were given (a source that
  * ignores the pushed predicate); `FailNext(kind)` makes the next Apply apply nothing and report each of its operations
- * as a failure of `kind`.
+ * as a failure of `kind`. `BumpVersions` makes an applied Optimistic upsert store the next version (the stored one plus
+ * one) and report it in `WriteResult.Versions`, as a source that versions its rows does.
  */
 export class MemorySourceAdapter implements IDataSourceAdapter
 {
@@ -20,6 +24,7 @@ export class MemorySourceAdapter implements IDataSourceAdapter
     public readonly Batches: WriteBatch[] = []
     public CanPage = false
     public IgnoreWhere = false
+    public BumpVersions = false
     private readonly sources = new Map<string, ExternalRecord[]>()
     private failNext: WriteFailureKind | undefined
 
@@ -74,6 +79,7 @@ export class MemorySourceAdapter implements IDataSourceAdapter
         const rows = this.sources.get(batch.Source) ?? []
         this.sources.set(batch.Source, rows)
         const failures: WriteFailure[] = []
+        const versions: ReportedVersion[] = []
         let applied = 0
         for (const op of batch.Operations)
         {
@@ -96,12 +102,18 @@ export class MemorySourceAdapter implements IDataSourceAdapter
                     continue
                 }
             }
-            const row: ExternalRecord = { ...op.Fields, [batch.IdKey]: op.Key }
+            const row: { [field: string]: ExternalFieldValue } = { ...op.Fields, [batch.IdKey]: op.Key }
+            if (this.BumpVersions && batch.Concurrency === WriteConcurrency.Optimistic && batch.VersionField !== undefined)
+            {
+                const next = Number(index >= 0 ? rows[index]![batch.VersionField] ?? 0 : 0) + 1
+                row[batch.VersionField] = next
+                versions.push({ Key: op.Key, Version: next })
+            }
             if (index >= 0) rows[index] = row
             else rows.push(row)
             applied++
         }
-        return { Applied: applied, Failures: failures }
+        return versions.length === 0 ? { Applied: applied, Failures: failures } : { Applied: applied, Failures: failures, Versions: versions }
     }
 
     public async Dispose(): Promise<void>

@@ -65,7 +65,7 @@ class CypherPagingWorld
     public Connect(): PragmaticClient
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, CypherPagingFixture.Permissive(), () => Promise.reject(new Error(CypherPagingFixture.NoConnectors)), this.cypher, undefined, undefined, undefined, undefined, undefined, this.limits, TenantPurpose.Development)
+        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, CypherPagingFixture.Permissive(), undefined, this.cypher, undefined, undefined, undefined, undefined, undefined, this.limits, TenantPurpose.Development)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.connections.push({ client, handler })
         return client

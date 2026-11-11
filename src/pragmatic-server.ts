@@ -3,7 +3,7 @@ import { StorageKind } from '@pragmatic-tech-ai/graph'
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
-import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey } from '@pragmatic-tech-ai/todl'
+import { DataSourceAdapterCatalog, SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey } from '@pragmatic-tech-ai/todl'
 import type { IDataSourceAdapterProvider, IDataSourceAdapterFactory } from '@pragmatic-tech-ai/todl'
 import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-system'
 import { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -26,18 +26,12 @@ import { ConnectorsHost, NpmAdapterPackProvider, WorkerThreadSandboxFactory, Chi
 import { SandboxStrategy } from './config/server-config.js'
 import type { AdapterPacksConfig } from './config/server-config.js'
 import type { ConnectorsHostOptions } from '@pragmatic-tech-ai/todl-connectors-host'
-import { SolutionConnectorPlanner } from './connectors/solution-connector-planner.js'
-import { ConnectorRuntime } from './connectors/connector-runtime.js'
 import { PolicyConnectionResolver } from './host/policy-connection-resolver.js'
 import type { ConnectorsPolicy } from './host/connector-policy.js'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { TenantReadAuthorization, AllowAllReadFilterSource, AllowAllFieldReadMaskSource } from './host/cypher/read-filter-source.js'
 import type { IReadFilterSource, IFieldReadMaskSource, ISecurityModelReload } from './host/cypher/read-filter-source.js'
-import { ConnectorReadAuthorizations } from './host/connector-read-authorization.js'
-import type { IConnectorReadAuthorization } from './host/connector-read-authorization.js'
-import { ConnectorHydrateWriter } from './host/connector-hydrate-writer.js'
-import type { IHydrateAuthorization } from './host/connector-hydrate-writer.js'
-import type { IWriteTargetSource } from './host/write-target-source.js'
+import { EngineConnectorService } from './host/engine/engine-connector-service.js'
 import { RuntimeWritePayloadValidator } from './host/runtime-write-payload-validator.js'
 import type { AppWriteOpDto, AppWriteResultDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -146,9 +140,6 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private static readonly NotStartedError = 'server not started'
     private static readonly ApplicationsRuntimeOnlyError = 'applications are a runtime-tenant feature'
     private static readonly IdentityNotConfiguredError = 'identity not configured'
-    private static readonly NoActiveSolutionForConnectors = 'No active solution: open a solution before accessing connectors'
-    private static readonly NoMemberStorageForConnectors = 'Active solution has no member storage to read a model view from'
-    private static readonly NoModelViewForConnectors = 'Active solution produced no model view'
 
     private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
     private static readonly DisposedMessage = 'The server has been disposed'
@@ -170,6 +161,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private devScopes: Promise<AccessScopeSource> | undefined
     private devCypher: EngineCypherQuery | undefined
     private devModelView: DevModelView | undefined
+    private devConnectors: EngineConnectorService | undefined
+    private environmentConnectors: EngineConnectorService | undefined
     private promoteRecords: PromoteRecordStore | undefined
     private environmentEngine: EnvironmentEngineHost | undefined
     private environmentScopes: Promise<AccessScopeSource> | undefined
@@ -295,29 +288,6 @@ export class PragmaticServer implements IEnvironmentGraphHost
     public SecurityModelReload(): Promise<ISecurityModelReload>
     {
         return this.ReadAuthorization()
-    }
-
-    /** Per-request connector read authorization: allow-all without identity, else the tenant's access-depth filter + field mask. */
-    public async ConnectorReadAuthorizationFor(context: AccessContext): Promise<IConnectorReadAuthorization>
-    {
-        if (this.identity === undefined)
-        {
-            return ConnectorReadAuthorizations.AllowAll()
-        }
-        return ConnectorReadAuthorizations.From(await this.ReadAuthorization(), context)
-    }
-
-    /** Per-request connector write authorization over the KEYED write target: allow-all without identity, else the tenant's
-     *  depth authorizer plus the depth gate (ownership is decided by the depth evaluator alone, mirroring the connector
-     *  read filter). */
-    public async ConnectorWriteAuthorizationFor(context: AccessContext, target: IWriteTargetSource): Promise<IHydrateAuthorization>
-    {
-        if (this.identity === undefined)
-        {
-            return ConnectorHydrateWriter.AllowAll()
-        }
-        const auth = await this.ReadAuthorization()
-        return { authorizer: await auth.WriteAuthorizerFor(context), gate: await auth.WriteInstanceGateFor(context, target) }
     }
 
     /** The per-request access-depth read filter source: allow-all without identity, else the tenant security model's depth filter. */
@@ -510,6 +480,17 @@ export class PragmaticServer implements IEnvironmentGraphHost
         this.AssertRuntimePurpose()
         this.environmentExecute ??= new EnvironmentCypherExecute(this.EnvironmentEngine(), () => this.EnvironmentScopes(), new LoggerExecuteDiagnostics(this.options.logger ?? new NullLogger()))
         return this.environmentExecute
+    }
+
+    /**
+     * The runtime `connector/*` endpoints (ruling S14) on the environment engine, under each caller's environment scope:
+     * the shared EngineConnectorService over the process-wide adapter catalog. Memoized; runtime tenants only.
+     */
+    public EnvironmentConnectors(): EngineConnectorService
+    {
+        this.AssertRuntimePurpose()
+        this.environmentConnectors ??= new EngineConnectorService(this.EnvironmentEngine(), () => this.EnvironmentScopes(), this.AdapterCatalog(), this.root.Services())
+        return this.environmentConnectors
     }
 
     /** The runtime `data/write` (ruling S10) on the environment engine, under each caller's environment scope. Memoized; runtime tenants only. */
@@ -718,6 +699,22 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
+     * The dev `connector/*` endpoints (ruling S14) on the dev engine, under each caller's dev scope: the same
+     * EngineConnectorService the runtime uses (S1). Memoized.
+     */
+    public DevConnectors(): EngineConnectorService
+    {
+        this.devConnectors ??= new EngineConnectorService(this.DevEngine(), () => this.DevScopes(), this.AdapterCatalog(), this.root.Services())
+        return this.devConnectors
+    }
+
+    /** The process-wide adapter catalog every external connector borrows its adapters from (ruling S18). */
+    private AdapterCatalog(): DataSourceAdapterCatalog
+    {
+        return this.root.Services().getRequired(DataSourceAdapterCatalog.ServiceKey)
+    }
+
+    /**
      * The dev model/view and model/resources visibility: structure from the language service, instance visibility
      * and masking from each caller's dev scope on the engine (memoized; disposed with the server).
      */
@@ -749,29 +746,6 @@ export class PragmaticServer implements IEnvironmentGraphHost
     {
         const manager = await this.Manager()
         await manager.OpenSolution(location)
-    }
-
-    public async Connectors(): Promise<ConnectorRuntime>
-    {
-        const manager = await this.Manager()
-        const solution = manager.ActiveSolution
-        if (solution === undefined)
-        {
-            throw new Error(PragmaticServer.NoActiveSolutionForConnectors)
-        }
-        const member = solution.Members.ToArray().find(m => m.Storage !== undefined)
-        if (member === undefined || member.Storage === undefined)
-        {
-            throw new Error(PragmaticServer.NoMemberStorageForConnectors)
-        }
-        const languageService = await this.LanguageService()
-        const view = await languageService.ModelView(member.Storage)
-        if (view === undefined)
-        {
-            throw new Error(PragmaticServer.NoModelViewForConnectors)
-        }
-        const models = SolutionConnectorPlanner.Plan(view.model)
-        return new ConnectorRuntime(models, this.root.Services())
     }
 
     /**

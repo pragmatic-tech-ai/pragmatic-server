@@ -71,7 +71,7 @@ class CypherSurfaceFixture
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, CypherSurfaceFixture.Permissive(), () => Promise.reject(new Error(CypherSurfaceFixture.NoConnectors)), server.DevCypher(), undefined, undefined, undefined, undefined, undefined, options.limits, TenantPurpose.Development)
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, CypherSurfaceFixture.Permissive(), undefined, server.DevCypher(), undefined, undefined, undefined, undefined, undefined, options.limits, TenantPurpose.Development)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {
@@ -119,7 +119,7 @@ class CypherSurfaceFixture
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, CypherSurfaceFixture.Permissive(), () => Promise.reject(new Error(CypherSurfaceFixture.NoConnectors)), server.DevCypher(), undefined, undefined, undefined, undefined, undefined, limits, TenantPurpose.Development)
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, CypherSurfaceFixture.Permissive(), undefined, server.DevCypher(), undefined, undefined, undefined, undefined, undefined, limits, TenantPurpose.Development)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

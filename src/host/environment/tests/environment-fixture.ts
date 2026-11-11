@@ -67,7 +67,6 @@ export class EnvironmentFixture
     private static readonly SourceSuffix = '.todl'
     private static readonly NotStartedMessage = 'the environment fixture has not been started'
     private static readonly NotSeededMessage = 'tenant config was not seeded on boot'
-    private static readonly NoConnectorsMessage = 'connectors are not available on a runtime tenant'
 
     public readonly Root = mkdtempSync(join(tmpdir(), EnvironmentFixture.RootPrefix))
     public readonly TenantDir = join(this.Root, EnvironmentFixture.TenantId)
@@ -211,9 +210,8 @@ export class EnvironmentFixture
         const development = ServerConnectionHandler.DevelopmentAttachArgs(server)
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(serverSocket, await server.LanguageService(), await server.Manager(), context,
-            () => Promise.reject(new Error(EnvironmentFixture.NoConnectorsMessage)), runtime.cypherQuery ?? development.cypherQuery, undefined, undefined, undefined, undefined, undefined, undefined,
-            server.Purpose(), runtime.applications, runtime.data, undefined, await server.FieldReadMaskSource(), ctx => server.ConnectorReadAuthorizationFor(ctx),
-            (ctx, target) => server.ConnectorWriteAuthorizationFor(ctx, target), runtime.cypherExecute ?? development.cypherExecute, runtime.deployProvider,
+            runtime.connectors ?? development.connectors, runtime.cypherQuery ?? development.cypherQuery, undefined, undefined, undefined, undefined, undefined, undefined,
+            server.Purpose(), runtime.applications, runtime.data, undefined, await server.FieldReadMaskSource(), runtime.cypherExecute ?? development.cypherExecute, runtime.deployProvider,
             development.devGraphService, runtime.environmentGraphHost, development.devModelView, await server.DepthFilterSource())
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.clients.push({ Client: client, Handler: handler })

@@ -105,9 +105,9 @@ class ExecWorld
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
-            serverSocket, this.language, this.manager, context, () => Promise.reject(new Error(ExecFixture.NoConnectors)), this.Server.DevCypher(),
+            serverSocket, this.language, this.manager, context, undefined, this.Server.DevCypher(),
             undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development, undefined, undefined, undefined,
-            this.fieldMasks, ctx => this.Server.ConnectorReadAuthorizationFor(ctx), undefined,
+            this.fieldMasks,
             this.Server.DevExecute())
         this.clients.push(PragmaticClient.CreateOverSocket(clientSocket))
         this.handlers.push(handler)
@@ -699,6 +699,11 @@ class ScriptedHost implements IDevGraphEngine
         const engine = await this.inner.Engine()
         this.proxy ??= new Proxy(engine, { get: (target, name) => this.EngineMember(target, name) })
         return this.proxy
+    }
+
+    public ResetConnectors(): void
+    {
+        this.inner.ResetConnectors()
     }
 
     public Description(): ReturnType<IDevGraphEngine['Description']>

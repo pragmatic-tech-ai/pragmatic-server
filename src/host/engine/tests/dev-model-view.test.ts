@@ -257,9 +257,8 @@ class DevWorld
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const development = ServerConnectionHandler.DevelopmentAttachArgs(this.Server)
-        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, context, () => Promise.reject(new Error(DevWorld.NoConnectors)), development.cypherQuery,
-            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-            undefined, undefined, undefined, undefined, development.devGraphService, undefined, development.devModelView)
+        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, context, undefined, development.cypherQuery,
+            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, development.devGraphService, undefined, development.devModelView)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.connections.push({ client, handler })
         return client
@@ -1140,7 +1139,7 @@ test('a development handler without the dev model view reports it unavailable', 
     await DevWorld.With(SurfaceFx.SampleTodl, undefined, async world =>
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, world.Language, await world.Server.Manager(), DevWorld.Owner(), () => Promise.reject(new Error(SurfaceFx.UnknownNode)), undefined)
+        const handler = ServerConnectionHandler.Attach(serverSocket, world.Language, await world.Server.Manager(), DevWorld.Owner(), undefined, undefined)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

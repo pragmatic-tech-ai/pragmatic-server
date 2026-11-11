@@ -100,7 +100,7 @@ class FieldSets
 
 /**
  * Compiles the tenant security model's access depth and field security for one principal into engine scope terms,
- * reproducing today's `AccessDepthInstanceFilter` / `AccessDepthWriteInstanceGate` / field mask, which judge each
+ * reproducing the per-instance `AccessDepthInstanceFilter` (and the retired write-instance gate) / field mask, which judge each
  * instance on its OWN concept's effective level, ownership rule and secured fields:
  *
  * - Every described concept K (but the reserved `todl.Element` root and `todl.Term`) gets a Rows entry and a
