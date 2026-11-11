@@ -465,8 +465,14 @@ describe('SecurityModelEditorViewModel', () =>
     it('mode and tab labels map to their flags', async () =>
     {
         const editor = await Fixture.Editor()
-        assert.deepEqual(editor.ModeLabels.ToArray(), ['Roles', 'Organization'])
+        assert.deepEqual(editor.ModeLabels.ToArray(), ['Roles', 'Field profiles', 'Organization', 'Changes'])
         assert.equal(editor.IsRolesMode, true)
+        editor.SelectedMode = 'Field profiles'
+        assert.equal(editor.IsProfilesMode, true)
+        editor.SelectedProfileTab = 'People'
+        assert.equal(editor.IsProfilePeopleTab, true)
+        editor.SelectedMode = 'Changes'
+        assert.equal(editor.IsChangesMode, true)
         editor.SelectedMode = 'Organization'
         assert.equal(editor.IsOrganizationMode, true)
         editor.SelectedOrgTab = 'Teams'

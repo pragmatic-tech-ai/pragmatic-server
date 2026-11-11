@@ -1,4 +1,5 @@
 import { TeamMemberOrigin } from '../../../tenant-types.js'
+import type { FieldAccess } from './security-overrides.js'
 import { AccessLevel, Actions, PrivilegeAction } from './security-model-enums.js'
 
 // The words the security-model editor shows for levels and actions: each
@@ -40,6 +41,10 @@ export class SecurityModelText
     private static readonly OrganizationScope = 'organization'
     private static readonly LegendSeparator = ' = '
     public static readonly DefaultPrefix = 'Default: '
+    private static readonly FieldNoneName = 'no access'
+    private static readonly FieldReadName = 'read'
+    private static readonly FieldUpdateName = 'update'
+    private static readonly FieldCreateName = 'create'
     public static readonly SystemAdministratorText = 'Full access to every record and field in this environment. Not editable.'
     private static readonly SyncedText = 'From identity provider'
     private static readonly ManualText = 'Added here'
@@ -88,6 +93,25 @@ export class SecurityModelText
     public static LevelName(level: AccessLevel): string
     {
         return SecurityModelText.LevelNames.get(level) ?? SecurityModelText.NoneName
+    }
+
+    // The catalog default of a secured field, in words ("Default: read, update").
+    public static FieldDefaultText(access: FieldAccess): string
+    {
+        const names: string[] = []
+        if (access.Read)
+        {
+            names.push(SecurityModelText.FieldReadName)
+        }
+        if (access.Update)
+        {
+            names.push(SecurityModelText.FieldUpdateName)
+        }
+        if (access.Create)
+        {
+            names.push(SecurityModelText.FieldCreateName)
+        }
+        return SecurityModelText.DefaultPrefix + (names.length === 0 ? SecurityModelText.FieldNoneName : names.join(SecurityModelText.CommaSpace))
     }
 
     // One legend line: the glyph, then the level's name.

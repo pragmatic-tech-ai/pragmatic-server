@@ -270,13 +270,19 @@ export class LegendEntryViewModel extends Observable
 
 // One catalog secured field of the selected field profile: a checkbox per
 // permission (Read / Update / Create) over the effective access (the
-// profile's override, else its catalog default).
+// profile's override, else its catalog default), the default as text, an
+// override marker and a reset. A write never stands without read (PR8):
+// clearing Read clears Update and Create, setting Update or Create sets Read.
 export class FieldGrantRowViewModel extends Observable
 {
     private static readonly LabelSeparator = '.'
     private static readonly CanReadProperty = 'CanRead'
     private static readonly CanUpdateProperty = 'CanUpdate'
     private static readonly CanCreateProperty = 'CanCreate'
+    private static readonly DefaultTextProperty = 'DefaultText'
+    private static readonly IsOverriddenProperty = 'IsOverridden'
+
+    private readonly resetCommand: RelayCommand
 
     public constructor(
         private readonly host: ISecurityModelEditHost,
@@ -286,6 +292,7 @@ export class FieldGrantRowViewModel extends Observable
         public readonly Field: string)
     {
         super()
+        this.resetCommand = new RelayCommand(() => this.Reset(), () => this.IsEditable && this.IsOverridden)
     }
 
     public get Label(): string
@@ -293,7 +300,8 @@ export class FieldGrantRowViewModel extends Observable
         return this.Concept + FieldGrantRowViewModel.LabelSeparator + this.Field
     }
 
-    public get CanEdit(): boolean
+    // Whether this row may be edited: the operator may edit (commands and setters share this gate).
+    public get IsEditable(): boolean
     {
         return this.host.CanEdit
     }
@@ -305,7 +313,7 @@ export class FieldGrantRowViewModel extends Observable
 
     public set CanRead(value: boolean)
     {
-        this.SetGrant(FieldPermission.Read, value, FieldGrantRowViewModel.CanReadProperty)
+        this.SetGrant(FieldPermission.Read, value)
     }
 
     public get CanUpdate(): boolean
@@ -315,7 +323,7 @@ export class FieldGrantRowViewModel extends Observable
 
     public set CanUpdate(value: boolean)
     {
-        this.SetGrant(FieldPermission.Update, value, FieldGrantRowViewModel.CanUpdateProperty)
+        this.SetGrant(FieldPermission.Update, value)
     }
 
     public get CanCreate(): boolean
@@ -325,7 +333,32 @@ export class FieldGrantRowViewModel extends Observable
 
     public set CanCreate(value: boolean)
     {
-        this.SetGrant(FieldPermission.Create, value, FieldGrantRowViewModel.CanCreateProperty)
+        this.SetGrant(FieldPermission.Create, value)
+    }
+
+    public get DefaultText(): string
+    {
+        return SecurityModelText.FieldDefaultText(this.draft.Overrides.DefaultField(this.Profile, this.Concept, this.Field))
+    }
+
+    public get IsOverridden(): boolean
+    {
+        return this.draft.Overrides.OverrideField(this.Profile, this.Concept, this.Field) !== undefined
+    }
+
+    public get ResetCommand(): RelayCommand
+    {
+        return this.resetCommand
+    }
+
+    // Drops the override, back to the profile's default; refused while not editable.
+    public Reset(): void
+    {
+        if (!this.IsEditable)
+        {
+            return
+        }
+        this.Edit(d => { d.Overrides.ResetField(this.Profile, this.Concept, this.Field) })
     }
 
     private Granted(permission: FieldPermission): boolean
@@ -334,13 +367,50 @@ export class FieldGrantRowViewModel extends Observable
     }
 
     // A refused edit re-raises the draft's value, so the checkbox snaps back.
-    private SetGrant(permission: FieldPermission, value: boolean, property: string): void
+    private SetGrant(permission: FieldPermission, value: boolean): void
     {
         if (typeof value !== 'boolean' || value === this.Granted(permission))
         {
             return
         }
-        this.host.Apply(d => { d.Overrides.SetField(this.Profile, this.Concept, this.Field, permission, value) })
-        this.RaisePropertyChanged(property, value, this.Granted(permission))
+        if (!this.IsEditable)
+        {
+            this.RaiseGrants()
+            return
+        }
+        this.Edit(d =>
+        {
+            const overrides = d.Overrides
+            if (permission === FieldPermission.Read && !value)
+            {
+                overrides.SetField(this.Profile, this.Concept, this.Field, FieldPermission.Update, false)
+                overrides.SetField(this.Profile, this.Concept, this.Field, FieldPermission.Create, false)
+            }
+            else if (permission !== FieldPermission.Read && value)
+            {
+                overrides.SetField(this.Profile, this.Concept, this.Field, FieldPermission.Read, true)
+            }
+            overrides.SetField(this.Profile, this.Concept, this.Field, permission, value)
+        })
+    }
+
+    private Edit(change: (draft: SecurityModelDraft) => void): void
+    {
+        if (!this.host.Apply(change))
+        {
+            this.RaiseGrants()
+            return
+        }
+        this.RaiseGrants()
+        this.RaisePropertyChanged(FieldGrantRowViewModel.DefaultTextProperty, undefined, this.DefaultText)
+        this.RaisePropertyChanged(FieldGrantRowViewModel.IsOverriddenProperty, undefined, this.IsOverridden)
+        this.resetCommand.RaiseCanExecuteChanged()
+    }
+
+    private RaiseGrants(): void
+    {
+        this.RaisePropertyChanged(FieldGrantRowViewModel.CanReadProperty, undefined, this.CanRead)
+        this.RaisePropertyChanged(FieldGrantRowViewModel.CanUpdateProperty, undefined, this.CanUpdate)
+        this.RaisePropertyChanged(FieldGrantRowViewModel.CanCreateProperty, undefined, this.CanCreate)
     }
 }

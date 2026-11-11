@@ -15,11 +15,20 @@ import { FieldGrantRowViewModel, LegendEntryViewModel, PrivilegeRowViewModel, Pr
 import { SecurityModelText } from './security-model-text.js'
 import { TabSelection } from './tab-selection.js'
 
-// The editor's two modes.
+// The editor's modes.
 export enum SecurityModelMode
 {
     Roles,
+    Profiles,
     Organization,
+    Changes,
+}
+
+// The per-profile tabs (Profiles mode).
+export enum ProfileTab
+{
+    Fields,
+    People,
 }
 
 // The per-role tabs (Roles mode).
@@ -60,7 +69,10 @@ enum NewInput
 export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel implements IHoldsPendingWork, ISecurityModelEditHost
 {
     private static readonly RolesLabel = 'Roles'
+    private static readonly ProfilesLabel = 'Field profiles'
     private static readonly OrganizationLabel = 'Organization'
+    private static readonly ChangesLabel = 'Changes'
+    private static readonly FieldAccessLabel = 'Field access'
     private static readonly PrivilegesLabel = 'What they can do'
     private static readonly PeopleLabel = 'People'
     private static readonly BusinessUnitsLabel = 'Business units'
@@ -76,6 +88,11 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly SelectedModeProperty = 'SelectedMode'
     private static readonly IsRolesModeProperty = 'IsRolesMode'
     private static readonly IsOrganizationModeProperty = 'IsOrganizationMode'
+    private static readonly IsProfilesModeProperty = 'IsProfilesMode'
+    private static readonly IsChangesModeProperty = 'IsChangesMode'
+    private static readonly SelectedProfileTabProperty = 'SelectedProfileTab'
+    private static readonly IsFieldsTabProperty = 'IsFieldsTab'
+    private static readonly IsProfilePeopleTabProperty = 'IsProfilePeopleTab'
     private static readonly SelectedRoleTabProperty = 'SelectedRoleTab'
     private static readonly IsPrivilegesTabProperty = 'IsPrivilegesTab'
     private static readonly IsSystemAdministratorProperty = 'IsSystemAdministrator'
@@ -124,7 +141,13 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
 
     private readonly mode = new TabSelection<SecurityModelMode>([
         [SecurityModelMode.Roles, SecurityModelEditorViewModel.RolesLabel],
+        [SecurityModelMode.Profiles, SecurityModelEditorViewModel.ProfilesLabel],
         [SecurityModelMode.Organization, SecurityModelEditorViewModel.OrganizationLabel],
+        [SecurityModelMode.Changes, SecurityModelEditorViewModel.ChangesLabel],
+    ])
+    private readonly profileTab = new TabSelection<ProfileTab>([
+        [ProfileTab.Fields, SecurityModelEditorViewModel.FieldAccessLabel],
+        [ProfileTab.People, SecurityModelEditorViewModel.PeopleLabel],
     ])
     private readonly roleTab = new TabSelection<RoleTab>([
         [RoleTab.Privileges, SecurityModelEditorViewModel.PrivilegesLabel],
@@ -257,8 +280,48 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     {
         if (this.mode.Select(label))
         {
-            this.Raise(SecurityModelEditorViewModel.SelectedModeProperty, SecurityModelEditorViewModel.IsRolesModeProperty, SecurityModelEditorViewModel.IsOrganizationModeProperty)
+            const P = SecurityModelEditorViewModel
+            this.Raise(P.SelectedModeProperty, P.IsRolesModeProperty, P.IsProfilesModeProperty, P.IsOrganizationModeProperty, P.IsChangesModeProperty)
         }
+    }
+
+    public get IsProfilesMode(): boolean
+    {
+        return this.mode.Is(SecurityModelMode.Profiles)
+    }
+
+    public get IsChangesMode(): boolean
+    {
+        return this.mode.Is(SecurityModelMode.Changes)
+    }
+
+    public get ProfileTabLabels(): ObservableCollection<string>
+    {
+        return this.profileTab.Labels
+    }
+
+    public get SelectedProfileTab(): string
+    {
+        return this.profileTab.Label
+    }
+
+    public set SelectedProfileTab(label: string)
+    {
+        if (this.profileTab.Select(label))
+        {
+            const P = SecurityModelEditorViewModel
+            this.Raise(P.SelectedProfileTabProperty, P.IsFieldsTabProperty, P.IsProfilePeopleTabProperty)
+        }
+    }
+
+    public get IsFieldsTab(): boolean
+    {
+        return this.profileTab.Is(ProfileTab.Fields)
+    }
+
+    public get IsProfilePeopleTab(): boolean
+    {
+        return this.profileTab.Is(ProfileTab.People)
     }
 
     public get IsRolesMode(): boolean
@@ -965,7 +1028,8 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         const profile = this.selectedProfileId
         if (draft !== undefined && profile !== undefined)
         {
-            for (const field of draft.Catalog.securedFields)
+            const secured = [...draft.Catalog.securedFields].sort((a, b) => a.concept.localeCompare(b.concept) || a.field.localeCompare(b.field))
+            for (const field of secured)
             {
                 this.fieldRows.Add(new FieldGrantRowViewModel(this, draft, profile, field.concept, field.field))
             }

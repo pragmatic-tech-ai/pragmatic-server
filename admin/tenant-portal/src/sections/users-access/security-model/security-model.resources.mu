@@ -150,6 +150,65 @@ resources SecurityModelResources {
                         }
                     }
 
+                    // ---- Field profiles mode ----
+                    Grid [ Visibility = $IsProfilesMode << ToVisibility ] {
+                        ColumnDefinitions {
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
+                        }
+
+                        // The profile list.
+                        StackPanel [ Grid.Column = 0, Orientation = Vertical, Margin = (0,0,16,0) ] {
+                            TextBlock [ Text = "Field profiles", Style = @TenantSectionCaption ]
+                            TextBlock [ Text = "This environment's catalog lists no field profiles yet.", Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,8),
+                                        Visibility = $HasNoSelectedProfile << ToVisibility ]
+                            ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $Profiles,
+                                      SelectedItem = $SelectedProfile, ItemTemplate = @SecurityModelProfileItemTemplate ]
+                        }
+
+                        // The selected profile's tabs.
+                        StackPanel [ Grid.Column = 1, Grid.ColumnSpan = 3, Orientation = Vertical, Visibility = $HasSelectedProfile << ToVisibility ] {
+                            StackPanel [ Orientation = Horizontal, Margin = (0,0,0,12) ] {
+                                SegmentedButton [ ItemsSource = $ProfileTabLabels, SelectedItem = $SelectedProfileTab, SelectionMode = Single, HorizontalAlignment = Left ]
+                            }
+
+                            // Field access: every secured field in the catalog.
+                            StackPanel [ Orientation = Vertical, Visibility = $IsFieldsTab << ToVisibility ] {
+                                TextBlock [ Text = "This environment's catalog lists no secured fields.", Foreground = @Fg2, TextWrapping = Wrap,
+                                            Visibility = $HasNoFieldRows << ToVisibility ]
+                                Grid [ Style = @TenantTableColumns ] {
+                                    ColumnDefinitions {
+                                        ColumnDefinition [ Width = GridLength.Star ]
+                                        ColumnDefinition [ Width = GridLength.Star ]
+                                        ColumnDefinition [ Width = GridLength.Star ]
+                                        ColumnDefinition [ Width = GridLength.Star ]
+                                        ColumnDefinition [ Width = GridLength.Star ]
+                                        ColumnDefinition [ Width = GridLength.Star ]
+                                    }
+                                    TextBlock [ Grid.Column = 0, Text = "Field", Style = @TenantTableHeader ]
+                                    TextBlock [ Grid.Column = 1, Text = "Read", Style = @TenantTableHeader ]
+                                    TextBlock [ Grid.Column = 2, Text = "Update", Style = @TenantTableHeader ]
+                                    TextBlock [ Grid.Column = 3, Text = "Create", Style = @TenantTableHeader ]
+                                    TextBlock [ Grid.Column = 4, Text = "Default", Style = @TenantTableHeader ]
+                                }
+                                ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $FieldRows,
+                                          ItemTemplate = @SecurityModelFieldGrantTemplate ]
+                            }
+
+                            // People: who holds the profile.
+                            StackPanel [ Orientation = Vertical, Visibility = $IsProfilePeopleTab << ToVisibility ] {
+                                ContentControl [ Content = $ProfileAssignment ]
+                            }
+                        }
+                    }
+
+                    // ---- Changes mode (content arrives with the changes view) ----
+                    StackPanel [ Orientation = Vertical, Visibility = $IsChangesMode << ToVisibility ] {
+                        TextBlock [ Text = "Security changes from deliveries will be listed here.", Foreground = @Fg2, TextWrapping = Wrap ]
+                    }
+
                     // ---- Organization mode ----
                     StackPanel [ Orientation = Vertical, Visibility = $IsOrganizationMode << ToVisibility ] {
                         StackPanel [ Orientation = Horizontal, Margin = (0,0,0,12) ] {
@@ -352,11 +411,18 @@ resources SecurityModelResources {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
             }
             TextBlock [ Grid.Column = 0, Text = $Label, Style = @Code, Foreground = @Fg0, VerticalAlignment = Center ]
-            Checkbox [ HorizontalAlignment = Left, Grid.Column = 1, IsChecked = $CanRead, IsEnabled = $CanEdit, VerticalAlignment = Center ]
-            Checkbox [ HorizontalAlignment = Left, Grid.Column = 2, IsChecked = $CanUpdate, IsEnabled = $CanEdit, VerticalAlignment = Center ]
-            Checkbox [ HorizontalAlignment = Left, Grid.Column = 3, IsChecked = $CanCreate, IsEnabled = $CanEdit, VerticalAlignment = Center ]
+            Checkbox [ HorizontalAlignment = Left, Grid.Column = 1, IsChecked = $CanRead, IsEnabled = $IsEditable, VerticalAlignment = Center ]
+            Checkbox [ HorizontalAlignment = Left, Grid.Column = 2, IsChecked = $CanUpdate, IsEnabled = $IsEditable, VerticalAlignment = Center ]
+            Checkbox [ HorizontalAlignment = Left, Grid.Column = 3, IsChecked = $CanCreate, IsEnabled = $IsEditable, VerticalAlignment = Center ]
+            TextBlock [ Grid.Column = 4, Text = $DefaultText, Foreground = @Fg2, VerticalAlignment = Center ]
+            StackPanel [ Grid.Column = 5, Orientation = Horizontal ] {
+                TextBlock [ Text = "•", Foreground = @Fg2, VerticalAlignment = Center, Visibility = $IsOverridden << ToVisibility ]
+                Button [ Variant = Ghost, Command = $ResetCommand, Visibility = $IsOverridden << ToVisibility ] { TextBlock [ Text = "↺" ] }
+            }
         }
     }
 
