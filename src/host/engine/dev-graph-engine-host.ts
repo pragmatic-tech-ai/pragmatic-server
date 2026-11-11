@@ -203,10 +203,14 @@ export class DevSnapshotCatalogFailure
     {
     }
 
-    /** The wire error for a catalog failure; any other error unchanged. */
+    /**
+     * The wire error for a catalog failure, also when it arrives as the cause of a compile error (sources that both fail
+     * to compile and break an environment rule, at open); any other error unchanged.
+     */
     public static Of(error: unknown): unknown
     {
-        return error instanceof EnvironmentCatalogError ? new ResponseError(ErrorCodes.InvalidRequest, error.message) : error
+        const catalog = error instanceof DevSnapshotCompileError ? error.cause : error
+        return catalog instanceof EnvironmentCatalogError ? new ResponseError(ErrorCodes.InvalidRequest, catalog.message) : error
     }
 }
 
@@ -713,7 +717,8 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
      * Replaces the running engine with one launched from `snapshot`, new callers waiting on the host gate meanwhile;
      * the replaced engine is retired, not disposed, so the readers already handed out finish.
      */
-    private async Reopen(opened: OpenedEngine, snapshot: DevSnapshot): Promise<void>
+    /** True when the launched engine was swapped in; false when teardown began meanwhile (nothing applied). */
+    private async Reopen(opened: OpenedEngine, snapshot: DevSnapshot): Promise<boolean>
     {
         let release: () => void = () => undefined
         this.reopening = new Promise<void>(resolve => { release = resolve })
@@ -724,9 +729,10 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
             if (this.disposing !== undefined)
             {
                 await running.dispose()
-                return
+                return false
             }
             this.Retire(opened.Swap(running, snapshot))
+            return true
         }
         finally
         {
@@ -837,7 +843,8 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
             }
             if (ConnectorSetKey.Of(snapshot.Connectors, snapshot.Identity) !== opened.Running.ConnectorKey)
             {
-                await this.Reopen(opened, snapshot)
+                // teardown began while the engine launched: nothing applied, Changed is not raised
+                if (!(await this.Reopen(opened, snapshot))) return
             }
             else
             {

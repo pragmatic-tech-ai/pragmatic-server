@@ -73,14 +73,27 @@ export class LazyExternalConnector implements IExternalConnector
         return (await this.Connector()).Begin()
     }
 
+    /**
+     * Forgets the opened connector, so the next use opens it again (ruling R23: after the adapter catalog disposed and
+     * dropped the adapter, e.g. a connector refresh). A call already running keeps the connector it got.
+     */
+    public Reset(): void
+    {
+        this.opening = undefined
+    }
+
     /** The opened connector; a failed open is forgotten, so the next call tries again. */
     private Connector(): Promise<DataSourceConnector>
     {
-        this.opening ??= this.Open().catch((error: unknown) =>
+        if (this.opening === undefined)
         {
-            this.opening = undefined
-            throw error
-        })
+            const opening = this.Open().catch((error: unknown) =>
+            {
+                if (this.opening === opening) this.opening = undefined
+                throw error
+            })
+            this.opening = opening
+        }
         return this.opening
     }
 

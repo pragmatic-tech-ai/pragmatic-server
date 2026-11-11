@@ -24,9 +24,10 @@ export class DevSnapshotCompileError extends Error
     private static readonly ErrorName = 'DevSnapshotCompileError'
     private static readonly MessagePrefix = 'the saved sources do not compile; errors: '
 
-    public constructor(public readonly Diagnostics: readonly Diagnostic[])
+    /** `cause`: the environment-rule failure the same sources also have (outranked by the compile errors). */
+    public constructor(public readonly Diagnostics: readonly Diagnostic[], cause?: EnvironmentCatalogError)
     {
-        super(DevSnapshotCompileError.MessagePrefix + Diagnostics.length)
+        super(DevSnapshotCompileError.MessagePrefix + Diagnostics.length, cause === undefined ? undefined : { cause })
         this.name = DevSnapshotCompileError.ErrorName
     }
 
@@ -184,7 +185,7 @@ export class DevSnapshotSource
         catch (error)
         {
             const errors = DevSnapshotCompileError.ErrorsOf(saved.Diagnostics)
-            if (error instanceof EnvironmentCatalogError && errors.length > 0) throw new DevSnapshotCompileError(errors)
+            if (error instanceof EnvironmentCatalogError && errors.length > 0) throw new DevSnapshotCompileError(errors, error)
             throw error
         }
     }
