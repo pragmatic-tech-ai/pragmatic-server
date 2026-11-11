@@ -12,15 +12,15 @@ import { CypherLimits } from '../../config/cypher-limits.js'
 import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
-import type { IDevCypherQuery, IDevCypherRequest } from '../engine/dev-cypher-query.js'
+import type { IGraphCypherQuery, IDevCypherRequest } from '../engine/engine-cypher-query.js'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 
 /** The server's dev Cypher, counting the queries that reach the engine (the dev path's graph fetch). */
-class CountingDevCypher implements IDevCypherQuery
+class CountingDevCypher implements IGraphCypherQuery
 {
     public Runs = 0
 
-    public constructor(private readonly inner: IDevCypherQuery)
+    public constructor(private readonly inner: IGraphCypherQuery)
     {
     }
 
@@ -65,7 +65,7 @@ class CypherPagingWorld
     public Connect(): PragmaticClient
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, CypherPagingFixture.Permissive(), () => Promise.reject(new Error(CypherPagingFixture.NoConnectors)), this.cypher, undefined, undefined, undefined, undefined, undefined, this.limits, TenantPurpose.Development)
+        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, CypherPagingFixture.Permissive(), undefined, this.cypher, undefined, undefined, undefined, undefined, undefined, this.limits, TenantPurpose.Development)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.connections.push({ client, handler })
         return client

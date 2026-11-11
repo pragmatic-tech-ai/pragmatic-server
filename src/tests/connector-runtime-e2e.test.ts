@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { newDb } from 'pg-mem'
 import { PragmaticServer } from '../pragmatic-server.js'
+import { DevConnectorRead } from '../host/engine/tests/dev-connector-read.js'
 
 /** Builds on-disk solution fixtures (exact schema of src/tests/fixtures/sample-solution) + a pg-mem pool.
  *  The connector model.todl is anchored on TODL/src/codegen/tests/connector-package-fixture.test.ts. */
@@ -69,12 +70,11 @@ test('a solution model with a SQL datasource reads its entities through the work
     {
         await server.Start()
         await server.OpenSolution(dir)
-        const runtime = await server.Connectors()
-        const models = runtime.ModelsWithConnectors()
+        const models = await server.DevConnectors().List()
         assert.equal(models.length, 1)
-        assert.ok(models[0]!.Bindings.length >= 1)
-        assert.equal(models[0]!.Bindings[0]!.Source, 'Customer')
-        const entities = (await runtime.ReadEntities(models[0]!.ModelId, 'shop.Customer')).Entities
+        assert.ok(models[0]!.bindings.length >= 1)
+        assert.equal(models[0]!.bindings[0]!.source, 'Customer')
+        const entities = await DevConnectorRead.Rows(server, 'shop.Customer')
         assert.ok(entities.length >= 1)
     }
     finally
@@ -92,8 +92,7 @@ test('a solution with no datasource yields an empty connector model set', async 
     {
         await server.Start()
         await server.OpenSolution(dir)
-        const runtime = await server.Connectors()
-        assert.equal(runtime.ModelsWithConnectors().length, 0)
+        assert.equal((await server.DevConnectors().List()).length, 0)
     }
     finally
     {

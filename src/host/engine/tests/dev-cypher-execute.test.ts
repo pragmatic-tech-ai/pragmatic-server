@@ -17,11 +17,11 @@ import { PagingLimits } from '../../../config/paging-limits.js'
 import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
-import type { IFieldReadMaskSource } from '../../cypher/read-filter-source.js'
 import { PpSecurityHarness } from '../../cypher/tests/pp-security-harness.js'
 import { WriteLockBusyError } from '../../cypher/write-lock.js'
 import type { IWriteLease, IWriteLock } from '../../cypher/write-lock.js'
-import { DevAccessScopeSource } from '../dev-access-scope-source.js'
+import { AccessScopeSource } from '../access-scope-source.js'
+import { DevScopeRules } from '../dev-scope-rules.js'
 import { DevCypherExecute } from '../dev-cypher-execute.js'
 import type { IDevExecuteDiagnostics } from '../dev-cypher-execute.js'
 import { DevGraphEngineHost } from '../dev-graph-engine-host.js'
@@ -43,7 +43,6 @@ class ExecWorld
         public readonly Server: PragmaticServer,
         private readonly language: SolutionLanguageService,
         private readonly manager: SolutionManagerService,
-        private readonly fieldMasks: IFieldReadMaskSource,
         modelIds: readonly string[],
         public readonly ModelFile: string)
     {
@@ -100,14 +99,13 @@ class ExecWorld
         return page.items
     }
 
-    public Connect(context: AccessContext, purpose: TenantPurpose = TenantPurpose.Development): ServerConnectionHandler
+    public Connect(context: AccessContext): ServerConnectionHandler
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
-            serverSocket, this.language, this.manager, context, () => Promise.reject(new Error(ExecFixture.NoConnectors)), this.Server.DevCypher(),
-            undefined, undefined, undefined, undefined, undefined, undefined, purpose, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-            this.fieldMasks, ctx => this.Server.ConnectorReadAuthorizationFor(ctx), undefined,
-            (ctx, id, request) => this.Server.ExecuteCypher(ctx, id, request))
+            serverSocket, this.language, this.manager, context, undefined, this.Server.DevCypher(),
+            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development, undefined, undefined, undefined,
+            this.Server.DevExecute())
         this.clients.push(PragmaticClient.CreateOverSocket(clientSocket))
         this.handlers.push(handler)
         return handler
@@ -252,7 +250,7 @@ class ExecFixture
         const manager = await server.Manager()
         // the model ids cypher/execute accepts are the engine's (cypher/models), not the language-service views
         const ids = await server.DevCypher().Models()
-        const world = new ExecWorld(server, language, manager, await server.FieldReadMaskSource(), ids, modelFile)
+        const world = new ExecWorld(server, language, manager, ids, modelFile)
         try
         {
             await body(world)
@@ -288,15 +286,6 @@ class ExecFixture
 
 describe('dev cypher/execute over the connection (ported from host/tests/cypher-execute.test.ts)', () =>
 {
-    test('a runtime tenant rejects cypher/execute with InvalidRequest', async () =>
-    {
-        await ExecFixture.With(false, async world =>
-        {
-            const handler = world.Connect(ExecFixture.Context(ExecFixture.Plain), TenantPurpose.Runtime)
-            assert.equal(await ExecFixture.CodeOf(handler.RunCypherExecute(ExecFixture.P(world.Shop, ExecFixture.Create))), ErrorCodes.InvalidRequest)
-        })
-    })
-
     test('omitted or unknown modelId => InvalidParams (write must name its target member)', async () =>
     {
         await ExecFixture.With(false, async world =>
@@ -585,6 +574,16 @@ class SilentEngineDiagnostics implements IDevEngineDiagnostics
         this.Failures.push(error)
     }
 
+    public CatalogFailed(error: unknown): void
+    {
+        this.Failures.push(error)
+    }
+
+    public RetireFailed(error: unknown): void
+    {
+        this.Failures.push(error)
+    }
+
     public ChangedHandlerFailed(error: unknown): void
     {
         this.Failures.push(error)
@@ -697,6 +696,11 @@ class ScriptedHost implements IDevGraphEngine
         const engine = await this.inner.Engine()
         this.proxy ??= new Proxy(engine, { get: (target, name) => this.EngineMember(target, name) })
         return this.proxy
+    }
+
+    public ResetConnectors(): void
+    {
+        this.inner.ResetConnectors()
     }
 
     public Description(): ReturnType<IDevGraphEngine['Description']>
@@ -836,7 +840,7 @@ class ExecFx
     public readonly Host: DevGraphEngineHost
     public Execute!: DevCypherExecute
     public Scripted: ScriptedHost | undefined
-    private scopes: DevAccessScopeSource | undefined
+    private scopes: AccessScopeSource | undefined
 
     private constructor(files: Readonly<Record<string, string>>, prepareTimeoutMs: number | undefined)
     {
@@ -851,7 +855,7 @@ class ExecFx
     {
         const fx = new ExecFx(options.files ?? { [ExecFx.ModelFile]: ExecFx.Shop }, options.prepareTimeoutMs)
         const auth = options.model === undefined ? undefined : (await DevScopeFx.Authorization(options.model)).Auth
-        fx.scopes = new DevAccessScopeSource(fx.Host, auth, options.model !== undefined, () => Promise.resolve(ExecFx.SolutionName), { ScopeDiagnostics: () => undefined })
+        fx.scopes = new AccessScopeSource(fx.Host, new DevScopeRules(fx.Host, auth, options.model !== undefined, () => Promise.resolve(ExecFx.SolutionName)), { ScopeDiagnostics: () => undefined })
         const scopes = fx.scopes
         fx.Scripted = options.host === undefined ? undefined : new ScriptedHost(fx.Host, options.host)
         fx.Execute = new DevCypherExecute(fx.Scripted ?? fx.Host, () => Promise.resolve(scopes), () => Promise.resolve(fx.Lang.GraphRevision), options.lock, fx.ExecuteDiagnostics, options.settleTimer)
@@ -918,7 +922,9 @@ class ExecFx
 /** A schema file holding two model blocks (deferred 4): its text pieces and what the write-back must keep. */
 class TwoBlockFx
 {
-    public static readonly Schema = 'namespace acme { concept Order { total : string?; } '
+    public static readonly Namespace = 'namespace acme {'
+    public static readonly Concept = 'concept Order { total : string?; } '
+    public static readonly Schema = TwoBlockFx.Namespace + ' ' + TwoBlockFx.Concept
     public static readonly HeaderA = 'model A : acme {'
     public static readonly HeaderB = 'model B : acme {'
     public static readonly Text = TwoBlockFx.Schema + TwoBlockFx.HeaderA + ' Order o1 { total = "1"; } } ' + TwoBlockFx.HeaderB + ' Order o2 { total = "2"; } } }'
@@ -927,8 +933,9 @@ class TwoBlockFx
     public static readonly CreatedTotal = 'total = "3"'
     public static readonly O1Body = /Order o1 \{\s*total = "1";\s*\}/
     public static readonly O2Body = /Order o2 \{\s*total = "2";\s*\}/
-    public static readonly O1 = /o1/
-    public static readonly O2 = /o2/
+    /** The seeded instances' own headers only: a placed id (random hex) may contain `o1` / `o2`. */
+    public static readonly O1 = /Order o1 \{/
+    public static readonly O2 = /Order o2 \{/
     public static readonly CreatedBody = /Order \w+ \{\s*total = "3";\s*\}/
     public static readonly CreatedAnywhere = /total = "3"/
 }
@@ -1179,8 +1186,9 @@ describe('DevCypherExecute persist (ported from host/model/tests/dev-model-write
             const result = await fx.Run(TwoBlockFx.Create, TwoBlockFx.ModelA)
             assert.equal(result.status, AppWriteStatus.Applied)
             const extra = fx.File(ExecFx.ExtraFile)
-            // the schema segment is kept byte for byte, ahead of the first model block
-            assert.ok(extra.startsWith(TwoBlockFx.Schema + TwoBlockFx.HeaderA), extra)
+            // the schema segment is kept, ahead of the first model block (TODL 0.56 adds `import todl.system;` to the namespace)
+            assert.ok(extra.startsWith(TwoBlockFx.Namespace), extra)
+            assert.ok(extra.includes(TwoBlockFx.Concept + TwoBlockFx.HeaderA), extra)
             const blockA = extra.slice(extra.indexOf(TwoBlockFx.HeaderA), extra.indexOf(TwoBlockFx.HeaderB))
             const blockB = extra.slice(extra.indexOf(TwoBlockFx.HeaderB))
             // o1 stays in A and o2 in B, each with its own total

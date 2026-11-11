@@ -10,6 +10,7 @@ import { TenantRegistry, InMemoryTenantProvisioning } from '../tenant-registry.j
 import { InMemoryTenantCoordinator } from '../tenant-coordinator.js'
 import type { TenantProvisioning } from '../tenant-provisioning.js'
 import { ConnectorsPolicy } from '../../host/connector-policy.js'
+import { DevConnectorRead } from '../../host/engine/tests/dev-connector-read.js'
 
 class TwoTenantPolicyFixture
 {
@@ -79,10 +80,8 @@ namespace shop {
             const s2 = await registry.ServerFor(TwoTenantPolicyFixture.TenantTwoId)
             await s1.OpenSolution(dir1)
             await s2.OpenSolution(dir2)
-            const r1 = await s1.Connectors()
-            const r2 = await s2.Connectors()
-            await assert.rejects(() => r1.ReadEntities(r1.ModelsWithConnectors()[0]!.ModelId, TwoTenantPolicyFixture.ConceptId), /catalog-only/)
-            const entities = (await r2.ReadEntities(r2.ModelsWithConnectors()[0]!.ModelId, TwoTenantPolicyFixture.ConceptId)).Entities
+            await assert.rejects(() => DevConnectorRead.Rows(s1, TwoTenantPolicyFixture.ConceptId, TwoTenantPolicyFixture.TenantOneId), /catalog-only/)
+            const entities = await DevConnectorRead.Rows(s2, TwoTenantPolicyFixture.ConceptId, TwoTenantPolicyFixture.TenantTwoId)
             assert.ok(entities.length >= 1)
         }
         finally

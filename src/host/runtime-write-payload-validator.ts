@@ -1,24 +1,29 @@
+import { ValueType } from '@pragmatic-tech-ai/graph'
+import type { CellValue } from '@pragmatic-tech-ai/graph'
 import { Cardinality } from '@pragmatic-tech-ai/todl'
+import { CellConverter } from '@pragmatic-tech-ai/todl/engine'
+import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
+import type { EngineSchemaCatalog } from './engine/engine-schema-catalog.js'
 
-/** The subset of a TODL reflection field the validator reads (the real FieldInfo is structurally assignable). */
-export interface IConceptField
+/** The TODL metadata snapshot whose reflected types say which fields a create requires (R39). */
+type ReflectedTypes = IEnvironmentCatalog['Snapshot']
+
+/** A checked write payload: the refusal reason, else the fields as engine cells (absent when refused). */
+export interface ICheckedPayload
 {
-    name: string
-    cardinality: Cardinality
-    fieldType: IConceptType | undefined
+    readonly Reason?: string
+    readonly Cells?: ReadonlyMap<string, CellValue>
 }
 
-/** The subset of a TODL reflection type the validator reads (the real TypeInfo is structurally assignable). */
-export interface IConceptType
-{
-    name: string
-    baseType: IConceptType | undefined
-    getField(name: string): IConceptField | undefined
-    getFields(): IConceptField[]
-    getRelationships(): { name: string }[]
-}
-
-/** Structural validation of a runtime write payload against a concept's reflected schema. No Repository needed. */
+/**
+ * Structural validation of a runtime write payload. `Check` (data/write on the environment engine, ruling S10) reads
+ * the engine schema description (EngineSchemaCatalog): an unknown concept, a member the concept lacks, a relationship
+ * member (not writable through data/write), a non-scalar value, a value its property's ValueType cannot hold (String
+ * takes a string, Boolean a boolean, Float64 a finite number, Int64 a safe integer); null clears any property. The accepted fields come back as engine
+ * cells (Int64 as bigint). Required-ness is not in the description (TODL describes every property nullable): on create
+ * it is read from the concept's TODL reflected type in `types` (a field of cardinality One or OneOrMore left out, ruling
+ * R39); `connector/writePaged` passes none (its upserts are partial). The reasons are unchanged.
+ */
 export class RuntimeWritePayloadValidator
 {
     private static readonly UnknownConcept = 'unknown concept'
@@ -31,56 +36,71 @@ export class RuntimeWritePayloadValidator
     private static readonly NumberPrimitive = 'number'
     private static readonly BooleanPrimitive = 'boolean'
 
-    public Validate(type: IConceptType | undefined, create: boolean, fields: Record<string, unknown> | undefined): string | undefined
+    public Check(catalog: EngineSchemaCatalog, types: ReflectedTypes | undefined, concept: string, create: boolean, fields: Record<string, unknown> | undefined): ICheckedPayload
     {
-        if (type === undefined)
+        if (!catalog.IsConcept(concept))
         {
-            return RuntimeWritePayloadValidator.UnknownConcept
+            return { Reason: RuntimeWritePayloadValidator.UnknownConcept }
         }
         const payload = fields ?? {}
+        const cells = new Map<string, CellValue>()
         for (const key of Object.keys(payload))
         {
-            const reason = this.ValidateField(type, key, payload[key])
+            const reason = this.CheckField(catalog, concept, key, payload[key], cells)
             if (reason !== undefined)
             {
-                return reason
+                return { Reason: reason }
             }
         }
-        if (create)
-        {
-            return this.ValidateRequired(type, payload)
-        }
-        return undefined
+        const type = create ? types?.getType(concept) : undefined
+        const missing = type === undefined ? undefined : this.ValidateRequired(type, payload)
+        return missing === undefined ? { Cells: cells } : { Reason: missing }
     }
 
-    private ValidateField(type: IConceptType, key: string, value: unknown): string | undefined
+    private CheckField(catalog: EngineSchemaCatalog, concept: string, key: string, value: unknown, cells: Map<string, CellValue>): string | undefined
     {
-        const field = type.getField(key)
-        if (field === undefined)
+        const type = catalog.PropertyType(concept, key)
+        if (type === undefined)
         {
-            if (type.getRelationships().some(r => r.name === key))
-            {
-                return RuntimeWritePayloadValidator.ReferenceMemberPrefix + key
-            }
-            return RuntimeWritePayloadValidator.UnknownFieldPrefix + key
+            return catalog.IsRelationship(concept, key) ? RuntimeWritePayloadValidator.ReferenceMemberPrefix + key : RuntimeWritePayloadValidator.UnknownFieldPrefix + key
         }
         if (value === null)
         {
+            cells.set(key, null)
             return undefined
         }
         if (!this.IsScalar(value))
         {
             return RuntimeWritePayloadValidator.NotScalarPrefix + key
         }
-        const expected = this.BasePrimitive(field.fieldType)
-        if (expected !== undefined && typeof value !== expected)
+        const expected = this.PrimitiveOf(type)
+        const conversion = expected === typeof value ? CellConverter.Convert(type, value) : undefined
+        if (conversion?.Value === undefined)
         {
             return RuntimeWritePayloadValidator.TypeMismatchPrefix + key
         }
+        cells.set(key, conversion.Value)
         return undefined
     }
 
-    private ValidateRequired(type: IConceptType, payload: Record<string, unknown>): string | undefined
+    /** The JS primitive a wire value of `type` must be (undefined for a type no wire scalar holds). */
+    private PrimitiveOf(type: ValueType): string | undefined
+    {
+        switch (type)
+        {
+            case ValueType.String:
+                return RuntimeWritePayloadValidator.StringPrimitive
+            case ValueType.Boolean:
+                return RuntimeWritePayloadValidator.BooleanPrimitive
+            case ValueType.Int64:
+            case ValueType.Float64:
+                return RuntimeWritePayloadValidator.NumberPrimitive
+            default:
+                return undefined
+        }
+    }
+
+    private ValidateRequired(type: NonNullable<ReturnType<ReflectedTypes['getType']>>, payload: Record<string, unknown>): string | undefined
     {
         for (const field of type.getFields())
         {
@@ -97,25 +117,8 @@ export class RuntimeWritePayloadValidator
         return cardinality === Cardinality.One || cardinality === Cardinality.OneOrMore
     }
 
-    private IsScalar(value: unknown): boolean
+    private IsScalar(value: unknown): value is string | number | boolean
     {
         return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean'
-    }
-
-    private BasePrimitive(type: IConceptType | undefined): string | undefined
-    {
-        let current = type
-        while (current !== undefined)
-        {
-            const name = current.name
-            if (name === RuntimeWritePayloadValidator.StringPrimitive
-                || name === RuntimeWritePayloadValidator.NumberPrimitive
-                || name === RuntimeWritePayloadValidator.BooleanPrimitive)
-            {
-                return name
-            }
-            current = current.baseType
-        }
-        return undefined
     }
 }

@@ -1,9 +1,11 @@
-import type { Diagnostic, Repository, TodlDocument } from '@pragmatic-tech-ai/todl'
-import { EngineCellMapper, SavedModelCompiler, SnapshotDescriber, TodlNames } from '@pragmatic-tech-ai/todl/engine'
-import type { ISavedModel, ISnapshotDescription } from '@pragmatic-tech-ai/todl/engine'
+import { ConnectorPlanEmitter, Severity } from '@pragmatic-tech-ai/todl'
+import type { Diagnostic, ModelConnectorPlan, NodeId, Repository, TodlDocument } from '@pragmatic-tech-ai/todl'
+import { EngineCellMapper, EnvironmentCatalogError, ExternalCatalogDescriber, SavedModelCompiler, TodlNames } from '@pragmatic-tech-ai/todl/engine'
+import type { IExternalCatalog, ISavedModel, ISavedSnapshot, ISnapshotDescription } from '@pragmatic-tech-ai/todl/engine'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDevLanguageService } from './dev-language-service.js'
 import type { IDevSolution } from './dev-solution.js'
+import type { IEngineSnapshot } from './graph-engine-host.js'
 import { SavedMember, SavedMemberReader } from './saved-member-reader.js'
 
 /**
@@ -11,8 +13,45 @@ import { SavedMember, SavedMemberReader } from './saved-member-reader.js'
  * (an error means the saved sources do not compile, for example a commit only half on disk), the mapper that
  * renders the engine's Cypher cells in TODL's wire shape against the same compiled metadata, and `Models`: the model
  * ids the compile accepted (one package each, with or without instances), sorted, without the solution package.
+ * `Connectors` are the external connector plans the description binds (one per datasource a model populates from,
+ * sorted by name) and `Identity` the public ids and keys of their records (ruling S18).
  */
-export type DevSnapshot = ISnapshotDescription & { Repository: Repository; CompileDiagnostics: readonly Diagnostic[]; CellMapper: EngineCellMapper; Models: readonly string[] }
+export type DevSnapshot = ISnapshotDescription & IEngineSnapshot & { Repository: Repository; CompileDiagnostics: readonly Diagnostic[] }
+
+/** The saved sources compiled with errors (a broken save, or a commit only half on disk): the snapshot is not applied. */
+export class DevSnapshotCompileError extends Error
+{
+    private static readonly ErrorName = 'DevSnapshotCompileError'
+    private static readonly MessagePrefix = 'the saved sources do not compile; errors: '
+
+    /** `cause`: the environment-rule failure the same sources also have (outranked by the compile errors). */
+    public constructor(public readonly Diagnostics: readonly Diagnostic[], cause?: EnvironmentCatalogError)
+    {
+        super(DevSnapshotCompileError.MessagePrefix + Diagnostics.length, cause === undefined ? undefined : { cause })
+        this.name = DevSnapshotCompileError.ErrorName
+    }
+
+    /** The error diagnostics of `diagnostics`. */
+    public static ErrorsOf(diagnostics: readonly Diagnostic[]): Diagnostic[]
+    {
+        return diagnostics.filter(diagnostic => diagnostic.severity === Severity.Error)
+    }
+
+    /** Throws when `diagnostics` holds an error. */
+    public static ThrowIfFailed(diagnostics: readonly Diagnostic[]): void
+    {
+        const errors = DevSnapshotCompileError.ErrorsOf(diagnostics)
+        if (errors.length > 0) throw new DevSnapshotCompileError(errors)
+    }
+}
+
+/** A saved state that failed to describe, with the error every `Current()` of that same state rethrows. */
+class FailedSnapshot
+{
+    public constructor(public readonly Key: SnapshotKey, public readonly Error: unknown)
+    {
+    }
+}
 
 /** What a snapshot was compiled from: the solution (identity and name) and each member's storage, source hash and
  *  bases fingerprint (content, not identity). Equal keys compile to the same snapshot. */
@@ -39,8 +78,15 @@ class SnapshotKey
 
 /**
  * The dev tenant's engine snapshot: every member's SAVED `.todl` sources (never unsaved editor buffers) compiled by
- * `SavedModelCompiler` into one package per model id, described with the `.todl` file connector as the default.
+ * `SavedModelCompiler` into one package per model id, described by TODL's `ExternalCatalogDescriber` (ruling S18) with
+ * the `.todl` file connector as both the default and the local connector, and each accepted model's connector plan
+ * (`ConnectorPlanEmitter.PlanFor`, re-keyed to the model's package id, delivered by the solution). External bindings
+ * are emitted, so a concept a model populates from a datasource is bound to that datasource's engine connector.
  * `Description.Version` is the description's content digest, so a snapshot changes exactly when saved content does.
+ * A plan set the environment rules reject (TODL's `EnvironmentCatalogError`, e.g. two models binding one source)
+ * fails `Current()` with that error, unless the sources also have compile errors: then it fails with
+ * `DevSnapshotCompileError` (compile errors outrank, so the host keeps its previous version). The failure is kept
+ * for the saved state that produced it: `Current()` rethrows it without recompiling until a save changes that state.
  */
 export class DevSnapshotSource
 {
@@ -50,6 +96,7 @@ export class DevSnapshotSource
     private readonly reader: SavedMemberReader
     private last: SnapshotKey | undefined
     private lastSnapshot: DevSnapshot | undefined
+    private failed: FailedSnapshot | undefined
 
     public constructor(private readonly solution: () => Promise<IDevSolution | undefined>, languageService: IDevLanguageService, reader?: SavedMemberReader)
     {
@@ -71,7 +118,18 @@ export class DevSnapshotSource
         }
         const key = new SnapshotKey(solution, members)
         if (this.lastSnapshot !== undefined && this.last !== undefined && this.last.Equals(key)) return this.lastSnapshot
-        const snapshot = this.Compile(solution, members)
+        if (this.failed !== undefined && this.failed.Key.Equals(key)) throw this.failed.Error
+        let snapshot: DevSnapshot
+        try
+        {
+            snapshot = this.Compile(solution, members)
+        }
+        catch (error)
+        {
+            if (error instanceof EnvironmentCatalogError || error instanceof DevSnapshotCompileError) this.failed = new FailedSnapshot(key, error)
+            throw error
+        }
+        this.failed = undefined
         this.last = key
         this.lastSnapshot = snapshot
         return snapshot
@@ -98,8 +156,53 @@ export class DevSnapshotSource
     private static Describe(models: readonly ISavedModel[], bases: readonly TodlDocument[], solutionName: string): DevSnapshot
     {
         const saved = SavedModelCompiler.Compile(models, bases, solutionName)
-        const described = SnapshotDescriber.Describe(saved.Snapshot, { DefaultConnector: TodlNames.FileConnector })
-        return { ...described, Repository: saved.Repository, CompileDiagnostics: saved.Diagnostics, CellMapper: new EngineCellMapper(saved.Snapshot), Models: DevSnapshotSource.ModelsOf(saved.Snapshot.manifests, solutionName) }
+        const accepted = DevSnapshotSource.ModelsOf(saved.Snapshot.manifests, solutionName)
+        const catalog = DevSnapshotSource.Catalog(saved, accepted, solutionName)
+        return {
+            Description: catalog.Description,
+            External: catalog.External,
+            Diagnostics: catalog.Diagnostics,
+            Repository: saved.Repository,
+            CompileDiagnostics: saved.Diagnostics,
+            CellMapper: new EngineCellMapper(saved.Snapshot),
+            Models: accepted,
+            Connectors: catalog.Connectors,
+            Identity: catalog.Identity,
+        }
+    }
+
+    /** The external catalog of the compile; an environment-rule failure of sources that do not compile is a compile error. */
+    private static Catalog(saved: ISavedSnapshot, accepted: readonly string[], solutionName: string): IExternalCatalog
+    {
+        try
+        {
+            return ExternalCatalogDescriber.Describe(saved.Snapshot, DevSnapshotSource.PlansOf(saved.Repository, accepted), {
+                DefaultConnector: TodlNames.FileConnector,
+                LocalConnector: TodlNames.FileConnector,
+                Deliveries: new Map(accepted.map(model => [model, [solutionName]])),
+            })
+        }
+        catch (error)
+        {
+            const errors = DevSnapshotCompileError.ErrorsOf(saved.Diagnostics)
+            if (error instanceof EnvironmentCatalogError && errors.length > 0) throw new DevSnapshotCompileError(errors, error)
+            throw error
+        }
+    }
+
+    /**
+     * Each accepted model's connector plan, its `Model` re-keyed from the TODL declaration name the emitter gives to the
+     * model's package id (the seed Owner id the describer binds by); a model with no population has none.
+     */
+    private static PlansOf(repository: Repository, models: readonly string[]): ModelConnectorPlan[]
+    {
+        const plans: ModelConnectorPlan[] = []
+        for (const model of models)
+        {
+            const plan = ConnectorPlanEmitter.PlanFor(repository, model as NodeId)
+            if (plan !== undefined) plans.push({ ...plan, Model: model })
+        }
+        return plans
     }
 
     /** The compiled packages' model ids (SavedModelCompiler binds one per accepted model id), without the solution's. */

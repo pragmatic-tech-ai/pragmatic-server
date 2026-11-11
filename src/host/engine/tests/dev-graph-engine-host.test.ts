@@ -1,11 +1,12 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessScope, CommitKind, ConnectorChangeSet, Cypher, GraphError, GraphErrorCode, WriteOp } from '@pragmatic-tech-ai/graph'
+import { AccessScope, CommitKind, ConnectorChangeSet, ConnectorContext, Cypher, GraphError, GraphErrorCode, WriteOp } from '@pragmatic-tech-ai/graph'
 import type { BatchOp, GraphEngine, ICommitApplied, IConnectorTransaction, IGraphConnector } from '@pragmatic-tech-ai/graph'
 import { Disposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { DevGraphEngineHost, DevSnapshotCompileError, EngineWriteTracker } from '../dev-graph-engine-host.js'
-import type { IDevEngineDiagnostics, IUpgradeTimer } from '../dev-graph-engine-host.js'
+import type { IDevEngineDiagnostics } from '../dev-graph-engine-host.js'
+import type { IUpgradeTimer } from '../bounded-wait.js'
 import { DevSnapshotSource } from '../dev-snapshot-source.js'
 import { EngineHostFx, HeldFence, ManualGate, ManualTimer } from './engine-host-fixture.js'
 
@@ -45,6 +46,16 @@ class RecordingDiagnostics implements IDevEngineDiagnostics
     public readonly HandlerFailures: unknown[] = []
 
     public UpgradeFailed(error: unknown): void
+    {
+        this.Failures.push(error)
+    }
+
+    public CatalogFailed(error: unknown): void
+    {
+        this.Failures.push(error)
+    }
+
+    public RetireFailed(error: unknown): void
     {
         this.Failures.push(error)
     }
@@ -106,7 +117,7 @@ class CommitFx
     /** A committed transaction given one SetProperty of `publicId`. */
     public static async Committed(tracker: EngineWriteTracker, publicId: string = CommitFx.Node): Promise<IConnectorTransaction>
     {
-        const transaction = await tracker.Track(new InertConnector()).Begin()
+        const transaction = await tracker.Track(new InertConnector()).Begin(ConnectorContext.Anonymous)
         await transaction.Apply(CommitFx.Changes(CommitFx.Set(publicId)))
         await transaction.Commit()
         return transaction

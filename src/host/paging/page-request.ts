@@ -49,9 +49,14 @@ export class PageRequest
 
     public static Resolve(params: PageParams, fingerprint: string, limits: PagingLimits, cap?: number): PageRequest
     {
+        return new PageRequest(PageRequest.OffsetOf(params?.cursor, fingerprint), PageRequest.SizeOf(params, limits, cap), fingerprint)
+    }
+
+    /** The validated page size: the requested size (else the default), clamped to the max and the optional cap. */
+    public static SizeOf(params: PageParams, limits: PagingLimits, cap?: number): number
+    {
         PageRequest.ValidatePageSize(params)
-        const size = Math.min(params?.pageSize ?? limits.PageSize, limits.MaxPageSize, cap ?? Infinity)
-        return new PageRequest(PageRequest.OffsetOf(params?.cursor, fingerprint), size, fingerprint)
+        return Math.min(params?.pageSize ?? limits.PageSize, limits.MaxPageSize, cap ?? Infinity)
     }
 
     public NextCursor(hasMore: boolean): string | undefined

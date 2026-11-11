@@ -4,11 +4,15 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
+import { Repository, toJSON } from '@pragmatic-tech-ai/todl'
+import type { PackageDocument } from '@pragmatic-tech-ai/todl'
 import { InMemoryMessageSocket, PragmaticClient, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherAppDeployParamsDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { AppIngestService } from '../app-ingest-service.js'
-import type { IAppCacheInvalidator } from '../app-ingest-service.js'
+import { DeliveryChannel, EnvironmentCatalogError, EnvironmentCatalogErrorCode } from '@pragmatic-tech-ai/todl/engine'
+import type { DeliveryChange, IDeliveryGate } from '../../environment/environment-deliveries.js'
+import { EnvironmentUpgradeFailedError } from '../../environment/environment-engine-host.js'
 import { PragmaticAppsRegistry } from '../pragmatic-apps-registry.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
@@ -26,13 +30,41 @@ class RecordingStorage extends NodeFsStorage
     }
 }
 
-class RecordingInvalidator implements IAppCacheInvalidator
+/** Runs every persist step and records the changes whose persist step completed (the deliveries that landed). */
+class RecordingGate implements IDeliveryGate
 {
-    public readonly Keys: string[] = []
+    public readonly Delivered: DeliveryChange[] = []
 
-    public InvalidateApp(nameAtVersion: string): void
+    public async Deliver<T>(change: DeliveryChange, persist: () => Promise<T>): Promise<T>
     {
-        this.Keys.push(nameAtVersion)
+        const result = await persist()
+        this.Delivered.push(change)
+        return result
+    }
+}
+
+/** A gate refusing every delivery with `error` before persisting (the composition failed). */
+class RefusingGate implements IDeliveryGate
+{
+    public constructor(private readonly error: Error)
+    {
+    }
+
+    public Deliver<T>(): Promise<T>
+    {
+        return Promise.reject(this.error)
+    }
+}
+
+/** A gate whose persist step lands but whose engine upgrade then fails (S4 step 4). */
+class UpgradeFailingGate implements IDeliveryGate
+{
+    private static readonly FailureMessage = 'upgrade failed'
+
+    public async Deliver<T>(_change: DeliveryChange, persist: () => Promise<T>): Promise<T>
+    {
+        const result = await persist()
+        throw new EnvironmentUpgradeFailedError(result, new Error(UpgradeFailingGate.FailureMessage))
     }
 }
 
@@ -45,14 +77,19 @@ class IngestFixture
     public static readonly ManifestFile = 'application.json'
     public static readonly Secret = 'SECRET-PAYLOAD-BYTES'
     public static readonly TenantId = 't1'
+    public static readonly CorePackage = 'shop.core'
+    public static readonly BasePackage = 'shop.base'
+    public static readonly BaseVersion = '2.0.0'
+    public static readonly CoreConcept = 'Order'
+    public static readonly BaseConcept = 'Customer'
 
     public readonly Root = mkdtempSync(join(tmpdir(), 'ingest-'))
     public readonly PackagesDir = join(this.Root, 'packages')
     public readonly AppsDir = join(this.Root, 'applications')
     public readonly Packages = new RecordingStorage(this.PackagesDir)
     public readonly Apps = new RecordingStorage(this.AppsDir)
-    public readonly Invalidator = new RecordingInvalidator()
-    public readonly Service = new AppIngestService(this.Packages, this.Apps, this.Invalidator)
+    public readonly Gate = new RecordingGate()
+    public readonly Service = new AppIngestService(this.Packages, this.Apps, this.Gate)
 
     public static Tenant(): Tenant
     {
@@ -86,6 +123,26 @@ class IngestFixture
                 ui: { entry: IngestFixture.Entry, assets: [IngestFixture.Asset] },
             },
         }
+    }
+
+    /**
+     * `Params` with real package documents (the environment gate composes them on a server): shop.core defines a concept
+     * and depends on shop.base, which defines another.
+     */
+    public static ServableParams(): CypherAppDeployParamsDto
+    {
+        const params = IngestFixture.Params()
+        const core = { ...IngestFixture.Document(IngestFixture.CorePackage, IngestFixture.CoreConcept), dependencies: [{ id: IngestFixture.BasePackage, version: IngestFixture.BaseVersion }] }
+        params.packages[0]!.modelJson = JSON.stringify(core)
+        params.packages[1]!.modelJson = JSON.stringify(IngestFixture.Document(IngestFixture.BasePackage, IngestFixture.BaseConcept))
+        return params
+    }
+
+    private static Document(namespace: string, concept: string): PackageDocument
+    {
+        const repo = new Repository()
+        repo.builder().defineConcept(concept).setNamespace(namespace).commit()
+        return toJSON(repo) as PackageDocument
     }
 
     public Dispose(): void
@@ -122,7 +179,7 @@ test('a valid deploy writes packages, UI assets and application.json last, and t
         assert.deepEqual(readdirSync(join(fx.AppsDir, 'shop')).sort(), ['1.0.0', 'live'])
         const app = await new PragmaticAppsRegistry(fx.Apps).ApplicationFor('shop')
         assert.equal(app.Manifest.version, '1.0.0')
-        assert.deepEqual(fx.Invalidator.Keys, ['shop@1.0.0'])
+        assert.deepEqual(fx.Gate.Delivered, [{ Channel: DeliveryChannel.Deploy, Name: 'shop', Packages: [{ model: 'shop.core', version: '1.0.0' }] }])
     })
 })
 
@@ -138,7 +195,7 @@ test('an incomplete package closure is rejected and nothing servable is written'
         assert.equal(existsSync(join(fx.AppsDir, 'shop', '1.0.0', 'application.json')), false)
         assert.equal(existsSync(join(fx.AppsDir, 'shop')), false)
         assert.equal(existsSync(join(fx.PackagesDir)), false)
-        assert.deepEqual(fx.Invalidator.Keys, [])
+        assert.deepEqual(fx.Gate.Delivered, [])
     })
 })
 
@@ -192,22 +249,11 @@ test('path traversal in UI paths, package ids and app name is rejected without l
     }
 })
 
-test('InvalidateApp evicts a cached app graph entry', async () =>
-{
-    const server = new PragmaticServer({ packagesRoot: join(tmpdir(), 'unused-pkgs'), applicationsRoot: join(tmpdir(), 'unused-apps'), purpose: TenantPurpose.Runtime })
-    const cache = (server as unknown as { appGraphs: Map<string, Promise<unknown>> }).appGraphs
-    cache.set('shop@1.0.0', Promise.resolve({}))
-    cache.set('shop@2.0.0', Promise.resolve({}))
-    server.InvalidateApp('shop@1.0.0')
-    assert.equal(cache.has('shop@1.0.0'), false)
-    assert.equal(cache.has('shop@2.0.0'), true)
-})
-
 class DeployWire
 {
     public static async Attach(fx: IngestFixture, role: Role): Promise<{ client: PragmaticClient; Dispose: () => Promise<void> }>
     {
-        const server = new PragmaticServer({ packagesRoot: fx.PackagesDir, applicationsRoot: fx.AppsDir, purpose: TenantPurpose.Runtime })
+        const server = new PragmaticServer({ packagesRoot: fx.PackagesDir, applicationsRoot: fx.AppsDir, graphsRoot: join(fx.Root, 'graphs'), purpose: TenantPurpose.Runtime })
         await server.Start()
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
@@ -215,10 +261,10 @@ class DeployWire
         const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
         const handler = ServerConnectionHandler.Attach(
             serverSocket, languageService, manager, IngestFixture.Context(role),
-            () => Promise.reject(new Error('no connectors')), undefined,
+            undefined, undefined,
             undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Runtime,
-            runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider,
-            undefined, undefined, undefined, undefined, undefined, runtime.deployProvider)
+            runtime.applications, runtime.data,
+            undefined, undefined, runtime.deployProvider)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         return {
             client,
@@ -256,8 +302,8 @@ test('RunDeploy lets an Admin deploy and the app is then listed', async () =>
         const wire = await DeployWire.Attach(fx, Role.Admin)
         try
         {
-            const result = await wire.client.DeployApplication(IngestFixture.Params())
-            assert.equal(result.status, AppWriteStatus.Applied)
+            const result = await wire.client.DeployApplication(IngestFixture.ServableParams())
+            assert.equal(result.status, AppWriteStatus.Applied, result.reason)
             const apps = await wire.client.ListApplications()
             assert.ok(apps.some(a => a.name === 'shop' && a.version === '1.0.0'))
         }
@@ -313,15 +359,29 @@ test('a package version already deployed with different content is refused', asy
     })
 })
 
-test('an invalidation failure after the marker landed does not flip the deploy to Failed', async () =>
+test('a delivery the gate refuses is invalid with its message and writes neither the version tree nor the pointer', async () =>
 {
     await IngestFixture.Run(async fx =>
     {
-        const throwing: IAppCacheInvalidator = { InvalidateApp: () => { throw new Error('evict failed') } }
-        const service = new AppIngestService(fx.Packages, fx.Apps, throwing)
+        const refusal = new EnvironmentCatalogError(EnvironmentCatalogErrorCode.IncompatibleVersions, 'shop.core', ['shop'], 'incompatible')
+        const service = new AppIngestService(fx.Packages, fx.Apps, new RefusingGate(refusal))
         const result = await service.Ingest(IngestFixture.Params())
-        assert.equal(result.status, AppWriteStatus.Applied)
-        assert.ok(existsSync(join(fx.AppsDir, 'shop', '1.0.0', 'application.json')))
+        assert.equal(result.status, AppWriteStatus.Invalid)
+        assert.equal(result.reason, 'incompatible')
+        assert.ok(existsSync(join(fx.PackagesDir, 'shop.core', '1.0.0', 'model.json')), 'the packages are stored first (immutable)')
+        assert.equal(existsSync(join(fx.AppsDir, 'shop')), false)
+    })
+})
+
+test('an upgrade failure after the pointer landed answers failed with the upgrade reason and the app is live', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        const service = new AppIngestService(fx.Packages, fx.Apps, new UpgradeFailingGate())
+        const result = await service.Ingest(IngestFixture.Params())
+        assert.equal(result.status, AppWriteStatus.Failed)
+        assert.equal(result.reason, EnvironmentUpgradeFailedError.Reason)
+        assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'live'), 'utf8'), '1.0.0')
     })
 })
 
@@ -333,7 +393,7 @@ test('a failure during commit removes renamed files, logs only class/code, and k
         apps.FailRenameTo = 'shop/1.0.0/application.json'
         const lines: string[] = []
         const logger = StructuredLogger.ToSink(line => lines.push(line))
-        const service = new AppIngestService(fx.Packages, apps, fx.Invalidator, logger)
+        const service = new AppIngestService(fx.Packages, apps, fx.Gate, logger)
         const result = await service.Ingest(IngestFixture.Params())
         assert.equal(result.status, AppWriteStatus.Failed)
         assert.equal(JSON.stringify(result).includes(IngestFixture.Secret), false)
@@ -342,7 +402,7 @@ test('a failure during commit removes renamed files, logs only class/code, and k
         assert.equal(existsSync(join(fx.AppsDir, 'shop', '1.0.0', 'application.json')), false)
         assert.equal(existsSync(join(fx.AppsDir, 'shop', '1.0.0', 'ui', 'index.html')), false)
         assert.deepEqual(readdirSync(join(fx.AppsDir, 'shop', '1.0.0', 'ui')).filter(n => n.includes('.ingest-')), [])
-        assert.deepEqual(fx.Invalidator.Keys, [])
+        assert.deepEqual(fx.Gate.Delivered, [])
     })
 })
 
@@ -415,7 +475,7 @@ test('a mid-commit failure of a later version leaves the earlier version tree an
         assert.equal((await fx.Service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
         const apps = new FailingStorage(fx.AppsDir)
         apps.FailRenameTo = 'shop/2.0.0/application.json'
-        const service = new AppIngestService(fx.Packages, apps, fx.Invalidator)
+        const service = new AppIngestService(fx.Packages, apps, fx.Gate)
         const next = IngestFixture.Params()
         next.appVersion = '2.0.0'
         next.manifest.version = '2.0.0'
@@ -465,7 +525,7 @@ test('Ingest writes a <app>/live pointer naming the deployed version, written af
     await IngestFixture.Run(async fx =>
     {
         const apps = new OrderingStorage(fx.AppsDir)
-        const service = new AppIngestService(fx.Packages, apps, fx.Invalidator)
+        const service = new AppIngestService(fx.Packages, apps, fx.Gate)
         assert.equal((await service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
         assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'live'), 'utf8'), '1.0.0')
         assert.equal(apps.Order[apps.Order.length - 1], 'shop/live')
@@ -527,7 +587,7 @@ test('a same-version retry after a failed live-pointer write resumes by writing 
     await IngestFixture.Run(async fx =>
     {
         const apps = new PointerFailingStorage(fx.AppsDir)
-        const service = new AppIngestService(fx.Packages, apps, fx.Invalidator)
+        const service = new AppIngestService(fx.Packages, apps, fx.Gate)
         assert.equal((await service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Failed)
         assert.ok(existsSync(join(fx.AppsDir, 'shop', '1.0.0', 'application.json')))
         assert.equal(existsSync(join(fx.AppsDir, 'shop', 'live')), false)
@@ -535,6 +595,21 @@ test('a same-version retry after a failed live-pointer write resumes by writing 
         assert.equal((await service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
         assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'live'), 'utf8'), '1.0.0')
         assert.equal((await service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Conflict)
+    })
+})
+
+test('a resume writes a package the interrupted deploy had not stored', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        const apps = new PointerFailingStorage(fx.AppsDir)
+        const service = new AppIngestService(fx.Packages, apps, fx.Gate)
+        assert.equal((await service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Failed)
+        const missing = join(fx.PackagesDir, IngestFixture.BasePackage, IngestFixture.BaseVersion, 'model.json')
+        rmSync(missing)
+        apps.FailPointer = false
+        assert.equal((await service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
+        assert.ok(existsSync(missing), 'the gate composes over the full closure')
     })
 })
 

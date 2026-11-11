@@ -1,5 +1,5 @@
 import { AccessDefault, AccessScope, And, ConceptIs, FalsePredicate, Not, TruePredicate } from '@pragmatic-tech-ai/graph'
-import type { IReadOnlyMembers, IWriteRules, Predicate } from '@pragmatic-tech-ai/graph'
+import type { IEndpointMembers, IReadOnlyMembers, IWriteRules, Predicate } from '@pragmatic-tech-ai/graph'
 import type { EngineSchemaCatalog } from './engine-schema-catalog.js'
 
 /** Folds conjunctions so a constant never leaves a needless tree (True is the identity, False absorbs). */
@@ -25,6 +25,10 @@ export enum WriteRule
     Create = 'Create',
     Update = 'Update',
     Delete = 'Delete',
+    /** Link / Unlink on the edge's source (engine security S2, R129). */
+    Append = 'Append',
+    /** Link / Unlink on the edge's target (engine security S2, R129). */
+    AppendTo = 'AppendTo',
 }
 
 /** The per-operation read-only members of one key, unioned across scopes. */
@@ -81,6 +85,8 @@ class WriteRulesDraft
             Create: this.Predicates.get(WriteRule.Create),
             Update: this.Predicates.get(WriteRule.Update),
             Delete: this.Predicates.get(WriteRule.Delete),
+            Append: this.Predicates.get(WriteRule.Append),
+            AppendTo: this.Predicates.get(WriteRule.AppendTo),
             ...(readOnly === undefined ? {} : { ReadOnly: readOnly }),
             ...(readOnlyExact === undefined ? {} : { ReadOnlyExact: readOnlyExact }),
         }
@@ -90,8 +96,9 @@ class WriteRulesDraft
 /**
  * The AND of two access scopes over one engine schema, deny-wins: a node is visible (a write allowed) iff both scopes
  * admit it. Rows on the same key are ANDed, write rules are ANDed per operation, Hidden / HiddenExact and ReadOnly /
- * ReadOnlyExact (per operation) are unioned key by key (inherited sets stay inherited, exact sets exact), and the
- * Default is Allow only when both are.
+ * ReadOnlyExact (per operation) are unioned key by key (inherited sets stay inherited, exact sets exact), the
+ * Endpoints entries of both are kept (both scopes describe the same schema, so a shared key has the same members), and
+ * the Default is Allow only when both are.
  *
  * A scope's Default only decides a node none of whose keys has an entry in that scope, but the combined scope sees
  * both scopes' entries. So where one scope would leave a concept to its Default Deny while the other has an entry
@@ -100,7 +107,7 @@ class WriteRulesDraft
  */
 export class AccessScopeConjunction
 {
-    public static readonly Rules: readonly WriteRule[] = [WriteRule.Create, WriteRule.Update, WriteRule.Delete]
+    public static readonly Rules: readonly WriteRule[] = [WriteRule.Create, WriteRule.Update, WriteRule.Delete, WriteRule.Append, WriteRule.AppendTo]
 
     public static And(left: AccessScope, right: AccessScope, catalog: EngineSchemaCatalog): AccessScope
     {
@@ -108,8 +115,10 @@ export class AccessScopeConjunction
         const writes = new Map<string, WriteRulesDraft>()
         const hidden = new Map<string, Set<string>>()
         const hiddenExact = new Map<string, Set<string>>()
+        const endpoints = new Map<string, IEndpointMembers>()
         for (const scope of [left, right])
         {
+            for (const [key, members] of scope.Endpoints) endpoints.set(key, members)
             for (const [key, predicate] of scope.Rows) rows.set(key, PredicateFold.And(rows.get(key), predicate))
             for (const [key, rules] of scope.Writes) AccessScopeConjunction.Draft(writes, key).Add(rules)
             AccessScopeConjunction.Union(hidden, scope.Hidden)
@@ -135,7 +144,7 @@ export class AccessScopeConjunction
         const fallback = left.Default === AccessDefault.Allow && right.Default === AccessDefault.Allow ? AccessDefault.Allow : AccessDefault.Deny
         const rules = new Map<string, IWriteRules>()
         for (const [key, draft] of writes) rules.set(key, draft.Rules())
-        return AccessScope.Build({ Default: fallback, Rows: rows, Writes: rules, Hidden: hidden, HiddenExact: hiddenExact })
+        return AccessScope.Build({ Default: fallback, Rows: rows, Writes: rules, Hidden: hidden, HiddenExact: hiddenExact, Endpoints: endpoints })
     }
 
     private static Union(into: Map<string, Set<string>>, from: ReadonlyMap<string, ReadonlySet<string>>): void

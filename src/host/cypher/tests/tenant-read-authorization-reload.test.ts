@@ -38,8 +38,9 @@ class ReloadFixture
 
     public static async Allows(authz: TenantReadAuthorization): Promise<boolean>
     {
-        const writer = await authz.WriteAuthorizerFor(ReloadFixture.Context())
-        return writer.Allows(ReloadFixture.Concept, PrivilegeAction.Update)
+        const context = ReloadFixture.Context()
+        const evaluator = await authz.EvaluatorForContext(context)
+        return evaluator.EffectiveLevel(context.Principal, PrivilegeAction.Update, ReloadFixture.Concept) !== AccessLevel.None
     }
 }
 

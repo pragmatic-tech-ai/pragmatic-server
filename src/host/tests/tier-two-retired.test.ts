@@ -1,19 +1,15 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, cpSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InMemoryMessageSocket, PragmaticClient, AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
-import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
-import { compilePackage, BlobPackageStore, StoragePackageSink, PolicyNodeKind, PolicyRefRoot, PolicyCompareOp, type SolutionManagerService } from '@pragmatic-tech-ai/todl'
-import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
+import { compilePackage, BlobPackageStore, StoragePackageSink } from '@pragmatic-tech-ai/todl'
 import { AccessLevel, PrivilegeAction, OwnershipSourceKind } from '@pragmatic-tech-ai/todl-identity'
-import type { AccessContext, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
+import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
-import { BuiltinStoreEngine } from '../connectors/builtin-store-engine.js'
-import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { PpSecurityHarness } from '../cypher/tests/pp-security-harness.js'
 
 /*
@@ -21,52 +17,14 @@ import { PpSecurityHarness } from '../cypher/tests/pp-security-harness.js'
  * tenant security model (tier 1) decides runtime and dev visibility.
  */
 
-/** One wire connection a fixture owns: the client and the handler it talks to, disposed together (dispose resolves once torn down). */
-class WireConnection implements IDisposable
-{
-    public constructor(public readonly Client: PragmaticClient, private readonly handler: ServerConnectionHandler)
-    {
-    }
-
-    public async dispose(): Promise<void>
-    {
-        await this.Client.DisposeAsync()
-        this.handler.Dispose()
-    }
-}
-
-/** One development server with an opened solution and one connection to it, and the temp dirs it owns (dispose resolves once torn down). */
-class DevSession implements IDisposable
-{
-    public constructor(
-        public readonly Connection: WireConnection,
-        private readonly server: PragmaticServer,
-        private readonly language: SolutionLanguageService,
-        private readonly manager: SolutionManagerService,
-        private readonly dirs: readonly string[])
-    {
-    }
-
-    public async dispose(): Promise<void>
-    {
-        await this.Connection.dispose()
-        await this.language.WhenIdle()
-        await this.manager.CloseSolution()
-        await this.server.Dispose()
-        for (const dir of this.dirs)
-        {
-            rmSync(dir, { recursive: true, force: true })
-        }
-    }
-}
-
-/** A runtime tenant with identity: app `crm` binds packages crm (crm.Account, governed) and notes (notes.Note, NOT governed). */
+/**
+ * A runtime tenant with identity: app `crm` binds packages crm (crm.Account, governed) and notes (notes.Note, NOT
+ * governed). Its data/write runs on the environment engine under the caller's scope (ruling S10); runtime reads are the
+ * environment engine's (environment-scope-rules.test.ts pins that a retired access-policy.json changes nothing).
+ */
 class RuntimeTierFixture
 {
     public static readonly Reader = 'p1'
-    public static readonly AccountLabels = 'MATCH (a:Account) RETURN a.label AS label'
-    public static readonly NoteLabels = 'MATCH (n:Note) RETURN n.label AS label'
-    public static readonly AccountLabel = 'acme'
     public static readonly Note = 'notes.Note'
     private static readonly AppName = 'crm'
     private static readonly Version = '1.0.0'
@@ -74,10 +32,7 @@ class RuntimeTierFixture
     private static readonly CrmPkg = 'crm'
     private static readonly NotesPkg = 'notes'
     private static readonly ManifestFile = 'application.json'
-    // the retired per-app policy setting file, written to prove the server no longer reads it
-    private static readonly RetiredPolicyFile = 'access-policy.json'
-    private static readonly Deny = 'deny'
-    private static readonly Read = 'read'
+    private static readonly LivePointerFile = 'live'
     private static readonly ReaderRole = 'reader'
     private static readonly ReaderRoleName = 'Reader'
     private static readonly RootName = 'Root'
@@ -86,14 +41,14 @@ class RuntimeTierFixture
     private static readonly PackagesPrefix = 'tier2-pkgs-'
     private static readonly AppsPrefix = 'tier2-apps-'
     private static readonly IdentityPrefix = 'tier2-id-'
-    private static readonly NoConnectors = 'no connectors'
+    private static readonly GraphsPrefix = 'tier2-graphs-'
     private static readonly CrmTodl = 'namespace crm { concept Account { owningBu : string; } model Crm : crm { annotate entrypoint { } Account a1 { label = "acme"; owningBu = "sales"; } } }'
     private static readonly NotesTodl = 'namespace notes { concept Note { } model Notes : notes { annotate entrypoint { } Note n1 { label = "hello"; } } }'
 
     private readonly packages = mkdtempSync(join(tmpdir(), RuntimeTierFixture.PackagesPrefix))
     private readonly apps = mkdtempSync(join(tmpdir(), RuntimeTierFixture.AppsPrefix))
     private readonly identityRoot = mkdtempSync(join(tmpdir(), RuntimeTierFixture.IdentityPrefix))
-    private readonly connections: WireConnection[] = []
+    private readonly graphs = mkdtempSync(join(tmpdir(), RuntimeTierFixture.GraphsPrefix))
     private server: PragmaticServer | undefined
 
     public static async Run(body: (fx: RuntimeTierFixture) => Promise<void>): Promise<void>
@@ -110,39 +65,6 @@ class RuntimeTierFixture
         }
     }
 
-    /**
-     * Writes the retired per-app policy setting denying every read of crm.Account: `deny read when entity.owningBu ==
-     * "sales"`, which every seeded Account matches.
-     */
-    public DenyEveryAccount(): void
-    {
-        const predicate = {
-            kind: PolicyNodeKind.Compare, op: PolicyCompareOp.Eq,
-            left: { kind: PolicyNodeKind.Ref, root: PolicyRefRoot.Entity, member: PpSecurityHarness.OwningBuField },
-            right: { kind: PolicyNodeKind.Literal, value: PpSecurityHarness.SalesBu },
-        }
-        const rules = [{ effect: RuntimeTierFixture.Deny, action: RuntimeTierFixture.Read, predicate }]
-        writeFileSync(join(this.apps, RuntimeTierFixture.AppName, RuntimeTierFixture.RetiredPolicyFile), JSON.stringify({ [RuntimeTierFixture.Account]: rules }))
-    }
-
-    /** A wire client bound to the app as `principal`. */
-    public async Client(principal: string): Promise<PragmaticClient>
-    {
-        const server = this.server!
-        const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(
-            serverSocket, await server.LanguageService(), await server.Manager(), PpSecurityHarness.Context(principal),
-            () => Promise.reject(new Error(RuntimeTierFixture.NoConnectors)), server.DevCypher(),
-            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Runtime,
-            server.Applications(), (ctx, name, labels) => server.GraphForPragmaticApp(ctx, name, labels),
-            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-            server)
-        const connection = new WireConnection(PragmaticClient.CreateOverSocket(clientSocket), handler)
-        this.connections.push(connection)
-        await connection.Client.OpenApplication(RuntimeTierFixture.AppName)
-        return connection.Client
-    }
-
     public CreateNote(principal: string): ReturnType<PragmaticServer['WriteForPragmaticApp']>
     {
         return this.server!.WriteForPragmaticApp(PpSecurityHarness.Context(principal), RuntimeTierFixture.AppName,
@@ -154,14 +76,16 @@ class RuntimeTierFixture
         PpSecurityHarness.SetKey()
         await this.Publish(RuntimeTierFixture.CrmPkg, RuntimeTierFixture.CrmTodl)
         await this.Publish(RuntimeTierFixture.NotesPkg, RuntimeTierFixture.NotesTodl)
-        mkdirSync(join(this.apps, RuntimeTierFixture.AppName))
-        writeFileSync(join(this.apps, RuntimeTierFixture.AppName, RuntimeTierFixture.ManifestFile), JSON.stringify({
+        // a live app (`<app>/<version>/application.json` + `<app>/live`): its packages are environment deliveries
+        mkdirSync(join(this.apps, RuntimeTierFixture.AppName, RuntimeTierFixture.Version), { recursive: true })
+        writeFileSync(join(this.apps, RuntimeTierFixture.AppName, RuntimeTierFixture.Version, RuntimeTierFixture.ManifestFile), JSON.stringify({
             name: RuntimeTierFixture.AppName, version: RuntimeTierFixture.Version,
             packages: [{ id: RuntimeTierFixture.CrmPkg, version: RuntimeTierFixture.Version }, { id: RuntimeTierFixture.NotesPkg, version: RuntimeTierFixture.Version }],
         }))
+        writeFileSync(join(this.apps, RuntimeTierFixture.AppName, RuntimeTierFixture.LivePointerFile), RuntimeTierFixture.Version)
         this.server = new PragmaticServer({
-            packagesRoot: this.packages, applicationsRoot: this.apps, purpose: TenantPurpose.Runtime,
-            builtinStoreEngine: BuiltinStoreEngine.Document, identity: PpSecurityHarness.Identity(this.identityRoot),
+            packagesRoot: this.packages, applicationsRoot: this.apps, graphsRoot: this.graphs, purpose: TenantPurpose.Runtime,
+            identity: PpSecurityHarness.Identity(this.identityRoot),
         })
         await this.server.Start()
         await PpSecurityHarness.Seed(this.server, RuntimeTierFixture.Model())
@@ -192,186 +116,20 @@ class RuntimeTierFixture
 
     private async Dispose(): Promise<void>
     {
-        for (const connection of this.connections.reverse())
-        {
-            await connection.dispose()
-        }
         await this.server?.Dispose()
         rmSync(this.packages, { recursive: true, force: true })
         rmSync(this.apps, { recursive: true, force: true })
         rmSync(this.identityRoot, { recursive: true, force: true })
+        rmSync(this.graphs, { recursive: true, force: true })
         PpSecurityHarness.ClearKey()
     }
 }
-
-/** A development solution whose saved model declares (or not) a read policy on Order admitting only label "a". */
-class DevTierFixture
-{
-    public static readonly MemberId = 'models'
-    public static readonly OrderLabels = 'MATCH (o:Order) RETURN o.label AS label'
-    public static readonly HiddenId = 'acme.o2'
-    public static readonly VisibleId = 'acme.o1'
-    /** Both seeded Order labels: the policy would admit only the first. */
-    public static readonly AllLabels = ['a', 'b']
-    private static readonly PackagesPrefix = 'tier2-dev-pkgs-'
-    private static readonly SolutionPrefix = 'tier2-dev-sol-'
-    private static readonly IdentityPrefix = 'tier2-dev-id-'
-    private static readonly Order = 'acme.Order'
-    private static readonly NoConnectors = 'no connectors'
-    private static readonly SolutionModelFile = join('models', 'model.todl')
-    private static readonly Policy = 'policy Order { allow read when entity.label == "a"; } '
-
-    private readonly sessions: DevSession[] = []
-
-    public static async Run(body: (fx: DevTierFixture) => Promise<void>): Promise<void>
-    {
-        const fx = new DevTierFixture()
-        try
-        {
-            await body(fx)
-        }
-        finally
-        {
-            await fx.Dispose()
-        }
-    }
-
-    private static Todl(withPolicy: boolean): string
-    {
-        const policy = withPolicy ? DevTierFixture.Policy : ''
-        return `namespace acme { concept Order { owningBu : string?; } ${policy}model Shop : acme { Order o1 { label = "a"; owningBu = "sales"; } Order o2 { label = "b"; owningBu = "root"; } } }`
-    }
-
-    /** The harness BU-depth model on acme.Order: the reader (home unit sales) reads sales-owned Orders only, so o2 (root) is hidden. */
-    private static SalesOnly(): ISecurityModelConfig
-    {
-        const model = PpSecurityHarness.BuSecurityModel(RuntimeTierFixture.Reader)
-        return {
-            ...model,
-            ownershipRules: model.ownershipRules.map(rule => ({ ...rule, concept: DevTierFixture.Order })),
-            roles: model.roles.map(role => ({ ...role, privileges: role.privileges.map(privilege => ({ ...privilege, concept: DevTierFixture.Order })) })),
-        }
-    }
-
-    /** A runtime connection over a server with identity, the solution open and the sales-only security model seeded. */
-    public async RuntimeClientWithIdentity(): Promise<PragmaticClient>
-    {
-        const packages = mkdtempSync(join(tmpdir(), DevTierFixture.PackagesPrefix))
-        const solution = mkdtempSync(join(tmpdir(), DevTierFixture.SolutionPrefix))
-        const identityRoot = mkdtempSync(join(tmpdir(), DevTierFixture.IdentityPrefix))
-        cpSync(join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution'), solution, { recursive: true })
-        writeFileSync(join(solution, DevTierFixture.SolutionModelFile), DevTierFixture.Todl(true))
-        PpSecurityHarness.SetKey()
-        const server = new PragmaticServer({ packagesRoot: packages, identity: PpSecurityHarness.Identity(identityRoot) })
-        await server.Start()
-        await server.OpenSolution(solution)
-        await PpSecurityHarness.Seed(server, DevTierFixture.SalesOnly())
-        const language = await server.LanguageService() as SolutionLanguageService
-        const manager = await server.Manager()
-        const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, language, manager, PpSecurityHarness.Context(RuntimeTierFixture.Reader), () => Promise.reject(new Error(DevTierFixture.NoConnectors)), undefined,
-            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Runtime, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-            await server.FieldReadMaskSource(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, await server.DepthFilterSource())
-        const session = new DevSession(new WireConnection(PragmaticClient.CreateOverSocket(clientSocket), handler), server, language, manager, [solution, packages, identityRoot])
-        this.sessions.push(session)
-        return session.Connection.Client
-    }
-
-    /** A client over a server with the solution open, attached with the development arguments or as a runtime connection. */
-    public async Client(withPolicy: boolean, purpose: TenantPurpose = TenantPurpose.Development): Promise<PragmaticClient>
-    {
-        const packages = mkdtempSync(join(tmpdir(), DevTierFixture.PackagesPrefix))
-        const solution = mkdtempSync(join(tmpdir(), DevTierFixture.SolutionPrefix))
-        cpSync(join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution'), solution, { recursive: true })
-        writeFileSync(join(solution, DevTierFixture.SolutionModelFile), DevTierFixture.Todl(withPolicy))
-        const server = new PragmaticServer({ packagesRoot: packages })
-        await server.Start()
-        await server.OpenSolution(solution)
-        const language = await server.LanguageService() as SolutionLanguageService
-        const manager = await server.Manager()
-        const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const development = ServerConnectionHandler.DevelopmentAttachArgs(server)
-        const handler = purpose === TenantPurpose.Development
-            ? ServerConnectionHandler.Attach(serverSocket, language, manager, PpSecurityHarness.Context(RuntimeTierFixture.Reader), () => Promise.reject(new Error(DevTierFixture.NoConnectors)), development.devCypher,
-                undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-                undefined, undefined, undefined, undefined, development.devGraphService, undefined, development.devModelView)
-            : ServerConnectionHandler.Attach(serverSocket, language, manager, PpSecurityHarness.Context(RuntimeTierFixture.Reader), () => Promise.reject(new Error(DevTierFixture.NoConnectors)), undefined,
-                undefined, undefined, undefined, undefined, undefined, undefined, purpose)
-        const session = new DevSession(new WireConnection(PragmaticClient.CreateOverSocket(clientSocket), handler), server, language, manager, [solution, packages])
-        this.sessions.push(session)
-        return session.Connection.Client
-    }
-
-    private async Dispose(): Promise<void>
-    {
-        for (const session of this.sessions.reverse())
-        {
-            await session.dispose()
-        }
-        PpSecurityHarness.ClearKey()
-    }
-}
-
-class TierColumn
-{
-    public static Of(result: { items: unknown[][] }): unknown[]
-    {
-        return result.items.map(r => r[0]).sort()
-    }
-}
-
-test('access-policy file is ignored', async () =>
-{
-    await RuntimeTierFixture.Run(async fx =>
-    {
-        fx.DenyEveryAccount()
-        const client = await fx.Client(RuntimeTierFixture.Reader)
-        const rows = await client.CypherQuery(RuntimeTierFixture.AccountLabels)
-        assert.deepEqual(TierColumn.Of(rows), [RuntimeTierFixture.AccountLabel])
-    })
-})
 
 test('own concept the security model does not govern is denied', async () =>
 {
     await RuntimeTierFixture.Run(async fx =>
     {
-        const client = await fx.Client(RuntimeTierFixture.Reader)
-        const rows = await client.CypherQuery(RuntimeTierFixture.NoteLabels)
-        assert.deepEqual(TierColumn.Of(rows), [])
         const created = await fx.CreateNote(RuntimeTierFixture.Reader)
         assert.equal(created.results[0]?.status, AppWriteStatus.Denied)
-    })
-})
-
-test('dev model policy is ignored', async () =>
-{
-    await DevTierFixture.Run(async fx =>
-    {
-        const governed = await (await fx.Client(true)).CypherQuery(DevTierFixture.OrderLabels)
-        const plain = await (await fx.Client(false)).CypherQuery(DevTierFixture.OrderLabels)
-        assert.deepEqual(TierColumn.Of(plain), DevTierFixture.AllLabels)
-        assert.deepEqual(TierColumn.Of(governed), TierColumn.Of(plain))
-    })
-})
-
-test('runtime model view ignores model policies', async () =>
-{
-    await DevTierFixture.Run(async fx =>
-    {
-        const client = await fx.Client(true, TenantPurpose.Runtime)
-        const page = await client.ModelView(DevTierFixture.MemberId)
-        assert.ok(page.items.some(member => member.id === DevTierFixture.HiddenId), JSON.stringify(page.items.map(member => member.id)))
-    })
-})
-
-test('runtime model view hides an instance the access depth hides', async () =>
-{
-    await DevTierFixture.Run(async fx =>
-    {
-        const client = await fx.RuntimeClientWithIdentity()
-        const page = await client.ModelView(DevTierFixture.MemberId)
-        const ids = page.items.map(member => member.id)
-        assert.ok(ids.includes(DevTierFixture.VisibleId), JSON.stringify(ids))
-        assert.ok(!ids.includes(DevTierFixture.HiddenId), JSON.stringify(ids))
     })
 })

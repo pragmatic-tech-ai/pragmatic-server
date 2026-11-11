@@ -37,7 +37,18 @@ export interface IPlacementDefaults
     Defaults(concept: string): ReadonlyMap<string, CellValue>
 }
 
-/** The access-depth axis of one principal's dev scope: its rows, writes and hidden fields, and the create defaults. */
+/** How one compile is narrowed. */
+export interface IDepthCompileOptions
+{
+    /**
+     * Concepts outside the depth axis (ruling R6: connector-bound concepts are outside platform security): a skipped
+     * concept gets an explicit allow, Rows True and Create / Update / Delete / Append / AppendTo True keyed on it (ruling R12: the depth
+     * Default is Deny, so mere absence would fail closed), and no HiddenExact, ReadOnlyExact or create-default entry.
+     */
+    readonly Skip?: (concept: string) => boolean
+}
+
+/** The access-depth axis of one principal's scope: its rows, writes and hidden fields, and the create defaults. */
 export class DepthScope implements IPlacementDefaults
 {
     private static readonly NoDefaults: ReadonlyMap<string, CellValue> = new Map()
@@ -89,12 +100,14 @@ class FieldSets
 
 /**
  * Compiles the tenant security model's access depth and field security for one principal into engine scope terms,
- * reproducing today's `AccessDepthInstanceFilter` / `AccessDepthWriteInstanceGate` / field mask, which judge each
+ * reproducing the per-instance `AccessDepthInstanceFilter` (and the retired write-instance gate) / field mask, which judge each
  * instance on its OWN concept's effective level, ownership rule and secured fields:
  *
  * - Every described concept K (but the reserved `todl.Element` root and `todl.Term`) gets a Rows entry and a
  *   Create / Update / Delete entry guarded as `Or(Not(ConceptIs K), rule)` (ruling R93), so it judges K's own
- *   instances only and never K's subconcepts. The rule is K's level: None → False, Organization → True, User → the
+ *   instances only and never K's subconcepts (engine security S2, R129: Append, the link rule on the edge's source,
+ *   is guarded by K's Update level; AppendTo, on its target, is True since a visible target is linkable, and
+ *   `todl.Term` gets that AppendTo alone). The rule is K's level: None → False, Organization → True, User → the
  *   owner is the principal or one of its teams, BusinessUnit → the owning unit is in the principal's reach (home unit
  *   plus its teams' units), BusinessUnitAndChildren → in the reach or under it. Ownership resolves as
  *   OwnershipResolver does: a fixed source is a constant; an unset, empty or unknown business-unit VALUE reads as the
@@ -119,10 +132,22 @@ export class DepthScopeCompiler
     private static readonly UnknownDefaultMessage = 'create default "{0}" is not a property of "{1}"; it is not placed'
     private static readonly Placeholder = /\{(\d)\}/g
     private static readonly NoArgument = ''
+    private static readonly SkipNone = (): boolean => false
+    private static readonly AllowWrites: IWriteRules = {
+        Create: TruePredicate.Instance,
+        Update: TruePredicate.Instance,
+        Delete: TruePredicate.Instance,
+        Append: TruePredicate.Instance,
+        AppendTo: TruePredicate.Instance,
+    }
+    /** A taxonomy term is never written, but records stay linkable to it (as the tier-1 compiler's Term entry). */
+    private static readonly TermWrites: IWriteRules = { AppendTo: TruePredicate.Instance }
     private static readonly Operations: readonly (readonly [WriteRule, PrivilegeAction])[] = [
         [WriteRule.Create, PrivilegeAction.Create],
         [WriteRule.Update, PrivilegeAction.Update],
         [WriteRule.Delete, PrivilegeAction.Delete],
+        // interim (until S4 Task 9's tier-1 compiler): a link from a record needs what a SET on it needs
+        [WriteRule.Append, PrivilegeAction.Update],
     ]
 
     private readonly catalog: EngineSchemaCatalog
@@ -132,7 +157,12 @@ export class DepthScopeCompiler
     private readonly reachAndBelow: ReadonlySet<string>
     private readonly units: readonly string[]
 
-    private constructor(private readonly evaluator: AccessDepthEvaluator, private readonly principal: Principal, description: ISchemaDescription, private readonly hasSecurityModel: boolean)
+    private constructor(
+        private readonly evaluator: AccessDepthEvaluator,
+        private readonly principal: Principal,
+        description: ISchemaDescription,
+        private readonly hasSecurityModel: boolean,
+        private readonly options: IDepthCompileOptions)
     {
         this.catalog = new EngineSchemaCatalog(description)
         const membership = evaluator.MembershipOf(principal)
@@ -148,10 +178,13 @@ export class DepthScopeCompiler
         this.units = [hierarchy.RootId(), ...hierarchy.DescendantsOf(hierarchy.RootId())]
     }
 
-    /** `hasSecurityModel`: false for a tenant with no security model (a DenyAll evaluator), which reads no terms either. */
-    public static Compile(evaluator: AccessDepthEvaluator, principal: Principal, description: ISchemaDescription, hasSecurityModel: boolean): DepthScope
+    /**
+     * `hasSecurityModel`: false for a tenant with no security model (a DenyAll evaluator), which reads no terms either.
+     * `options.Skip` puts concepts outside the axis: allowed, never secured (IDepthCompileOptions).
+     */
+    public static Compile(evaluator: AccessDepthEvaluator, principal: Principal, description: ISchemaDescription, hasSecurityModel: boolean, options: IDepthCompileOptions = {}): DepthScope
     {
-        return new DepthScopeCompiler(evaluator, principal, description, hasSecurityModel).Run()
+        return new DepthScopeCompiler(evaluator, principal, description, hasSecurityModel, options).Run()
     }
 
     private Run(): DepthScope
@@ -160,18 +193,31 @@ export class DepthScopeCompiler
         {
             if (!this.catalog.IsConcept(concept)) this.Report(DepthDiagnosticCode.UnknownConcept, concept, DepthScopeCompiler.UnknownConceptMessage, concept)
         }
-        const concepts = this.catalog.Concepts().filter(concept => concept !== TodlNames.Element && concept !== TodlNames.Term)
+        const skip = this.options.Skip ?? DepthScopeCompiler.SkipNone
+        const described = this.catalog.Concepts().filter(concept => concept !== TodlNames.Element && concept !== TodlNames.Term)
+        const concepts = described.filter(concept => !skip(concept))
         const rows = new Map<string, Predicate>()
         const writes = new Map<string, IWriteRules>()
+        for (const concept of described.filter(skip))
+        {
+            rows.set(concept, TruePredicate.Instance)
+            writes.set(concept, DepthScopeCompiler.AllowWrites)
+        }
         for (const concept of concepts)
         {
             rows.set(concept, this.Guarded(concept, PrivilegeAction.Read))
             const rules: Partial<Record<WriteRule, Predicate>> = {}
             for (const [rule, action] of DepthScopeCompiler.Operations) rules[rule] = this.Guarded(concept, action)
+            // a link to a record needs only that the record is visible (the engine checks visibility before AppendTo)
+            rules[WriteRule.AppendTo] = TruePredicate.Instance
             writes.set(concept, rules)
         }
         // ruling F-b: terms are readable under any security model, but a tenant with none (DenyAll) reads nothing
-        if (this.catalog.IsConcept(TodlNames.Term)) rows.set(TodlNames.Term, this.hasSecurityModel ? TruePredicate.Instance : FalsePredicate.Instance)
+        if (this.catalog.IsConcept(TodlNames.Term))
+        {
+            rows.set(TodlNames.Term, this.hasSecurityModel ? TruePredicate.Instance : FalsePredicate.Instance)
+            writes.set(TodlNames.Term, DepthScopeCompiler.TermWrites)
+        }
         const hidden = new Map<string, ReadonlySet<string>>()
         const readOnly = new Map<string, IReadOnlyMembers>()
         this.FieldSecurity(concepts, hidden, readOnly)

@@ -13,6 +13,7 @@ import { ConnectorsPolicy } from '../../host/connector-policy.js'
 import { FileConnectionResolver } from '../../host/file-connection-resolver.js'
 import type { FileConnection } from '../../host/file-connection-resolver.js'
 import { ProvisionedSecretSource } from '../../config/provisioned-secret-source.js'
+import { DevConnectorRead } from '../../host/engine/tests/dev-connector-read.js'
 
 class Fixture
 {
@@ -94,13 +95,11 @@ namespace shop {
             const s2 = await registry.ServerFor('t2')
             await s1.OpenSolution(dir1)
             await s2.OpenSolution(dir2)
-            const r1 = await s1.Connectors()
-            const r2 = await s2.Connectors()
-            const rows = (await r1.ReadEntities(r1.ModelsWithConnectors()[0]!.ModelId, Fixture.ConceptId)).Entities
+            const rows = await DevConnectorRead.Rows(s1, Fixture.ConceptId, 't1')
             assert.ok(rows.length >= 1)
             assert.equal(Fixture.CapturedOptions()?.database, 'app')
             assert.equal(Fixture.CapturedOptions()?.password, 'db-password')
-            await assert.rejects(() => r2.ReadEntities(r2.ModelsWithConnectors()[0]!.ModelId, Fixture.ConceptId), /is not declared/)
+            await assert.rejects(() => DevConnectorRead.Rows(s2, Fixture.ConceptId, 't2'), /is not declared/)
         }
         finally
         {

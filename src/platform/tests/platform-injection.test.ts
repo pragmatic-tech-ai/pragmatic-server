@@ -6,8 +6,6 @@ import { join } from 'node:path'
 import type { IStorage, IPromptService } from '@pragmatic-tech-ai/todl-runtime'
 import type { IStorageProviderRegistry } from '@pragmatic-tech-ai/todl'
 import type { IdentityStoreSet, ITenantConfigStore } from '@pragmatic-tech-ai/todl-identity'
-import type { IDocumentSession } from '@pragmatic-tech-ai/todl-connectors-host'
-import type { BuiltinStoreEngine } from '../../host/connectors/builtin-store-engine.js'
 import { NodePlatform } from '../node-platform.js'
 import type { PlatformServices } from '../platform-services.js'
 import type { MasterKeyRef } from '../../identity/master-key-resolver.js'
@@ -64,11 +62,6 @@ class RecordingPlatform implements PlatformServices
     {
         this.calls.push(RecordingPlatform.TenantConfigCall)
         return this.inner.CreateTenantConfigStore(configRoot)
-    }
-
-    public CreateAppDataStore(dataRoot: string, engine: BuiltinStoreEngine): IDocumentSession
-    {
-        return this.inner.CreateAppDataStore(dataRoot, engine)
     }
 }
 
