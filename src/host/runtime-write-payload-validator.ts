@@ -33,10 +33,11 @@ export interface ICheckedPayload
  * Structural validation of a runtime write payload. `Check` (data/write on the environment engine, ruling S10) reads
  * the engine schema description (EngineSchemaCatalog): an unknown concept, a member the concept lacks, a relationship
  * member (not writable through data/write), a non-scalar value, a value its property's ValueType cannot hold (String
- * takes a string, Boolean a boolean, Float64 a finite number, Int64 a safe integer), and on create a property the
- * description marks `Nullable: false` left out; null clears any property. The accepted fields come back as engine
- * cells (Int64 as bigint). `Validate` is the same check over a TODL reflected type, kept for the connector hydrate
- * writer until `connector/*` moves to the engine (Task 11). The reasons are shared and unchanged.
+ * takes a string, Boolean a boolean, Float64 a finite number, Int64 a safe integer); null clears any property. The accepted fields come back as engine
+ * cells (Int64 as bigint). Required-ness is not in the description (TODL describes every property nullable): on create
+ * it is read from the concept's TODL reflected type (a field of cardinality One or OneOrMore left out, ruling R39).
+ * `Validate` is the whole check over a TODL reflected type, kept for the connector hydrate writer until `connector/*`
+ * moves to the engine (Task 11). The reasons are shared and unchanged.
  */
 export class RuntimeWritePayloadValidator
 {
@@ -50,7 +51,7 @@ export class RuntimeWritePayloadValidator
     private static readonly NumberPrimitive = 'number'
     private static readonly BooleanPrimitive = 'boolean'
 
-    public Check(catalog: EngineSchemaCatalog, concept: string, create: boolean, fields: Record<string, unknown> | undefined): ICheckedPayload
+    public Check(catalog: EngineSchemaCatalog, type: IConceptType | undefined, concept: string, create: boolean, fields: Record<string, unknown> | undefined): ICheckedPayload
     {
         if (!catalog.IsConcept(concept))
         {
@@ -66,15 +67,8 @@ export class RuntimeWritePayloadValidator
                 return { Reason: reason }
             }
         }
-        if (create)
-        {
-            const missing = catalog.RequiredProperties(concept).find(name => !(name in payload))
-            if (missing !== undefined)
-            {
-                return { Reason: RuntimeWritePayloadValidator.MissingRequiredPrefix + missing }
-            }
-        }
-        return { Cells: cells }
+        const missing = create && type !== undefined ? this.ValidateRequired(type, payload) : undefined
+        return missing === undefined ? { Cells: cells } : { Reason: missing }
     }
 
     public Validate(type: IConceptType | undefined, create: boolean, fields: Record<string, unknown> | undefined): string | undefined

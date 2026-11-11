@@ -24,13 +24,21 @@ class WriterFx
     public static readonly AppVersion = '1.0.0'
     public static readonly Crm = { id: 'crm', version: '1.0.0' }
     public static readonly Ext = { id: 'ext', version: '1.0.0' }
-    public static readonly CrmTodl = 'namespace crm {\n  concept Account { name : string?; owner : string?; size : integer?; relationship parent -> Account?; }\n  model Crm : crm { Account seeded1 { } }\n}\n'
-    public static readonly ExtTodl = 'namespace ext {\n  concept Customer { id : string?; name : string?; }\n  concept Vendor { name : string?; }\n  datasource src { kind = sql; connection = "ext-db"; }\n'
-        + '  model Ext : ext { connect src; populate Customer key cust_id { name = "nm"; } populate Vendor key vend_id { name = "nm"; read-only; } }\n}\n'
+    public static readonly CrmTodl = 'namespace crm {\n  concept Account { name : string?; owner : string?; size : integer?; relationship parent -> Account?; }\n  concept Contact { name : string; }\n  model Crm : crm { Account seeded1 { } }\n}\n'
+    public static readonly ExtTodl = 'namespace ext {\n  concept Customer { id : string?; name : string?; }\n  concept Vendor { name : string?; }\n  concept Ledger { id : integer?; name : string?; }\n  datasource src { kind = sql; connection = "ext-db"; }\n'
+        + '  model Ext : ext { connect src; populate Customer key cust_id { name = "nm"; } populate Vendor key vend_id { name = "nm"; read-only; } populate Ledger key led_id { name = "nm"; } }\n}\n'
     public static readonly Account = 'crm.Account'
     public static readonly Customer = 'ext.Customer'
     public static readonly Vendor = 'ext.Vendor'
     public static readonly Seeded = 'crm.seeded1'
+    public static readonly Contact = 'crm.Contact'
+    public static readonly Ledger = 'ext.Ledger'
+    public static readonly Parent = 'parent'
+    public static readonly ClientId = 'c1'
+    public static readonly ClientKey = 'k5'
+    public static readonly MissingName = 'missing required field: name'
+    public static readonly ParentNotWritable = 'reference member is not writable: parent'
+    public static readonly UnsupportedExternalChange = 'UnsupportedExternalChange'
     public static readonly Name = 'name'
     public static readonly Owner = 'owner'
     public static readonly Size = 'size'
@@ -63,10 +71,11 @@ class WriterFx
     public static readonly ReadOnlyBinding = 'binding is read-only'
     public static readonly UuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
-    /** Read every account; create, update and delete own ones only. */
-    public static Model(): ISecurityModelConfig
+    /** Read every account; create, update and (unless `deletes` is false) delete own ones only. */
+    public static Model(deletes: boolean = true): ISecurityModelConfig
     {
-        const own = [PrivilegeAction.Create, PrivilegeAction.Update, PrivilegeAction.Delete].map(action => ({ action, level: AccessLevel.User, concept: WriterFx.Account }))
+        const actions = deletes ? [PrivilegeAction.Create, PrivilegeAction.Update, PrivilegeAction.Delete] : [PrivilegeAction.Create, PrivilegeAction.Update]
+        const own = actions.map(action => ({ action, level: AccessLevel.User, concept: WriterFx.Account }))
         return {
             businessUnits: [{ id: WriterFx.Root, name: WriterFx.RootName }],
             teams: [],
@@ -194,10 +203,11 @@ describe('data/write on the environment engine', () =>
             assert.deepEqual(updated.results, [{ status: AppWriteStatus.Applied, id }])
             assert.equal(await WriterFx.Property(fx, id, WriterFx.Name), WriterFx.B)
             assert.equal(await WriterFx.Property(fx, id, WriterFx.Size), 5n, 'an integer member is an Int64 cell')
-            // placement decides a create's id (S6): a client id naming an existing record cannot overwrite it
+            // ruling R38: a client id is the engine node's id; one naming an existing record cannot overwrite it
+            const chosen = await WriterFx.Write(fx, [{ op: AppWriteOpKind.Create, concept: WriterFx.Account, id: WriterFx.ClientId, fields: { [WriterFx.Name]: WriterFx.A } }])
+            assert.deepEqual(chosen.results, [{ status: AppWriteStatus.Applied, id: WriterFx.ClientId }])
             const again = await WriterFx.Write(fx, [{ op: AppWriteOpKind.Create, concept: WriterFx.Account, id, fields: { [WriterFx.Name]: WriterFx.Changed } }])
-            assert.equal(again.results[0]!.status, AppWriteStatus.Applied)
-            assert.notEqual(again.results[0]!.id, id)
+            assert.deepEqual(WriterFx.Statuses(again), [[AppWriteStatus.Denied, WriterFx.RecordDenied]])
             assert.equal(await WriterFx.Property(fx, id, WriterFx.Name), WriterFx.B, 'the existing record is untouched')
         })
     })
@@ -338,6 +348,74 @@ describe('data/write on the environment engine', () =>
             ])
             assert.deepEqual(fx.Source.Adapter.Rows(WriterFx.CustomerSource), [])
             assert.equal(await WriterFx.Revision(fx), before, 'nothing in the engine log')
+        })
+    })
+
+    test('missing required field is invalid', async () =>
+    {
+        await WriterFx.Run({}, async fx =>
+        {
+            const result = await WriterFx.Write(fx, [{ op: AppWriteOpKind.Create, concept: WriterFx.Contact, fields: {} }])
+            assert.deepEqual(WriterFx.Statuses(result), [[AppWriteStatus.Invalid, WriterFx.MissingName]])
+            const named = await WriterFx.Write(fx, [{ op: AppWriteOpKind.Create, concept: WriterFx.Contact, fields: { [WriterFx.Name]: WriterFx.A } }])
+            assert.equal(named.results[0]!.status, AppWriteStatus.Applied, JSON.stringify(named))
+        })
+    })
+
+    test('relationship member is not writable', async () =>
+    {
+        await WriterFx.Run({}, async fx =>
+        {
+            const result = await WriterFx.Write(fx, [{ op: AppWriteOpKind.Create, concept: WriterFx.Account, fields: { [WriterFx.Parent]: WriterFx.Seeded } }])
+            assert.deepEqual(WriterFx.Statuses(result), [[AppWriteStatus.Invalid, WriterFx.ParentNotWritable]])
+        })
+    })
+
+    test('the denied op is the one the engine names', async () =>
+    {
+        await WriterFx.Run({ Identity: true, SecurityModel: WriterFx.Model(false) }, async fx =>
+        {
+            await WriterFx.SeedAccounts(fx, [[WriterFx.R1, WriterFx.P1]])
+            // both ops target r1: the update is allowed, the delete is not
+            const result = await WriterFx.Write(fx, [
+                { op: AppWriteOpKind.Update, concept: WriterFx.Account, id: WriterFx.R1, fields: { [WriterFx.Name]: WriterFx.Changed } },
+                { op: AppWriteOpKind.Delete, concept: WriterFx.Account, id: WriterFx.R1 },
+            ])
+            assert.deepEqual(WriterFx.Statuses(result), [[AppWriteStatus.Failed, WriterFx.RolledBack], [AppWriteStatus.Denied, WriterFx.RecordDenied]])
+        })
+    })
+
+    test('an external conflict rolls back the engine ops', async () =>
+    {
+        await WriterFx.Run({}, async fx =>
+        {
+            const before = await WriterFx.Revision(fx)
+            const result = await WriterFx.Write(fx, [
+                { op: AppWriteOpKind.Create, concept: WriterFx.Account, fields: { [WriterFx.Name]: WriterFx.A } },
+                { op: AppWriteOpKind.Create, concept: WriterFx.Customer, fields: { [WriterFx.IdMember]: WriterFx.AcmeKey, [WriterFx.Name]: WriterFx.Renamed } },
+            ])
+            assert.deepEqual(WriterFx.Statuses(result), [[AppWriteStatus.Failed, WriterFx.RolledBack], [AppWriteStatus.Conflict, WriterFx.WriteConflict]])
+            assert.equal(await WriterFx.Revision(fx), before, 'no engine commit')
+        })
+    })
+
+    test('external create without a numeric key is invalid', async () =>
+    {
+        await WriterFx.Run({}, async fx =>
+        {
+            const result = await WriterFx.Write(fx, [{ op: AppWriteOpKind.Create, concept: WriterFx.Ledger, fields: { [WriterFx.Name]: WriterFx.A } }])
+            assert.deepEqual(WriterFx.Statuses(result), [[AppWriteStatus.Invalid, WriterFx.UnsupportedExternalChange]])
+            assert.equal(fx.Source.Adapter.Batches.length, 0, 'nothing reached the source')
+        })
+    })
+
+    test('external create keys the row by the client id', async () =>
+    {
+        await WriterFx.Run({}, async fx =>
+        {
+            const result = await WriterFx.Write(fx, [{ op: AppWriteOpKind.Create, concept: WriterFx.Customer, id: WriterFx.ClientKey, fields: { [WriterFx.Name]: WriterFx.Renamed } }])
+            assert.deepEqual(result.results, [{ status: AppWriteStatus.Applied, id: await WriterFx.CustomerId(fx, WriterFx.ClientKey) }], JSON.stringify(result))
+            assert.deepEqual(fx.Source.Adapter.Rows(WriterFx.CustomerSource).map(row => row[WriterFx.CustomerKey]), [WriterFx.AcmeKey, WriterFx.ClientKey])
         })
     })
 })

@@ -11,7 +11,7 @@ import { AsyncMutex } from '../cypher/async-mutex.js'
 import { BoundedWait, TimeoutUpgradeTimer } from '../engine/bounded-wait.js'
 import type { IUpgradeTimer } from '../engine/bounded-wait.js'
 import { ConnectorSetKey } from '../engine/connector-set-key.js'
-import { EngineCypherQueryError, EngineCypherQueryErrorCode } from '../engine/engine-cypher-query.js'
+import { EngineSchemaCatalog } from '../engine/engine-schema-catalog.js'
 import { EngineHostChanged } from '../engine/engine-host-changed.js'
 import type { IEngineSnapshot, IGraphEngineHost } from '../engine/graph-engine-host.js'
 import { LazyExternalConnector } from '../engine/lazy-external-connector.js'
@@ -24,6 +24,8 @@ import type { DeliveryChange, EnvironmentDeliveries, IDeliveryGate } from './env
  */
 export type EnvironmentSnapshot = IEngineSnapshot & {
     readonly Catalog: IEnvironmentCatalog
+    /** How the engine sees `Description` (built once per snapshot). */
+    readonly SchemaCatalog: EngineSchemaCatalog
     readonly Deliveries: readonly IPackageDelivery[]
 }
 
@@ -103,6 +105,27 @@ export class LoggerEnvironmentDiagnostics implements IEnvironmentDiagnostics
     private static NameOf(error: unknown): string
     {
         return error instanceof Error ? error.name : LoggerEnvironmentDiagnostics.UnknownName
+    }
+}
+
+export enum EnvironmentHostErrorCode
+{
+    /** The engine kept upgrading on every settle attempt; a later request runs on the settled engine. */
+    Unsettled = 1,
+}
+
+/** A failure of the environment host itself (not of a query or a write): the request fails (InternalError). */
+export class EnvironmentHostError extends Error
+{
+    private static readonly ErrorName = 'EnvironmentHostError'
+    private static readonly Messages: Readonly<Record<EnvironmentHostErrorCode, string>> = {
+        [EnvironmentHostErrorCode.Unsettled]: 'the environment graph engine kept upgrading while the request was prepared',
+    }
+
+    public constructor(public readonly Code: EnvironmentHostErrorCode)
+    {
+        super(EnvironmentHostError.Messages[Code])
+        this.name = EnvironmentHostError.ErrorName
     }
 }
 
@@ -254,7 +277,7 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
 
     /**
      * The engine and the snapshot it runs, once their versions agree (an upgrade being applied installs its snapshot
-     * after the engine upgraded); EngineCypherQueryError Unsettled when they still differ after `MaxSettles` yields.
+     * after the engine upgraded); EnvironmentHostError Unsettled when they still differ after `MaxSettles` yields.
      */
     public async Settled(): Promise<readonly [GraphEngine, EnvironmentSnapshot]>
     {
@@ -265,7 +288,7 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
             if (snapshot.Description.Version === engine.SchemaVersion) return [engine, snapshot]
             await new Promise<void>(resolve => setImmediate(resolve))
         }
-        throw new EngineCypherQueryError(EngineCypherQueryErrorCode.Unsettled)
+        throw new EnvironmentHostError(EnvironmentHostErrorCode.Unsettled)
     }
 
     /**
@@ -488,6 +511,7 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
             Connectors: catalog.Connectors,
             Identity: catalog.Identity,
             Catalog: catalog,
+            SchemaCatalog: new EngineSchemaCatalog(catalog.Description),
             Deliveries: deliveries,
         }
     }

@@ -81,12 +81,6 @@ export class EngineSchemaCatalog
         return this.EffectiveMembers(concept).get(member)?.Kind === MemberKind.Relationship
     }
 
-    /** The effective properties of `concept` the description marks non-nullable (`Nullable: false`). */
-    public RequiredProperties(concept: string): readonly string[]
-    {
-        return [...this.EffectiveMembers(concept).values()].filter(input => input.Kind === MemberKind.Property && input.Nullable === false).map(input => input.Name)
-    }
-
     /** The value type of an effective property of `concept` (String when the description leaves it unset); undefined when not a property. */
     public PropertyType(concept: string, member: string): ValueType | undefined
     {
