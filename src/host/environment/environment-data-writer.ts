@@ -106,14 +106,17 @@ class RecordedBatch
  * - Pre-checks per op, before anything begins: a known op kind, an id for update / delete, and the payload
  *   (`RuntimeWritePayloadValidator.Check` over the engine description, required fields from the TODL type, R39). A
  *   create's client id (R38) is the engine node's public id, or for an external binding the value of its id member
- *   (the source row is keyed by it; a payload id member that differs is `invalid`). The first failing op gets its
+ *   (the source row is keyed by it; a payload id member that differs, or a binding mapping no id member, is
+ *   `invalid`); two creates with one client id are `invalid` "duplicate id in batch". The first failing op gets its
  *   status, every other op `failed` "atomic batch rolled back".
  * - A System reader then finds the grants linked to each deleted record (`Links(record, In, record)`, kept when the far
  *   node is exactly a `todl.system.ShareGrant`) and the engine create ids already taken (`denied` "not authorized for
  *   this record", as before: a create cannot overwrite). The batch runs under `DeleteGrantsScope.For(callerScope,
- *   grantIds)`: a caller scope never writes grants (R31), so the delete of each such grant is admitted for exactly
- *   those ids. Inside the transaction each deleted record's grants are read again; one the pre-read missed (linked
- *   since) refuses the batch as `conflict` "write conflict" (R40; the recorded read lets OCC catch any linked later).
+ *   grantIds, catalog, deletedIds)`: a caller scope never writes grants (R31), so the delete of each pre-read grant is
+ *   admitted for exactly those ids, and every grant linking a deleted record is visible to the transaction whoever
+ *   it is addressed to. Inside the transaction each deleted record's grants are read again: one the pre-read missed
+ *   (linked since) refuses the batch as `conflict` "write conflict" and nothing is deleted (R40); the re-read is
+ *   recorded, so OCC refuses a commit racing a grant linked after it (ConflictError -> `conflict`).
  * - Updates and deletes fetch their records in the transaction first (`GraphTransaction.Fetch`, R15 / plan O1 option
  *   (a); an external id is fetched as its binding's concept and model, `ExternalIdentity.Parse`), so a write to an
  *   external row is decided against the row the transaction read and carries its version (read-time OCC, spec 11.2).
@@ -140,6 +143,8 @@ export class EnvironmentDataWriter
     private static readonly IdMismatch = 'id does not match the record\'s id field'
     private static readonly UnknownOperation = 'unknown operation kind'
     private static readonly NoOwner = ''
+    private static readonly NoIdMember = 'the binding has no id field to take the id'
+    private static readonly DuplicateId = 'duplicate id in batch'
     /** An engine AccessError: "Access denied: op N (Op) on '<id>' (<concept>): <reason>" (N the recorded op index). */
     private static readonly DeniedPattern = /^Access denied: op (\d+) \(\w+\) on '(.*?)' \(/s
     private static readonly NumericPattern = /^-?\d+(\.\d+)?$/
@@ -159,9 +164,10 @@ export class EnvironmentDataWriter
         const [engine, snapshot] = await this.host.Settled()
         const catalog = snapshot.SchemaCatalog
         const planned: IPlannedOp[] = []
+        const clientIds = new Set<string>()
         for (let index = 0; index < operations.length; index++)
         {
-            const op = this.Plan(operations[index]!, catalog, snapshot.Catalog)
+            const op = this.Plan(operations[index]!, catalog, snapshot.Catalog, clientIds)
             if (!('Kind' in op)) return EnvironmentDataWriter.Refused(operations.length, { Op: index, Outcome: op })
             planned.push(op)
         }
@@ -169,7 +175,8 @@ export class EnvironmentDataWriter
         const taken = planned.findIndex(op => op.Kind === AppWriteOpKind.Create && op.Id !== undefined && pre.Taken.has(op.Id))
         if (taken >= 0) return EnvironmentDataWriter.Refused(operations.length, { Op: taken, Outcome: EnvironmentDataWriter.Invisible })
         const graphScope = await (await this.scopes()).ScopeFor(context)
-        const scope = DeleteGrantsScope.For(graphScope.Scope, new Set(pre.Grants.keys()), catalog)
+        const deleted = new Set(planned.filter(op => op.Kind === AppWriteOpKind.Delete).map(op => op.Id!))
+        const scope = DeleteGrantsScope.For(graphScope.Scope, new Set(pre.Grants.keys()), catalog, deleted)
         const transaction = await engine.Begin(scope)
         try
         {
@@ -194,19 +201,24 @@ export class EnvironmentDataWriter
         }
     }
 
-    /** The pre-checked op, or the outcome refusing it. */
-    private Plan(op: AppWriteOpDto, catalog: EngineSchemaCatalog, environment: IEnvironmentCatalog): IPlannedOp | IWriteFailureOutcome
+    /** The pre-checked op, or the outcome refusing it; `clientIds` collects the batch's create client ids. */
+    private Plan(op: AppWriteOpDto, catalog: EngineSchemaCatalog, environment: IEnvironmentCatalog, clientIds: Set<string>): IPlannedOp | IWriteFailureOutcome
     {
         if (!EnvironmentDataWriter.Kinds.has(op.op)) return EnvironmentDataWriter.Invalid(EnvironmentDataWriter.UnknownOperation)
         const id = op.id !== undefined && op.id.length > 0 ? op.id : undefined
         if (op.op !== AppWriteOpKind.Create && id === undefined) return EnvironmentDataWriter.Invalid(EnvironmentDataWriter.IdRequired)
         const create = op.op === AppWriteOpKind.Create
+        if (create && id !== undefined)
+        {
+            if (clientIds.has(id)) return EnvironmentDataWriter.Invalid(EnvironmentDataWriter.DuplicateId)
+            clientIds.add(id)
+        }
         const binding = create ? environment.Identity.CreateTarget(op.concept) : undefined
         let fields = op.op === AppWriteOpKind.Delete ? undefined : op.fields
         if (create && id !== undefined && binding !== undefined)
         {
             const keyed = EnvironmentDataWriter.KeyedFields(environment.Identity, binding, fields, id)
-            if (keyed === undefined) return EnvironmentDataWriter.Invalid(EnvironmentDataWriter.IdMismatch)
+            if (typeof keyed === 'string') return EnvironmentDataWriter.Invalid(keyed)
             fields = keyed
         }
         const type = environment.Snapshot.getType(op.concept) as IConceptType | undefined
@@ -218,17 +230,19 @@ export class EnvironmentDataWriter
 
     /**
      * `fields` with the external binding's id member set to the client id (numeric for a numeric id member, so the
-     * validator converts it); undefined when the payload already gives the id member a different value.
+     * validator converts it); else the reason refusing the client id: the binding maps no id member (or maps one the
+     * concept does not declare as a property), or the payload already gives it a different value.
      */
-    private static KeyedFields(identity: ExternalIdentity, binding: IExternalBinding, fields: Record<string, unknown> | undefined, id: string): Record<string, unknown> | undefined
+    private static KeyedFields(identity: ExternalIdentity, binding: IExternalBinding, fields: Record<string, unknown> | undefined, id: string): Record<string, unknown> | string
     {
         const member = identity.IdMemberName(binding)
-        if (member === undefined) return fields
         const type = identity.IdMemberType(binding)
+        // no member maps the source key, or the one that does is not a property of the concept
+        if (member === undefined || type === undefined) return EnvironmentDataWriter.NoIdMember
         const numeric = (type === ValueType.Int64 || type === ValueType.Float64) && EnvironmentDataWriter.NumericPattern.test(id)
         const value: unknown = numeric ? Number(id) : id
         const given = fields?.[member]
-        if (given !== undefined && given !== null && String(given) !== String(value)) return undefined
+        if (given !== undefined && given !== null && String(given) !== String(value)) return EnvironmentDataWriter.IdMismatch
         return { ...(fields ?? {}), [member]: value }
     }
 

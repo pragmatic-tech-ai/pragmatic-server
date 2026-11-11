@@ -8,6 +8,8 @@ import { AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-pro
 import type { AppWriteOpDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessLevel, OwnershipSourceKind, Principal, PrincipalKind, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
+import { RuntimeWritePayloadValidator } from '../../runtime-write-payload-validator.js'
+import { EnvironmentDataWriter } from '../environment-data-writer.js'
 import { EnvironmentFixture } from './environment-fixture.js'
 import type { IEnvironmentFixtureOptions } from './environment-fixture.js'
 
@@ -25,8 +27,8 @@ class WriterFx
     public static readonly Crm = { id: 'crm', version: '1.0.0' }
     public static readonly Ext = { id: 'ext', version: '1.0.0' }
     public static readonly CrmTodl = 'namespace crm {\n  concept Account { name : string?; owner : string?; size : integer?; relationship parent -> Account?; }\n  concept Contact { name : string; }\n  model Crm : crm { Account seeded1 { } }\n}\n'
-    public static readonly ExtTodl = 'namespace ext {\n  concept Customer { id : string?; name : string?; }\n  concept Vendor { name : string?; }\n  concept Ledger { id : integer?; name : string?; }\n  datasource src { kind = sql; connection = "ext-db"; }\n'
-        + '  model Ext : ext { connect src; populate Customer key cust_id { name = "nm"; } populate Vendor key vend_id { name = "nm"; read-only; } populate Ledger key led_id { name = "nm"; } }\n}\n'
+    public static readonly ExtTodl = 'namespace ext {\n  concept Customer { id : string?; name : string?; }\n  concept Vendor { name : string?; }\n  concept Ledger { id : integer?; name : string?; }\n  concept Note { text : string?; }\n  datasource src { kind = sql; connection = "ext-db"; }\n'
+        + '  model Ext : ext { connect src; populate Customer key cust_id { name = "nm"; } populate Vendor key vend_id { name = "nm"; read-only; } populate Ledger key led_id { name = "nm"; } populate Note key note_id { text = "tx"; } }\n}\n'
     public static readonly Account = 'crm.Account'
     public static readonly Customer = 'ext.Customer'
     public static readonly Vendor = 'ext.Vendor'
@@ -56,6 +58,10 @@ class WriterFx
     public static readonly R1 = 'r1'
     public static readonly R2 = 'r2'
     public static readonly G1 = 'g1'
+    public static readonly G2 = 'g2'
+    public static readonly Note = 'ext.Note'
+    public static readonly DuplicateId = 'duplicate id in batch'
+    public static readonly NoIdMember = 'the binding has no id field to take the id'
     public static readonly A = 'a'
     public static readonly B = 'b'
     public static readonly Changed = 'changed'
@@ -416,6 +422,47 @@ describe('data/write on the environment engine', () =>
             const result = await WriterFx.Write(fx, [{ op: AppWriteOpKind.Create, concept: WriterFx.Customer, id: WriterFx.ClientKey, fields: { [WriterFx.Name]: WriterFx.Renamed } }])
             assert.deepEqual(result.results, [{ status: AppWriteStatus.Applied, id: await WriterFx.CustomerId(fx, WriterFx.ClientKey) }], JSON.stringify(result))
             assert.deepEqual(fx.Source.Adapter.Rows(WriterFx.CustomerSource).map(row => row[WriterFx.CustomerKey]), [WriterFx.AcmeKey, WriterFx.ClientKey])
+        })
+    })
+
+    test('a grant linked after the pre-read refuses the delete', async () =>
+    {
+        await WriterFx.Run({ Identity: true, SecurityModel: WriterFx.Model() }, async fx =>
+        {
+            await WriterFx.SeedAccounts(fx, [[WriterFx.R1, WriterFx.P1]])
+            await WriterFx.Grant(fx, WriterFx.G1, WriterFx.R1)
+            const server = fx.Server
+            // the scope source is resolved after the grant pre-read and before the transaction begins: a grant to
+            // another subject linked there is not one the caller's own grant rows would show
+            const writer = new EnvironmentDataWriter(server.EnvironmentEngine(), async () =>
+            {
+                await WriterFx.Grant(fx, WriterFx.G2, WriterFx.R1)
+                return server.EnvironmentScopes()
+            }, new RuntimeWritePayloadValidator())
+            const result = await writer.Apply(fx.ContextFor(WriterFx.Principal(WriterFx.P1)), [{ op: AppWriteOpKind.Delete, concept: WriterFx.Account, id: WriterFx.R1 }])
+            assert.deepEqual(WriterFx.Statuses(result), [[AppWriteStatus.Conflict, WriterFx.WriteConflict]])
+            for (const id of [WriterFx.R1, WriterFx.G1, WriterFx.G2]) assert.ok((await WriterFx.Node(fx, id)) !== undefined, id + ' is not deleted')
+        })
+    })
+
+    test('two creates with one client id are invalid', async () =>
+    {
+        await WriterFx.Run({}, async fx =>
+        {
+            const create: AppWriteOpDto = { op: AppWriteOpKind.Create, concept: WriterFx.Account, id: WriterFx.ClientId, fields: { [WriterFx.Name]: WriterFx.A } }
+            const result = await WriterFx.Write(fx, [create, { ...create }])
+            assert.deepEqual(WriterFx.Statuses(result), [[AppWriteStatus.Failed, WriterFx.RolledBack], [AppWriteStatus.Invalid, WriterFx.DuplicateId]])
+            assert.equal(await WriterFx.Node(fx, WriterFx.ClientId), undefined)
+        })
+    })
+
+    test('a client id on a binding with no id member is invalid', async () =>
+    {
+        await WriterFx.Run({}, async fx =>
+        {
+            const result = await WriterFx.Write(fx, [{ op: AppWriteOpKind.Create, concept: WriterFx.Note, id: WriterFx.ClientKey, fields: {} }])
+            assert.deepEqual(WriterFx.Statuses(result), [[AppWriteStatus.Invalid, WriterFx.NoIdMember]])
+            assert.equal(fx.Source.Adapter.Batches.length, 0, 'nothing reached the source')
         })
     })
 })
