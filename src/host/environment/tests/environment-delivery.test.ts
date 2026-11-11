@@ -81,6 +81,8 @@ class DeliveryFx
     public static readonly NameMember = 'name'
     public static readonly ModelFile = 'model.json'
     public static readonly LivePointer = 'live'
+    public static readonly EngineField = 'environmentEngine'
+    public static readonly ExtSet = 'ext-set'
     public static readonly Entry = 'index.html'
     public static readonly Page = '<html></html>'
     public static readonly Base64 = 'base64'
@@ -133,6 +135,15 @@ class DeliveryFx
     {
         const result = await fx.Server.DeployApplication(DeliveryFx.Params(fx, app, version, refs))
         assert.equal(result.status, AppWriteStatus.Applied, result.reason)
+    }
+
+    /**
+     * Installs `host` as the server's environment engine (the memoized private field `EnvironmentEngine()` returns), so
+     * a server endpoint runs against a host whose opens a test can fail. The fixture disposes it.
+     */
+    public static Install(fx: EnvironmentFixture, host: EnvironmentEngineHost): void
+    {
+        (fx.Server as unknown as Record<string, EnvironmentEngineHost>)[DeliveryFx.EngineField] = fx.Track(host)
     }
 
     public static async Definitions(host: EnvironmentEngineHost): Promise<string[]>
@@ -212,7 +223,8 @@ describe('environment delivery (ruling S4)', () =>
         await DeliveryFx.Run(async fx =>
         {
             await DeliveryFx.Deploy(fx, DeliveryFx.CrmApp, DeliveryFx.V1, [DeliveryFx.Crm])
-            const engine = await fx.Server.EnvironmentEngine().Engine()
+            const host = fx.Server.EnvironmentEngine()
+            const engine = await host.Engine()
             const version = engine.SchemaVersion
             const result = await fx.Server.DeployApplication(DeliveryFx.Params(fx, DeliveryFx.OtherApp, DeliveryFx.V1, [DeliveryFx.CrmMajor]))
             const expected = await EnvironmentCatalogComposer.Compose({
@@ -226,7 +238,9 @@ describe('environment delivery (ruling S4)', () =>
             assert.equal(result.reason, expected)
             for (const part of [DeliveryFx.Crm.id, DeliveryFx.Crm.version, DeliveryFx.CrmMajor.version, DeliveryFx.CrmApp, DeliveryFx.OtherApp]) assert.ok(result.reason?.includes(part), part)
             assert.equal(existsSync(join(fx.AppsDir, DeliveryFx.OtherApp, DeliveryFx.LivePointer)), false, 'the live pointer is not written')
-            assert.equal(engine.SchemaVersion, version, 'the engine is unchanged')
+            const current = await host.Engine()
+            assert.equal(current, engine, 'not reopened')
+            assert.equal(current.SchemaVersion, version, 'the engine is unchanged')
         })
     })
 
@@ -292,6 +306,25 @@ describe('environment delivery (ruling S4)', () =>
             assert.equal(diagnostics.Upgrades.length, 1)
             assert.equal(readFileSync(join(fx.AppsDir, DeliveryFx.ExtApp, DeliveryFx.LivePointer), 'utf8'), DeliveryFx.V1, 'the deploy landed')
             assert.ok((await DeliveryFx.Definitions(host)).includes(DeliveryFx.Customer), 'the next use retries and sees the app')
+        })
+    })
+
+    test('upgrade failure after promote is InternalError and retries', async () =>
+    {
+        await DeliveryFx.Run(async fx =>
+        {
+            fx.Live(DeliveryFx.CrmApp, DeliveryFx.V1, [DeliveryFx.Crm])
+            const diagnostics = new UpgradeDiagnostics()
+            const host = new FailingOpenHost(fx.Deliveries(), new NodeFsStorage(fx.PackagesDir), fx.Services(), { Kind: StorageKind.Lmdb, Path: fx.StorePath }, diagnostics)
+            DeliveryFx.Install(fx, host)
+            await host.Engine()
+            // ext brings a new connector: the redelivery reopens, and that open fails
+            host.FailNextOpen = true
+            await assert.rejects(fx.Server.LoadEnvironmentGraph({ graphName: DeliveryFx.ExtSet, packages: [DeliveryFx.Contributed(fx, DeliveryFx.Ext)] }),
+                (error: unknown) => error instanceof ResponseError && error.code === ErrorCodes.InternalError && error.message === EnvironmentUpgradeFailedError.PromoteReason)
+            assert.equal(diagnostics.Upgrades.length, 1)
+            assert.equal((await fx.Server.LoadedGraph())?.name, DeliveryFx.ExtSet, 'the promote record landed')
+            assert.ok((await DeliveryFx.Definitions(host)).includes(DeliveryFx.Customer), 'the next use retries and sees the promote set')
         })
     })
 })

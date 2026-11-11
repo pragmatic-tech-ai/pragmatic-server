@@ -77,6 +77,11 @@ class IngestFixture
     public static readonly ManifestFile = 'application.json'
     public static readonly Secret = 'SECRET-PAYLOAD-BYTES'
     public static readonly TenantId = 't1'
+    public static readonly CorePackage = 'shop.core'
+    public static readonly BasePackage = 'shop.base'
+    public static readonly BaseVersion = '2.0.0'
+    public static readonly CoreConcept = 'Order'
+    public static readonly BaseConcept = 'Customer'
 
     public readonly Root = mkdtempSync(join(tmpdir(), 'ingest-'))
     public readonly PackagesDir = join(this.Root, 'packages')
@@ -127,9 +132,9 @@ class IngestFixture
     public static ServableParams(): CypherAppDeployParamsDto
     {
         const params = IngestFixture.Params()
-        const core = { ...IngestFixture.Document('shop.core', 'Order'), dependencies: [{ id: 'shop.base', version: '2.0.0' }] }
+        const core = { ...IngestFixture.Document(IngestFixture.CorePackage, IngestFixture.CoreConcept), dependencies: [{ id: IngestFixture.BasePackage, version: IngestFixture.BaseVersion }] }
         params.packages[0]!.modelJson = JSON.stringify(core)
-        params.packages[1]!.modelJson = JSON.stringify(IngestFixture.Document('shop.base', 'Customer'))
+        params.packages[1]!.modelJson = JSON.stringify(IngestFixture.Document(IngestFixture.BasePackage, IngestFixture.BaseConcept))
         return params
     }
 
@@ -590,6 +595,21 @@ test('a same-version retry after a failed live-pointer write resumes by writing 
         assert.equal((await service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
         assert.equal(readFileSync(join(fx.AppsDir, 'shop', 'live'), 'utf8'), '1.0.0')
         assert.equal((await service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Conflict)
+    })
+})
+
+test('a resume writes a package the interrupted deploy had not stored', async () =>
+{
+    await IngestFixture.Run(async fx =>
+    {
+        const apps = new PointerFailingStorage(fx.AppsDir)
+        const service = new AppIngestService(fx.Packages, apps, fx.Gate)
+        assert.equal((await service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Failed)
+        const missing = join(fx.PackagesDir, IngestFixture.BasePackage, IngestFixture.BaseVersion, 'model.json')
+        rmSync(missing)
+        apps.FailPointer = false
+        assert.equal((await service.Ingest(IngestFixture.Params())).status, AppWriteStatus.Applied)
+        assert.ok(existsSync(missing), 'the gate composes over the full closure')
     })
 })
 

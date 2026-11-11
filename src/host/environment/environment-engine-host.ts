@@ -101,6 +101,8 @@ export class LoggerEnvironmentDiagnostics implements IEnvironmentDiagnostics
 export class EnvironmentUpgradeFailedError extends Error
 {
     public static readonly Reason = 'deployed, but the environment graph could not be upgraded; it is retried on next use'
+    /** The same failure on a promote (`graph/load`): the promote record is persisted, the upgrade is retried on next use. */
+    public static readonly PromoteReason = 'promoted, but the environment graph could not be upgraded; it is retried on next use'
     private static readonly ErrorName = 'EnvironmentUpgradeFailedError'
 
     public constructor(public readonly Result: unknown, cause: unknown)

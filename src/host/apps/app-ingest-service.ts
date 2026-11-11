@@ -131,11 +131,9 @@ export class AppIngestService
             try
             {
                 const resume = await this.AssertImmutable(plan, params)
-                if (!resume)
-                {
-                    // S4 step 1: the packages are stored (immutably) first, so the gate composes over them.
-                    await this.Commit(plan.files.filter(file => file.storage === this.packages && file.skip !== true))
-                }
+                // S4 step 1: the packages are stored (immutably) first, so the gate composes over them; on a resume
+                // only the ones still missing are written.
+                await this.Commit(plan.files.filter(file => file.storage === this.packages && file.skip !== true))
                 // S4 steps 2-4: the gate validates the prospective deliveries, runs the persist step, then upgrades.
                 await this.gate.Deliver(AppIngestService.ChangeOf(params), async () =>
                 {
@@ -220,9 +218,13 @@ export class AppIngestService
         }
     }
 
-    /** Versions are immutable: refuse an already-deployed name@version and a package version whose content differs. */
+    /**
+     * Versions are immutable: refuse an already-deployed name@version and a package version whose content differs; marks
+     * already-stored packages skip. True when this is a resume (the complete version tree is stored, not yet live).
+     */
     private async AssertImmutable(plan: IngestPlan, params: CypherAppDeployParamsDto): Promise<boolean>
     {
+        let resume = false
         if (await this.applications.Exists(plan.marker.path))
         {
             let existing: unknown
@@ -247,9 +249,11 @@ export class AppIngestService
                 {
                     throw new IngestRejection(AppWriteStatus.Conflict, AppIngestService.VersionExistsMessage)
                 }
-                return true
+                resume = true
             }
         }
+        // Stored packages are marked skip (a resume included: MatchesStored tolerates a package not yet written, which
+        // the package commit then writes, so the gate can compose over it).
         for (const file of plan.files)
         {
             if (file.storage === this.packages && await this.packages.Exists(file.path))
@@ -262,7 +266,7 @@ export class AppIngestService
                 file.skip = true
             }
         }
-        return false
+        return resume
     }
 
     /** True when the marker and every UI file are byte-identical to what is stored, and no already-stored package file differs. */

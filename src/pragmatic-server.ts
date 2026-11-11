@@ -494,7 +494,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
             }
             if (error instanceof EnvironmentUpgradeFailedError)
             {
-                throw new ResponseError(ErrorCodes.InternalError, error.message)
+                throw new ResponseError(ErrorCodes.InternalError, EnvironmentUpgradeFailedError.PromoteReason)
             }
             throw error
         }
