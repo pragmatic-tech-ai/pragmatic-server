@@ -1,6 +1,6 @@
 import { AccessError, AccessErrorCode, CommitError, CommitErrorCode, ConflictError, ConnectorError, ConnectorPhase, Cypher } from '@pragmatic-tech-ai/graph'
 import { WriteFailureKind } from '@pragmatic-tech-ai/todl'
-import { EngineBridgeError, EngineBridgeErrorCode, ExternalWriteError } from '@pragmatic-tech-ai/todl/engine'
+import { EngineBridgeError, EngineBridgeErrorCode, ExternalVersionConflict, ExternalWriteError } from '@pragmatic-tech-ai/todl/engine'
 import { AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /** What a failed engine write means for the caller: the wire status and its reason. */
@@ -38,7 +38,8 @@ export class EngineWriteFailure
     public static readonly ReadOnlyBinding = 'binding is read-only'
     public static readonly UnsupportedBySource = 'the source cannot apply the write'
 
-    private static readonly Conflict: IWriteFailureOutcome = { Status: AppWriteStatus.Conflict, Reason: EngineWriteFailure.WriteConflict }
+    /** The `conflict` "write conflict" outcome. */
+    public static readonly Conflict: IWriteFailureOutcome = { Status: AppWriteStatus.Conflict, Reason: EngineWriteFailure.WriteConflict }
     private static readonly Failed: IWriteFailureOutcome = { Status: AppWriteStatus.Failed, Reason: EngineWriteFailure.WriteFailed }
 
     public static Map(error: unknown): IWriteFailureOutcome | undefined
@@ -50,6 +51,20 @@ export class EngineWriteFailure
         if (error instanceof ConnectorError) return EngineWriteFailure.Connector(error)
         if (error instanceof EngineBridgeError) return EngineWriteFailure.Bridge(error)
         return undefined
+    }
+
+    /**
+     * True for the engine's own OCC conflict (a concurrent commit, or a commit racing an upgrade): nothing was applied
+     * and a retry on a fresh snapshot may succeed. An external source's conflict (a stale read-time version, a key the
+     * source already holds) is not one: it maps to `conflict` but is not retried.
+     */
+    public static IsEngineConflict(error: unknown): boolean
+    {
+        if (error instanceof Cypher.CypherWriteError)
+        {
+            return error.cause === undefined ? error.WriteCode === Cypher.CypherWriteErrorCode.Conflict : EngineWriteFailure.IsEngineConflict(error.cause)
+        }
+        return error instanceof ConflictError && !(error instanceof ExternalVersionConflict)
     }
 
     private static CypherWrite(error: Cypher.CypherWriteError): IWriteFailureOutcome

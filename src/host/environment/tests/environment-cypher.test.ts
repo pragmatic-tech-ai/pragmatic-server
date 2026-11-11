@@ -6,6 +6,10 @@ import { AppWriteStatus, CypherCells, ErrorCodes } from '@pragmatic-tech-ai/prag
 import type { CypherQueryPageDto, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessLevel, OwnershipSourceKind, Principal, PrincipalKind, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
+import { CypherLimits } from '../../../config/cypher-limits.js'
+import type { IGraphScopeSource } from '../../engine/access-scope-source.js'
+import type { ICypherExecuteRequest } from '../../engine/graph-cypher-execute.js'
+import { EnvironmentCypherExecute } from '../environment-cypher-execute.js'
 import { EnvironmentFixture } from './environment-fixture.js'
 import type { IEnvironmentFixtureOptions } from './environment-fixture.js'
 
@@ -22,7 +26,7 @@ class CypherFx
     public static readonly AppVersion = '1.0.0'
     public static readonly Crm = { id: 'crm', version: '1.0.0' }
     public static readonly Ext = { id: 'ext', version: '1.0.0' }
-    public static readonly CrmTodl = 'namespace crm {\n  concept Account { name : string?; owner : string?; }\n}\n'
+    public static readonly CrmTodl = 'namespace crm {\n  concept Account { name : string?; owner : string?; secret : string?; }\n}\n'
     public static readonly ExtTodl = 'namespace ext {\n  concept Customer { id : string?; name : string?; }\n  concept Vendor { name : string?; }\n  datasource src { kind = sql; connection = "ext-db"; }\n'
         + '  model Ext : ext { connect src; populate Customer key cust_id { name = "nm"; } populate Vendor key vend_id { name = "nm"; read-only; } }\n}\n'
     public static readonly Account = 'crm.Account'
@@ -41,12 +45,33 @@ class CypherFx
     public static readonly NewKey = 'k9'
     public static readonly NewCustomer = 'Newco'
     public static readonly Unknown = 'nope'
+    /** How long the gated execute stalls: far longer than an in-memory create commit takes. */
+    public static readonly GateMs = 300
+    public static readonly R1 = 'r1'
+    public static readonly R2 = 'r2'
+    public static readonly X = 'x'
+    public static readonly Y = 'y'
+    public static readonly Z = 'z'
+    public static readonly V = 'v'
+    public static readonly A = 'a'
+    public static readonly B = 'b'
+    public static readonly D = 'd'
+    public static readonly F = 'f'
+    public static readonly AcmeKey = 'k1'
+    public static readonly AccountColumn = 'account'
+    public static readonly CustomerColumn = 'customer'
+    public static readonly Secret = 'secret'
+    public static readonly Hush = 'hush'
+    public static readonly Profile = 'secret-readers'
+    public static readonly ProfileName = 'Secret readers'
     public static readonly System = 'todl.system'
     public static readonly UuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
     public static readonly ModelNotFound = /model not found/
     public static readonly RevisionAdvanced = 'graph revision has advanced'
     public static readonly RecordDenied = 'not authorized for this record'
-    public static readonly Joined = 'MATCH (a:`crm.Account`), (c:`ext.Customer`) RETURN a.name AS account, c.name AS customer ORDER BY account, customer'
+    public static readonly Joined = `MATCH (a:\`crm.Account\`), (c:\`ext.Customer\`) RETURN a.name AS ${CypherFx.AccountColumn}, c.name AS ${CypherFx.CustomerColumn} ORDER BY ${CypherFx.AccountColumn}, ${CypherFx.CustomerColumn}`
+    public static readonly Secrets = `MATCH (a:\`crm.Account\`) RETURN a.name AS name, a.secret AS ${CypherFx.Secret} ORDER BY name`
+    public static readonly AccountNodes = 'MATCH (a:`crm.Account`) RETURN a ORDER BY a.name'
     public static readonly Elements = 'MATCH (n:`todl.Element`) WHERE n.name IS NOT NULL RETURN n.name AS name ORDER BY name'
     public static readonly Accounts = 'MATCH (a:`crm.Account`) RETURN a.name AS name ORDER BY name'
     public static readonly Customers = 'MATCH (c:`ext.Customer`) RETURN c.name AS name ORDER BY name'
@@ -70,7 +95,19 @@ class CypherFx
                 { principalId: CypherFx.P1, roles: [CypherFx.UserRole] },
                 { principalId: CypherFx.P2, roles: [CypherFx.UserRole] },
             ] },
+            fieldSecurity: {
+                securedFields: [{ concept: CypherFx.Account, field: CypherFx.Secret }],
+                profiles: [{ id: CypherFx.Profile, name: CypherFx.ProfileName, grants: [{ concept: CypherFx.Account, field: CypherFx.Secret, read: true }] }],
+                profileAssignment: { claimsMapping: [], teamProfiles: [], overrides: [{ principalId: CypherFx.P2, profiles: [CypherFx.Profile] }] },
+            },
         }
+    }
+
+    /** A cypher/execute request for `CreateAccount` named `name`, guarded by `expectedRevision`. */
+    public static Request(name: string, expectedRevision: number): ICypherExecuteRequest
+    {
+        const limits = new CypherLimits()
+        return { cypher: CypherFx.CreateAccount, parameters: new Map([[CypherFx.Name, name]]), expectedRevision, timeoutMs: limits.TimeoutMs, maxVarLength: limits.MaxVarLength }
     }
 
     public static Principal(id: string): Principal
@@ -88,7 +125,7 @@ class CypherFx
             await fx.Package(CypherFx.Ext.id, CypherFx.Ext.version, CypherFx.ExtTodl)
             fx.Live(CypherFx.CrmApp, CypherFx.AppVersion, [CypherFx.Crm])
             fx.Live(CypherFx.ExtApp, CypherFx.AppVersion, [CypherFx.Ext])
-            fx.Source.Adapter.Seed(CypherFx.CustomerSource, [{ [CypherFx.CustomerKey]: 'k1', [CypherFx.NameField]: CypherFx.Acme }])
+            fx.Source.Adapter.Seed(CypherFx.CustomerSource, [{ [CypherFx.CustomerKey]: CypherFx.AcmeKey, [CypherFx.NameField]: CypherFx.Acme }])
             await fx.Start(options)
             await body(fx)
         }
@@ -169,17 +206,33 @@ class CypherFx
     }
 }
 
+/** A scope source whose first `Source()` call stalls `delayMs` (after the execute's revision check, before its write). */
+class GatedScopes
+{
+    private calls = 0
+
+    public constructor(private readonly inner: () => Promise<IGraphScopeSource>, private readonly delayMs: number)
+    {
+    }
+
+    public async Source(): Promise<IGraphScopeSource>
+    {
+        if (this.calls++ === 0) await new Promise<void>(resolve => setTimeout(resolve, this.delayMs))
+        return this.inner()
+    }
+}
+
 describe('runtime cypher on the environment engine', () =>
 {
     test('runtime query reads engine and external data', async () =>
     {
         await CypherFx.Run({}, async fx =>
         {
-            await CypherFx.SeedAccounts(fx, [['r1', CypherFx.P1]])
+            await CypherFx.SeedAccounts(fx, [[CypherFx.R1, CypherFx.P1]])
             const client = await fx.Connect(CypherFx.Principal(CypherFx.P1))
             const page = await client.CypherQuery(CypherFx.Joined)
-            assert.deepEqual(page.columns, ['account', 'customer'])
-            assert.deepEqual(CypherFx.Rows(page), [['r1', CypherFx.Acme]], 'one MATCH over an engine-stored and an external concept')
+            assert.deepEqual(page.columns, [CypherFx.AccountColumn, CypherFx.CustomerColumn])
+            assert.deepEqual(CypherFx.Rows(page), [[CypherFx.R1, CypherFx.Acme]], 'one MATCH over an engine-stored and an external concept')
         })
     })
 
@@ -187,13 +240,13 @@ describe('runtime cypher on the environment engine', () =>
     {
         await CypherFx.Run({}, async fx =>
         {
-            await CypherFx.SeedAccounts(fx, [['r1', CypherFx.P1]])
+            await CypherFx.SeedAccounts(fx, [[CypherFx.R1, CypherFx.P1]])
             const client = await fx.Connect(CypherFx.Principal(CypherFx.P1))
             const models = (await client.CypherModels()).models
             assert.deepEqual(models, [CypherFx.Crm.id, CypherFx.Ext.id], 'cypher/models lists the delivered packages, sorted, without todl.system')
             assert.ok(!models.includes(CypherFx.System))
-            assert.deepEqual(CypherFx.Column(await client.CypherQuery(CypherFx.Elements)), [CypherFx.Acme, 'r1'], 'tenant-wide: both packages')
-            assert.deepEqual(CypherFx.Column(await client.CypherQuery(CypherFx.Elements, undefined, undefined, CypherFx.Crm.id)), ['r1'], 'crm: its engine nodes only')
+            assert.deepEqual(CypherFx.Column(await client.CypherQuery(CypherFx.Elements)), [CypherFx.Acme, CypherFx.R1], 'tenant-wide: both packages')
+            assert.deepEqual(CypherFx.Column(await client.CypherQuery(CypherFx.Elements, undefined, undefined, CypherFx.Crm.id)), [CypherFx.R1], 'crm: its engine nodes only')
             assert.deepEqual(CypherFx.Column(await client.CypherQuery(CypherFx.Elements, undefined, undefined, CypherFx.Ext.id)), [CypherFx.Acme], 'ext: its binding\'s external rows only')
             for (const unknown of [CypherFx.Unknown, CypherFx.System])
             {
@@ -208,10 +261,10 @@ describe('runtime cypher on the environment engine', () =>
     {
         await CypherFx.Run({ Identity: true, SecurityModel: CypherFx.Model() }, async fx =>
         {
-            await CypherFx.SeedAccounts(fx, [['r1', CypherFx.P1], ['r2', CypherFx.P2]])
+            await CypherFx.SeedAccounts(fx, [[CypherFx.R1, CypherFx.P1], [CypherFx.R2, CypherFx.P2]])
             const plain = await fx.Connect(CypherFx.Principal(CypherFx.P1))
             const unopened = CypherFx.Rows(await plain.CypherQuery(CypherFx.Accounts))
-            assert.deepEqual(unopened, [['r1']], 'allowed without application/open, and scoped (User level: own rows)')
+            assert.deepEqual(unopened, [[CypherFx.R1]], 'allowed without application/open, and scoped (User level: own rows)')
             for (const app of [CypherFx.CrmApp, CypherFx.ExtApp])
             {
                 const client = await fx.Connect(CypherFx.Principal(CypherFx.P1))
@@ -225,11 +278,11 @@ describe('runtime cypher on the environment engine', () =>
     {
         await CypherFx.Run({}, async fx =>
         {
-            await CypherFx.SeedAccounts(fx, [['b', CypherFx.P1], ['d', CypherFx.P1], ['f', CypherFx.P1]])
+            await CypherFx.SeedAccounts(fx, [[CypherFx.B, CypherFx.P1], [CypherFx.D, CypherFx.P1], [CypherFx.F, CypherFx.P1]])
             const client = await fx.Connect(CypherFx.Principal(CypherFx.P1))
-            // 'a' sorts before page 1's last row: offset paging would repeat 'b'
-            const seen = await CypherFx.Walk(client, CypherFx.Accounts, 1, async () => { await CypherFx.SeedAccounts(fx, [['a', CypherFx.P1]]) })
-            assert.deepEqual(seen, ['b', 'd', 'f'])
+            // A sorts before page 1's last row: offset paging would repeat B
+            const seen = await CypherFx.Walk(client, CypherFx.Accounts, 1, async () => { await CypherFx.SeedAccounts(fx, [[CypherFx.A, CypherFx.P1]]) })
+            assert.deepEqual(seen, [CypherFx.B, CypherFx.D, CypherFx.F])
         })
     })
 
@@ -238,18 +291,18 @@ describe('runtime cypher on the environment engine', () =>
         await CypherFx.Run({}, async fx =>
         {
             const client = await fx.Connect(CypherFx.Principal(CypherFx.P1))
-            const result = await client.CypherExecute(CypherFx.CreateAccount, { name: 'x' })
+            const result = await client.CypherExecute(CypherFx.CreateAccount, { name: CypherFx.X })
             assert.equal(result.status, AppWriteStatus.Applied, JSON.stringify(result))
             assert.equal(result.counts.nodesCreated, 1)
             const node = CypherCells.AsNode(result.rows[0]![0])!
             assert.match(node.id, CypherFx.UuidPattern, 'the public id is a fresh UUID')
             assert.equal(await CypherFx.OwnerOf(fx, node.id), CypherFx.Crm.id, 'owned by the home package')
             assert.equal(result.revision, await CypherFx.Revision(fx), 'revision = the latest commit')
-            const scoped = await client.CypherExecute(CypherFx.CreateAccount, { name: 'y' }, CypherFx.Crm.id)
+            const scoped = await client.CypherExecute(CypherFx.CreateAccount, { name: CypherFx.Y }, CypherFx.Crm.id)
             assert.equal(scoped.status, AppWriteStatus.Applied, 'a write confined to its own package applies')
-            const foreign = await client.CypherExecute(CypherFx.CreateAccount, { name: 'z' }, CypherFx.Ext.id)
+            const foreign = await client.CypherExecute(CypherFx.CreateAccount, { name: CypherFx.Z }, CypherFx.Ext.id)
             assert.equal(foreign.status, AppWriteStatus.Denied, 'a write confined to another package is Denied')
-            const unknown = await CypherFx.CodeOf(client.CypherExecute(CypherFx.CreateAccount, { name: 'z' }, CypherFx.Unknown))
+            const unknown = await CypherFx.CodeOf(client.CypherExecute(CypherFx.CreateAccount, { name: CypherFx.Z }, CypherFx.Unknown))
             assert.equal(unknown.code, ErrorCodes.InvalidParams)
         })
     })
@@ -260,12 +313,12 @@ describe('runtime cypher on the environment engine', () =>
         {
             const client = await fx.Connect(CypherFx.Principal(CypherFx.P1))
             const revision = await CypherFx.Revision(fx)
-            const stale = await client.CypherExecute(CypherFx.CreateAccount, { name: 'x' }, undefined, revision - 1)
+            const stale = await client.CypherExecute(CypherFx.CreateAccount, { name: CypherFx.X }, undefined, revision - 1)
             assert.equal(stale.status, AppWriteStatus.Conflict)
             assert.equal(stale.reason, CypherFx.RevisionAdvanced)
             assert.equal(stale.revision, revision)
             assert.deepEqual(CypherFx.Column(await client.CypherQuery(CypherFx.Accounts)), [], 'nothing was written')
-            assert.equal((await client.CypherExecute(CypherFx.CreateAccount, { name: 'x' }, undefined, revision)).status, AppWriteStatus.Applied)
+            assert.equal((await client.CypherExecute(CypherFx.CreateAccount, { name: CypherFx.X }, undefined, revision)).status, AppWriteStatus.Applied)
         })
     })
 
@@ -274,7 +327,7 @@ describe('runtime cypher on the environment engine', () =>
         await CypherFx.Run({}, async fx =>
         {
             const client = await fx.Connect(CypherFx.Principal(CypherFx.P1))
-            const result = await client.CypherExecute(CypherFx.CreateVendor, { name: 'v' })
+            const result = await client.CypherExecute(CypherFx.CreateVendor, { name: CypherFx.V })
             assert.equal(result.status, AppWriteStatus.Denied)
             assert.equal(result.reason, CypherFx.RecordDenied)
             assert.equal(fx.Source.Adapter.Batches.length, 0, 'nothing reached the source')
@@ -305,6 +358,41 @@ describe('runtime cypher on the environment engine', () =>
             const error = await CypherFx.CodeOf(client.OpenApplication(CypherFx.Unknown))
             assert.equal(error.code, ErrorCodes.InvalidParams)
             assert.deepEqual(await client.OpenApplication(CypherFx.CrmApp), { name: CypherFx.CrmApp, version: CypherFx.AppVersion })
+        })
+    })
+
+    test('a secured field reads only with its profile', async () =>
+    {
+        await CypherFx.Run({ Identity: true, SecurityModel: CypherFx.Model() }, async fx =>
+        {
+            await fx.Seed([CypherFx.P1, CypherFx.P2].map(owner => ({ Concept: CypherFx.Account, Id: owner, Properties: { [CypherFx.Name]: owner, [CypherFx.Owner]: owner, [CypherFx.Secret]: CypherFx.Hush } })))
+            const plain = await fx.Connect(CypherFx.Principal(CypherFx.P1))
+            const granted = await fx.Connect(CypherFx.Principal(CypherFx.P2))
+            assert.deepEqual(CypherFx.Rows(await plain.CypherQuery(CypherFx.Secrets)), [[CypherFx.P1, null]], 'without the profile the secured field reads as null')
+            assert.deepEqual(CypherFx.Rows(await granted.CypherQuery(CypherFx.Secrets)), [[CypherFx.P2, CypherFx.Hush]], 'with the profile it reads')
+            const hidden = CypherCells.AsNode((await plain.CypherQuery(CypherFx.AccountNodes)).items[0]![0])!
+            assert.ok(!(CypherFx.Secret in hidden.fields), 'a whole-node RETURN omits it without the profile')
+            const shown = CypherCells.AsNode((await granted.CypherQuery(CypherFx.AccountNodes)).items[0]![0])!
+            assert.equal(shown.fields[CypherFx.Secret]?.value, CypherFx.Hush, 'and includes it with the profile')
+        })
+    })
+
+    test('concurrent executes with one expectedRevision apply once', async () =>
+    {
+        await CypherFx.Run({}, async fx =>
+        {
+            const server = fx.Server
+            // the first execute stalls after its revision check (while resolving its scope): without serialization the
+            // second would check the same revision, write and commit before the first writes too
+            const scopes = new GatedScopes(() => server.EnvironmentScopes(), CypherFx.GateMs)
+            const execute = new EnvironmentCypherExecute(server.EnvironmentEngine(), () => scopes.Source())
+            const revision = await CypherFx.Revision(fx)
+            const context = fx.ContextFor(CypherFx.Principal(CypherFx.P1))
+            const results = await Promise.all([CypherFx.X, CypherFx.Y].map(name => execute.Run(context, undefined, CypherFx.Request(name, revision))))
+            assert.deepEqual(results.map(result => result.status), [AppWriteStatus.Applied, AppWriteStatus.Conflict])
+            assert.equal(results[1]!.reason, CypherFx.RevisionAdvanced)
+            const client = await fx.Connect(CypherFx.Principal(CypherFx.P1))
+            assert.deepEqual(CypherFx.Column(await client.CypherQuery(CypherFx.Accounts)), [CypherFx.X], 'exactly one write applied')
         })
     })
 })

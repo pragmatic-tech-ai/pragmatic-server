@@ -44,7 +44,7 @@ import { PageFingerprint, PageRequest } from './paging/page-request.js'
 import { BuildStateMapper } from './build-state-mapper.js'
 import { CypherParamConverter, CypherParamError } from './cypher/cypher-param-converter.js'
 import { AdapterPackError, AdapterPackErrorKind } from '@pragmatic-tech-ai/todl-connectors-host'
-import type { DevCypherRequest, IGraphCypherExecute } from './engine/dev-cypher-execute.js'
+import type { ICypherExecuteRequest, IGraphCypherExecute } from './engine/graph-cypher-execute.js'
 import { trace } from '@opentelemetry/api'
 import type { Context } from '@opentelemetry/api'
 import type { RequestInstrumentation } from '../observability/request-instrumentation.js'
@@ -611,7 +611,7 @@ export class ServerConnectionHandler
         {
             throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.CypherUnavailableMessage)
         }
-        const request: DevCypherRequest = { cypher: source, parameters, timeoutMs: this.cypherLimits.TimeoutMs, maxVarLength: this.cypherLimits.MaxVarLength }
+        const request: ICypherExecuteRequest = { cypher: source, parameters, timeoutMs: this.cypherLimits.TimeoutMs, maxVarLength: this.cypherLimits.MaxVarLength }
         if (params.expectedRevision !== undefined && params.expectedRevision !== null)
         {
             request.expectedRevision = params.expectedRevision

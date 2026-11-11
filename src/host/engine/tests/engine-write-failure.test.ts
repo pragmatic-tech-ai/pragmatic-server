@@ -19,6 +19,8 @@ class FailureFx
     public static readonly FieldDenied = 'not authorized for a field'
     public static readonly RecordDenied = 'not authorized for this record'
     public static readonly ReadOnlyBinding = 'binding is read-only'
+    public static readonly UnsupportedBySource = 'the source cannot apply the write'
+    public static readonly OtherKey = 'k2'
     public static readonly Binding = { Model: 'ext', Connector: 'src', Binding: { Concept: 'ext.Customer' } } as unknown as IExternalBinding
 
     public static Bridge(code: EngineBridgeErrorCode): EngineBridgeError
@@ -33,7 +35,7 @@ class FailureFx
 
     public static Failures(kind: WriteFailureKind): WriteFailure[]
     {
-        return [{ Key: FailureFx.Key, Kind: kind, Reason: FailureFx.Message }, { Key: 'k2', Kind: WriteFailureKind.Error, Reason: FailureFx.Message }]
+        return [{ Key: FailureFx.Key, Kind: kind, Reason: FailureFx.Message }, { Key: FailureFx.OtherKey, Kind: WriteFailureKind.Error, Reason: FailureFx.Message }]
     }
 
     public static ExternalWrite(kind: WriteFailureKind): ConnectorError
@@ -66,7 +68,7 @@ describe('engine write failure', () =>
             FailureFx.Expect(FailureFx.Connector(ConnectorPhase.Apply, FailureFx.Bridge(code)), AppWriteStatus.Invalid, EngineBridgeErrorCode[code])
         }
         FailureFx.Expect(FailureFx.ExternalWrite(WriteFailureKind.Conflict), AppWriteStatus.Conflict, FailureFx.WriteConflict)
-        assert.equal(EngineWriteFailure.Map(FailureFx.ExternalWrite(WriteFailureKind.Unsupported))?.Status, AppWriteStatus.Invalid)
+        FailureFx.Expect(FailureFx.ExternalWrite(WriteFailureKind.Unsupported), AppWriteStatus.Invalid, FailureFx.UnsupportedBySource)
         FailureFx.Expect(FailureFx.ExternalWrite(WriteFailureKind.Error), AppWriteStatus.Failed, FailureFx.WriteFailed)
         const compensation = new ExternalWriteError(EngineBridgeErrorCode.CompensationFailed, FailureFx.Message, FailureFx.Binding, [])
         FailureFx.Expect(FailureFx.Connector(ConnectorPhase.Commit, compensation), AppWriteStatus.Failed, FailureFx.WriteFailed)
@@ -83,5 +85,11 @@ describe('engine write failure', () =>
         FailureFx.Expect(new Cypher.CypherWriteError(FailureFx.Message, Cypher.CypherWriteErrorCode.Conflict, new ConflictError(FailureFx.Message)), AppWriteStatus.Conflict, FailureFx.WriteConflict)
         FailureFx.Expect(new Cypher.CypherWriteError(FailureFx.Message), AppWriteStatus.Invalid, Cypher.CypherWriteErrorCode[Cypher.CypherWriteErrorCode.Invalid])
         assert.equal(EngineWriteFailure.Map(new Error(FailureFx.Message)), undefined, 'an unknown error is not a write outcome')
+        // only the engine's own OCC conflict is retry-safe; an external source's conflict is not
+        assert.equal(EngineWriteFailure.IsEngineConflict(new ConflictError(FailureFx.Message)), true)
+        assert.equal(EngineWriteFailure.IsEngineConflict(new Cypher.CypherWriteError(FailureFx.Message, Cypher.CypherWriteErrorCode.Conflict, new ConflictError(FailureFx.Message))), true)
+        assert.equal(EngineWriteFailure.IsEngineConflict(stale), false)
+        assert.equal(EngineWriteFailure.IsEngineConflict(FailureFx.Connector(ConnectorPhase.Commit, stale)), false)
+        assert.equal(EngineWriteFailure.IsEngineConflict(FailureFx.ExternalWrite(WriteFailureKind.Conflict)), false)
     })
 })

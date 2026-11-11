@@ -3,7 +3,7 @@ import { StorageKind } from '@pragmatic-tech-ai/graph'
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
-import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog, Cypher } from '@pragmatic-tech-ai/todl'
+import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
 import type { ModelConnectorPlan, IDataSourceAdapterProvider, IDataSourceAdapterFactory } from '@pragmatic-tech-ai/todl'
 import type { Domain } from '@pragmatic-tech-ai/todl/domain'
 import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-system'
@@ -58,9 +58,9 @@ import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import { DeliveryChannel, EnvironmentCatalogError } from '@pragmatic-tech-ai/todl/engine'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import type { CypherExecuteResultDto, CypherAppDeployParamsDto, AppDeployResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CypherAppDeployParamsDto, AppDeployResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { DevCypherExecute, LoggerDevExecuteDiagnostics } from './host/engine/dev-cypher-execute.js'
-import type { DevCypherRequest } from './host/engine/dev-cypher-execute.js'
+import { LoggerExecuteDiagnostics } from './host/engine/graph-cypher-execute.js'
 import { PragmaticAppsRegistry } from './host/apps/pragmatic-apps-registry.js'
 import { NullLogger, StructuredLogger } from './observability/logger.js'
 import type { ILogger } from './observability/logger.js'
@@ -571,7 +571,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     public EnvironmentExecute(): EnvironmentCypherExecute
     {
         this.AssertRuntimePurpose()
-        this.environmentExecute ??= new EnvironmentCypherExecute(this.EnvironmentEngine(), () => this.EnvironmentScopes())
+        this.environmentExecute ??= new EnvironmentCypherExecute(this.EnvironmentEngine(), () => this.EnvironmentScopes(), new LoggerExecuteDiagnostics(this.options.logger ?? new NullLogger()))
         return this.environmentExecute
     }
 

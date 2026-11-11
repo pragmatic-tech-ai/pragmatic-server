@@ -21,33 +21,18 @@ import { DevGraphEngineHost } from './dev-graph-engine-host.js'
 import type { IDevGraphEngine } from './dev-graph-engine-host.js'
 import type { DevSnapshot } from './dev-snapshot-source.js'
 import { EngineWriteFailure } from './engine-write-failure.js'
+import { ExecuteAttempt } from './graph-cypher-execute.js'
+import type { ICypherExecuteRequest, IExecuteDiagnostics, IGraphCypherExecute } from './graph-cypher-execute.js'
 import { ModelWriteScopes } from './model-write-scopes.js'
 import type { IWriteFence } from './server-model-workspace.js'
-
-/** A validated cypher/execute request, free of wire concerns (the handler converts the parameters once). */
-export interface DevCypherRequest
-{
-    cypher: string
-    parameters: ReadonlyMap<string, Cypher.ParameterValue>
-    expectedRevision?: number
-    timeoutMs: number
-    maxVarLength: number
-}
-
-/**
- * The `cypher/execute` endpoint's engine side, for any engine host (ruling S1: dev DevCypherExecute, runtime
- * EnvironmentCypherExecute). `modelId` confines the write to one model; dev requires it, runtime takes it optionally.
- */
-export interface IGraphCypherExecute
-{
-    Run(context: AccessContext, modelId: string | undefined, request: DevCypherRequest): Promise<CypherExecuteResultDto>
-}
 
 /** What a failed engine write means for the caller (see the status mapping on {@link DevCypherExecute}). */
 export enum DevWriteFailureKind
 {
     /** An engine ConflictError (a concurrent commit, or a commit racing an upgrade): nothing was applied, retry-safe. */
     EngineConflict = 1,
+    /** An external source's conflict (a stale read-time version, a key the source holds): `conflict`, not retried. */
+    SourceConflict,
     /** A model's saved sources changed under the write (the connector's EngineBridgeError Stale). */
     SourcesChanged,
     Denied,
@@ -64,7 +49,7 @@ export enum DevWriteFailureKind
 export class DevWriteFailure
 {
     private static readonly ByStatus: ReadonlyMap<AppWriteStatus, DevWriteFailureKind> = new Map([
-        [AppWriteStatus.Conflict, DevWriteFailureKind.EngineConflict],
+        [AppWriteStatus.Conflict, DevWriteFailureKind.SourceConflict],
         [AppWriteStatus.Denied, DevWriteFailureKind.Denied],
         [AppWriteStatus.Invalid, DevWriteFailureKind.Invalid],
         [AppWriteStatus.Failed, DevWriteFailureKind.Failed],
@@ -81,6 +66,7 @@ export class DevWriteFailure
             default:
                 break
         }
+        if (EngineWriteFailure.IsEngineConflict(error)) return DevWriteFailureKind.EngineConflict
         const outcome = EngineWriteFailure.Map(error)
         return outcome === undefined ? undefined : DevWriteFailure.ByStatus.get(outcome.Status) ?? DevWriteFailureKind.Failed
     }
@@ -95,9 +81,8 @@ export class DevWriteFailure
 }
 
 /** Where a failure after a committed write is reported (the write is applied; only its rows or upgrade wait failed). */
-export interface IDevExecuteDiagnostics
+export interface IDevExecuteDiagnostics extends IExecuteDiagnostics
 {
-    AfterCommitFailed(error: unknown): void
     /**
      * A write's connector writes did not settle within `DevCypherExecute.MaxSettleMs` (a hung connector call): the
      * tenant is wedged (every execute is Failed) until they do; the lease stays held meanwhile.
@@ -149,21 +134,6 @@ class LeaseFence implements IWriteFence
     }
 }
 
-/** One attempt's outcome: the wire result, or that the engine conflicted (nothing applied) and a retry may succeed. */
-class Attempt
-{
-    public static readonly Conflicted = new Attempt(undefined)
-
-    private constructor(public readonly Result: CypherExecuteResultDto | undefined)
-    {
-    }
-
-    public static Done(result: CypherExecuteResultDto): Attempt
-    {
-        return new Attempt(result)
-    }
-}
-
 /**
  * Runs the dev tenant's Cypher writes on its embedded graph engine, under the caller's dev scope: the scope alone
  * decides what the write may see and do (the engine's WriteGate judges every op at commit); this class never filters,
@@ -183,7 +153,8 @@ class Attempt
  *   once the lease is lost (same Conflict). Like the legacy fence, a check and not a storage fence.
  * - Status mapping ({@link DevWriteFailure}): `CypherWriteErrorCode.Conflict` (engine ConflictError) is retried once
  *   (a commit racing an upgrade fails retry-safe), then Conflict; a connector `EngineBridgeError` Stale is Conflict,
- *   both "model sources changed during the write"; Denied or an AccessError (MemberReadOnly, HiddenMember included)
+ *   both "model sources changed during the write"; an external source's conflict (stale version, existing key) is
+ *   Conflict "write conflict", not retried; Denied or an AccessError (MemberReadOnly, HiddenMember included)
  *   is Denied; Invalid, NodeHasRelationships or EngineBridgeError NotEditable / ForeignId / UnsupportedValue is
  *   Invalid; ConnectorFailed otherwise (PersistFailed, a failed revert) is Failed. A refusal carries no counts or rows
  *   and the revision read after the connector restored what it wrote.
@@ -215,6 +186,7 @@ export class DevCypherExecute implements IGraphCypherExecute
     private static readonly NoRows: CypherQueryPageDto = { columns: [], items: [], truncated: false }
     private static readonly Reasons: Readonly<Record<DevWriteFailureKind, string>> = {
         [DevWriteFailureKind.EngineConflict]: DevCypherExecute.SourcesChangedReason,
+        [DevWriteFailureKind.SourceConflict]: EngineWriteFailure.WriteConflict,
         [DevWriteFailureKind.SourcesChanged]: DevCypherExecute.SourcesChangedReason,
         [DevWriteFailureKind.Denied]: DevCypherExecute.DeniedReason,
         [DevWriteFailureKind.Invalid]: DevCypherExecute.InvalidReason,
@@ -222,6 +194,7 @@ export class DevCypherExecute implements IGraphCypherExecute
     }
     private static readonly Statuses: Readonly<Record<DevWriteFailureKind, AppWriteStatus>> = {
         [DevWriteFailureKind.EngineConflict]: AppWriteStatus.Conflict,
+        [DevWriteFailureKind.SourceConflict]: AppWriteStatus.Conflict,
         [DevWriteFailureKind.SourcesChanged]: AppWriteStatus.Conflict,
         [DevWriteFailureKind.Denied]: AppWriteStatus.Denied,
         [DevWriteFailureKind.Invalid]: AppWriteStatus.Invalid,
@@ -245,7 +218,7 @@ export class DevCypherExecute implements IGraphCypherExecute
     {
     }
 
-    public async Run(context: AccessContext, modelId: string | undefined, request: DevCypherRequest): Promise<CypherExecuteResultDto>
+    public async Run(context: AccessContext, modelId: string | undefined, request: ICypherExecuteRequest): Promise<CypherExecuteResultDto>
     {
         if (modelId === undefined)
         {
@@ -258,7 +231,7 @@ export class DevCypherExecute implements IGraphCypherExecute
         return this.mutex.Run(() => this.Locked(context, modelId, request))
     }
 
-    private async Locked(context: AccessContext, modelId: string, request: DevCypherRequest): Promise<CypherExecuteResultDto>
+    private async Locked(context: AccessContext, modelId: string, request: ICypherExecuteRequest): Promise<CypherExecuteResultDto>
     {
         // wedged: an earlier write may still be writing files; refuse before taking the lease
         if (this.wedged !== undefined) return CypherExecuteResultMapper.Refused(AppWriteStatus.Failed, await this.revision(), DevCypherExecute.WedgedReason)
@@ -316,11 +289,11 @@ export class DevCypherExecute implements IGraphCypherExecute
         this.wedged = cleared.catch(() => undefined)
     }
 
-    private async Leased(context: AccessContext, modelId: string, request: DevCypherRequest, fence: LeaseFence): Promise<CypherExecuteResultDto>
+    private async Leased(context: AccessContext, modelId: string, request: ICypherExecuteRequest, fence: LeaseFence): Promise<CypherExecuteResultDto>
     {
         // one deadline for every attempt: a retry never extends the caller's timeout
         const deadline = Cypher.Deadline.After(request.timeoutMs)
-        let outcome = Attempt.Conflicted
+        let outcome = ExecuteAttempt.Conflicted
         for (let attempt = 1; attempt <= DevCypherExecute.MaxAttempts && outcome.Result === undefined; attempt++)
         {
             outcome = await this.Attempt(context, modelId, request, fence, deadline, attempt === DevCypherExecute.MaxAttempts)
@@ -328,13 +301,13 @@ export class DevCypherExecute implements IGraphCypherExecute
         return outcome.Result ?? this.Refuse(DevWriteFailureKind.EngineConflict)
     }
 
-    private async Attempt(context: AccessContext, modelId: string, request: DevCypherRequest, fence: LeaseFence, deadline: Cypher.Deadline, last: boolean): Promise<Attempt>
+    private async Attempt(context: AccessContext, modelId: string, request: ICypherExecuteRequest, fence: LeaseFence, deadline: Cypher.Deadline, last: boolean): Promise<ExecuteAttempt>
     {
         if (request.expectedRevision !== undefined && request.expectedRevision !== await this.revision())
         {
-            return Attempt.Done(CypherExecuteResultMapper.Refused(AppWriteStatus.Conflict, await this.revision(), DevCypherExecute.RevisionReason))
+            return ExecuteAttempt.Done(CypherExecuteResultMapper.Refused(AppWriteStatus.Conflict, await this.revision(), DevCypherExecute.RevisionReason))
         }
-        if (!(await fence.Held())) return Attempt.Done(await this.LeaseLost())
+        if (!(await fence.Held())) return ExecuteAttempt.Done(await this.LeaseLost())
         const [engine, snapshot] = await this.Settled()
         const devScope = await (await this.scopes()).ScopeFor(context)
         const scope = this.writeScopes.For(devScope.Scope, modelId, snapshot.Description)
@@ -348,12 +321,12 @@ export class DevCypherExecute implements IGraphCypherExecute
         {
             const kind = DevWriteFailure.KindOf(error)
             if (kind === undefined) throw EngineCypherQuery.WireError(error)
-            if (kind === DevWriteFailureKind.EngineConflict && !last) return Attempt.Conflicted
+            if (kind === DevWriteFailureKind.EngineConflict && !last) return ExecuteAttempt.Conflicted
             // a draft session refuses (Stale) once the fence it checks before its first write no longer holds
-            if (kind === DevWriteFailureKind.SourcesChanged && fence.Lost) return Attempt.Done(await this.LeaseLost())
-            return Attempt.Done(await this.Refuse(kind))
+            if (kind === DevWriteFailureKind.SourcesChanged && fence.Lost) return ExecuteAttempt.Done(await this.LeaseLost())
+            return ExecuteAttempt.Done(await this.Refuse(kind))
         }
-        return Attempt.Done(await this.Applied(engine, snapshot, scope, result))
+        return ExecuteAttempt.Done(await this.Applied(engine, snapshot, scope, result))
     }
 
     /** The applied result; nothing after the commit can fail it (reported, rows best-effort). */

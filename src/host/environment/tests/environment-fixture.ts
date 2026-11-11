@@ -194,13 +194,19 @@ export class EnvironmentFixture
         return transaction.Commit()
     }
 
-    /** A client attached to the started server as `principal` (an Owner grant on the tenant: the gate admits it; the scope decides). */
+    /** `principal` with an Owner grant on the tenant (the gate admits it; the scope decides). */
+    public ContextFor(principal: Principal): AccessContext
+    {
+        const tenant = new Tenant(EnvironmentFixture.TenantId, TenantKind.SelfHosted, EnvironmentFixture.DisplayName)
+        const grants = [new Grant(principal.Id, Role.Owner, new ResourceRef(ResourceKind.Tenant, EnvironmentFixture.TenantId, []))]
+        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+    }
+
+    /** A client attached to the started server as `principal` (`ContextFor`). */
     public async Connect(principal: Principal): Promise<PragmaticClient>
     {
         const server = this.Server
-        const tenant = new Tenant(EnvironmentFixture.TenantId, TenantKind.SelfHosted, EnvironmentFixture.DisplayName)
-        const grants = [new Grant(principal.Id, Role.Owner, new ResourceRef(ResourceKind.Tenant, EnvironmentFixture.TenantId, []))]
-        const context = new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+        const context = this.ContextFor(principal)
         const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
         const development = ServerConnectionHandler.DevelopmentAttachArgs(server)
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()

@@ -168,7 +168,7 @@ class RuntimeWorkerFx
             ownershipRules: [],
             roles: [{ id: RuntimeWorkerFx.ReaderRole, name: RuntimeWorkerFx.ReaderRoleName, privileges: [{ action: PrivilegeAction.Read, concept: RuntimeWorkerFx.Account, level: AccessLevel.Organization }] }],
             roleAssignment: { claimsMapping: [], overrides: [{ principalId: RuntimeWorkerFx.Tenant, roles: [RuntimeWorkerFx.ReaderRole] }], teamRoles: [] },
-        } as unknown as ISecurityModelConfig
+        }
     }
 
     public static async Connect(worker: WorkerHost, token: string): Promise<PragmaticClient>
