@@ -15,7 +15,6 @@ import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { PageFingerprint } from '../paging/page-request.js'
 import { CypherParamConverter } from '../cypher/cypher-param-converter.js'
-import type { IFieldReadMaskSource } from '../cypher/read-filter-source.js'
 import { PpSecurityHarness } from '../cypher/tests/pp-security-harness.js'
 
 /** One open solution holding three models (A, B, C), served through real handlers for chosen principals. */
@@ -25,16 +24,14 @@ class ModelScopedWorld
     private readonly server: PragmaticServer
     private readonly language: SolutionLanguageService
     private readonly manager: SolutionManagerService
-    private readonly fieldMasks: IFieldReadMaskSource
     private readonly handlers: ServerConnectionHandler[] = []
     private readonly clients: PragmaticClient[] = []
 
-    public constructor(server: PragmaticServer, language: SolutionLanguageService, manager: SolutionManagerService, fieldMasks: IFieldReadMaskSource, modelIds: readonly string[])
+    public constructor(server: PragmaticServer, language: SolutionLanguageService, manager: SolutionManagerService, modelIds: readonly string[])
     {
         this.server = server
         this.language = language
         this.manager = manager
-        this.fieldMasks = fieldMasks
         this.ModelIds = modelIds
     }
 
@@ -50,8 +47,7 @@ class ModelScopedWorld
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
             serverSocket, this.language, this.manager, context, undefined, this.server.DevCypher(),
-            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development, undefined, undefined, undefined,
-            this.fieldMasks)
+            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development)
         this.clients.push(PragmaticClient.CreateOverSocket(clientSocket))
         this.handlers.push(handler)
         return handler
@@ -162,7 +158,7 @@ class ModelScopedFixture
         const member = [...manager.ActiveSolution!.Members].find(m => m.Storage !== undefined)!
         const view = await language.ModelView(member.Storage!)
         const ids = ModelShardExtractor.ModelsOf(toJSON(view!.model)).map(m => String(m))
-        const world = new ModelScopedWorld(server, language, manager, await server.FieldReadMaskSource(), ids)
+        const world = new ModelScopedWorld(server, language, manager, ids)
         try
         {
             await body(world)

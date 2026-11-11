@@ -211,8 +211,8 @@ export class EnvironmentFixture
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(serverSocket, await server.LanguageService(), await server.Manager(), context,
             runtime.connectors ?? development.connectors, runtime.cypherQuery ?? development.cypherQuery, undefined, undefined, undefined, undefined, undefined, undefined,
-            server.Purpose(), runtime.applications, runtime.data, undefined, await server.FieldReadMaskSource(), runtime.cypherExecute ?? development.cypherExecute, runtime.deployProvider,
-            development.devGraphService, runtime.environmentGraphHost, development.devModelView, await server.DepthFilterSource())
+            server.Purpose(), runtime.applications, runtime.data, undefined, runtime.cypherExecute ?? development.cypherExecute, runtime.deployProvider,
+            development.devGraphService, runtime.environmentGraphHost, runtime.modelView ?? development.modelView)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.clients.push({ Client: client, Handler: handler })
         return client

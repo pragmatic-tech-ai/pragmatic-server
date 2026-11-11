@@ -189,7 +189,7 @@ class InvariantText
     public static readonly Projected = 'projected unreadable '
     public static readonly FilterLeak = 'a filter on an unreadable attribute selected rows'
     public static readonly NotApplied = 'statement was not applied'
-    public static readonly NoTenantAuthorization = 'the field-read mask source is not the tenant read authorization'
+    public static readonly NoTenantAuthorization = 'the security-model reload is not the tenant read authorization'
     public static readonly ModelCount = 'the fixture has two models'
     /** Common to every unreadable-member message (Field, Ref, Attr, EdgeVia, Projected). */
     public static readonly Unreadable = 'unreadable '
@@ -263,7 +263,7 @@ class ExpectedVisibility
         {
             reader.dispose()
         }
-        const authorization = await server.FieldReadMaskSource()
+        const authorization = await server.SecurityModelReload()
         assert.ok(authorization instanceof TenantReadAuthorization, InvariantText.NoTenantAuthorization)
         const fields = (await authorization.EvaluatorForContext(context)).FieldSecurity()
         return new ExpectedVisibility(cypher, perModel, modelView, concepts, fields, context)
@@ -496,11 +496,10 @@ class InvariantWorld
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const server = this.Server
         const development = ServerConnectionHandler.DevelopmentAttachArgs(server)
-        const fieldMasks = await server.FieldReadMaskSource()
         const handler = ServerConnectionHandler.Attach(serverSocket, this.language, this.manager, context, undefined, development.cypherQuery,
             undefined, undefined, undefined, undefined, undefined, undefined, server.Purpose(), undefined, undefined, undefined,
-            fieldMasks, development.cypherExecute,
-            undefined, development.devGraphService, undefined, development.devModelView)
+            development.cypherExecute,
+            undefined, development.devGraphService, undefined, development.modelView)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.handlers.push(handler)
         this.clients.push(client)

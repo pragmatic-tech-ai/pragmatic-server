@@ -18,7 +18,8 @@ import { PragmaticServer } from '../../../pragmatic-server.js'
 import { PpSecurityHarness } from '../../cypher/tests/pp-security-harness.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
 import { DevModelView } from '../dev-model-view.js'
-import type { IDevModelStructure, IDevModelView, IDevModelViewDiagnostics } from '../dev-model-view.js'
+import type { IDevModelResource, IDevModelStructure, IDevModelViewDiagnostics } from '../dev-model-view.js'
+import type { IGraphModelView } from '../graph-model-view.js'
 import type { IGraphScope, IGraphScopeSource } from '../access-scope-source.js'
 import type { IDevGraphEngine } from '../dev-graph-engine-host.js'
 
@@ -42,6 +43,11 @@ class FixedStructure implements IDevModelStructure
     public async ModelView(): Promise<{ model: Repository; provenanceOf: ReadonlyMap<string, string> }>
     {
         return { model: this.model, provenanceOf: this.provenance }
+    }
+
+    public async Resources(): Promise<readonly IDevModelResource[]>
+    {
+        return []
     }
 }
 
@@ -258,7 +264,7 @@ class DevWorld
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const development = ServerConnectionHandler.DevelopmentAttachArgs(this.Server)
         const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, context, undefined, development.cypherQuery,
-            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, development.devGraphService, undefined, development.devModelView)
+            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, development.devGraphService, undefined, development.modelView)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.connections.push({ client, handler })
         return client
@@ -304,13 +310,13 @@ class DevWorld
         return new AccessContext(principal, tenant, [], new ResourceAuthorizationPolicy())
     }
 
-    public static Page(view: IDevModelView, context: AccessContext, memberId: string, pageSize: number, cursor?: string): Promise<ModelViewPageDto>
+    public static Page(view: IGraphModelView, context: AccessContext, memberId: string, pageSize: number, cursor?: string): Promise<ModelViewPageDto>
     {
         return view.Page(context, memberId, { Params: { pageSize, cursor }, Limits: new PagingLimits() })
     }
 
     /** Pages the view from the first page to the end, returning every page. */
-    public static async WalkView(view: IDevModelView, context: AccessContext, memberId: string, size: number): Promise<ModelViewPageDto[]>
+    public static async WalkView(view: IGraphModelView, context: AccessContext, memberId: string, size: number): Promise<ModelViewPageDto[]>
     {
         const pages: ModelViewPageDto[] = []
         let cursor: string | undefined
@@ -409,7 +415,7 @@ class ModelFixture
     }
 
     /** The ids on one all-members page of `view` for `memberId`. */
-    public static async Ids(view: IDevModelView, memberId: string): Promise<string[]>
+    public static async Ids(view: IGraphModelView, memberId: string): Promise<string[]>
     {
         return (await DevWorld.Page(view, DevWorld.Reader(), memberId, ViewFx.All)).items.map(member => member.id)
     }
@@ -492,7 +498,7 @@ class FilterFixture
     }
 
     /** One all-members page of `view` for the reader `context`. */
-    public static All(view: IDevModelView, world: DevWorld, context: AccessContext = DevWorld.Reader()): Promise<ModelViewPageDto>
+    public static All(view: IGraphModelView, world: DevWorld, context: AccessContext = DevWorld.Reader()): Promise<ModelViewPageDto>
     {
         return DevWorld.Page(view, context, world.MemberId, 100)
     }
@@ -1134,7 +1140,7 @@ test('a saved edit is seen once the engine upgrades, and a cursor minted before 
     })
 })
 
-test('a development handler without the dev model view reports it unavailable', async () =>
+test('a handler without a model view reports it unavailable', async () =>
 {
     await DevWorld.With(SurfaceFx.SampleTodl, undefined, async world =>
     {

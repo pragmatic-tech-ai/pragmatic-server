@@ -130,6 +130,8 @@ export class EngineConnectorService implements IGraphConnectorService
     private static readonly ProbeFailedDetail = 'connection probe failed'
     private static readonly IntegerKey = /^-?\d+$/
     private static readonly DecimalKey = /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/
+    private static readonly Int64Min = -(2n ** 63n)
+    private static readonly Int64Max = 2n ** 63n - 1n
     private static readonly Invisible: IWriteFailureOutcome = { Status: AppWriteStatus.Denied, Reason: EngineWriteFailure.RecordDenied }
 
     private readonly modelScopes = new ModelScopes()
@@ -431,7 +433,7 @@ export class EngineConnectorService implements IGraphConnectorService
     /**
      * The source key as the id member's cell: an integer for an Int64 id member, a number for a Float64 one, the text for a
      * String one; undefined when the key's text does not fit the member (empty or non-numeric text on a numeric member,
-     * a boolean key, or another type).
+     * an integer outside the Int64 range, a boolean key, or another type).
      */
     private static KeyCell(key: ConnectorWriteOpDto['key'], type: ValueType): CellValue | undefined
     {
@@ -439,7 +441,7 @@ export class EngineConnectorService implements IGraphConnectorService
         switch (type)
         {
             case ValueType.Int64:
-                return EngineConnectorService.IntegerKey.test(text) ? BigInt(text) : undefined
+                return EngineConnectorService.IntegerKey.test(text) ? EngineConnectorService.Int64Of(BigInt(text)) : undefined
             case ValueType.Float64:
                 return EngineConnectorService.DecimalKey.test(text) && Number.isFinite(Number(text)) ? Number(text) : undefined
             case ValueType.String:
@@ -447,6 +449,12 @@ export class EngineConnectorService implements IGraphConnectorService
             default:
                 return undefined
         }
+    }
+
+    /** `value` when it lies in the Int64 range, else undefined. */
+    private static Int64Of(value: bigint): bigint | undefined
+    {
+        return value >= EngineConnectorService.Int64Min && value <= EngineConnectorService.Int64Max ? value : undefined
     }
 
     /** The rows of `ids` the transaction sees (TODL ids fetched as their binding's concept and model), or the refusal of a failed fetch. */

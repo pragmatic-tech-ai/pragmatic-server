@@ -6,12 +6,12 @@ import type { AppWriteOpDto, AppWriteOpResultDto, AppWriteResultDto } from '@pra
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { IGraphScopeSource } from '../engine/access-scope-source.js'
 import type { EngineSchemaCatalog } from '../engine/engine-schema-catalog.js'
-import { EngineWriteAttribution, RecordedBatch } from '../engine/recorded-batch.js'
 import { EngineWriteFailure } from '../engine/engine-write-failure.js'
 import type { IWriteFailureOutcome } from '../engine/engine-write-failure.js'
+import { DeleteGrantsScope, RecordGrantDeletion } from '../engine/record-grant-deletion.js'
+import { EngineWriteAttribution, RecordedBatch } from '../engine/recorded-batch.js'
 import type { RuntimeWritePayloadValidator } from '../runtime-write-payload-validator.js'
 import type { EnvironmentEngineHost } from './environment-engine-host.js'
-import { DeleteGrantsScope, RecordGrantDeletion } from '../engine/record-grant-deletion.js'
 
 /**
  * One pre-checked data/write op: its kind, target id (an update's or delete's id; a create's client id on an engine
@@ -54,13 +54,14 @@ interface IPreRead
  *   `invalid`); two creates with one client id are `invalid` "duplicate id in batch". The first failing op gets its
  *   status, every other op `failed` "atomic batch rolled back".
  * - A System reader then finds the grants linked to each deleted record (`RecordGrantDeletion.PreRead`: `Links(record,
- *   In, record)`, kept when the far node is exactly a `todl.system.ShareGrant`) and the engine create ids already taken (`denied` "not authorized for
- *   this record", as before: a create cannot overwrite). The batch runs under `DeleteGrantsScope.For(callerScope,
- *   grantIds, catalog, deletedIds)`: a caller scope never writes grants (R31), so the delete of each pre-read grant is
- *   admitted for exactly those ids, and every grant linking a deleted record is visible to the transaction whoever
- *   it is addressed to. Inside the transaction each deleted record's grants are read again: one the pre-read missed
- *   (linked since) refuses the batch as `conflict` "write conflict" and nothing is deleted (R40); the re-read is
- *   recorded, so OCC refuses a commit racing a grant linked after it (ConflictError -> `conflict`).
+ *   In, record)`, kept when the far node is exactly a `todl.system.ShareGrant`) and the engine create ids already
+ *   taken (`denied` "not authorized for this record", as before: a create cannot overwrite). The batch runs under
+ *   `DeleteGrantsScope.For(callerScope, grantIds, catalog, deletedIds)`: a caller scope never writes grants (R31), so
+ *   the delete of each pre-read grant is admitted for exactly those ids, and every grant linking a deleted record is
+ *   visible to the transaction whoever it is addressed to. Inside the transaction each deleted record's grants are
+ *   read again: one the pre-read missed (linked since) refuses the batch as `conflict` "write conflict" and nothing is
+ *   deleted (R40); the re-read is recorded, so OCC refuses a commit racing a grant linked after it (ConflictError ->
+ *   `conflict`).
  * - Updates and deletes fetch their records in the transaction first (`GraphTransaction.Fetch`, R15 / plan O1 option
  *   (a); an external id is fetched as its binding's concept and model, `ExternalIdentity.Parse`), so a write to an
  *   external row is decided against the row the transaction read and carries its version (read-time OCC, spec 11.2).

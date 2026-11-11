@@ -1,7 +1,6 @@
 import { EdgeKind, Tier } from '@pragmatic-tech-ai/todl'
 import type { Repository, Node, Edge } from '@pragmatic-tech-ai/todl'
 import type { ModelEdgeDto, ModelMemberDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { IFieldReadMask } from './cypher/field-read-mask.js'
 import { WireScalar } from './wire-scalar.js'
 import type { WireScalarValue } from './wire-scalar.js'
 
@@ -12,25 +11,9 @@ export interface IMemberReadGate
 }
 
 /**
- * The field-read mask as a member gate: untyped nodes are ontology definitions / model containers (never
- * secured instances), so field security does not apply to them; every typed node asks the mask for its type.
- */
-export class FieldReadMaskGate implements IMemberReadGate
-{
-    public constructor(private readonly mask: IFieldReadMask)
-    {
-    }
-
-    public CanRead(node: Node, field: string): boolean
-    {
-        return node.type === null || this.mask.CanRead(node.type, field)
-    }
-}
-
-/**
- * Maps a visible model Node plus its out-edges to a ModelMemberDto under a member gate (a field-read mask, or the dev
- * engine scope's hidden members). Used ONLY by ModelProjection, which owns visibility: it hands over the set of visible
- * node ids, so the builder never decides which nodes are hidden, only which of a visible node's attrs and edges survive.
+ * Maps a visible model Node plus its out-edges to a ModelMemberDto under a member gate (the dev engine scope's hidden
+ * members). Used ONLY by ModelProjection, which owns visibility: it hands over the set of visible node ids, so the
+ * builder never decides which nodes are hidden, only which of a visible node's attrs and edges survive.
  */
 export class ModelMemberBuilder
 {

@@ -164,7 +164,7 @@ class GraphFixture
         const handler = ServerConnectionHandler.Attach(
             serverSocket, language, {} as SolutionManagerService, context, undefined, undefined,
             undefined, undefined, undefined, undefined, undefined, undefined, purpose, undefined, undefined, undefined,
-            undefined, undefined, undefined, wired ? this.Service : undefined)
+            undefined, undefined, wired ? this.Service : undefined)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

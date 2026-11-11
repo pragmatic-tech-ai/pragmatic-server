@@ -536,8 +536,6 @@ export class WorkerHost
             const parent = this.instrumentation !== undefined ? RequestCorrelation.Extract(req.headers) : undefined
             const languageService = await server.LanguageService()
             const manager = await server.Manager()
-            const fieldMasks = await server.FieldReadMaskSource()
-            const readFilters = await server.DepthFilterSource()
             const pack = await server.Pack()
             const admin = new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), () => this.registry.DisposeTenant(environmentId), pack.Accounts, pack.Registrar, pack.Tokens, {
                 Invalidate: name => server.InvalidateAdapterPack(name),
@@ -561,7 +559,7 @@ export class WorkerHost
                         policy: new BackpressurePolicy(resilience.backpressureSoftBytes, resilience.backpressureHardBytes, resilience.backpressureGraceMs),
                         onShed: () => this.logger.Info(WorkerHost.ShedLine, { [WorkerHost.EventKey]: WorkerHost.ShedEvent }),
                     })
-                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, runtime.connectors ?? development.connectors, runtime.cypherQuery ?? development.cypherQuery, this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.data, this.paging, fieldMasks, runtime.cypherExecute ?? development.cypherExecute, runtime.deployProvider, development.devGraphService, runtime.environmentGraphHost, development.devModelView, readFilters)
+                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, runtime.connectors ?? development.connectors, runtime.cypherQuery ?? development.cypherQuery, this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.data, this.paging, runtime.cypherExecute ?? development.cypherExecute, runtime.deployProvider, development.devGraphService, runtime.environmentGraphHost, runtime.modelView ?? development.modelView)
                     this.handlers.add(handler)
                     const revocable: IRevocableConnection =
                     {

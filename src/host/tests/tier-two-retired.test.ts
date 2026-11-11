@@ -1,63 +1,21 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, cpSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InMemoryMessageSocket, PragmaticClient, AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
-import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
-import { compilePackage, BlobPackageStore, StoragePackageSink, type SolutionManagerService } from '@pragmatic-tech-ai/todl'
-import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
+import { compilePackage, BlobPackageStore, StoragePackageSink } from '@pragmatic-tech-ai/todl'
 import { AccessLevel, PrivilegeAction, OwnershipSourceKind } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
-import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { PpSecurityHarness } from '../cypher/tests/pp-security-harness.js'
 
 /*
  * Tier 2 (per-app access policy files, TODL model policies, app-private concept governance) is retired: only the
  * tenant security model (tier 1) decides runtime and dev visibility.
  */
-
-/** One wire connection a fixture owns: the client and the handler it talks to, disposed together (dispose resolves once torn down). */
-class WireConnection implements IDisposable
-{
-    public constructor(public readonly Client: PragmaticClient, private readonly handler: ServerConnectionHandler)
-    {
-    }
-
-    public async dispose(): Promise<void>
-    {
-        await this.Client.DisposeAsync()
-        this.handler.Dispose()
-    }
-}
-
-/** One development server with an opened solution and one connection to it, and the temp dirs it owns (dispose resolves once torn down). */
-class DevSession implements IDisposable
-{
-    public constructor(
-        public readonly Connection: WireConnection,
-        private readonly server: PragmaticServer,
-        private readonly language: SolutionLanguageService,
-        private readonly manager: SolutionManagerService,
-        private readonly dirs: readonly string[])
-    {
-    }
-
-    public async dispose(): Promise<void>
-    {
-        await this.Connection.dispose()
-        await this.language.WhenIdle()
-        await this.manager.CloseSolution()
-        await this.server.Dispose()
-        for (const dir of this.dirs)
-        {
-            rmSync(dir, { recursive: true, force: true })
-        }
-    }
-}
 
 /**
  * A runtime tenant with identity: app `crm` binds packages crm (crm.Account, governed) and notes (notes.Note, NOT
@@ -167,98 +125,11 @@ class RuntimeTierFixture
     }
 }
 
-/** A development solution with two Orders: o1 owned by the sales unit, o2 by root (TODL no longer has `policy` declarations, A1). */
-class DevTierFixture
-{
-    public static readonly MemberId = 'models'
-    public static readonly HiddenId = 'acme.o2'
-    public static readonly VisibleId = 'acme.o1'
-    private static readonly PackagesPrefix = 'tier2-dev-pkgs-'
-    private static readonly SolutionPrefix = 'tier2-dev-sol-'
-    private static readonly IdentityPrefix = 'tier2-dev-id-'
-    private static readonly Order = 'acme.Order'
-    private static readonly ShopTodl = 'namespace acme { concept Order { owningBu : string?; } model Shop : acme { Order o1 { label = "a"; owningBu = "sales"; } Order o2 { label = "b"; owningBu = "root"; } } }'
-    private static readonly NoConnectors = 'no connectors'
-    private static readonly SolutionModelFile = join('models', 'model.todl')
-
-    private readonly sessions: DevSession[] = []
-
-    public static async Run(body: (fx: DevTierFixture) => Promise<void>): Promise<void>
-    {
-        const fx = new DevTierFixture()
-        try
-        {
-            await body(fx)
-        }
-        finally
-        {
-            await fx.Dispose()
-        }
-    }
-
-
-    /** The harness BU-depth model on acme.Order: the reader (home unit sales) reads sales-owned Orders only, so o2 (root) is hidden. */
-    private static SalesOnly(): ISecurityModelConfig
-    {
-        const model = PpSecurityHarness.BuSecurityModel(RuntimeTierFixture.Reader)
-        return {
-            ...model,
-            ownershipRules: model.ownershipRules.map(rule => ({ ...rule, concept: DevTierFixture.Order })),
-            roles: model.roles.map(role => ({ ...role, privileges: role.privileges.map(privilege => ({ ...privilege, concept: DevTierFixture.Order })) })),
-        }
-    }
-
-    /** A runtime connection over a server with identity, the solution open and the sales-only security model seeded. */
-    public async RuntimeClientWithIdentity(): Promise<PragmaticClient>
-    {
-        const packages = mkdtempSync(join(tmpdir(), DevTierFixture.PackagesPrefix))
-        const solution = mkdtempSync(join(tmpdir(), DevTierFixture.SolutionPrefix))
-        const identityRoot = mkdtempSync(join(tmpdir(), DevTierFixture.IdentityPrefix))
-        cpSync(join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution'), solution, { recursive: true })
-        writeFileSync(join(solution, DevTierFixture.SolutionModelFile), DevTierFixture.ShopTodl)
-        PpSecurityHarness.SetKey()
-        const server = new PragmaticServer({ packagesRoot: packages, identity: PpSecurityHarness.Identity(identityRoot) })
-        await server.Start()
-        await server.OpenSolution(solution)
-        await PpSecurityHarness.Seed(server, DevTierFixture.SalesOnly())
-        const language = await server.LanguageService() as SolutionLanguageService
-        const manager = await server.Manager()
-        const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, language, manager, PpSecurityHarness.Context(RuntimeTierFixture.Reader), undefined, undefined,
-            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Runtime, undefined, undefined, undefined,
-            await server.FieldReadMaskSource(), undefined, undefined, undefined, undefined, undefined, await server.DepthFilterSource())
-        const session = new DevSession(new WireConnection(PragmaticClient.CreateOverSocket(clientSocket), handler), server, language, manager, [solution, packages, identityRoot])
-        this.sessions.push(session)
-        return session.Connection.Client
-    }
-
-    private async Dispose(): Promise<void>
-    {
-        for (const session of this.sessions.reverse())
-        {
-            await session.dispose()
-        }
-        PpSecurityHarness.ClearKey()
-    }
-}
-
 test('own concept the security model does not govern is denied', async () =>
 {
     await RuntimeTierFixture.Run(async fx =>
     {
         const created = await fx.CreateNote(RuntimeTierFixture.Reader)
         assert.equal(created.results[0]?.status, AppWriteStatus.Denied)
-    })
-})
-
-test('runtime model view hides an instance the access depth hides', async () =>
-{
-    await DevTierFixture.Run(async fx =>
-    {
-        const client = await fx.RuntimeClientWithIdentity()
-        const page = await client.ModelView(DevTierFixture.MemberId)
-        const ids = page.items.map(member => member.id)
-        assert.ok(ids.includes(DevTierFixture.VisibleId), JSON.stringify(ids))
-        assert.ok(!ids.includes(DevTierFixture.HiddenId), JSON.stringify(ids))
     })
 })

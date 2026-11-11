@@ -126,7 +126,7 @@ class RuntimeSurfaceFixture
             serverSocket, await server.LanguageService(), await server.Manager(), RuntimeSurfaceFixture.Permissive(),
             undefined, runtime.cypherQuery ?? development.cypherQuery,
             undefined, undefined, undefined, undefined, undefined, undefined, server.Purpose(), runtime.applications,
-            undefined, undefined, undefined, runtime.cypherExecute ?? development.cypherExecute,
+            undefined, undefined, runtime.cypherExecute ?? development.cypherExecute,
             undefined, development.devGraphService, runtime.environmentGraphHost)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.disposables.push(async () =>

@@ -17,7 +17,6 @@ import { PagingLimits } from '../../../config/paging-limits.js'
 import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
-import type { IFieldReadMaskSource } from '../../cypher/read-filter-source.js'
 import { PpSecurityHarness } from '../../cypher/tests/pp-security-harness.js'
 import { WriteLockBusyError } from '../../cypher/write-lock.js'
 import type { IWriteLease, IWriteLock } from '../../cypher/write-lock.js'
@@ -44,7 +43,6 @@ class ExecWorld
         public readonly Server: PragmaticServer,
         private readonly language: SolutionLanguageService,
         private readonly manager: SolutionManagerService,
-        private readonly fieldMasks: IFieldReadMaskSource,
         modelIds: readonly string[],
         public readonly ModelFile: string)
     {
@@ -107,7 +105,6 @@ class ExecWorld
         const handler = ServerConnectionHandler.Attach(
             serverSocket, this.language, this.manager, context, undefined, this.Server.DevCypher(),
             undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development, undefined, undefined, undefined,
-            this.fieldMasks,
             this.Server.DevExecute())
         this.clients.push(PragmaticClient.CreateOverSocket(clientSocket))
         this.handlers.push(handler)
@@ -253,7 +250,7 @@ class ExecFixture
         const manager = await server.Manager()
         // the model ids cypher/execute accepts are the engine's (cypher/models), not the language-service views
         const ids = await server.DevCypher().Models()
-        const world = new ExecWorld(server, language, manager, await server.FieldReadMaskSource(), ids, modelFile)
+        const world = new ExecWorld(server, language, manager, ids, modelFile)
         try
         {
             await body(world)

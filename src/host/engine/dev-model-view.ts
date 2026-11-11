@@ -1,12 +1,11 @@
 import { GraphError, GraphErrorCode } from '@pragmatic-tech-ai/graph'
 import type { GraphEngine, GraphReader, ISubscription, MemberDef } from '@pragmatic-tech-ai/graph'
 import { ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { ModelViewPageDto, PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ModelViewPageDto, ResolvedResourceDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { Node, Repository } from '@pragmatic-tech-ai/todl'
 import { SnapshotDescriber, TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable, IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import type { PagingLimits } from '../../config/paging-limits.js'
 import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
 import type { IMemberReadGate } from '../model-member-builder.js'
@@ -15,6 +14,7 @@ import type { IModelNodeGate } from '../model-projection.js'
 import { PageFingerprint, PageRequest } from '../paging/page-request.js'
 import type { IGraphScope, IGraphScopeSource } from './access-scope-source.js'
 import type { IDevGraphEngine } from './dev-graph-engine-host.js'
+import type { IGraphModelView, IModelViewPage } from './graph-model-view.js'
 
 /** One member of the active solution as model/view finds it: the wire member id (`Ref.path`) and its storage. */
 export interface IDevModelMember
@@ -29,26 +29,20 @@ export interface IDevModelSolution
     readonly Members: { ToArray(): readonly IDevModelMember[] }
 }
 
+/** One resource the language service resolves for a node (TODL's `ResolvedResource` satisfies it). */
+export interface IDevModelResource
+{
+    readonly annotation: string
+    readonly path: string
+    readonly storage: { readonly Root: string }
+}
+
 /** Where model/view's STRUCTURE comes from: the language service (unsaved buffers included), as before the engine. */
 export interface IDevModelStructure
 {
     ModelView(storage: IStorage): Promise<{ readonly model: Repository; readonly provenanceOf: ReadonlyMap<string, string> } | undefined>
+    Resources(nodeId: string): Promise<readonly IDevModelResource[]>
     readonly GraphRevision: number
-}
-
-/** The page a model/view asks for: the wire paging params and the connection's paging limits. */
-export interface IDevModelViewPage
-{
-    readonly Params: PageParams
-    readonly Limits: PagingLimits
-}
-
-/** The dev `model/view` and `model/resources` visibility on the dev graph engine. */
-export interface IDevModelView
-{
-    Page(context: AccessContext, memberId: string | undefined, page: IDevModelViewPage): Promise<ModelViewPageDto>
-    /** True when the active solution holds `nodeId` and the caller's scope hides it (false for an unknown id). */
-    Hidden(context: AccessContext, nodeId: string): Promise<boolean>
 }
 
 /** Where the model view's diagnostics go (a node the engine refused to judge, hidden fail-closed). */
@@ -266,18 +260,20 @@ class EngineRead
  * the language service as before (nodes, attrs, edges, provenance, unsaved buffers included); instance VISIBILITY and
  * attribute MASKING come from the caller's engine scope (AccessScopeSource under DevScopeRules: with identity, access
  * depth and field security), read off the saved engine snapshot. The endpoint decides nothing beyond mapping the
- * engine's answer onto the structure (EngineModelGate); paging, edges and provenance are ModelProjection's, shared with
- * the runtime path.
+ * engine's answer onto the structure (EngineModelGate); paging, edges and provenance are ModelProjection's. The runtime
+ * counterpart is EnvironmentModelView (ruling S15); both implement {@link IGraphModelView}.
  *
  * - Page: no active solution / unknown member -> InvalidRequest; a non-positive page size -> InvalidParams. Cursor
  *   fingerprint = `modelView`, member id, `GraphRevision` (read once the view is in hand), engine schema version,
  *   engine commit, scope digest: a cursor is stale after any structure edit, upgrade or commit, and for another caller.
  * - Hidden: the first member whose structure resolves the id decides; an unknown id is not hidden.
+ * - Resources: the language service's resources of the node, `[]` when Hidden.
  * - The visible-instance set (a `todl.Element` scan) is cached per scope digest for the latest engine state (an LRU of
  *   at most 32 digests) and dropped on the host's `Changed` and the scope source's `Dropped`.
- *   A class node whose values the engine refuses (SchemaViolation) is hidden and reported to {@link IDevModelViewDiagnostics}. A read that saw the engine upgrade is repeated (`MaxAttempts`).
+ *   A class node whose values the engine refuses (SchemaViolation) is hidden and reported to
+ *   {@link IDevModelViewDiagnostics}. A read that saw the engine upgrade is repeated (`MaxAttempts`).
  */
-export class DevModelView implements IDevModelView, IDisposable
+export class DevModelView implements IGraphModelView, IDisposable
 {
     public static readonly MaxAttempts = 5
     public static readonly NoActiveSolutionError = 'no active solution after open'
@@ -300,7 +296,7 @@ export class DevModelView implements IDevModelView, IDisposable
         this.subscriptions.push(host.Changed.Subscribe(() => this.cache.Clear()))
     }
 
-    public async Page(context: AccessContext, memberId: string | undefined, page: IDevModelViewPage): Promise<ModelViewPageDto>
+    public async Page(context: AccessContext, memberId: string | undefined, page: IModelViewPage): Promise<ModelViewPageDto>
     {
         const solution = await this.solution()
         if (solution === undefined)
@@ -355,6 +351,17 @@ export class DevModelView implements IDevModelView, IDisposable
             return this.Read(context, read => new ModelProjection(view.model, read.Gate, read.Gate).Hidden(nodeId))
         }
         return false
+    }
+
+    /** The language service's resources of `nodeId`, or `[]` when the caller's scope hides the node. */
+    public async Resources(context: AccessContext, nodeId: string): Promise<ResolvedResourceDto[]>
+    {
+        if (await this.Hidden(context, nodeId))
+        {
+            return []
+        }
+        const resources = await (await this.structure()).Resources(nodeId)
+        return resources.map(r => ({ annotation: r.annotation, path: r.path, storageRoot: r.storage.Root }))
     }
 
     public dispose(): void

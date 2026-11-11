@@ -24,8 +24,8 @@ import { MemorySourceAdapter, MemorySourceAdapterFactory } from './memory-source
 /**
  * A runtime tenant delivering `crm` (crm.Account, engine-stored, owned by its `owner` field) and `ext` over the
  * fixture's MemorySourceAdapter: ext.Customer (writable; `name` in `nm`, the integer `amount` in `amt`), ext.Vendor
- * (read-only) and ext.Order (optimistic, version field `ver`). With identity, p1 reads every account and deletes only
- * its own; p3 reads only its own. Neither holds anything on the ext concepts (connector data is outside platform
+ * (read-only), ext.Order (optimistic, version field `ver`) and ext.Ledger (an integer id member). With identity, p1
+ * reads every account and deletes only its own; p3 reads only its own. Neither holds anything on the ext concepts (connector data is outside platform
  * security, amendment A6).
  */
 class ConnectorFx
@@ -37,13 +37,17 @@ class ConnectorFx
     public static readonly AppVersion = '1.0.0'
     public static readonly CrmTodl = 'namespace crm {\n  concept Account { name : string?; owner : string?; }\n  model Crm : crm { }\n}\n'
     public static readonly ExtTodl = 'namespace ext {\n  concept Customer { id : string?; name : string?; amount : integer?; score : number?; }\n  concept Vendor { id : string?; name : string?; }\n'
-        + '  concept Order { id : string?; total : integer?; ver : integer?; }\n  datasource src { kind = sql; connection = "ext-db"; }\n'
+        + '  concept Order { id : string?; total : integer?; ver : integer?; }\n  concept Ledger { id : integer?; }\n  datasource src { kind = sql; connection = "ext-db"; }\n'
         + '  model Ext : ext { connect src; populate Customer key cust_id { id = "cust_id"; name = "nm"; amount = "amt"; score = "sc"; } populate Vendor key vend_id { id = "vend_id"; name = "nm"; read-only; }'
-        + ' populate Order key ord_id { id = "ord_id"; total = "tot"; ver = "ver"; version ver; concurrency optimistic; } }\n}\n'
+        + ' populate Order key ord_id { id = "ord_id"; total = "tot"; ver = "ver"; version ver; concurrency optimistic; } populate Ledger key led_id { id = "led_id"; } }\n}\n'
     public static readonly ModelId = 'ext'
     public static readonly Connector = 'src'
     public static readonly Account = 'crm.Account'
     public static readonly Customer = 'ext.Customer'
+    public static readonly Ledger = 'ext.Ledger'
+    public static readonly LedgerSource = 'Ledger'
+    /** 2^63: one past the Int64 maximum. */
+    public static readonly BeyondInt64 = '9223372036854775808'
     public static readonly Vendor = 'ext.Vendor'
     public static readonly Order = 'ext.Order'
     public static readonly CustomerSource = 'Customer'
@@ -283,6 +287,7 @@ describe('connector endpoints on the engine', () =>
             assert.ok(ext !== undefined, JSON.stringify(listed))
             assert.deepEqual(ext.bindings.map(b => [b.concept, b.connector, b.writable]).sort(), [
                 [ConnectorFx.Customer, ConnectorFx.Connector, true],
+                [ConnectorFx.Ledger, ConnectorFx.Connector, true],
                 [ConnectorFx.Order, ConnectorFx.Connector, true],
                 [ConnectorFx.Vendor, ConnectorFx.Connector, false],
             ])
@@ -365,6 +370,8 @@ describe('connector endpoints on the engine', () =>
             assert.ok(rows.some(row => row[ConnectorFx.CustomerKey] === 'k9' && row[ConnectorFx.NameField] === 'Eon'))
             const unfit = await service.WritePaged(ConnectorFx.Context(fx), { modelId: ConnectorFx.ModelId, operations: [{ ...ConnectorFx.Upsert(ConnectorFx.Customer, ConnectorFx.CustomerSource, 'x', {}), key: true }] })
             assert.deepEqual(ConnectorFx.Statuses(unfit), [[AppWriteStatus.Invalid, ConnectorFx.KeyNotFit]], 'a boolean key does not fit a String id member')
+            const beyond = await service.WritePaged(ConnectorFx.Context(fx), { modelId: ConnectorFx.ModelId, operations: [ConnectorFx.Upsert(ConnectorFx.Ledger, ConnectorFx.LedgerSource, ConnectorFx.BeyondInt64, {})] })
+            assert.deepEqual(ConnectorFx.Statuses(beyond), [[AppWriteStatus.Invalid, ConnectorFx.KeyNotFit]], 'an integer key beyond the Int64 range does not fit an Int64 id member')
         })
     })
 

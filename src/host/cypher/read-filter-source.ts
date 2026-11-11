@@ -1,39 +1,12 @@
-import type { AccessContext, ITenantConfigStore, ISecurityModelConfig, Principal } from '@pragmatic-tech-ai/todl-identity'
-import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
-import type { IInstanceFilter } from '@pragmatic-tech-ai/todl'
-import { AccessDepthEvaluator, AccessDepthInstanceFilter, AllowAllInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
+import type { AccessContext, ITenantConfigStore, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
+import { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
-import type { FieldSecurityEvaluator, IMembership } from '@pragmatic-tech-ai/todl-identity-engine'
-import { AllowAllFieldReadMask } from './field-read-mask.js'
-import type { IFieldReadMask } from './field-read-mask.js'
-
-/** Produces the ACCESS-DEPTH read filter for a request. One of two impls is chosen by the server per the identity state. */
-export interface IReadFilterSource
-{
-    ReadFilterFor(context: AccessContext): Promise<IInstanceFilter>
-}
-
-/** Produces the FIELD-READ mask for a request. One of two impls is chosen by the server per the identity state. */
-export interface IFieldReadMaskSource
-{
-    FieldReadMaskFor(context: AccessContext): Promise<IFieldReadMask>
-}
 
 /** Drops a tenant's cached access evaluator so the next request re-reads its SecurityModel from the store (live reload, no restart). */
 export interface ISecurityModelReload
 {
     Invalidate(environmentId: string): void
-}
-
-class AccessFieldReadMask implements IFieldReadMask
-{
-    constructor(private readonly evaluator: FieldSecurityEvaluator, private readonly principal: Principal) {}
-
-    public CanRead(concept: string, field: string): boolean
-    {
-        return this.evaluator.CanReadField(this.principal, concept, field)
-    }
 }
 
 /** One tenant's cached access evaluator and whether it came from a real SecurityModel (else DenyAll, fail-closed). */
@@ -72,12 +45,12 @@ class SecurityModelInvalidated implements ISignal<string>
 
 /**
  * Identity configured: builds and caches one AccessDepthEvaluator per tenant from the tenant's
- * SecurityModel (absent/null ⇒ DenyAll, fail-closed), and returns a per-principal depth filter.
+ * SecurityModel (absent/null ⇒ DenyAll, fail-closed); the scope rules compile it into each caller's engine scope.
  * The evaluator is built once per tenant and reused; a runtime SecurityModel change calls Invalidate
  * to drop the cached evaluator so the next request re-reads the store — live, without a restart.
  * `Invalidated` is raised after each Invalidate so per-principal caches built on the evaluator drop too.
  */
-export class TenantReadAuthorization implements IReadFilterSource, IFieldReadMaskSource, ISecurityModelReload
+export class TenantReadAuthorization implements ISecurityModelReload
 {
     public readonly Invalidated: ISignal<string>
 
@@ -89,32 +62,9 @@ export class TenantReadAuthorization implements IReadFilterSource, IFieldReadMas
         this.Invalidated = this.invalidated
     }
 
-    public async ReadFilterFor(context: AccessContext): Promise<IInstanceFilter>
-    {
-        const evaluator = await this.EvaluatorFor(context.Tenant.Id)
-        return new AccessDepthInstanceFilter(evaluator, context.Principal, PrivilegeAction.Read)
-    }
-
     public async HasSecurityModelFor(context: AccessContext): Promise<boolean>
     {
         return (await this.SecurityOf(context.Tenant.Id)).HasSecurityModel
-    }
-
-    public async FieldReadMaskFor(context: AccessContext): Promise<IFieldReadMask>
-    {
-        const evaluator = await this.EvaluatorFor(context.Tenant.Id)
-        const fs = evaluator.FieldSecurity()
-        if (!fs.HasSecuredFields())
-        {
-            return AllowAllFieldReadMask.Instance
-        }
-        return new AccessFieldReadMask(fs, context.Principal)
-    }
-
-    public async MembershipFor(context: AccessContext): Promise<IMembership>
-    {
-        const evaluator = await this.EvaluatorFor(context.Tenant.Id)
-        return evaluator.MembershipOf(context.Principal)
     }
 
     public EvaluatorForContext(context: AccessContext): Promise<AccessDepthEvaluator>
@@ -161,27 +111,5 @@ export class TenantReadAuthorization implements IReadFilterSource, IFieldReadMas
             return TenantSecurity.DenyAll()
         }
         return TenantSecurity.From(model)
-    }
-}
-
-/** No identity subsystem: the access-depth axis is inactive (keeps everything). */
-export class AllowAllReadFilterSource implements IReadFilterSource
-{
-    public static readonly Instance = new AllowAllReadFilterSource()
-
-    public async ReadFilterFor(): Promise<IInstanceFilter>
-    {
-        return new AllowAllInstanceFilter()
-    }
-}
-
-/** No identity subsystem: field security is inactive; every field is readable. */
-export class AllowAllFieldReadMaskSource implements IFieldReadMaskSource
-{
-    public static readonly Instance = new AllowAllFieldReadMaskSource()
-
-    public async FieldReadMaskFor(): Promise<IFieldReadMask>
-    {
-        return AllowAllFieldReadMask.Instance
     }
 }

@@ -264,7 +264,7 @@ class DeployWire
             undefined, undefined,
             undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Runtime,
             runtime.applications, runtime.data,
-            undefined, undefined, undefined, runtime.deployProvider)
+            undefined, undefined, runtime.deployProvider)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         return {
             client,

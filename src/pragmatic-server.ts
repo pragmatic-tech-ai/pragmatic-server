@@ -29,8 +29,8 @@ import type { ConnectorsHostOptions } from '@pragmatic-tech-ai/todl-connectors-h
 import { PolicyConnectionResolver } from './host/policy-connection-resolver.js'
 import type { ConnectorsPolicy } from './host/connector-policy.js'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { TenantReadAuthorization, AllowAllReadFilterSource, AllowAllFieldReadMaskSource } from './host/cypher/read-filter-source.js'
-import type { IReadFilterSource, IFieldReadMaskSource, ISecurityModelReload } from './host/cypher/read-filter-source.js'
+import { TenantReadAuthorization } from './host/cypher/read-filter-source.js'
+import type { ISecurityModelReload } from './host/cypher/read-filter-source.js'
 import { EngineConnectorService } from './host/engine/engine-connector-service.js'
 import { RuntimeWritePayloadValidator } from './host/runtime-write-payload-validator.js'
 import type { AppWriteOpDto, AppWriteResultDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -61,6 +61,7 @@ import { EnvironmentDeliveries } from './host/environment/environment-deliveries
 import { EnvironmentEngineHost, EnvironmentUpgradeFailedError, LoggerEnvironmentDiagnostics } from './host/environment/environment-engine-host.js'
 import type { IEnvironmentGraphHost } from './host/environment/environment-engine-host.js'
 import { EnvironmentCypherExecute } from './host/environment/environment-cypher-execute.js'
+import { EnvironmentModelView } from './host/environment/environment-model-view.js'
 import { EnvironmentDataWriter } from './host/environment/environment-data-writer.js'
 import { EnvironmentShareService } from './host/environment/environment-share-service.js'
 import { EnvironmentAssignService } from './host/environment/environment-assign-service.js'
@@ -167,6 +168,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private environmentEngine: EnvironmentEngineHost | undefined
     private environmentScopes: Promise<AccessScopeSource> | undefined
     private environmentCypher: EngineCypherQuery | undefined
+    private environmentModelView: EnvironmentModelView | undefined
     private environmentExecute: EnvironmentCypherExecute | undefined
     private environmentWriter: EnvironmentDataWriter | undefined
     private environmentShares: EnvironmentShareService | undefined
@@ -274,29 +276,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.root.Resolve(TenantConfigStoreKey)
     }
 
-    /** The per-request field-read mask source: allow-all without identity, else the tenant's field security. */
-    public async FieldReadMaskSource(): Promise<IFieldReadMaskSource>
-    {
-        if (this.identity === undefined)
-        {
-            return AllowAllFieldReadMaskSource.Instance
-        }
-        return this.ReadAuthorization()
-    }
-
     /** The live authorizer-reload seam: an admin SecurityModel change invalidates the cached per-tenant evaluator so the next request re-reads it. Requires identity. */
     public SecurityModelReload(): Promise<ISecurityModelReload>
     {
-        return this.ReadAuthorization()
-    }
-
-    /** The per-request access-depth read filter source: allow-all without identity, else the tenant security model's depth filter. */
-    public async DepthFilterSource(): Promise<IReadFilterSource>
-    {
-        if (this.identity === undefined)
-        {
-            return AllowAllReadFilterSource.Instance
-        }
         return this.ReadAuthorization()
     }
 
@@ -472,6 +454,18 @@ export class PragmaticServer implements IEnvironmentGraphHost
         this.AssertRuntimePurpose()
         this.environmentCypher ??= new EngineCypherQuery(this.EnvironmentEngine(), () => this.EnvironmentScopes())
         return this.environmentCypher
+    }
+
+    /**
+     * The runtime `model/view` and `model/resources` (ruling S15): projected from {@link PragmaticServer.EnvironmentEngine}
+     * under each caller's {@link PragmaticServer.EnvironmentScopes} AND the S12 model filter; `memberId` is a delivered
+     * package id; `model/resources` is `[]`. Memoized; runtime tenants only.
+     */
+    public EnvironmentModelView(): EnvironmentModelView
+    {
+        this.AssertRuntimePurpose()
+        this.environmentModelView ??= new EnvironmentModelView(this.EnvironmentEngine(), () => this.EnvironmentScopes())
+        return this.environmentModelView
     }
 
     /** The runtime `cypher/execute` (ruling S13) on the environment engine, under each caller's environment scope. Memoized; runtime tenants only. */
