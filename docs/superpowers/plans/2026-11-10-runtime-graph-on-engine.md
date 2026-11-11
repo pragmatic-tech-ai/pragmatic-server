@@ -53,6 +53,16 @@ This plan was written from M2.2's plan text; it is refreshed against the as-buil
 - **Q9 `cypher/execute` on runtime tenants.** **Default (S13):** enabled (spec §8 lists it), gated by the existing `writeTenant` policy and the engine scope.
 - **Q10 Paging a query whose `ORDER BY` is not over returned columns.** The engine gives no `NextCursor` then (R104 cont. m2). **Default (S11):** that chain falls back to offset paging (`Skip`), so a commit between its pages may repeat or skip rows (today's behaviour for every query); declared in ARCHITECTURE.md. Alternative: refuse such a paged query with InvalidParams.
 
+## Owner answers (2026-11-11)
+
+- **Q1:** no narrowing — `application/open` selects the app only; the access scope alone decides visibility (default S7 confirmed).
+- **Q2:** both apps' policies apply, deny wins (default S5 confirmed).
+- **Q3:** `data/write` is one engine transaction: engine-stored ops are all-or-nothing; external ops execute immediately (spec §11.2) and are compensated in reverse on failure, best effort, with per-op outcomes reported. Replaces the S10 "atomic batch rolled back" wording for external ops.
+- **Q4:** identity resolution is designed NOW as its own spec/plan (engine/TODL); until it lands, `connector/decisions` answers `[]` (declared behaviour change), and M2.3 does not block on it.
+- **Q6 (controller ruling, follows spec §11.2 read-time versions):** after engine 0.3.0, `connector/writePaged` honours a non-null `expectedVersion` as the write guard and results carry the new `version`; until 0.3.0 the S14 default stands.
+- **Q9:** `cypher/execute` enabled on runtime tenants, gated by `writeTenant` and the engine scope (default S13 confirmed).
+- **Q5, Q7, Q8, Q10:** defaults stand.
+
 ## Design rulings (record each in the implementing task's commit message and in ARCHITECTURE.md; the plan's id is the reference, e.g. "ruling S5")
 
 - **S1 One code path.** Endpoint logic that only needs "an engine, its snapshot, a caller scope" is one class for both purposes: `EngineCypherQuery`, `EngineConnectorService`, `AccessScopeSource`, `EngineWriteFailure`, `CypherKeysetPage`, `ScopeReach`. What legitimately differs is host-shaped and stays per host: the dev `cypher/execute` (write lease, write fence, settle waits for `.todl` file writes) versus `EnvironmentCypherExecute` (no lease: the tenant-ownership lease already makes the engine single-owner, and the engine's OCC serializes); `model/view` structure (dev: the language service incl. unsaved buffers; runtime: the engine catalog). Both execute paths share placement, scope confinement and failure mapping.
