@@ -26,7 +26,7 @@ export interface IEnvironmentDataChanges
 /** Where the push reports a window it could not deliver (it never throws at the engine). */
 export interface IDataChangedDiagnostics
 {
-    /** A window was dropped: no running engine snapshot, no commit to name, or a receipt / flush step threw. */
+    /** A receipt or flush step threw, or a subscriber was skipped for a window (its scope or send failed). */
     FlushFailed(error: unknown): void
 }
 
@@ -46,27 +46,16 @@ export class LoggerDataChangedDiagnostics implements IDataChangedDiagnostics
     }
 }
 
-/** Why a window was dropped (reported to IDataChangedDiagnostics). */
-export enum DataChangedDropCode
+/** A subscriber skipped for one window: the engine began reopening while its scope resolved. */
+export class DataChangedSkipError extends Error
 {
-    /** The engine is reopening (or the host went): no snapshot to filter with. */
-    NoSnapshot = 1,
-    /** No receipt named a commit (every snapshot read failed) and nothing was pushed before. */
-    NoCommit = 2,
-}
+    private static readonly ErrorName = 'DataChangedSkipError'
+    private static readonly SkipMessage = 'the environment engine began reopening while a data/changed subscriber scope resolved'
 
-export class DataChangedDropError extends Error
-{
-    private static readonly ErrorName = 'DataChangedDropError'
-    private static readonly Messages: Readonly<Record<DataChangedDropCode, string>> = {
-        [DataChangedDropCode.NoSnapshot]: 'no running environment engine snapshot to filter the window with',
-        [DataChangedDropCode.NoCommit]: 'no commit to name the window with',
-    }
-
-    public constructor(public readonly Code: DataChangedDropCode)
+    public constructor()
     {
-        super(DataChangedDropError.Messages[Code])
-        this.name = DataChangedDropError.ErrorName
+        super(DataChangedSkipError.SkipMessage)
+        this.name = DataChangedSkipError.ErrorName
     }
 }
 
@@ -135,16 +124,19 @@ class PendingChange
  * a System reader opened on receipt (when that read fails, the concepts join without naming a commit). Receipts are
  * processed in arrival order, and a write-through's ConnectorApplied (raised after its engine commit) normally joins
  * the same window, so one commit is reported once. Should a window end between the two, the ConnectorApplied's
- * concepts merge into the next payload, whose commit is never older than the last one pushed: the external part may
- * then arrive in a follow-up payload naming the same commit, but no change is ever lost.
+ * concepts merge into the next payload, whose commit is never older than the last one pushed: the commit is a
+ * monotonic watermark that may repeat across payloads. A window due while the engine is reopening (or before any
+ * commit can be named) is merged back into the pending change and goes out with the next window, opened by the next
+ * receipt or by the next engine `Opened` announces.
  *
  * Coalescing: the first receipt starts one `CoalesceMs` window (closed synchronously when its timer fires, so a
  * receipt queued behind a running step opens the next); when it ends, every live subscriber gets `{ commit: latest,
- * concepts: union }` filtered by `ScopeReach.MayRead` under its scope (resolved then) and the running snapshot's
- * catalog (read without opening or redelivering), sorted; nothing is sent when the filtered set is empty. A concept
- * covers its subconcepts. External sources changed outside the engine are not pushed (no changefeed, spec §5.2). A
- * failing scope or send skips that subscriber; a window that cannot be pushed at all is reported to
- * `IDataChangedDiagnostics`.
+ * concepts: union }` filtered by `ScopeReach.MayRead` under its scope (resolved then, through its scope source, which
+ * may itself wait on the host) and the catalog of the running snapshot read right after that scope resolved
+ * (`RunningSnapshot()`: that read alone never opens, redelivers or takes the host mutex), sorted; nothing is sent when
+ * the filtered set is empty. A concept covers its subconcepts. External sources changed outside the engine are not
+ * pushed (no changefeed, spec 5.2). A failing scope or send (or a reopen begun while the scope resolved) skips that
+ * subscriber for the window and is reported to `IDataChangedDiagnostics`, as is a step that threw.
  */
 export class DataChangedPush implements IDisposable
 {
@@ -201,6 +193,11 @@ export class DataChangedPush implements IDisposable
             engine.CommitApplied.Subscribe(applied => this.Receive(() => this.CommitConcepts(engine, applied))),
             engine.ConnectorApplied.Subscribe(applied => this.Receive(() => this.ConnectorConcepts(engine, applied))),
         ])
+        // a change requeued while the engine was reopening goes out with the next window
+        this.Enqueue(async () =>
+        {
+            if (this.pending.Concepts.size > 0) this.OpenWindow()
+        })
     }
 
     /** Queues one receipt in arrival order and opens the window if none is open. */
@@ -212,6 +209,12 @@ export class DataChangedPush implements IDisposable
             const [commit, concepts] = await resolve()
             this.pending.Add(commit, concepts)
         })
+        this.OpenWindow()
+    }
+
+    private OpenWindow(): void
+    {
+        if (this.disposed) return
         this.window ??= this.timer.Start(DataChangedPush.CoalesceMs, () =>
         {
             // closed now, not when the flush step runs: a receipt queued meanwhile opens the next window
@@ -296,25 +299,37 @@ export class DataChangedPush implements IDisposable
         this.pending = new PendingChange()
         if (this.disposed || change.Concepts.size === 0) return
         const latest = change.Commit > this.pushed ? change.Commit : this.pushed
-        if (latest === 0n) throw new DataChangedDropError(DataChangedDropCode.NoCommit)
-        const snapshot = this.host.RunningSnapshot()
-        if (snapshot === undefined) throw new DataChangedDropError(DataChangedDropCode.NoSnapshot)
+        if (latest === 0n || this.host.RunningSnapshot() === undefined)
+        {
+            // no commit to name yet, or the engine is reopening: the change waits (merged, so bounded by the concepts)
+            this.Requeue(change)
+            return
+        }
         this.pushed = latest
-        const catalog = snapshot.SchemaCatalog
         const commit = String(latest)
         for (const subscriber of [...this.subscribers])
         {
             try
             {
                 const scope = (await subscriber.Scope()).Scope
-                const concepts = [...change.Concepts].filter(concept => ScopeReach.MayRead(scope, concept, catalog)).sort()
+                // the catalog of the snapshot the scope was just resolved on, not one read before it
+                const snapshot = this.host.RunningSnapshot()
+                if (snapshot === undefined) throw new DataChangedSkipError()
+                const concepts = [...change.Concepts].filter(concept => ScopeReach.MayRead(scope, concept, snapshot.SchemaCatalog)).sort()
                 if (concepts.length > 0 && subscriber.Live) subscriber.Send({ commit, concepts })
             }
-            catch
+            catch (error)
             {
-                // fail-closed: a subscriber whose scope cannot be compiled (or whose send throws) gets nothing
+                // fail-closed: a subscriber whose scope cannot be compiled (or whose send throws) gets nothing this window
+                this.diagnostics.FlushFailed(error)
             }
         }
+    }
+
+    /** Merges an unpushed change back into the pending one; the next window (or the next engine opened) carries it. */
+    private Requeue(change: PendingChange): void
+    {
+        this.pending.Add(change.Commit === 0n ? undefined : change.Commit, change.Concepts)
     }
 
     private static IdsOf(op: BatchOp): readonly string[]

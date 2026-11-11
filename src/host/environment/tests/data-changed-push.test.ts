@@ -3,13 +3,14 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AccessDefault, AccessScope, FalsePredicate } from '@pragmatic-tech-ai/graph'
+import { AccessDefault, AccessScope, FalsePredicate, StorageKind } from '@pragmatic-tech-ai/graph'
 import { TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import { AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppWriteOpDto, AppWriteResultDto, DataChangedPayload, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { Principal, PrincipalKind } from '@pragmatic-tech-ai/todl-identity'
 import { Disposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
+import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
 import type { IGraphScope } from '../../engine/access-scope-source.js'
@@ -17,6 +18,8 @@ import type { IUpgradeTimer } from '../../engine/bounded-wait.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
 import { ScopedAccessContext, TokenScope } from '../../token-scope.js'
 import { DataChangedPush } from '../data-changed-push.js'
+import { EnvironmentEngineHost } from '../environment-engine-host.js'
+import type { EnvironmentSnapshot } from '../environment-engine-host.js'
 import { EnvironmentFixture } from './environment-fixture.js'
 import type { IEnvironmentFixtureOptions } from './environment-fixture.js'
 
@@ -58,6 +61,22 @@ class DenyingScope implements IGraphScope
     public Placement(): never
     {
         throw new Error(DenyingScope.NoPlacement)
+    }
+}
+
+/** A host whose running snapshot can be hidden, as during a reopen. */
+class GatedHost extends EnvironmentEngineHost
+{
+    public Reopening = false
+
+    public static Over(fx: EnvironmentFixture): GatedHost
+    {
+        return fx.Track(new GatedHost(fx.Deliveries(), new NodeFsStorage(fx.PackagesDir), fx.Services(), { Kind: StorageKind.Lmdb, Path: fx.StorePath }))
+    }
+
+    public override RunningSnapshot(): EnvironmentSnapshot | undefined
+    {
+        return this.Reopening ? undefined : super.RunningSnapshot()
     }
 }
 
@@ -351,6 +370,37 @@ describe('data/changed push', () =>
             await Inbox.Quiet()
             assert.deepEqual(scoped.Payloads, [], 'a token scope without cypher/query gets nothing')
             assert.deepEqual(closed.Payloads, [], 'a disposed connection gets nothing')
+        })
+    })
+
+    test('a window due during a reopen is carried by the next one', async () =>
+    {
+        await PushFx.Run({}, async fx =>
+        {
+            // a standalone host on the store (the server's own engine is never opened in this test)
+            const host = GatedHost.Over(fx)
+            const timer = new ManualTimer()
+            const push = new DataChangedPush(host, timer)
+            try
+            {
+                const inbox = new Inbox()
+                const scope = new DenyingScope(PushFx.Customer)
+                push.Subscribe(async () => scope, payload => inbox.Receive(payload))
+                await host.Engine()
+                await fx.Seed([{ Concept: PushFx.Account, Id: PushFx.R1 }], host)
+                host.Reopening = true
+                timer.Fire()
+                await Inbox.Quiet()
+                assert.deepEqual(inbox.Payloads, [], 'nothing to filter with while reopening')
+                host.Reopening = false
+                const latest = await fx.Seed([{ Concept: PushFx.Contact, Id: PushFx.R2 }], host)
+                timer.Fire()
+                assert.deepEqual(await inbox.Await(), [{ commit: String(latest), concepts: [PushFx.Account, PushFx.Contact] }], 'the requeued change joins the next window')
+            }
+            finally
+            {
+                push.dispose()
+            }
         })
     })
 
