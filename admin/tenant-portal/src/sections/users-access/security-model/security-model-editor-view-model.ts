@@ -775,6 +775,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     protected override OnEnvironmentChanged(): void
     {
         this.SetDraft(undefined)
+        this.securityChanges.Invalidate()
     }
 
     // The setting and the catalog load together (a null setting from the
@@ -802,6 +803,10 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
             if (generation === this.LoadGeneration)
             {
                 this.SetDraft(new SecurityModelDraft(model ?? SecurityModelDraft.EmptyModel(), catalog))
+                if (this.IsChangesMode)
+                {
+                    void this.securityChanges.Refresh()
+                }
             }
             return true
         }

@@ -53,4 +53,37 @@ describe('SecurityChangesViewModel', () =>
             Fixture.Change('2026-02-01T00:00:00.000Z', { version: '2.0.0' }))
         assert.deepEqual(vm.Entries.ToArray().map(e => e.Change.version), ['3.0.0', '2.0.0', '1.0.0'])
     })
+
+    it('switching environment drops the old log and ignores a refresh still in flight', async () =>
+    {
+        class GatedApi extends FakeTenantApi
+        {
+            public Release: (() => void) | undefined
+
+            public override async ListSecurityChanges(env: string): Promise<SecurityChangesDto[]>
+            {
+                const rows = await super.ListSecurityChanges(env)
+                if (env === 'alpha' && this.Release === undefined)
+                {
+                    await new Promise<void>(resolve => { this.Release = resolve })
+                }
+                return rows
+            }
+        }
+        const api = new GatedApi()
+        api.WithEnvironment('alpha').WithEnvironment('beta')
+        api.SecurityChanges.set('alpha', [Fixture.Change('2026-01-01T00:00:00.000Z', { version: 'A' })])
+        api.SecurityChanges.set('beta', [Fixture.Change('2026-02-01T00:00:00.000Z', { version: 'B' })])
+        const host = new TenantTestHost(api, { envs: true, adopt: true, access: true, settings: true })
+        const env: { Environment: string | undefined } = { Environment: 'alpha' }
+        const vm = new SecurityChangesViewModel(host.Session, env)
+        const inFlight = vm.Refresh()
+        await new Promise<void>(resolve => setTimeout(resolve, 0))
+        env.Environment = 'beta'
+        vm.Invalidate()
+        await vm.Refresh()
+        api.Release?.()
+        await inFlight
+        assert.deepEqual(vm.Entries.ToArray().map(e => e.Change.version), ['B'])
+    })
 })

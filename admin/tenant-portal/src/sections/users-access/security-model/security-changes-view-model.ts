@@ -125,6 +125,13 @@ export class SecurityChangesViewModel extends Observable
         }
     }
 
+    // Forgets the shown log and abandons any refresh in flight (the environment changed).
+    public Invalidate(): void
+    {
+        this.generation++
+        this.Show([], SecurityChangesViewModel.Empty)
+    }
+
     private Show(changes: readonly SecurityChangesDto[], failure: string): void
     {
         const P = SecurityChangesViewModel
