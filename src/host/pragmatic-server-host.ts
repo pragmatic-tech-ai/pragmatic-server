@@ -469,6 +469,7 @@ export class PragmaticServerHost
             const languageService = await server.LanguageService()
             const manager = await server.Manager()
             const fieldMasks = await server.FieldReadMaskSource()
+            const readFilters = await server.DepthFilterSource()
             const pack = await server.Pack()
             const admin = new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), () => this.registry.DisposeTenant(environmentId), pack.Accounts, pack.Registrar, pack.Tokens, {
                 Invalidate: name => server.InvalidateAdapterPack(name),
@@ -492,7 +493,7 @@ export class PragmaticServerHost
                         policy: new BackpressurePolicy(resilience.backpressureSoftBytes, resilience.backpressureHardBytes, resilience.backpressureGraceMs),
                         onShed: () => this.logger.Info(PragmaticServerHost.ShedLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.ShedEvent }),
                     })
-                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, () => server.Connectors(), development.devCypher, this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider, this.paging, fieldMasks, ctx => server.ConnectorReadAuthorizationFor(ctx), (ctx, target) => server.ConnectorWriteAuthorizationFor(ctx, target), (ctx, id, request) => server.ExecuteCypher(ctx, id, request), runtime.deployProvider, development.devGraphService, runtime.environmentGraphHost, development.devModelView)
+                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, () => server.Connectors(), development.devCypher, this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.appGraphProvider, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider, runtime.assignProvider, this.paging, fieldMasks, ctx => server.ConnectorReadAuthorizationFor(ctx), (ctx, target) => server.ConnectorWriteAuthorizationFor(ctx, target), (ctx, id, request) => server.ExecuteCypher(ctx, id, request), runtime.deployProvider, development.devGraphService, runtime.environmentGraphHost, development.devModelView, readFilters)
                     this.handlers.add(handler)
                     const revocable: IRevocableConnection =
                     {
