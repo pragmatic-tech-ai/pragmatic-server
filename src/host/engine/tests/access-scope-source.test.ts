@@ -27,6 +27,14 @@ class SilentDiagnostics implements IDevEngineDiagnostics
     {
     }
 
+    public CatalogFailed(): void
+    {
+    }
+
+    public RetireFailed(): void
+    {
+    }
+
     public ChangedHandlerFailed(): void
     {
     }

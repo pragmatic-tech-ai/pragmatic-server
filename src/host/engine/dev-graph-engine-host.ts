@@ -1,9 +1,7 @@
 import { CommitKind, GraphEngine, StorageKind, WriteOp } from '@pragmatic-tech-ai/graph'
 import type { BatchOp, ConnectorChangeSet, ICommitApplied, IConnectorTransaction, IGraphConnector, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { DataSourceAdapterCatalog, Severity } from '@pragmatic-tech-ai/todl'
-import type { Diagnostic } from '@pragmatic-tech-ai/todl'
-import { DataSourceConnector, EnvironmentCatalogError, TodlFileConnector } from '@pragmatic-tech-ai/todl/engine'
+import { EnvironmentCatalogError, TodlFileConnector } from '@pragmatic-tech-ai/todl/engine'
 import { Disposable, ServiceProvider, Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable, IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { StructuredLogger } from '../../observability/logger.js'
@@ -11,9 +9,10 @@ import type { ILogger } from '../../observability/logger.js'
 import { ConnectorSetKey } from './connector-set-key.js'
 import type { IDevLanguageService } from './dev-language-service.js'
 import type { IDevSolution } from './dev-solution.js'
-import { DevSnapshotSource } from './dev-snapshot-source.js'
+import { DevSnapshotCompileError, DevSnapshotSource } from './dev-snapshot-source.js'
 import type { DevSnapshot } from './dev-snapshot-source.js'
 import type { IGraphEngineHost } from './graph-engine-host.js'
+import { LazyExternalConnector } from './lazy-external-connector.js'
 import { SavedMemberReader } from './saved-member-reader.js'
 import { LoggerDevWriteDiagnostics, ServerModelWorkspace, WriteFenceSlot } from './server-model-workspace.js'
 import type { IDevWriteDiagnostics, IWriteFence } from './server-model-workspace.js'
@@ -98,8 +97,15 @@ export class TimeoutUpgradeTimer implements IUpgradeTimer
 /** Where an upgrade that did not apply is reported (it is never fatal: the engine keeps its previous version). */
 export interface IDevEngineDiagnostics
 {
-    /** An upgrade or reopen did not apply, or a reopen's retired engine failed to close. */
+    /** An upgrade or reopen did not apply (the engine keeps its previous version). */
     UpgradeFailed(error: unknown): void
+    /**
+     * The saved connector plans break an environment rule (TODL's EnvironmentCatalogError): dev engine requests answer
+     * InvalidRequest with its message until a save describes again.
+     */
+    CatalogFailed(error: unknown): void
+    /** An engine retired by a reopen failed to close (the running engine is unaffected). */
+    RetireFailed(error: unknown): void
     /** A `Changed` subscriber threw (the upgrade itself applied; later upgrades are unaffected). */
     ChangedHandlerFailed(error: unknown): void
     /**
@@ -118,6 +124,8 @@ export class LoggerDevEngineDiagnostics implements IDevEngineDiagnostics
     private static readonly HandlerLine = 'dev graph engine upgraded, but a Changed subscriber failed: '
     private static readonly UnsettledLine = 'dev graph engine writes did not settle in time; the host went on without them'
     private static readonly DrainLine = 'dev graph engine teardown stopped waiting for a hung upgrade pass'
+    private static readonly CatalogLine = 'dev graph engine requests fail until the next save; the saved connector plans break an environment rule: '
+    private static readonly RetireLine = 'dev graph engine retired by a reopen failed to close: '
     private static readonly UnknownName = 'UnknownError'
 
     public constructor(private readonly logger: ILogger = StructuredLogger.ToStdout())
@@ -127,6 +135,16 @@ export class LoggerDevEngineDiagnostics implements IDevEngineDiagnostics
     public UpgradeFailed(error: unknown): void
     {
         this.logger.Error(LoggerDevEngineDiagnostics.Line + LoggerDevEngineDiagnostics.NameOf(error))
+    }
+
+    public CatalogFailed(error: unknown): void
+    {
+        this.logger.Error(LoggerDevEngineDiagnostics.CatalogLine + LoggerDevEngineDiagnostics.NameOf(error))
+    }
+
+    public RetireFailed(error: unknown): void
+    {
+        this.logger.Error(LoggerDevEngineDiagnostics.RetireLine + LoggerDevEngineDiagnostics.NameOf(error))
     }
 
     public ChangedHandlerFailed(error: unknown): void
@@ -150,23 +168,27 @@ export class LoggerDevEngineDiagnostics implements IDevEngineDiagnostics
     }
 }
 
-/** The saved sources compiled with errors (a broken save, or a commit only half on disk): the snapshot is not applied. */
-export class DevSnapshotCompileError extends Error
+export { DevSnapshotCompileError } from './dev-snapshot-source.js'
+
+/**
+ * The language-service-bound parts every open reuses: the reader, the snapshot source (whose failure memo spares a
+ * failed open from recompiling until a save) and the model workspace.
+ */
+class SnapshotParts
 {
-    private static readonly ErrorName = 'DevSnapshotCompileError'
-    private static readonly MessagePrefix = 'the saved sources do not compile; errors: '
+    public readonly Reader: SavedMemberReader
+    public readonly Source: DevSnapshotSource
+    public readonly Workspace: ServerModelWorkspace
 
-    public constructor(public readonly Diagnostics: readonly Diagnostic[])
+    public constructor(
+        public readonly LanguageService: IDevEngineLanguageService,
+        solution: () => Promise<IDevSolution | undefined>,
+        writeDiagnostics: IDevWriteDiagnostics,
+        fences: WriteFenceSlot)
     {
-        super(DevSnapshotCompileError.MessagePrefix + Diagnostics.length)
-        this.name = DevSnapshotCompileError.ErrorName
-    }
-
-    /** Throws when `diagnostics` holds an error. */
-    public static ThrowIfFailed(diagnostics: readonly Diagnostic[]): void
-    {
-        const errors = diagnostics.filter(diagnostic => diagnostic.severity === Severity.Error)
-        if (errors.length > 0) throw new DevSnapshotCompileError(errors)
+        this.Reader = new SavedMemberReader(LanguageService)
+        this.Source = new DevSnapshotSource(solution, LanguageService, this.Reader)
+        this.Workspace = new ServerModelWorkspace(solution, LanguageService, writeDiagnostics, this.Reader, fences)
     }
 }
 
@@ -506,15 +528,17 @@ class OpenedEngine implements IDisposable
  * retries. Readers already open keep their snapshot (the engine's MVCC). `Changed` is raised after each applied
  * upgrade or reopen.
  *
- * External connectors (ruling S18): beside the file connector the engine runs one `DataSourceConnector` per external
- * plan of the snapshot, each borrowing its adapter from the process-wide `DataSourceAdapterCatalog` the `services`
- * provider resolves. An engine's connectors are fixed at Open, so a pass whose {@link ConnectorSetKey} differs from the
+ * External connectors (ruling S18): beside the file connector the engine runs one {@link LazyExternalConnector} per
+ * external plan of the snapshot, each opening its `DataSourceConnector` on first use (ruling R21: an unreachable source
+ * fails only the calls touching its bindings) with an adapter borrowed from the process-wide `DataSourceAdapterCatalog`
+ * the `services` provider resolves. An engine's connectors are fixed at Open, so a pass whose {@link ConnectorSetKey} differs from the
  * running engine's reopens (ruling S2's rule): new callers wait on the host gate, a fresh memory engine is launched
  * from the new snapshot (dev data lives in the `.todl` files, so the seed carries it over) and swapped in, and the
  * retired engine is disposed after {@link DevGraphEngineHost.RetireGraceMs} so readers already handed out finish. The
  * drain's settle wait precedes the reopen exactly as it precedes an upgrade. A snapshot that fails with TODL's
  * `EnvironmentCatalogError` (at open or in a pass) makes every request reject with InvalidRequest and its message
- * until a later pass describes again ({@link DevSnapshotCatalogFailure}).
+ * until a later pass describes again ({@link DevSnapshotCatalogFailure}); sources that do not compile keep the previous
+ * version instead and never enter that state.
  */
 export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
 {
@@ -526,6 +550,7 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
     /** How long an engine retired by a reopen stays open for the readers already handed out before it is disposed. */
     public static readonly RetireGraceMs = DevGraphEngineHost.MaxSettleMs
     private static readonly DisposedMessage = 'The dev graph engine host has been disposed'
+    private static readonly NoIdentityMessage = 'invariant: a dev snapshot with external connector plans has no external identity'
 
     public readonly Changed: ISignal<void>
 
@@ -542,6 +567,7 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
     private reopening: Promise<void> | undefined
     /** The request error of the latest pass's catalog failure, until a later pass describes. */
     private failure: unknown
+    private parts: SnapshotParts | undefined
     /** Engines retired by a reopen, each with its pending grace timer. */
     private readonly retired = new Map<RunningEngine, IDisposable>()
 
@@ -639,9 +665,8 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
     private async Open(): Promise<OpenedEngine>
     {
         const languageService = await this.languageService()
-        const reader = new SavedMemberReader(languageService)
-        const source = new DevSnapshotSource(this.solution, languageService, reader)
-        const workspace = new ServerModelWorkspace(this.solution, languageService, this.writeDiagnostics, reader, this.fences)
+        if (this.parts?.LanguageService !== languageService) this.parts = new SnapshotParts(languageService, this.solution, this.writeDiagnostics, this.fences)
+        const { Source: source, Workspace: workspace } = this.parts
         // subscribed before the first read, so a save racing the open is upgraded once it is open
         const subscription = languageService.GraphChanged.subscribe(() => this.Schedule())
         try
@@ -658,30 +683,30 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         }
     }
 
-    /** Opens a memory engine on `snapshot`: the tracked `.todl` file connector plus one DataSourceConnector per plan. */
+    /** Opens a memory engine on `snapshot`: the tracked `.todl` file connector plus one lazy external connector per plan. */
     private async Launch(snapshot: DevSnapshot, workspace: ServerModelWorkspace): Promise<RunningEngine>
     {
         const file = this.writes.Track(new TodlFileConnector(workspace))
         const engine = await GraphEngine.Open({
             Description: snapshot.Description,
             Storage: { Kind: StorageKind.Memory },
-            Connectors: [file, ...await this.ExternalConnectors(snapshot)],
+            Connectors: [file, ...this.ExternalConnectors(snapshot)],
             PrepareTimeoutMs: this.prepareTimeoutMs,
         })
         const applied = engine.CommitApplied.Subscribe(commit => this.writes.Finalized(commit))
         return new RunningEngine(engine, applied, file, this.writes, ConnectorSetKey.Of(snapshot.Connectors, snapshot.Identity))
     }
 
-    /** One DataSourceConnector per external plan (each borrows its adapter from the catalog, never disposes it). */
-    private async ExternalConnectors(snapshot: DevSnapshot): Promise<IGraphConnector[]>
+    /**
+     * One lazily opened DataSourceConnector per external plan (ruling R21: a source that cannot be reached fails only
+     * the calls touching its bindings, never the engine open; each borrows its adapter from the catalog).
+     */
+    private ExternalConnectors(snapshot: DevSnapshot): IGraphConnector[]
     {
+        if (snapshot.Connectors.length === 0) return []
         const identity = snapshot.Identity
-        if (snapshot.Connectors.length === 0 || identity === undefined) return []
-        const services = this.services()
-        const adapters = services.getRequired(DataSourceAdapterCatalog.ServiceKey)
-        const connectors: IGraphConnector[] = []
-        for (const plan of snapshot.Connectors) connectors.push(await DataSourceConnector.Open(plan, adapters, services, identity))
-        return connectors
+        if (identity === undefined) throw new Error(DevGraphEngineHost.NoIdentityMessage)
+        return snapshot.Connectors.map(plan => new LazyExternalConnector(plan, this.services, identity))
     }
 
     /**
@@ -694,7 +719,14 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
         this.reopening = new Promise<void>(resolve => { release = resolve })
         try
         {
-            this.Retire(opened.Swap(await this.Launch(snapshot, opened.Workspace), snapshot))
+            const running = await this.Launch(snapshot, opened.Workspace)
+            // teardown began while the engine launched: it disposes what is installed, so the new engine is not swapped in
+            if (this.disposing !== undefined)
+            {
+                await running.dispose()
+                return
+            }
+            this.Retire(opened.Swap(running, snapshot))
         }
         finally
         {
@@ -706,10 +738,16 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
     /** Disposes `running` once {@link DevGraphEngineHost.RetireGraceMs} elapses (or at teardown). */
     private Retire(running: RunningEngine): void
     {
+        if (this.disposing !== undefined)
+        {
+            // teardown already collected the retired engines: close this one now
+            running.dispose().catch((error: unknown) => this.diagnostics.RetireFailed(error))
+            return
+        }
         const grace = this.settleTimer.Start(DevGraphEngineHost.RetireGraceMs, () =>
         {
             this.retired.delete(running)
-            running.dispose().catch((error: unknown) => this.diagnostics.UpgradeFailed(error))
+            running.dispose().catch((error: unknown) => this.diagnostics.RetireFailed(error))
         })
         this.retired.set(running, grace)
     }
@@ -765,15 +803,15 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
             }
             const begun = this.writes.Begun
             let snapshot: DevSnapshot | undefined
-            let catalogError: unknown
+            let failed: unknown
             try
             {
                 snapshot = await opened.Source.Current()
             }
             catch (error)
             {
-                if (!(error instanceof EnvironmentCatalogError)) throw error
-                catalogError = error
+                if (!(error instanceof EnvironmentCatalogError) && !(error instanceof DevSnapshotCompileError)) throw error
+                failed = error
             }
             if (!this.writes.Quiet(begun))
             {
@@ -781,11 +819,14 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
                 this.pending = true
                 return
             }
+            // sources that do not compile keep the previous version (the source reports them as compile errors even
+            // when their plans also break an environment rule): never the catalog-failure state
+            if (failed instanceof DevSnapshotCompileError) throw failed
             if (snapshot === undefined)
             {
                 // the saved plans break an environment rule: every request reports it until a later pass describes
-                this.failure = DevSnapshotCatalogFailure.Of(catalogError)
-                this.diagnostics.UpgradeFailed(catalogError)
+                this.failure = DevSnapshotCatalogFailure.Of(failed)
+                this.diagnostics.CatalogFailed(failed)
                 return
             }
             DevSnapshotCompileError.ThrowIfFailed(snapshot.CompileDiagnostics)

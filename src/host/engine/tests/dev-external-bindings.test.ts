@@ -32,6 +32,7 @@ class ExternalFx
     /** A second model of the solution binding crm.Customer to the same source: their external ids would collide. */
     public static readonly Colliding = 'namespace crm {\n  model Other : crm { connect crm; populate Customer key cust_id { name = "nm"; } }\n}\n'
     public static readonly CollidingFile = 'other.todl'
+    public static readonly Unreachable = 'crm-db is unreachable'
     public static readonly Collision = /both bind "crm\.Customer" to source "Customer"/
 
     public readonly Fx = new EngineHostFx()
@@ -69,6 +70,16 @@ class ExternalFx
         return result.Rows.map(row => (row[0] as Cypher.ScalarValue).Value)
     }
 
+    /** True when `error`, or an error in its cause chain, carries the unreachable source's message. */
+    public static Caused(error: unknown): boolean
+    {
+        for (let current: unknown = error; current instanceof Error; current = current.cause)
+        {
+            if (current.message.includes(ExternalFx.Unreachable)) return true
+        }
+        return false
+    }
+
     public static IsInvalidRequest(error: unknown): boolean
     {
         return error instanceof ResponseError && error.code === ErrorCodes.InvalidRequest && ExternalFx.Collision.test(error.message)
@@ -92,6 +103,26 @@ describe('dev external bindings', () =>
             assert.ok(snapshot.Description.Bindings.some(binding => binding.Concept === ExternalFx.Customer && binding.Connector === ExternalFx.Engine))
             assert.ok(snapshot.External.has(ExternalFx.Customer))
             assert.deepEqual(snapshot.Identity?.Bindings().map(binding => binding.Binding.Concept), [ExternalFx.Customer])
+        }
+        finally
+        {
+            await x.Host.dispose()
+        }
+    })
+
+    test('an unreachable source fails only its own bindings', async () =>
+    {
+        const x = new ExternalFx()
+        x.Factory.OpenFailure = new Error(ExternalFx.Unreachable)
+        try
+        {
+            // the source is opened on first use, never at engine open: file-bound reads work while it is down
+            const engine = await x.Host.Engine()
+            assert.deepEqual(await ExternalFx.Strings(engine, ExternalFx.ShopNames), ['Ada', 'Bo'])
+            await assert.rejects(ExternalFx.Strings(engine, ExternalFx.Names), (error: unknown) => ExternalFx.Caused(error))
+            // the source recovers: the next query opens it again
+            x.Factory.OpenFailure = undefined
+            assert.deepEqual(await ExternalFx.Strings(engine, ExternalFx.Names), [ExternalFx.Acme, ExternalFx.Bolt])
         }
         finally
         {

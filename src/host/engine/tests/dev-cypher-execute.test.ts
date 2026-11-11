@@ -586,6 +586,16 @@ class SilentEngineDiagnostics implements IDevEngineDiagnostics
         this.Failures.push(error)
     }
 
+    public CatalogFailed(error: unknown): void
+    {
+        this.Failures.push(error)
+    }
+
+    public RetireFailed(error: unknown): void
+    {
+        this.Failures.push(error)
+    }
+
     public ChangedHandlerFailed(error: unknown): void
     {
         this.Failures.push(error)

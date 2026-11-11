@@ -133,11 +133,15 @@ export class MemorySourceAdapter implements IDataSourceAdapter
     }
 }
 
-/** Hands out one {@link MemorySourceAdapter} for the SQL kind (register it with `DataSourceAdapterCatalog.Register`). */
+/**
+ * Hands out one {@link MemorySourceAdapter} for the SQL kind (register it with `DataSourceAdapterCatalog.Register`).
+ * While `OpenFailure` is set every Open rejects with it (an unreachable or misconfigured source).
+ */
 export class MemorySourceAdapterFactory implements IDataSourceAdapterFactory
 {
     public readonly Kind = DataSourceKind.Sql
     public readonly Opened: ResolvedConnection[] = []
+    public OpenFailure: Error | undefined
 
     public constructor(public readonly Adapter: MemorySourceAdapter = new MemorySourceAdapter())
     {
@@ -145,6 +149,7 @@ export class MemorySourceAdapterFactory implements IDataSourceAdapterFactory
 
     public async Open(connection: ResolvedConnection): Promise<IDataSourceAdapter>
     {
+        if (this.OpenFailure !== undefined) throw this.OpenFailure
         this.Opened.push(connection)
         return this.Adapter
     }
