@@ -1,5 +1,5 @@
 import { AccessDefault, AccessScope, ConceptIs, FalsePredicate, Not, Or, TruePredicate } from '@pragmatic-tech-ai/graph'
-import type { IWriteRules, Predicate } from '@pragmatic-tech-ai/graph'
+import type { IReadOnlyMembers, IWriteRules, Predicate } from '@pragmatic-tech-ai/graph'
 import { AccessScopeConjunction, PredicateFold, WriteRule } from '../engine/access-scope-conjunction.js'
 import type { EngineSchemaCatalog } from '../engine/engine-schema-catalog.js'
 
@@ -21,8 +21,9 @@ export class PredicateAny
 }
 
 /**
- * A mutable copy of an engine scope's Rows and write predicates, for the runtime Finish steps (ruling S5). Hidden,
- * HiddenExact, ReadOnly and ReadOnlyExact are carried unchanged.
+ * A mutable copy of an engine scope's Rows and write predicates, for the runtime Finish steps (ruling S5) and the
+ * service scopes. Hidden, HiddenExact and ReadOnly are carried unchanged; ReadOnlyExact too, unless `SetReadOnlyExact`
+ * replaces a key's.
  *
  * `MaterializeDefault` makes a `Default: Deny` explicit (the M1 rule, ruling R93): every described concept none of
  * whose applicable keys has a Rows entry (or a rule of one write operation) in the scope gets its own
@@ -35,6 +36,7 @@ export class ScopeDraft
 {
     private readonly rows: Map<string, Predicate>
     private readonly writes = new Map<string, Map<WriteRule, Predicate>>()
+    private readonly readOnlyExact = new Map<string, IReadOnlyMembers>()
 
     public constructor(private readonly scope: AccessScope, private readonly catalog: EngineSchemaCatalog)
     {
@@ -108,15 +110,23 @@ export class ScopeDraft
         this.Rules(key).set(rule, PredicateFold.And(current, predicate))
     }
 
+    /** Replaces `key`'s ReadOnlyExact members (the scope's own entry for `key` is dropped). */
+    public SetReadOnlyExact(key: string, members: IReadOnlyMembers): void
+    {
+        this.Rules(key)
+        this.readOnlyExact.set(key, members)
+    }
+
     public Build(): AccessScope
     {
         const writes = new Map<string, IWriteRules>()
         for (const [key, rules] of this.writes)
         {
             const original = this.scope.Writes.get(key)
+            const exact = this.readOnlyExact.get(key) ?? original?.ReadOnlyExact
             writes.set(key, {
                 ...(original?.ReadOnly === undefined ? {} : { ReadOnly: original.ReadOnly }),
-                ...(original?.ReadOnlyExact === undefined ? {} : { ReadOnlyExact: original.ReadOnlyExact }),
+                ...(exact === undefined ? {} : { ReadOnlyExact: exact }),
                 ...Object.fromEntries(rules),
             })
         }

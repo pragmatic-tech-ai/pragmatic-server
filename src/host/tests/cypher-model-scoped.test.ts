@@ -50,7 +50,7 @@ class ModelScopedWorld
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
             serverSocket, this.language, this.manager, context, () => Promise.reject(new Error(ModelScopedFixture.NoConnectors)), this.server.DevCypher(),
-            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development, undefined, undefined, undefined,
             this.fieldMasks, ctx => this.server.ConnectorReadAuthorizationFor(ctx), undefined)
         this.clients.push(PragmaticClient.CreateOverSocket(clientSocket))
         this.handlers.push(handler)

@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
 import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
-import { BuiltinStoreEngine } from '../connectors/builtin-store-engine.js'
 import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { check, DataSourceAdapterCatalog, DataSourceKind } from '@pragmatic-tech-ai/todl'
 import type { IDataSourceAdapter, IDataSourceAdapterFactory, ResolvedConnection, QueryRequest, WriteBatch, WriteResult, ExternalRecord } from '@pragmatic-tech-ai/todl'
@@ -186,7 +185,7 @@ test('production ConnectorWriteAuthorizationFor with identity configured denies 
     process.env[keyEnv] = randomBytes(32).toString('base64')
     const dirs = [mkdtempSync(join(tmpdir(), 'cwi-pk-')), mkdtempSync(join(tmpdir(), 'cwi-ap-')), mkdtempSync(join(tmpdir(), 'cwi-id-'))]
     const server = new PragmaticServer({
-        packagesRoot: dirs[0]!, applicationsRoot: dirs[1]!, purpose: TenantPurpose.Runtime, builtinStoreEngine: BuiltinStoreEngine.Document,
+        packagesRoot: dirs[0]!, applicationsRoot: dirs[1]!, purpose: TenantPurpose.Runtime,
         identity: { identityRoot: dirs[2]!, masterKey: { base64Env: keyEnv }, tenant: { id: 't1', displayName: 'Tenant One' } },
     })
     try

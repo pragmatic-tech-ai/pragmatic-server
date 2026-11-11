@@ -3,9 +3,8 @@ import { StorageKind } from '@pragmatic-tech-ai/graph'
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
-import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
-import type { ModelConnectorPlan, IDataSourceAdapterProvider, IDataSourceAdapterFactory } from '@pragmatic-tech-ai/todl'
-import type { Domain } from '@pragmatic-tech-ai/todl/domain'
+import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey } from '@pragmatic-tech-ai/todl'
+import type { IDataSourceAdapterProvider, IDataSourceAdapterFactory } from '@pragmatic-tech-ai/todl'
 import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-system'
 import { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -27,9 +26,6 @@ import { ConnectorsHost, NpmAdapterPackProvider, WorkerThreadSandboxFactory, Chi
 import { SandboxStrategy } from './config/server-config.js'
 import type { AdapterPacksConfig } from './config/server-config.js'
 import type { ConnectorsHostOptions } from '@pragmatic-tech-ai/todl-connectors-host'
-import { BuiltinAdapterFactory } from './host/connectors/builtin-adapter-factory.js'
-import { BuiltinBindings } from './host/connectors/builtin-bindings.js'
-import { BuiltinStoreEngine } from './host/connectors/builtin-store-engine.js'
 import { SolutionConnectorPlanner } from './connectors/solution-connector-planner.js'
 import { ConnectorRuntime } from './connectors/connector-runtime.js'
 import { PolicyConnectionResolver } from './host/policy-connection-resolver.js'
@@ -42,17 +38,11 @@ import type { IConnectorReadAuthorization } from './host/connector-read-authoriz
 import { ConnectorHydrateWriter } from './host/connector-hydrate-writer.js'
 import type { IHydrateAuthorization } from './host/connector-hydrate-writer.js'
 import type { IWriteTargetSource } from './host/write-target-source.js'
-import { FilteredReadWriteTargetSource } from './host/filtered-read-write-target-source.js'
 import { RuntimeWritePayloadValidator } from './host/runtime-write-payload-validator.js'
 import type { AppWriteOpDto, AppWriteResultDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { ShareService } from './host/sharing/share-service.js'
-import { AssignService } from './host/sharing/assign-service.js'
-import { FilteredGraphQuery } from './host/cypher/filtered-graph-query.js'
 import { InProcessWriteLock, type IWriteLock } from './host/cypher/write-lock.js'
-import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import { DeliveryChannel, EnvironmentCatalogError } from '@pragmatic-tech-ai/todl/engine'
-import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { CypherAppDeployParamsDto, AppDeployResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { DevCypherExecute, LoggerDevExecuteDiagnostics } from './host/engine/dev-cypher-execute.js'
@@ -61,13 +51,6 @@ import { PragmaticAppsRegistry } from './host/apps/pragmatic-apps-registry.js'
 import { NullLogger, StructuredLogger } from './observability/logger.js'
 import type { ILogger } from './observability/logger.js'
 import { AppIngestService } from './host/apps/app-ingest-service.js'
-import { RuntimeAppGraph } from './host/cypher/runtime-app-graph.js'
-import { AppConnectorPlan } from './host/cypher/app-connector-plan.js'
-import type { PragmaticAppManifest } from './host/apps/pragmatic-app-manifest.js'
-import { ShareStore } from './host/sharing/share-store.js'
-import { ShareGrantIndex } from './host/sharing/share-grant-index.js'
-import { ShareWideningInstanceFilter } from './host/sharing/share-widening-instance-filter.js'
-import { ConceptIdFields } from './host/sharing/concept-id-fields.js'
 import { DevGraphStore } from './host/graphs/dev-graph-store.js'
 import { GraphPackageIngest } from './host/graphs/graph-package-ingest.js'
 import { GraphPackageReader } from './host/graphs/graph-package-reader.js'
@@ -85,6 +68,8 @@ import { EnvironmentEngineHost, EnvironmentUpgradeFailedError, LoggerEnvironment
 import type { IEnvironmentGraphHost } from './host/environment/environment-engine-host.js'
 import { EnvironmentCypherExecute } from './host/environment/environment-cypher-execute.js'
 import { EnvironmentDataWriter } from './host/environment/environment-data-writer.js'
+import { EnvironmentShareService } from './host/environment/environment-share-service.js'
+import { EnvironmentAssignService } from './host/environment/environment-assign-service.js'
 import { EnvironmentScopeRules } from './host/environment/environment-scope-rules.js'
 import { InvalidParamsPrefix } from './host/invalid-params-prefix.js'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -131,7 +116,6 @@ export interface PragmaticServerOptions
     graphsRoot?: string
     identity?: PragmaticServerIdentityOptions
     deploymentMode?: DeploymentMode
-    builtinStoreEngine?: BuiltinStoreEngine
     platform?: PlatformServices
     connectors?: ConnectorsHostOptions
     connectorsPolicy?: ConnectorsPolicy
@@ -149,27 +133,16 @@ export interface PragmaticServerOptions
     adapterFactories?: readonly IDataSourceAdapterFactory[]
 }
 
-/** The node labels a Cypher query references; wildcard when any node pattern is unlabeled; parseFailed when the text is not valid Cypher (nothing is prefetched). */
-export type ReferencedLabelSet = { labels: readonly string[]; wildcard: boolean; parseFailed: boolean }
-
-type AppBase = { domain: Domain; plan: ModelConnectorPlan; nativeBase: IGraphQuery; defaultConcepts: ReadonlySet<string> }
-
 /** Headless single-tenant in-process host: composes the engine over the lazy root and opens a solution. */
 export class PragmaticServer implements IEnvironmentGraphHost
 {
     private static readonly DefaultPackagesDir = 'packages'
     private static readonly DefaultGraphsDir = 'graphs'
-    private static readonly AppGraphKeySeparator = '@'
-    private static readonly BuiltinConnectorPrefix = '__builtin__@'
-    private static readonly AppDataDir = 'data'
     private static readonly ApplicationsRootRequiredError = 'applicationsRoot is required for a runtime tenant'
     private static readonly ErrorSeparator = '; '
-    private static readonly NamespaceSeparator = '.'
-    private static readonly NoLabels: ReferencedLabelSet = { labels: [], wildcard: false, parseFailed: false }
 
     private static readonly SharingRequiresIdentityError = 'record sharing requires an identity subsystem'
     private static readonly AssignRequiresIdentityError = 'record assignment requires an identity subsystem'
-    private static readonly SharingRequiresStoreError = 'record sharing requires the built-in store'
     private static readonly NotStartedError = 'server not started'
     private static readonly ApplicationsRuntimeOnlyError = 'applications are a runtime-tenant feature'
     private static readonly IdentityNotConfiguredError = 'identity not configured'
@@ -203,8 +176,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private environmentCypher: EngineCypherQuery | undefined
     private environmentExecute: EnvironmentCypherExecute | undefined
     private environmentWriter: EnvironmentDataWriter | undefined
-    private readonly appGraphs = new Map<string, Promise<AppBase>>()
-    private readonly shareStores = new Map<string, ShareStore>()
+    private environmentShares: EnvironmentShareService | undefined
+    private environmentAssign: EnvironmentAssignService | undefined
     private readAuth: Promise<TenantReadAuthorization> | undefined
     private devExecute: DevCypherExecute | undefined
 
@@ -218,17 +191,11 @@ export class PragmaticServer implements IEnvironmentGraphHost
             .Module(new LanguageServiceModule())
         this.root = builder.Build()
         this.connectorsHost = new ConnectorsHost(PragmaticServer.ConnectorsOptions(options))
-        this.connectorsHost.Catalog.Register(new BuiltinAdapterFactory((dataRoot, engine) => this.platform.CreateAppDataStore(dataRoot, engine)))
         for (const factory of options.adapterFactories ?? [])
         {
             this.connectorsHost.Catalog.Register(factory)
         }
         this.RegisterInfrastructure(options.packagesRoot ?? PragmaticServer.DefaultPackagesDir)
-    }
-
-    private BuiltinEngine(): BuiltinStoreEngine
-    {
-        return this.options.builtinStoreEngine ?? (this.options.deploymentMode === DeploymentMode.Cloud ? BuiltinStoreEngine.Sqlite : BuiltinStoreEngine.Document)
     }
 
     private static ConnectorsOptions(options: PragmaticServerOptions): ConnectorsHostOptions | undefined
@@ -593,88 +560,6 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * The legacy per-app graph data/write, shares and assign still read their write targets from (Tasks 9-10 retire
-     * it; `cypher/query` reads the environment engine): cached base graph, connector-backed concepts `labels` names
-     * prefetched fresh per call, then the tenant security model's depth filter (widened by record shares). The
-     * connector layer sits INSIDE the filter, so a connector-minted instance is filtered exactly like a native one.
-     */
-    public async GraphForPragmaticApp(context: AccessContext, name: string, labels: ReferencedLabelSet = PragmaticServer.NoLabels): Promise<IGraphQuery>
-    {
-        const built = await this.BaseGraphFor(name)
-        const nativeBase = built.nativeBase
-        const concepts = PragmaticServer.ConnectorConcepts(labels, built.plan, nativeBase)
-        const services = this.root.Services()
-        const shareIndex = await this.ShareIndexFor(context, name)
-        const snapshot = concepts.length === 0
-            ? new Map()
-            : await ConnectorPrefetch.ForConcepts(concepts, built.plan, services.getRequired(DataSourceAdapterCatalog.ServiceKey), services, built.domain)
-        const base = new ConnectorRuntimeGraphQuery(nativeBase, snapshot, built.defaultConcepts)
-        const depth = await (await this.DepthFilterSource()).ReadFilterFor(context)
-        const instanceFilter = shareIndex.IsEmpty()
-            ? depth
-            : new ShareWideningInstanceFilter(depth, shareIndex, ConceptIdFields.From(built.plan))
-        return new FilteredGraphQuery(base, instanceFilter)
-    }
-
-    private async ShareServiceFor(context: AccessContext, name: string): Promise<ShareService>
-    {
-        if (this.identity === undefined)
-        {
-            throw new Error(PragmaticServer.SharingRequiresIdentityError)
-        }
-        let store: ShareStore
-        try
-        {
-            store = this.AppShareStore(name)
-        }
-        catch
-        {
-            throw new Error(PragmaticServer.SharingRequiresStoreError)
-        }
-        const index = await this.ShareIndexFor(context, name)
-        const evaluator = await (await this.ReadAuthorization()).EvaluatorForContext(context)
-        const target = new FilteredReadWriteTargetSource(this, context, name)
-        const idFields = ConceptIdFields.From((await this.BaseGraphFor(name)).plan)
-        return new ShareService(store, index, evaluator, context.Principal, target, idFields)
-    }
-
-    public async ShareForPragmaticApp(context: AccessContext, name: string, params: ShareParams): Promise<ShareResultDto>
-    {
-        return (await this.ShareServiceFor(context, name)).Share(params)
-    }
-
-    public async UnshareForPragmaticApp(context: AccessContext, name: string, params: UnshareParams): Promise<UnshareResultDto>
-    {
-        return (await this.ShareServiceFor(context, name)).Unshare(params)
-    }
-
-    public async ListSharesForPragmaticApp(context: AccessContext, name: string, params: ListSharesParams): Promise<ListSharesResultDto>
-    {
-        return (await this.ShareServiceFor(context, name)).List(params)
-    }
-
-    private async AssignServiceFor(context: AccessContext, name: string): Promise<AssignService>
-    {
-        if (this.identity === undefined)
-        {
-            throw new Error(PragmaticServer.AssignRequiresIdentityError)
-        }
-        const built = await this.BaseGraphFor(name)
-        const services = this.root.Services()
-        const catalog = services.getRequired(DataSourceAdapterCatalog.ServiceKey)
-        const index = await this.ShareIndexFor(context, name)
-        const evaluator = await (await this.ReadAuthorization()).EvaluatorForContext(context)
-        const target = new FilteredReadWriteTargetSource(this, context, name)
-        const idFields = ConceptIdFields.From(built.plan)
-        return new AssignService(evaluator, index, context.Principal, target, idFields, built.plan, catalog, services)
-    }
-
-    public async AssignForPragmaticApp(context: AccessContext, name: string, params: AssignParams): Promise<AssignResultDto>
-    {
-        return (await this.AssignServiceFor(context, name)).Assign(params)
-    }
-
-    /**
      * `data/write` (ruling S10): one engine transaction per batch on the environment engine under the caller's
      * environment scope ({@link PragmaticServer.EnvironmentWriter}). The app name is the bound `application/open`
      * app; it selects nothing here (S7).
@@ -684,119 +569,59 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.EnvironmentWriter().Apply(context, operations)
     }
 
-    /** Resolves the query's labels to the connector-backed concept ids to prefetch; a wildcard selects every connector concept. */
-    private static ConnectorConcepts(labels: ReferencedLabelSet, plan: ModelConnectorPlan, base: IGraphQuery): string[]
+    /**
+     * `data/share` (ruling S8): a `todl.system.ShareGrant` written on the environment engine under the caller's scope
+     * ({@link PragmaticServer.EnvironmentShares}); the app name selects nothing (S7). Requires identity.
+     */
+    public async ShareForPragmaticApp(context: AccessContext, _name: string, params: ShareParams): Promise<ShareResultDto>
     {
-        if (labels.parseFailed || plan.Bindings.length === 0)
-        {
-            return []
-        }
-        if (labels.wildcard)
-        {
-            return [...new Set(plan.Bindings.map(b => b.Concept))]
-        }
-        const connectorConcepts = new Set(plan.Bindings.map(b => b.Concept))
-        const result: string[] = []
-        for (const label of labels.labels)
-        {
-            for (const full of PragmaticServer.ConceptIdsFor(label, base))
-            {
-                if (connectorConcepts.has(full) && !result.includes(full))
-                {
-                    result.push(full)
-                }
-            }
-        }
-        return result
+        return await this.EnvironmentShares().Share(context, params)
     }
 
-    /** Mirrors the Cypher engine's label resolution: an exact concept id, else every concept whose short name matches (ambiguity prefetches all candidates). */
-    private static ConceptIdsFor(label: string, base: IGraphQuery): string[]
+    /** `data/unshare` (ruling S8): deletes the grant on the environment engine; the app name selects nothing (S7). Requires identity. */
+    public async UnshareForPragmaticApp(context: AccessContext, _name: string, params: UnshareParams): Promise<UnshareResultDto>
     {
-        const exact = base.Type(label)
-        if (exact !== undefined)
-        {
-            return [exact.fullName]
-        }
-        return base.Concepts()
-            .map(c => c.fullName)
-            .filter(full => full.substring(full.lastIndexOf(PragmaticServer.NamespaceSeparator) + 1) === label)
+        return await this.EnvironmentShares().Unshare(context, params)
     }
 
-    private async BaseGraphFor(name: string): Promise<AppBase>
+    /** `data/listShares` (ruling S8): the grants linking the record on the environment engine; the app name selects nothing (S7). Requires identity. */
+    public async ListSharesForPragmaticApp(context: AccessContext, _name: string, params: ListSharesParams): Promise<ListSharesResultDto>
     {
-        const app = await this.Applications().ApplicationFor(name)
-        // Key is name@version: packages are version-pinned, so republishing under the same app version is intentionally not re-read.
-        const key = `${app.Manifest.name}${PragmaticServer.AppGraphKeySeparator}${app.Manifest.version}`
-        let base = this.appGraphs.get(key)
-        if (base === undefined)
-        {
-            const built = this.BuildBaseFor(app.Manifest)
-            base = built
-            this.appGraphs.set(key, built)
-            // Evict a failed build so a later call retries (concurrent callers still share the in-flight promise).
-            built.catch(() =>
-            {
-                if (this.appGraphs.get(key) === built)
-                {
-                    this.appGraphs.delete(key)
-                }
-            })
-        }
-        return base
+        return await this.EnvironmentShares().List(context, params)
     }
 
-    private async BuildBaseFor(manifest: PragmaticAppManifest): Promise<AppBase>
+    /** `data/assign` (ruling S9): the record's ownership members written on the environment engine ({@link PragmaticServer.EnvironmentAssign}). Requires identity. */
+    public async AssignForPragmaticApp(context: AccessContext, _name: string, params: AssignParams): Promise<AssignResultDto>
     {
-        const packagesStorage = this.PackagesStorage()
-        const domain = await RuntimeAppGraph.BuildDomain(new StoragePackageSource(packagesStorage), manifest)
-        const plan = await AppConnectorPlan.For(packagesStorage, manifest)
-        const nativeBase = new GraphQuery(domain.Snapshot)
-        const connectorName = `${PragmaticServer.BuiltinConnectorPrefix}${manifest.name}${PragmaticServer.AppGraphKeySeparator}${manifest.version}`
-        const augmented = BuiltinBindings.Augment(plan, nativeBase, connectorName, this.DataRootFor(manifest.name), this.BuiltinEngine())
-        return { domain, plan: augmented.plan, nativeBase, defaultConcepts: augmented.defaultConcepts }
+        return await this.EnvironmentAssign().Assign(context, params)
     }
 
-    /** The per-app record-share store (memoized), over the app's built-in document store. */
-    public AppShareStore(name: string): ShareStore
+    /**
+     * The runtime share service (ruling S8) on the environment engine under each caller's environment scope, with the
+     * tenant security model's evaluator. Memoized; runtime tenants with identity only (else the error is unchanged:
+     * "record sharing requires an identity subsystem").
+     */
+    public EnvironmentShares(): EnvironmentShareService
     {
-        let store = this.shareStores.get(name)
-        if (store === undefined)
-        {
-            store = new ShareStore(this.platform.CreateAppDataStore(this.DataRootFor(name), this.BuiltinEngine()))
-            this.shareStores.set(name, store)
-        }
-        return store
-    }
-
-    public async ShareIndexFor(context: AccessContext, name: string): Promise<ShareGrantIndex>
-    {
+        this.AssertRuntimePurpose()
         if (this.identity === undefined)
         {
-            return ShareGrantIndex.Empty()
+            throw new Error(PragmaticServer.SharingRequiresIdentityError)
         }
-        let store: ShareStore
-        try
-        {
-            store = this.AppShareStore(name)
-        }
-        // Fail-closed: a store that can't be opened (e.g. Cloud, where CreateAppDataStore is unsupported) leaves sharing inactive rather than breaking reads/writes.
-        catch
-        {
-            return ShareGrantIndex.Empty()
-        }
-        const membership = await (await this.ReadAuthorization()).MembershipFor(context)
-        return ShareGrantIndex.For(store, context.Principal, membership)
+        this.environmentShares ??= new EnvironmentShareService(this.EnvironmentEngine(), () => this.EnvironmentScopes(), () => this.ReadAuthorization())
+        return this.environmentShares
     }
 
-    /** The per-app built-in store directory: `<applicationsRoot>/<app>/data`, the path the platform's CreateAppDataStore consumes. */
-    private DataRootFor(name: string): string
+    /** The runtime assign service (ruling S9), as {@link PragmaticServer.EnvironmentShares}; without identity "record assignment requires an identity subsystem". */
+    public EnvironmentAssign(): EnvironmentAssignService
     {
-        if (this.options.applicationsRoot === undefined)
+        this.AssertRuntimePurpose()
+        if (this.identity === undefined)
         {
-            throw new Error(PragmaticServer.ApplicationsRootRequiredError)
+            throw new Error(PragmaticServer.AssignRequiresIdentityError)
         }
-        return join(this.options.applicationsRoot, name, PragmaticServer.AppDataDir)
+        this.environmentAssign ??= new EnvironmentAssignService(this.EnvironmentEngine(), () => this.EnvironmentScopes(), () => this.ReadAuthorization())
+        return this.environmentAssign
     }
 
     public Tenant(): Tenant
@@ -1009,7 +834,6 @@ export class PragmaticServer implements IEnvironmentGraphHost
             }
             finally
             {
-                this.appGraphs.clear()
                 try
                 {
                     const disposable = this.options.identity?.flowStateStore as { Dispose?: () => Promise<void> } | undefined

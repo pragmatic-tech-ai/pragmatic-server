@@ -12,7 +12,6 @@ import { AccessLevel, PrivilegeAction, OwnershipSourceKind } from '@pragmatic-te
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
-import { BuiltinStoreEngine } from '../connectors/builtin-store-engine.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { PpSecurityHarness } from '../cypher/tests/pp-security-harness.js'
 
@@ -128,7 +127,7 @@ class RuntimeTierFixture
         writeFileSync(join(this.apps, RuntimeTierFixture.AppName, RuntimeTierFixture.LivePointerFile), RuntimeTierFixture.Version)
         this.server = new PragmaticServer({
             packagesRoot: this.packages, applicationsRoot: this.apps, graphsRoot: this.graphs, purpose: TenantPurpose.Runtime,
-            builtinStoreEngine: BuiltinStoreEngine.Document, identity: PpSecurityHarness.Identity(this.identityRoot),
+            identity: PpSecurityHarness.Identity(this.identityRoot),
         })
         await this.server.Start()
         await PpSecurityHarness.Seed(this.server, RuntimeTierFixture.Model())
@@ -226,7 +225,7 @@ class DevTierFixture
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(serverSocket, language, manager, PpSecurityHarness.Context(RuntimeTierFixture.Reader), () => Promise.reject(new Error(DevTierFixture.NoConnectors)), undefined,
-            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Runtime, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Runtime, undefined, undefined, undefined,
             await server.FieldReadMaskSource(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, await server.DepthFilterSource())
         const session = new DevSession(new WireConnection(PragmaticClient.CreateOverSocket(clientSocket), handler), server, language, manager, [solution, packages, identityRoot])
         this.sessions.push(session)

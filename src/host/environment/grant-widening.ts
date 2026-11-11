@@ -19,7 +19,7 @@ import type { ScopeDraft } from './scope-draft.js'
  * scope (R66) and a scope whose grant rows are False widens nothing (R114). (`Writes[ShareGrant]` Create / Update /
  * Delete False is set by EnvironmentScopeRules.Finish for every scope, with or without identity, ruling R31.)
  */
-export class ShareWidening
+export class GrantWidening
 {
     private static readonly Widened: readonly (readonly [WriteRule, ShareRight])[] = [
         [WriteRule.Update, ShareRight.Update],
@@ -31,7 +31,7 @@ export class ShareWidening
         draft.MaterializeDefault()
         const read = ShareGrantScope.Widening(subjects, ShareRight.Read)
         for (const key of draft.RowKeys().filter(widens)) draft.OrRow(key, read)
-        for (const [rule, right] of ShareWidening.Widened)
+        for (const [rule, right] of GrantWidening.Widened)
         {
             const widening = ShareGrantScope.Widening(subjects, right)
             for (const key of draft.RuleKeys(rule).filter(widens)) draft.OrRule(key, rule, widening)

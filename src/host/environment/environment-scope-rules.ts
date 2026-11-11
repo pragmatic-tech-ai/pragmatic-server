@@ -14,7 +14,7 @@ import { ExternalConcepts } from '../engine/external-concepts.js'
 import { SecuredScopeRules } from '../engine/secured-scope-rules.js'
 import type { EnvironmentSnapshot } from './environment-engine-host.js'
 import { ScopeDraft } from './scope-draft.js'
-import { ShareWidening } from './share-widening.js'
+import { GrantWidening } from './grant-widening.js'
 
 /** The environment snapshot the rules read (EnvironmentEngineHost). */
 export interface IEnvironmentSnapshotSource
@@ -79,7 +79,7 @@ class EnvironmentPreparedRules implements IPreparedRules
         {
             const evaluator = this.evaluators.get(context) ?? await this.security.EvaluatorForContext(context)
             const subjects = { PrincipalId: context.Principal.Id, Teams: evaluator.MembershipOf(context.Principal).teams }
-            ShareWidening.Apply(draft, subjects, key => this.EngineStored(key))
+            GrantWidening.Apply(draft, subjects, key => this.EngineStored(key))
         }
         // ruling R31: grants are written only by the share, assign and data-write service scopes, with or without identity
         if (this.schema.Catalog.IsConcept(SystemNames.ShareGrant))
@@ -130,7 +130,7 @@ class EnvironmentPreparedRules implements IPreparedRules
  *   subconcepts (connector data is outside platform security; R12: they get explicit allow entries); a tenant with no
  *   security model is deny-all for everything else. No identity → Default Allow, nothing stamped. Interim until
  *   security S4 Task 9 replaces DepthScopeCompiler with the tier-1 compiler.
- * - Finish, in order: (a)+(b) with identity only, ShareWidening (grants widen engine-stored concepts: a delivered
+ * - Finish, in order: (a)+(b) with identity only, GrantWidening (grants widen engine-stored concepts: a delivered
  *   package's own, never a built-in, system or connector-bound one; the caller sees its own grants); `Writes[ShareGrant]`
  *   Create / Update / Delete False with or without identity (ruling R31); (c) for every read-only external binding, `Not(OwnerIs({binding model}))` ANDed
  *   into Create / Update / Delete of its concept; (d) `Not(Seeded)` ANDed into the root `todl.Element` Update and

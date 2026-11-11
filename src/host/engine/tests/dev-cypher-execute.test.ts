@@ -106,7 +106,7 @@ class ExecWorld
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
             serverSocket, this.language, this.manager, context, () => Promise.reject(new Error(ExecFixture.NoConnectors)), this.Server.DevCypher(),
-            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development, undefined, undefined, undefined,
             this.fieldMasks, ctx => this.Server.ConnectorReadAuthorizationFor(ctx), undefined,
             this.Server.DevExecute())
         this.clients.push(PragmaticClient.CreateOverSocket(clientSocket))
@@ -931,8 +931,9 @@ class TwoBlockFx
     public static readonly CreatedTotal = 'total = "3"'
     public static readonly O1Body = /Order o1 \{\s*total = "1";\s*\}/
     public static readonly O2Body = /Order o2 \{\s*total = "2";\s*\}/
-    public static readonly O1 = /o1/
-    public static readonly O2 = /o2/
+    /** The seeded instances' own headers only: a placed id (random hex) may contain `o1` / `o2`. */
+    public static readonly O1 = /Order o1 \{/
+    public static readonly O2 = /Order o2 \{/
     public static readonly CreatedBody = /Order \w+ \{\s*total = "3";\s*\}/
     public static readonly CreatedAnywhere = /total = "3"/
 }

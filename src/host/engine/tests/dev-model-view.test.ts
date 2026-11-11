@@ -258,7 +258,7 @@ class DevWorld
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const development = ServerConnectionHandler.DevelopmentAttachArgs(this.Server)
         const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, context, () => Promise.reject(new Error(DevWorld.NoConnectors)), development.cypherQuery,
-            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
             undefined, undefined, undefined, undefined, development.devGraphService, undefined, development.devModelView)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.connections.push({ client, handler })

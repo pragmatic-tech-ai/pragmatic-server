@@ -5,10 +5,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import {
-    Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink, Cypher,
+    Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink,
     type PackageDocument, type CompiledPackage, PackageSecurity,
 } from '@pragmatic-tech-ai/todl'
-import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
@@ -27,13 +26,9 @@ class FieldSecurityFixture
     private static readonly SourceSuffix = '.todl'
     private static readonly Namespace = 'shop'
     private static readonly Qualified = 'shop.Widget'
-    private static readonly OrderQuery = 'MATCH (w:Widget) RETURN w.label AS label, w.secret AS secret ORDER BY w.secret'
     private static readonly Label = 'label'
     private static readonly Secret = 'secret'
     private static readonly SecretValue = 'hush'
-    private static readonly ReturnQuery = 'MATCH (w:Widget) RETURN w.label AS label, w.secret AS secret'
-    private static readonly WhereQuery = "MATCH (w:Widget) WHERE w.secret = 'hush' RETURN w.label AS label"
-    private static readonly NodeQuery = 'MATCH (w:Widget) RETURN w'
     private static readonly Profile = 'cost-readers'
     private static readonly ProfileName = 'Cost readers'
     public static readonly Plain = 'p1'
@@ -43,16 +38,6 @@ class FieldSecurityFixture
     private readonly apps = mkdtempSync(join(tmpdir(), FieldSecurityFixture.AppsPrefix))
     private readonly identityRoot = mkdtempSync(join(tmpdir(), FieldSecurityFixture.IdPrefix))
     private server: PragmaticServer | undefined
-
-    public static get Name(): string
-    {
-        return FieldSecurityFixture.AppName
-    }
-
-    public static get Hidden(): string
-    {
-        return FieldSecurityFixture.SecretValue
-    }
 
     public async Setup(identityOn = true): Promise<PragmaticServer>
     {
@@ -87,35 +72,6 @@ class FieldSecurityFixture
         rmSync(this.apps, { recursive: true, force: true })
         rmSync(this.identityRoot, { recursive: true, force: true })
         PpSecurityHarness.ClearKey()
-    }
-
-    public static Rows(graph: IGraphQuery): Array<[string, string | null]>
-    {
-        return Cypher.CypherEngine.OverQuery(graph).Execute(FieldSecurityFixture.ReturnQuery).Rows
-            .map(r => [FieldSecurityFixture.Text(r[0]), r[1] instanceof Cypher.ScalarValue && r[1].Value !== null ? String(r[1].Value) : null] as [string, string | null])
-    }
-
-    public static Ordered(graph: IGraphQuery): Array<[string, string | null]>
-    {
-        return Cypher.CypherEngine.OverQuery(graph).Execute(FieldSecurityFixture.OrderQuery).Rows
-            .map(r => [FieldSecurityFixture.Text(r[0]), r[1] instanceof Cypher.ScalarValue && r[1].Value !== null ? String(r[1].Value) : null] as [string, string | null])
-    }
-
-    public static NodeSnapshot(graph: IGraphQuery): string
-    {
-        const value = Cypher.CypherEngine.OverQuery(graph).Execute(FieldSecurityFixture.NodeQuery).Rows[0][0]
-        return value instanceof Cypher.NodeValue ? JSON.stringify(value.ToDto()) : ''
-    }
-
-    public static Matches(graph: IGraphQuery): string[]
-    {
-        return Cypher.CypherEngine.OverQuery(graph).Execute(FieldSecurityFixture.WhereQuery).Rows
-            .map(r => FieldSecurityFixture.Text(r[0]))
-    }
-
-    private static Text(value: unknown): string
-    {
-        return value instanceof Cypher.ScalarValue ? String(value.Value) : ''
     }
 
     /** Org-level Read for both principals; `secret` is secured and only the Granted principal holds a profile reading it. */
@@ -160,21 +116,6 @@ class FieldSecurityFixture
         return repo
     }
 }
-
-test('the unmasked internal fetch still sees the secured field (write-gate path)', async () =>
-{
-    const fx = new FieldSecurityFixture()
-    try
-    {
-        const server = await fx.Setup()
-        const graph = await server.GraphForPragmaticApp(PpSecurityHarness.Context(FieldSecurityFixture.Plain), FieldSecurityFixture.Name)
-        assert.deepEqual(FieldSecurityFixture.Rows(graph), [['W1', FieldSecurityFixture.Hidden]])
-    }
-    finally
-    {
-        await fx.Dispose()
-    }
-})
 
 test('FieldReadMaskSource is allow-all with identity off', async () =>
 {

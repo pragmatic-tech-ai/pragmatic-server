@@ -498,7 +498,7 @@ class InvariantWorld
         const development = ServerConnectionHandler.DevelopmentAttachArgs(server)
         const fieldMasks = await server.FieldReadMaskSource()
         const handler = ServerConnectionHandler.Attach(serverSocket, this.language, this.manager, context, () => Promise.reject(new Error(InvariantFx.NoConnectors)), development.cypherQuery,
-            undefined, undefined, undefined, undefined, undefined, undefined, server.Purpose(), undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+            undefined, undefined, undefined, undefined, undefined, undefined, server.Purpose(), undefined, undefined, undefined,
             fieldMasks, ctx => server.ConnectorReadAuthorizationFor(ctx), (ctx, target) => server.ConnectorWriteAuthorizationFor(ctx, target), development.cypherExecute,
             undefined, development.devGraphService, undefined, development.devModelView)
         const client = PragmaticClient.CreateOverSocket(clientSocket)

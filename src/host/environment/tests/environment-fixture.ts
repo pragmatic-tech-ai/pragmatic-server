@@ -212,8 +212,7 @@ export class EnvironmentFixture
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(serverSocket, await server.LanguageService(), await server.Manager(), context,
             () => Promise.reject(new Error(EnvironmentFixture.NoConnectorsMessage)), runtime.cypherQuery ?? development.cypherQuery, undefined, undefined, undefined, undefined, undefined, undefined,
-            server.Purpose(), runtime.applications, runtime.appWriteProvider, runtime.shareProvider, runtime.unshareProvider, runtime.listSharesProvider,
-            runtime.assignProvider, undefined, await server.FieldReadMaskSource(), ctx => server.ConnectorReadAuthorizationFor(ctx),
+            server.Purpose(), runtime.applications, runtime.data, undefined, await server.FieldReadMaskSource(), ctx => server.ConnectorReadAuthorizationFor(ctx),
             (ctx, target) => server.ConnectorWriteAuthorizationFor(ctx, target), runtime.cypherExecute ?? development.cypherExecute, runtime.deployProvider,
             development.devGraphService, runtime.environmentGraphHost, development.devModelView, await server.DepthFilterSource())
         const client = PragmaticClient.CreateOverSocket(clientSocket)
