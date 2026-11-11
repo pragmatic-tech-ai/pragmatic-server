@@ -232,8 +232,8 @@ class HandlerFixture
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const applications = { List: async () => [], ApplicationFor: async (name: string) => ({ Manifest: { name, version: RecordAssignFixture.Version } }) } as unknown as PragmaticAppsRegistry
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, PpSecurityHarness.Context(RecordAssignFixture.Principal), () => Promise.reject(new Error(RecordAssignFixture.NoConnectorsMessage)), undefined, undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Runtime, applications, undefined, undefined, undefined, undefined, undefined, provider)
+        const applications = { List: async () => [], LiveApplicationFor: async (name: string) => ({ Manifest: { name, version: RecordAssignFixture.Version } }) } as unknown as PragmaticAppsRegistry
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, PpSecurityHarness.Context(RecordAssignFixture.Principal), () => Promise.reject(new Error(RecordAssignFixture.NoConnectorsMessage)), undefined, undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Runtime, applications, undefined, undefined, undefined, undefined, provider)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

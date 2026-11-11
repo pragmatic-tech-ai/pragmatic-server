@@ -76,6 +76,30 @@ export class PragmaticAppsRegistry
         return result
     }
 
+    /**
+     * The application in directory `name` when its `<name>/live` pointer names a version that has a manifest (what
+     * `application/open` binds, ruling S7); undefined for an invalid name and an unknown, legacy (no pointer) or
+     * broken-pointer app.
+     */
+    public async LiveApplicationFor(name: string): Promise<PragmaticApplication | undefined>
+    {
+        if (!PragmaticAppsRegistry.IsValidName(name))
+        {
+            return undefined
+        }
+        const version = await this.LiveVersion(name)
+        if (version === undefined)
+        {
+            return undefined
+        }
+        const path = PragmaticAppsRegistry.VersionManifestPath(name, version)
+        if (!await this.storage.Exists(path))
+        {
+            return undefined
+        }
+        return new PragmaticApplication(PragmaticAppManifestParser.Parse(await this.storage.ReadText(path)))
+    }
+
     public async ApplicationFor(name: string): Promise<PragmaticApplication>
     {
         PragmaticAppsRegistry.AssertValidName(name)
@@ -94,12 +118,17 @@ export class PragmaticAppsRegistry
      */
     public static AssertValidName(name: string): void
     {
-        if (name === '' || PragmaticAppsRegistry.DotsOnlyPattern.test(name) || PragmaticAppsRegistry.EdgeDotOrSpacePattern.test(name)
-            || PragmaticAppsRegistry.ReservedDevicePattern.test(name.split(PragmaticAppsRegistry.ExtensionSeparator)[0]!) || PragmaticAppsRegistry.SeparatorPattern.test(name)
-            || PragmaticAppsRegistry.ControlCharPattern.test(name))
+        if (!PragmaticAppsRegistry.IsValidName(name))
         {
             throw new Error(PragmaticAppsRegistry.InvalidNameError + name)
         }
+    }
+
+    private static IsValidName(name: string): boolean
+    {
+        return !(name === '' || PragmaticAppsRegistry.DotsOnlyPattern.test(name) || PragmaticAppsRegistry.EdgeDotOrSpacePattern.test(name)
+            || PragmaticAppsRegistry.ReservedDevicePattern.test(name.split(PragmaticAppsRegistry.ExtensionSeparator)[0]!) || PragmaticAppsRegistry.SeparatorPattern.test(name)
+            || PragmaticAppsRegistry.ControlCharPattern.test(name))
     }
 
     /** `<name>/<version>/application.json` when `<name>/live` names a version, else the legacy `<name>/application.json` (also used when the pointer is corrupt). */

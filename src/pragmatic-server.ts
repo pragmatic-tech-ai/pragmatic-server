@@ -4,7 +4,7 @@ import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech
 import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
 import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog, Cypher } from '@pragmatic-tech-ai/todl'
-import type { ModelConnectorPlan, IDataSourceAdapterProvider, IConnectorQueryFilterProvider, IDataSourceAdapterFactory } from '@pragmatic-tech-ai/todl'
+import type { ModelConnectorPlan, IDataSourceAdapterProvider, IDataSourceAdapterFactory } from '@pragmatic-tech-ai/todl'
 import type { Domain } from '@pragmatic-tech-ai/todl/domain'
 import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-system'
 import { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -36,7 +36,6 @@ import { PolicyConnectionResolver } from './host/policy-connection-resolver.js'
 import type { ConnectorsPolicy } from './host/connector-policy.js'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { TenantReadAuthorization, AllowAllReadFilterSource, AllowAllFieldReadMaskSource } from './host/cypher/read-filter-source.js'
-import { FieldMaskedGraphQuery, AllowAllFieldReadMask } from './host/cypher/field-masked-graph-query.js'
 import { AllowAllWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
 import type { IReadFilterSource, IWriteAuthorizerSource, IFieldReadMaskSource, ISecurityModelReload } from './host/cypher/read-filter-source.js'
 import { ConnectorReadAuthorizations } from './host/connector-read-authorization.js'
@@ -86,13 +85,13 @@ import { AccessScopeSource, LoggerScopeDiagnostics } from './host/engine/access-
 import { DevScopeRules } from './host/engine/dev-scope-rules.js'
 import { EngineCypherQuery } from './host/engine/engine-cypher-query.js'
 import { DevModelView, LoggerDevModelViewDiagnostics } from './host/engine/dev-model-view.js'
-import { EnvironmentGraph, EnvironmentGraphOverlay, NoEnvironmentGraphError } from './host/graphs/environment-graph.js'
 import { PromoteRecordStore } from './host/environment/promote-record-store.js'
 import { EnvironmentDeliveries } from './host/environment/environment-deliveries.js'
 import { EnvironmentEngineHost, EnvironmentUpgradeFailedError, LoggerEnvironmentDiagnostics } from './host/environment/environment-engine-host.js'
+import type { IEnvironmentGraphHost } from './host/environment/environment-engine-host.js'
+import { EnvironmentCypherExecute } from './host/environment/environment-cypher-execute.js'
 import { EnvironmentScopeRules } from './host/environment/environment-scope-rules.js'
 import { InvalidParamsPrefix } from './host/invalid-params-prefix.js'
-import type { IEnvironmentGraphHost } from './host/graphs/environment-graph.js'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 export interface OidcServerOptions
@@ -157,8 +156,6 @@ export interface PragmaticServerOptions
 
 /** The node labels a Cypher query references; wildcard when any node pattern is unlabeled; parseFailed when the text is not valid Cypher (nothing is prefetched). */
 export type ReferencedLabelSet = { labels: readonly string[]; wildcard: boolean; parseFailed: boolean }
-/** The read query a runtime graph is built for: its WHERE / inline-property equalities are pushed into connector pulls. */
-export type CypherScanQuery = { text: string; parameters: ReadonlyMap<string, Cypher.ParameterValue> }
 
 type AppBase = { domain: Domain; plan: ModelConnectorPlan; nativeBase: IGraphQuery; defaultConcepts: ReadonlySet<string> }
 
@@ -205,10 +202,11 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private devScopes: Promise<AccessScopeSource> | undefined
     private devCypher: EngineCypherQuery | undefined
     private devModelView: DevModelView | undefined
-    private environmentGraph: EnvironmentGraph | undefined
     private promoteRecords: PromoteRecordStore | undefined
     private environmentEngine: EnvironmentEngineHost | undefined
     private environmentScopes: Promise<AccessScopeSource> | undefined
+    private environmentCypher: EngineCypherQuery | undefined
+    private environmentExecute: EnvironmentCypherExecute | undefined
     private readonly appGraphs = new Map<string, Promise<AppBase>>()
     private readonly shareStores = new Map<string, ShareStore>()
     private readAuth: Promise<TenantReadAuthorization> | undefined
@@ -483,8 +481,6 @@ export class PragmaticServer implements IEnvironmentGraphHost
             return await this.EnvironmentEngine().Deliver(change, async () =>
             {
                 await this.PromoteRecords().Save(record)
-                // the legacy read model (until Task 8) rebuilds from the new record on next use
-                this.environmentGraph = undefined
                 return record
             })
         }
@@ -500,27 +496,6 @@ export class PragmaticServer implements IEnvironmentGraphHost
             }
             throw error
         }
-    }
-
-    /** The loaded environment graph's query; rehydrates on demand from the persisted record when the live instance is absent (idle teardown / restart), and throws only when nothing was ever promoted. RBAC is enforced at the policy gate, so no context is taken. */
-    public async EnvironmentGraphQuery(): Promise<IGraphQuery>
-    {
-        return EnvironmentGraphOverlay.Apply(await this.EnsureEnvironmentGraph(), this.root.Services())
-    }
-
-    /** Returns the live environment graph, lazily rebuilding it from the persisted loaded-manifest record (refs) and the immutably-stored packages when no live instance is held. Throws NoEnvironmentGraphError only when no record exists (never promoted). */
-    private async EnsureEnvironmentGraph(): Promise<EnvironmentGraph>
-    {
-        if (this.environmentGraph === undefined)
-        {
-            const record = await this.PromoteRecords().Read()
-            if (record === null)
-            {
-                throw new NoEnvironmentGraphError()
-            }
-            this.environmentGraph = await EnvironmentGraph.Build(this.PackagesStorage(), record.name, record.packages)
-        }
-        return this.environmentGraph
     }
 
     /** The promote record (`graphs/loaded-graph.json`, ruling S3): survives a restart; null when nothing was ever promoted. */
@@ -580,6 +555,26 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.environmentScopes
     }
 
+    /**
+     * The runtime `cypher/query` and `cypher/models` (rulings S1, S11, S12): the shared EngineCypherQuery over
+     * {@link PragmaticServer.EnvironmentEngine} under each caller's {@link PragmaticServer.EnvironmentScopes}; `modelId`
+     * is a delivered package id. Memoized; runtime tenants only.
+     */
+    public EnvironmentCypher(): EngineCypherQuery
+    {
+        this.AssertRuntimePurpose()
+        this.environmentCypher ??= new EngineCypherQuery(this.EnvironmentEngine(), () => this.EnvironmentScopes())
+        return this.environmentCypher
+    }
+
+    /** The runtime `cypher/execute` (ruling S13) on the environment engine, under each caller's environment scope. Memoized; runtime tenants only. */
+    public EnvironmentExecute(): EnvironmentCypherExecute
+    {
+        this.AssertRuntimePurpose()
+        this.environmentExecute ??= new EnvironmentCypherExecute(this.EnvironmentEngine(), () => this.EnvironmentScopes())
+        return this.environmentExecute
+    }
+
     private async BuildEnvironmentScopes(): Promise<AccessScopeSource>
     {
         const host = this.EnvironmentEngine()
@@ -620,11 +615,12 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * The security-filtered graph for a bound application: cached base graph, connector-backed concepts the query references
-     * prefetched fresh per query, then the tenant security model's depth filter (widened by record shares) over the
-     * result. The connector layer sits INSIDE the filter, so a connector-minted instance is filtered exactly like a native one.
+     * The legacy per-app graph data/write, shares and assign still read their write targets from (Tasks 9-10 retire
+     * it; `cypher/query` reads the environment engine): cached base graph, connector-backed concepts `labels` names
+     * prefetched fresh per call, then the tenant security model's depth filter (widened by record shares). The
+     * connector layer sits INSIDE the filter, so a connector-minted instance is filtered exactly like a native one.
      */
-    public async GraphForPragmaticApp(context: AccessContext, name: string, labels: ReferencedLabelSet = PragmaticServer.NoLabels, maskFields = true, query?: CypherScanQuery): Promise<IGraphQuery>
+    public async GraphForPragmaticApp(context: AccessContext, name: string, labels: ReferencedLabelSet = PragmaticServer.NoLabels): Promise<IGraphQuery>
     {
         const built = await this.BaseGraphFor(name)
         const nativeBase = built.nativeBase
@@ -633,35 +629,13 @@ export class PragmaticServer implements IEnvironmentGraphHost
         const shareIndex = await this.ShareIndexFor(context, name)
         const snapshot = concepts.length === 0
             ? new Map()
-            : await ConnectorPrefetch.ForConcepts(concepts, built.plan, services.getRequired(DataSourceAdapterCatalog.ServiceKey), services, built.domain,
-                PragmaticServer.PushDownFor(query, nativeBase))
+            : await ConnectorPrefetch.ForConcepts(concepts, built.plan, services.getRequired(DataSourceAdapterCatalog.ServiceKey), services, built.domain)
         const base = new ConnectorRuntimeGraphQuery(nativeBase, snapshot, built.defaultConcepts)
         const depth = await (await this.DepthFilterSource()).ReadFilterFor(context)
         const instanceFilter = shareIndex.IsEmpty()
             ? depth
             : new ShareWideningInstanceFilter(depth, shareIndex, ConceptIdFields.From(built.plan))
-        const filtered = new FilteredGraphQuery(base, instanceFilter)
-        if (!maskFields || this.identity === undefined)
-        {
-            return filtered
-        }
-        const mask = await (await this.ReadAuthorization()).FieldReadMaskFor(context)
-        if (mask === AllowAllFieldReadMask.Instance)
-        {
-            return filtered
-        }
-        return new FieldMaskedGraphQuery(filtered, mask)
-    }
-
-    /**
-     * The source filter a runtime pull may push down: the query's own WHERE / inline-property equalities
-     * (CypherPushDown), a SUPERSET of the rows the query itself can match. Nothing is pushed for a non-query build
-     * (writes, write-target reads).
-     */
-    private static PushDownFor(query: CypherScanQuery | undefined, schema: IGraphQuery): IConnectorQueryFilterProvider | undefined
-    {
-        if (query === undefined) return undefined
-        return Cypher.CypherPushDown.Analyze(query.text, new Cypher.GraphQuerySchema(schema), query.parameters)
+        return new FilteredGraphQuery(base, instanceFilter)
     }
 
     private async ShareServiceFor(context: AccessContext, name: string): Promise<ShareService>
@@ -1026,20 +1000,10 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * Executes a dev Cypher WRITE on the dev graph engine (`DevCypherExecute`), CREATEs placed in `modelId`, which must
-     * be one of `cypher/models` (else InvalidParams). Dev tenants only; serialized per tenant under the write lease.
+     * The dev `cypher/execute` on the engine, under each caller's dev scope (memoized, one per tenant): CREATEs placed in
+     * `modelId`, which must be one of `cypher/models` (else InvalidParams); serialized per tenant under the write lease.
      */
-    public async ExecuteCypher(context: AccessContext, modelId: string, request: DevCypherRequest): Promise<CypherExecuteResultDto>
-    {
-        if (this.Purpose() !== TenantPurpose.Development)
-        {
-            throw new ResponseError(ErrorCodes.InvalidRequest, PragmaticServer.NotDevelopmentMessage)
-        }
-        return this.DevExecute().Run(context, modelId, request)
-    }
-
-    /** The dev `cypher/execute` on the engine, under each caller's dev scope (memoized, one per tenant). */
-    private DevExecute(): DevCypherExecute
+    public DevExecute(): DevCypherExecute
     {
         this.devExecute ??= new DevCypherExecute(this.DevEngine(), () => this.DevScopes(), async () => (await this.LanguageService()).GraphRevision, this.options.writeLock ?? new InProcessWriteLock(), new LoggerDevExecuteDiagnostics(this.options.logger ?? new NullLogger()))
         return this.devExecute

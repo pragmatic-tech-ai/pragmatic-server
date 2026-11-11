@@ -1,7 +1,7 @@
 import { EdgeKind, Tier } from '@pragmatic-tech-ai/todl'
 import type { Repository, Node, Edge } from '@pragmatic-tech-ai/todl'
 import type { ModelEdgeDto, ModelMemberDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { IFieldReadMask } from './cypher/field-masked-graph-query.js'
+import type { IFieldReadMask } from './cypher/field-read-mask.js'
 import { WireScalar } from './wire-scalar.js'
 import type { WireScalarValue } from './wire-scalar.js'
 

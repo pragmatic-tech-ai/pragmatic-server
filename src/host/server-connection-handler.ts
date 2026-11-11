@@ -11,9 +11,7 @@ import type { AccessContext, ISecurityModelConfig, Grant, Role, LocalAccount, Se
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { Cypher } from '@pragmatic-tech-ai/todl'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
-import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
-import type { ReferencedLabelSet, CypherScanQuery } from '../pragmatic-server.js'
 import { InvalidParamsPrefix } from './invalid-params-prefix.js'
 import { PolicyGate } from './policy-gate.js'
 import { AuditSurface } from './access-audit.js'
@@ -27,7 +25,7 @@ import type { IHydrateAuthorization } from './connector-hydrate-writer.js'
 import type { IWriteTargetSource } from './write-target-source.js'
 import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
 import { ModelReadFilter } from './model-read-filter.js'
-import { AllowAllFieldReadMask } from './cypher/field-masked-graph-query.js'
+import { AllowAllFieldReadMask } from './cypher/field-read-mask.js'
 import { AllowAllFieldReadMaskSource, AllowAllReadFilterSource } from './cypher/read-filter-source.js'
 import type { IFieldReadMaskSource, IReadFilterSource } from './cypher/read-filter-source.js'
 import { AdminService, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, AdminTokenNotFoundError, ForeignTenantResourceError } from './admin-service.js'
@@ -38,7 +36,7 @@ import type { IDevModelView } from './engine/dev-model-view.js'
 import { EngineCypherQuery } from './engine/engine-cypher-query.js'
 import type { IGraphCypherQuery } from './engine/engine-cypher-query.js'
 import { GraphErrorCodes } from './graphs/graph-error-codes.js'
-import { NoEnvironmentGraphError, type IEnvironmentGraphHost } from './graphs/environment-graph.js'
+import type { IEnvironmentGraphHost } from './environment/environment-engine-host.js'
 import type { PragmaticAppsRegistry } from './apps/pragmatic-apps-registry.js'
 import { CypherLimits } from '../config/cypher-limits.js'
 import { PagingLimits } from '../config/paging-limits.js'
@@ -46,9 +44,7 @@ import { PageFingerprint, PageRequest } from './paging/page-request.js'
 import { BuildStateMapper } from './build-state-mapper.js'
 import { CypherParamConverter, CypherParamError } from './cypher/cypher-param-converter.js'
 import { AdapterPackError, AdapterPackErrorKind } from '@pragmatic-tech-ai/todl-connectors-host'
-import type { DevCypherRequest } from './engine/dev-cypher-execute.js'
-import { GraphDataDigest } from './paging/graph-data-digest.js'
-import { CypherResultMapper } from './cypher/cypher-result-mapper.js'
+import type { DevCypherRequest, IGraphCypherExecute } from './engine/dev-cypher-execute.js'
 import { trace } from '@opentelemetry/api'
 import type { Context } from '@opentelemetry/api'
 import type { RequestInstrumentation } from '../observability/request-instrumentation.js'
@@ -80,24 +76,19 @@ export class ServerConnectionHandler
     private static readonly PrincipalTakenMessage = 'principal already registered'
     private static readonly AccountExistsMessage = 'account already exists'
     private static readonly CypherField = 'cypher'
-    private static readonly CypherTimeoutMessage = EngineCypherQuery.TimeoutMessage
     private static readonly PagedExplicitBoundsMessage = `${InvalidParamsPrefix.Text}paging cannot be combined with an explicit SKIP or LIMIT`
-    private static readonly CypherFingerprintTag = 'cypher'
     private static readonly ModelIdField = 'modelId'
-    private static readonly RuntimeModelScopeMessage = `${InvalidParamsPrefix.Text}model-scoped query is not available on a runtime tenant`
-    private static readonly ModelScopeUnavailableMessage = `${InvalidParamsPrefix.Text}model-scoped query not available`
-    private static readonly DevCypherUnavailableMessage = `${InvalidParamsPrefix.Text}dev cypher not available`
+    private static readonly CypherUnavailableMessage = `${InvalidParamsPrefix.Text}cypher not available`
     private static readonly DevModelViewUnavailableMessage = `${InvalidParamsPrefix.Text}dev model view not available`
     private static readonly ModelViewFingerprintTag = 'modelView'
     private static readonly NotRuntimeMessage = 'operation requires a runtime tenant'
-    private static readonly DataRevisionFingerprintTag = 'data'
     private static readonly ReadWhereUnsupportedMessage = `${InvalidParamsPrefix.Text}where is supported on connector/readPage only`
     private static readonly ReadEndpointWriteMessage = `${InvalidParamsPrefix.Text}writes are not supported on ${CypherProtocol.Query.method}; send them to ${CypherProtocol.Execute.method}`
-    private static readonly ExecuteModelIdRequiredMessage = `${InvalidParamsPrefix.Text}modelId is required: a write must name its target model`
     private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
     private static readonly GraphServiceUnavailableMessage = 'graph service is not available on this tenant'
     private static readonly EnvironmentGraphHostUnavailableMessage = 'environment graph host is not available on this tenant'
     private static readonly NameMismatchMessage = 'application manifest name does not match requested name: '
+    private static readonly AppNotLiveMessage = `${InvalidParamsPrefix.Text}no live application named `
     private static readonly NoApplicationSelectedMessage = 'no application selected: call application/open first'
     private static readonly ApplicationsUnavailableMessage = 'pragmatic applications are not available on this connection'
     public static readonly RateLimitedCode = -32029
@@ -119,17 +110,17 @@ export class ServerConnectionHandler
     private readonly parent: Context | undefined
     private readonly rateLimit: RateLimitGuard | undefined
     private readonly admin: AdminService | undefined
-    /** The dev cypher/query and cypher/models on the dev graph engine (undefined off a Development tenant). */
-    private readonly devCypher: IGraphCypherQuery | undefined
+    /** cypher/query and cypher/models on the tenant's graph engine (dev or environment, ruling S1). */
+    private readonly cypherQuery: IGraphCypherQuery | undefined
     private readonly cypherLimits: CypherLimits
     private readonly paging: PagingLimits
     private readonly fieldMasks: IFieldReadMaskSource
     private readonly readFilters: IReadFilterSource
     private readonly purpose: TenantPurpose
-    private readonly cypherExecuteProvider: ((context: AccessContext, modelId: string, request: DevCypherRequest) => Promise<CypherExecuteResultDto>) | undefined
+    /** cypher/execute on the tenant's graph engine (dev DevCypherExecute or runtime EnvironmentCypherExecute). */
+    private readonly cypherExecute: IGraphCypherExecute | undefined
     private readonly deployProvider: ((params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>) | undefined
     private readonly applications: PragmaticAppsRegistry | undefined
-    private readonly appGraphProvider: ((context: AccessContext, name: string, labels: ReferencedLabelSet, query?: CypherScanQuery) => Promise<IGraphQuery>) | undefined
     private readonly appWriteProvider: ((context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>) | undefined
     private readonly shareProvider: ((context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>) | undefined
     private readonly unshareProvider: ((context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>) | undefined
@@ -145,20 +136,19 @@ export class ServerConnectionHandler
     private revoked = false
     private disposed = false
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, devCypher: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet, query?: CypherScanQuery) => Promise<IGraphQuery>, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>, assignProvider?: (context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>, paging?: PagingLimits, fieldMasks?: IFieldReadMaskSource, connectorReadAuthorization?: (context: AccessContext) => Promise<IConnectorReadAuthorization>, connectorWriteAuthorization?: (context: AccessContext, target: IWriteTargetSource) => Promise<IHydrateAuthorization>, cypherExecuteProvider?: (context: AccessContext, modelId: string, request: DevCypherRequest) => Promise<CypherExecuteResultDto>, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, devModelView?: IDevModelView, readFilters?: IReadFilterSource)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>, assignProvider?: (context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>, paging?: PagingLimits, fieldMasks?: IFieldReadMaskSource, connectorReadAuthorization?: (context: AccessContext) => Promise<IConnectorReadAuthorization>, connectorWriteAuthorization?: (context: AccessContext, target: IWriteTargetSource) => Promise<IHydrateAuthorization>, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, devModelView?: IDevModelView, readFilters?: IReadFilterSource)
     {
         this.cypherLimits = cypherLimits ?? new CypherLimits()
         this.paging = paging ?? new PagingLimits()
         this.fieldMasks = fieldMasks ?? AllowAllFieldReadMaskSource.Instance
         this.readFilters = readFilters ?? AllowAllReadFilterSource.Instance
         this.purpose = purpose
-        this.cypherExecuteProvider = cypherExecuteProvider
+        this.cypherExecute = cypherExecute
         this.deployProvider = deployProvider
         this.devGraphService = devGraphService
         this.environmentGraphHost = environmentGraphHost
         this.devModelView = devModelView
         this.applications = applications
-        this.appGraphProvider = appGraphProvider
         this.appWriteProvider = appWriteProvider
         this.shareProvider = shareProvider
         this.unshareProvider = unshareProvider
@@ -166,7 +156,7 @@ export class ServerConnectionHandler
         this.assignProvider = assignProvider
         this.rateLimit = rateLimit
         this.admin = admin
-        this.devCypher = devCypher
+        this.cypherQuery = cypherQuery
         this.instrumentation = instrumentation
         this.parent = parent
         this.connectorService = new ConnectorService(connectorsFactory, connectorWriteAuthorization, connectorReadAuthorization)
@@ -229,30 +219,34 @@ export class ServerConnectionHandler
         })
     }
 
-    /** The runtime-only Attach arguments (application registry + per-app graph provider); both undefined unless the server is a Runtime tenant. */
-    public static RuntimeAttachArgs(server: { Purpose(): TenantPurpose; Applications(): PragmaticAppsRegistry; GraphForPragmaticApp(context: AccessContext, name: string, labels: ReferencedLabelSet, maskFields?: boolean, query?: CypherScanQuery): Promise<IGraphQuery>; WriteForPragmaticApp(context: AccessContext, name: string, operations: readonly AppWriteOpDto[]): Promise<AppWriteResultDto>; ShareForPragmaticApp(context: AccessContext, name: string, params: ShareParams): Promise<ShareResultDto>; UnshareForPragmaticApp(context: AccessContext, name: string, params: UnshareParams): Promise<UnshareResultDto>; ListSharesForPragmaticApp(context: AccessContext, name: string, params: ListSharesParams): Promise<ListSharesResultDto>; AssignForPragmaticApp(context: AccessContext, name: string, params: AssignParams): Promise<AssignResultDto>; DeployApplication(params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>; LoadEnvironmentGraph(params: GraphLoadParamsDto): Promise<GraphLoadedDto>; LoadedGraph(): Promise<GraphLoadedDto | null>; EnvironmentGraphQuery(): Promise<IGraphQuery> }): { deployProvider: ((params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>) | undefined; applications: PragmaticAppsRegistry | undefined; appGraphProvider: ((context: AccessContext, name: string, labels: ReferencedLabelSet, query?: CypherScanQuery) => Promise<IGraphQuery>) | undefined; appWriteProvider: ((context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>) | undefined; shareProvider: ((context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>) | undefined; unshareProvider: ((context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>) | undefined; listSharesProvider: ((context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>) | undefined; assignProvider: ((context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>) | undefined; environmentGraphHost: IEnvironmentGraphHost | undefined }
+    /**
+     * The runtime-only Attach arguments: the application registry, the data/write, share and assign providers, deploy,
+     * the promote seam, and `cypher/query` / `cypher/execute` on the environment engine (rulings S1, S13); all
+     * undefined unless the server is a Runtime tenant.
+     */
+    public static RuntimeAttachArgs(server: { Purpose(): TenantPurpose; Applications(): PragmaticAppsRegistry; WriteForPragmaticApp(context: AccessContext, name: string, operations: readonly AppWriteOpDto[]): Promise<AppWriteResultDto>; ShareForPragmaticApp(context: AccessContext, name: string, params: ShareParams): Promise<ShareResultDto>; UnshareForPragmaticApp(context: AccessContext, name: string, params: UnshareParams): Promise<UnshareResultDto>; ListSharesForPragmaticApp(context: AccessContext, name: string, params: ListSharesParams): Promise<ListSharesResultDto>; AssignForPragmaticApp(context: AccessContext, name: string, params: AssignParams): Promise<AssignResultDto>; DeployApplication(params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>; LoadEnvironmentGraph(params: GraphLoadParamsDto): Promise<GraphLoadedDto>; LoadedGraph(): Promise<GraphLoadedDto | null>; EnvironmentCypher(): IGraphCypherQuery; EnvironmentExecute(): IGraphCypherExecute }): { deployProvider: ((params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>) | undefined; applications: PragmaticAppsRegistry | undefined; appWriteProvider: ((context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>) | undefined; shareProvider: ((context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>) | undefined; unshareProvider: ((context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>) | undefined; listSharesProvider: ((context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>) | undefined; assignProvider: ((context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>) | undefined; environmentGraphHost: IEnvironmentGraphHost | undefined; cypherQuery: IGraphCypherQuery | undefined; cypherExecute: IGraphCypherExecute | undefined }
     {
         if (server.Purpose() !== TenantPurpose.Runtime)
         {
-            return { deployProvider: undefined, applications: undefined, appGraphProvider: undefined, appWriteProvider: undefined, shareProvider: undefined, unshareProvider: undefined, listSharesProvider: undefined, assignProvider: undefined, environmentGraphHost: undefined }
+            return { deployProvider: undefined, applications: undefined, appWriteProvider: undefined, shareProvider: undefined, unshareProvider: undefined, listSharesProvider: undefined, assignProvider: undefined, environmentGraphHost: undefined, cypherQuery: undefined, cypherExecute: undefined }
         }
-        return { deployProvider: params => server.DeployApplication(params), applications: server.Applications(), appGraphProvider: (context, name, labels, query) => server.GraphForPragmaticApp(context, name, labels, true, query), appWriteProvider: (context, name, operations) => server.WriteForPragmaticApp(context, name, operations), shareProvider: (context, name, params) => server.ShareForPragmaticApp(context, name, params), unshareProvider: (context, name, params) => server.UnshareForPragmaticApp(context, name, params), listSharesProvider: (context, name, params) => server.ListSharesForPragmaticApp(context, name, params), assignProvider: (context, name, params) => server.AssignForPragmaticApp(context, name, params), environmentGraphHost: server }
+        return { deployProvider: params => server.DeployApplication(params), applications: server.Applications(), appWriteProvider: (context, name, operations) => server.WriteForPragmaticApp(context, name, operations), shareProvider: (context, name, params) => server.ShareForPragmaticApp(context, name, params), unshareProvider: (context, name, params) => server.UnshareForPragmaticApp(context, name, params), listSharesProvider: (context, name, params) => server.ListSharesForPragmaticApp(context, name, params), assignProvider: (context, name, params) => server.AssignForPragmaticApp(context, name, params), environmentGraphHost: server, cypherQuery: server.EnvironmentCypher(), cypherExecute: server.EnvironmentExecute() }
     }
 
-    /** The development-only Attach arguments (the container-owned graph service, the dev Cypher and the dev model view, both on the dev graph engine); all undefined unless the server is a Development tenant. */
-    public static DevelopmentAttachArgs(server: { Purpose(): TenantPurpose; GraphService(): IDevGraphService; DevCypher(): IGraphCypherQuery; DevModelView(): IDevModelView }): { devGraphService: IDevGraphService | undefined; devCypher: IGraphCypherQuery | undefined; devModelView: IDevModelView | undefined }
+    /** The development-only Attach arguments (the container-owned graph service; `cypher/query`, `cypher/execute` and the model view on the dev graph engine); all undefined unless the server is a Development tenant. */
+    public static DevelopmentAttachArgs(server: { Purpose(): TenantPurpose; GraphService(): IDevGraphService; DevCypher(): IGraphCypherQuery; DevExecute(): IGraphCypherExecute; DevModelView(): IDevModelView }): { devGraphService: IDevGraphService | undefined; cypherQuery: IGraphCypherQuery | undefined; cypherExecute: IGraphCypherExecute | undefined; devModelView: IDevModelView | undefined }
     {
         if (server.Purpose() !== TenantPurpose.Development)
         {
-            return { devGraphService: undefined, devCypher: undefined, devModelView: undefined }
+            return { devGraphService: undefined, cypherQuery: undefined, cypherExecute: undefined, devModelView: undefined }
         }
-        return { devGraphService: server.GraphService(), devCypher: server.DevCypher(), devModelView: server.DevModelView() }
+        return { devGraphService: server.GraphService(), cypherQuery: server.DevCypher(), cypherExecute: server.DevExecute(), devModelView: server.DevModelView() }
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, devCypher: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appGraphProvider?: (context: AccessContext, name: string, labels: ReferencedLabelSet, query?: CypherScanQuery) => Promise<IGraphQuery>, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>, assignProvider?: (context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>, paging?: PagingLimits, fieldMasks?: IFieldReadMaskSource, connectorReadAuthorization?: (context: AccessContext) => Promise<IConnectorReadAuthorization>, connectorWriteAuthorization?: (context: AccessContext, target: IWriteTargetSource) => Promise<IHydrateAuthorization>, cypherExecuteProvider?: (context: AccessContext, modelId: string, request: DevCypherRequest) => Promise<CypherExecuteResultDto>, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, devModelView?: IDevModelView, readFilters?: IReadFilterSource): ServerConnectionHandler
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectorsFactory: () => Promise<ConnectorRuntime>, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, appWriteProvider?: (context: AccessContext, name: string, operations: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, shareProvider?: (context: AccessContext, name: string, params: ShareParams) => Promise<ShareResultDto>, unshareProvider?: (context: AccessContext, name: string, params: UnshareParams) => Promise<UnshareResultDto>, listSharesProvider?: (context: AccessContext, name: string, params: ListSharesParams) => Promise<ListSharesResultDto>, assignProvider?: (context: AccessContext, name: string, params: AssignParams) => Promise<AssignResultDto>, paging?: PagingLimits, fieldMasks?: IFieldReadMaskSource, connectorReadAuthorization?: (context: AccessContext) => Promise<IConnectorReadAuthorization>, connectorWriteAuthorization?: (context: AccessContext, target: IWriteTargetSource) => Promise<IHydrateAuthorization>, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, devModelView?: IDevModelView, readFilters?: IReadFilterSource): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
-        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, devCypher, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, appGraphProvider, appWriteProvider, shareProvider, unshareProvider, listSharesProvider, assignProvider, paging, fieldMasks, connectorReadAuthorization, connectorWriteAuthorization, cypherExecuteProvider, deployProvider, devGraphService, environmentGraphHost, devModelView, readFilters)
+        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectorsFactory, cypherQuery, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, appWriteProvider, shareProvider, unshareProvider, listSharesProvider, assignProvider, paging, fieldMasks, connectorReadAuthorization, connectorWriteAuthorization, cypherExecute, deployProvider, devGraphService, environmentGraphHost, devModelView, readFilters)
         connection.listen()
         return handler
     }
@@ -475,14 +469,10 @@ export class ServerConnectionHandler
         return this.connectorService.Read(params.modelId, params.concept, params, this.paging, this.accessContext)
     }
 
-    /** The model ids usable as modelId (the dev engine's models). Model scope exists on development tenants only, as on cypher/query. */
+    /** The model ids usable as modelId: the dev engine's models, or a runtime environment's delivered packages (ruling S12). */
     public async RunCypherModels(): Promise<CypherModelListDto>
     {
-        if (this.purpose === TenantPurpose.Runtime)
-        {
-            throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.RuntimeModelScopeMessage)
-        }
-        return { models: [...await this.RequireDevCypher().Models()] }
+        return { models: [...await this.RequireCypherQuery().Models()] }
     }
 
     private RegisterAppDataHandlers(): void
@@ -582,58 +572,25 @@ export class ServerConnectionHandler
             throw error
         }
         const modelId = params.modelId === undefined ? undefined : this.RequireNonEmptyString(params.modelId, ServerConnectionHandler.ModelIdField)
-        if (modelId !== undefined && this.purpose === TenantPurpose.Runtime)
-        {
-            throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.RuntimeModelScopeMessage)
-        }
-        if (this.purpose !== TenantPurpose.Runtime)
-        {
-            // the dev engine's scope decides every row and member; nothing is filtered or masked here
-            return this.RequireDevCypher().Run(this.accessContext, {
-                Source: source,
-                Parameters: parameters,
-                CanonicalParameters: CypherParamConverter.Canonical(params.parameters),
-                ...(modelId === undefined ? {} : { ModelId: modelId }),
-                Page: { Params: params, Limits: this.paging, RowCap: this.cypherLimits.RowCap },
-                TimeoutMs: this.cypherLimits.TimeoutMs,
-                MaxVarLength: this.cypherLimits.MaxVarLength,
-            })
-        }
-        const labels = Cypher.ReferencedLabels.Of(source)
-        const graph = this.boundApp !== undefined
-            ? await this.RequireBoundAppGraph(labels, { text: source, parameters })
-            : await this.RequireEnvironmentGraph()
-        // read the revision only once the graph is in hand: acquiring it may itself commit the first build, so
-        // reading GraphRevision before the fetch would fingerprint page 1 against the pre-build revision and
-        // page 2 would then always be rejected as stale; runtime data (app writes, connector rows) moves without
-        // GraphRevision, so the data itself is fingerprinted too
-        const fingerprint = PageFingerprint.Of(ServerConnectionHandler.CypherFingerprintTag, source, CypherParamConverter.Canonical(params.parameters), String(this.languageService.GraphRevision),
-            ServerConnectionHandler.DataRevisionFingerprintTag, GraphDataDigest.Of(graph, labels))
-        const page = PageRequest.Resolve(params, fingerprint, this.paging, this.cypherLimits.RowCap)
-        try
-        {
-            const engine = Cypher.CypherEngine.OverQuery(graph, { MaxVarLength: this.cypherLimits.MaxVarLength })
-            const result = engine.Execute(source, parameters, { Skip: page.Offset, RowCap: page.Size, Cancel: Cypher.Deadline.After(this.cypherLimits.TimeoutMs) })
-            return CypherResultMapper.ToWire(Cypher.CypherEngine.ToDto(result), page.NextCursor(result.HasMore))
-        }
-        catch (error)
-        {
-            if (error instanceof Cypher.CypherSyntaxError || error instanceof Cypher.CypherSemanticError)
-            {
-                throw new ResponseError(ErrorCodes.InvalidParams, `${InvalidParamsPrefix.Text}${error.message}`)
-            }
-            if (error instanceof Cypher.CypherTimeout)
-            {
-                throw new ResponseError(ServerConnectionHandler.CypherTimeoutCode, ServerConnectionHandler.CypherTimeoutMessage)
-            }
-            throw error
-        }
+        // the engine scope decides every row and member, on both purposes; nothing is filtered or masked here
+        return this.RequireCypherQuery().Run(this.accessContext, {
+            Source: source,
+            Parameters: parameters,
+            CanonicalParameters: CypherParamConverter.Canonical(params.parameters),
+            ...(modelId === undefined ? {} : { ModelId: modelId }),
+            Page: { Params: params, Limits: this.paging, RowCap: this.cypherLimits.RowCap },
+            TimeoutMs: this.cypherLimits.TimeoutMs,
+            MaxVarLength: this.cypherLimits.MaxVarLength,
+        })
     }
 
-    /** `modelId` must be the round-trip-stable canonical model id (`<namespace>Model`): a non-canonical author name is renamed on first write (TODL emitter convention) and the id changes. */
+    /**
+     * On a dev tenant `modelId` is required and must be the round-trip-stable canonical model id (`<namespace>Model`): a
+     * non-canonical author name is renamed on first write (TODL emitter convention) and the id changes. On a runtime
+     * tenant it is optional (a delivered package id, ruling S13).
+     */
     public async RunCypherExecute(params: CypherExecuteParams): Promise<CypherExecuteResultDto>
     {
-        this.EnsureDevelopment()
         params ??= {} as CypherExecuteParams
         const source = this.RequireNonEmptyString(params?.cypher, ServerConnectionHandler.CypherField)
         let parameters: ReadonlyMap<string, Cypher.ParameterValue>
@@ -649,22 +606,18 @@ export class ServerConnectionHandler
             }
             throw error
         }
-        if (params.modelId === undefined || params.modelId === null)
+        const modelId = params.modelId === undefined || params.modelId === null ? undefined : this.RequireNonEmptyString(params.modelId, ServerConnectionHandler.ModelIdField)
+        if (this.cypherExecute === undefined)
         {
-            throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.ExecuteModelIdRequiredMessage)
-        }
-        const modelId = this.RequireNonEmptyString(params.modelId, ServerConnectionHandler.ModelIdField)
-        if (this.cypherExecuteProvider === undefined)
-        {
-            throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.ModelScopeUnavailableMessage)
+            throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.CypherUnavailableMessage)
         }
         const request: DevCypherRequest = { cypher: source, parameters, timeoutMs: this.cypherLimits.TimeoutMs, maxVarLength: this.cypherLimits.MaxVarLength }
         if (params.expectedRevision !== undefined && params.expectedRevision !== null)
         {
             request.expectedRevision = params.expectedRevision
         }
-        // the dev engine path reports engine syntax / semantic errors and timeouts as wire errors itself
-        return this.cypherExecuteProvider(this.accessContext, modelId, request)
+        // the engine path reports engine syntax / semantic errors and timeouts as wire errors itself
+        return this.cypherExecute.Run(this.accessContext, modelId, request)
     }
 
     /**
@@ -707,13 +660,13 @@ export class ServerConnectionHandler
         return this.devModelView
     }
 
-    private RequireDevCypher(): IGraphCypherQuery
+    private RequireCypherQuery(): IGraphCypherQuery
     {
-        if (this.devCypher === undefined)
+        if (this.cypherQuery === undefined)
         {
-            throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.DevCypherUnavailableMessage)
+            throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.CypherUnavailableMessage)
         }
-        return this.devCypher
+        return this.cypherQuery
     }
 
     private RegisterApplicationHandlers(): void
@@ -725,13 +678,19 @@ export class ServerConnectionHandler
             return summaries.map(a => ({ name: a.name, version: a.version }))
         })
         this.guarded(ApplicationDeployProtocol.Deploy, p => this.RunDeploy(p))
+        // S7: binds a LIVE app's name to the connection (data/write, shares and assign need it); no effect on the scope
         this.guarded(PragmaticAppProtocol.Open, async p =>
         {
             this.EnsureRuntime()
-            const app = await this.RequireApplications().ApplicationFor(p.name)
-            if (app.Manifest.name !== p.name)
+            const name = this.RequireNonEmptyString(p?.name, ServerConnectionHandler.PackNameField)
+            const app = await this.RequireApplications().LiveApplicationFor(name)
+            if (app === undefined)
             {
-                throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.NameMismatchMessage + p.name)
+                throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.AppNotLiveMessage + name)
+            }
+            if (app.Manifest.name !== name)
+            {
+                throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.NameMismatchMessage + name)
             }
             this.boundApp = { name: app.Manifest.name, version: app.Manifest.version }
             return this.boundApp
@@ -800,22 +759,6 @@ export class ServerConnectionHandler
         return this.environmentGraphHost
     }
 
-    private async RequireEnvironmentGraph(): Promise<IGraphQuery>
-    {
-        try
-        {
-            return await this.RequireEnvironmentGraphHost().EnvironmentGraphQuery()
-        }
-        catch (error)
-        {
-            if (error instanceof NoEnvironmentGraphError)
-            {
-                throw new ResponseError(ErrorCodes.InvalidRequest, error.message)
-            }
-            throw error
-        }
-    }
-
     private EnsureRuntime(): void
     {
         if (this.purpose !== TenantPurpose.Runtime)
@@ -839,15 +782,6 @@ export class ServerConnectionHandler
             throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.ApplicationsUnavailableMessage)
         }
         return this.applications
-    }
-
-    private async RequireBoundAppGraph(labels: ReferencedLabelSet, query?: CypherScanQuery): Promise<IGraphQuery>
-    {
-        if (this.boundApp === undefined || this.appGraphProvider === undefined)
-        {
-            throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.NoApplicationSelectedMessage)
-        }
-        return this.appGraphProvider(this.accessContext, this.boundApp.name, labels, query)
     }
 
     private RegisterAdminHandlers(): void

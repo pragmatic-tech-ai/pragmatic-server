@@ -161,84 +161,14 @@ class FieldSecurityFixture
     }
 }
 
-test('a principal without a granting profile sees the secured field as null and cannot filter on it', async () =>
-{
-    const fx = new FieldSecurityFixture()
-    try
-    {
-        const server = await fx.Setup()
-        const graph = await server.GraphForPragmaticApp(PpSecurityHarness.Context(FieldSecurityFixture.Plain), FieldSecurityFixture.Name)
-        assert.deepEqual(FieldSecurityFixture.Rows(graph), [['W1', null]])
-        assert.deepEqual(FieldSecurityFixture.Matches(graph), [])
-        assert.deepEqual(FieldSecurityFixture.Ordered(graph), [['W1', null]])
-    }
-    finally
-    {
-        await fx.Dispose()
-    }
-})
-
-test('a principal with a granting profile reads and filters on the secured field', async () =>
-{
-    const fx = new FieldSecurityFixture()
-    try
-    {
-        const server = await fx.Setup()
-        const graph = await server.GraphForPragmaticApp(PpSecurityHarness.Context(FieldSecurityFixture.Granted), FieldSecurityFixture.Name)
-        assert.deepEqual(FieldSecurityFixture.Rows(graph), [['W1', FieldSecurityFixture.Hidden]])
-        assert.deepEqual(FieldSecurityFixture.Matches(graph), ['W1'])
-    }
-    finally
-    {
-        await fx.Dispose()
-    }
-})
-
 test('the unmasked internal fetch still sees the secured field (write-gate path)', async () =>
 {
     const fx = new FieldSecurityFixture()
     try
     {
         const server = await fx.Setup()
-        const graph = await server.GraphForPragmaticApp(PpSecurityHarness.Context(FieldSecurityFixture.Plain), FieldSecurityFixture.Name, undefined, false)
-        assert.deepEqual(FieldSecurityFixture.Rows(graph), [['W1', FieldSecurityFixture.Hidden]])
-    }
-    finally
-    {
-        await fx.Dispose()
-    }
-})
-
-test('identity off: no mask wrapper, the secured field reads unmasked', async () =>
-{
-    const fx = new FieldSecurityFixture()
-    try
-    {
-        const server = await fx.Setup(false)
         const graph = await server.GraphForPragmaticApp(PpSecurityHarness.Context(FieldSecurityFixture.Plain), FieldSecurityFixture.Name)
         assert.deepEqual(FieldSecurityFixture.Rows(graph), [['W1', FieldSecurityFixture.Hidden]])
-    }
-    finally
-    {
-        await fx.Dispose()
-    }
-})
-
-test('a whole-node RETURN omits the secured field without the profile and includes it with the profile', async () =>
-{
-    const fx = new FieldSecurityFixture()
-    try
-    {
-        const server = await fx.Setup()
-        const plain = await server.GraphForPragmaticApp(PpSecurityHarness.Context(FieldSecurityFixture.Plain), FieldSecurityFixture.Name)
-        const plainNode = FieldSecurityFixture.NodeSnapshot(plain)
-        assert.ok(plainNode.includes('W1'))
-        assert.ok(!plainNode.includes('secret'))
-        assert.ok(!plainNode.includes(FieldSecurityFixture.Hidden))
-        const granted = await server.GraphForPragmaticApp(PpSecurityHarness.Context(FieldSecurityFixture.Granted), FieldSecurityFixture.Name)
-        const grantedNode = FieldSecurityFixture.NodeSnapshot(granted)
-        assert.ok(grantedNode.includes('secret'))
-        assert.ok(grantedNode.includes(FieldSecurityFixture.Hidden))
     }
     finally
     {

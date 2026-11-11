@@ -2,7 +2,7 @@ import { ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol
 import type { ConnectorFilterTermDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { QueryCompareOp, QueryFilterTranslator, UnmappedFilterFieldError } from '@pragmatic-tech-ai/todl'
 import type { ConnectorBinding, ExternalFieldValue, QueryComparison, QueryFilter } from '@pragmatic-tech-ai/todl'
-import type { IFieldReadMask } from '../host/cypher/field-masked-graph-query.js'
+import type { IFieldReadMask } from '../host/cypher/field-read-mask.js'
 
 /**
  * Validates and translates a client's paged-read filter (model member names) into the source query's Where (external

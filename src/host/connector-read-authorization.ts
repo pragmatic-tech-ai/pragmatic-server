@@ -1,8 +1,8 @@
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { IInstanceFilter } from '@pragmatic-tech-ai/todl'
 import { AllowAllInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
-import { AllowAllFieldReadMask } from './cypher/field-masked-graph-query.js'
-import type { IFieldReadMask } from './cypher/field-masked-graph-query.js'
+import { AllowAllFieldReadMask } from './cypher/field-read-mask.js'
+import type { IFieldReadMask } from './cypher/field-read-mask.js'
 import type { TenantReadAuthorization } from './cypher/read-filter-source.js'
 
 /** Per-request read authorization for connector rows: the access-depth row filter plus the field-read mask. */

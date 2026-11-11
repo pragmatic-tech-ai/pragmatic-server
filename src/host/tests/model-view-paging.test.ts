@@ -5,8 +5,8 @@ import type { Edge } from '@pragmatic-tech-ai/todl'
 import { ModelReadFilter } from '../model-read-filter.js'
 import type { ModelMemberPage } from '../model-projection.js'
 import { AllowAllInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
-import { AllowAllFieldReadMask } from '../cypher/field-masked-graph-query.js'
-import type { IFieldReadMask } from '../cypher/field-masked-graph-query.js'
+import { AllowAllFieldReadMask } from '../cypher/field-read-mask.js'
+import type { IFieldReadMask } from '../cypher/field-read-mask.js'
 
 /*
  * The runtime (non-dev) ModelReadFilter over an in-memory repository. The dev tenant's model/view runs on the dev

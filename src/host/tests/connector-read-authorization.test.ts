@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { AllowAllInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { TenantReadAuthorization } from '../cypher/read-filter-source.js'
-import { AllowAllFieldReadMask } from '../cypher/field-masked-graph-query.js'
+import { AllowAllFieldReadMask } from '../cypher/field-read-mask.js'
 import { ConnectorReadAuthorizations } from '../connector-read-authorization.js'
 import { ConnectorPrincipalDigest } from '../engine/principal-digest.js'
 

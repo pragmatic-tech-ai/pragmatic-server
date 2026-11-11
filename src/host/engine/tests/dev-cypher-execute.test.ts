@@ -101,14 +101,14 @@ class ExecWorld
         return page.items
     }
 
-    public Connect(context: AccessContext, purpose: TenantPurpose = TenantPurpose.Development): ServerConnectionHandler
+    public Connect(context: AccessContext): ServerConnectionHandler
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
             serverSocket, this.language, this.manager, context, () => Promise.reject(new Error(ExecFixture.NoConnectors)), this.Server.DevCypher(),
-            undefined, undefined, undefined, undefined, undefined, undefined, purpose, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
             this.fieldMasks, ctx => this.Server.ConnectorReadAuthorizationFor(ctx), undefined,
-            (ctx, id, request) => this.Server.ExecuteCypher(ctx, id, request))
+            this.Server.DevExecute())
         this.clients.push(PragmaticClient.CreateOverSocket(clientSocket))
         this.handlers.push(handler)
         return handler
@@ -289,15 +289,6 @@ class ExecFixture
 
 describe('dev cypher/execute over the connection (ported from host/tests/cypher-execute.test.ts)', () =>
 {
-    test('a runtime tenant rejects cypher/execute with InvalidRequest', async () =>
-    {
-        await ExecFixture.With(false, async world =>
-        {
-            const handler = world.Connect(ExecFixture.Context(ExecFixture.Plain), TenantPurpose.Runtime)
-            assert.equal(await ExecFixture.CodeOf(handler.RunCypherExecute(ExecFixture.P(world.Shop, ExecFixture.Create))), ErrorCodes.InvalidRequest)
-        })
-    })
-
     test('omitted or unknown modelId => InvalidParams (write must name its target member)', async () =>
     {
         await ExecFixture.With(false, async world =>
@@ -929,7 +920,9 @@ class ExecFx
 /** A schema file holding two model blocks (deferred 4): its text pieces and what the write-back must keep. */
 class TwoBlockFx
 {
-    public static readonly Schema = 'namespace acme { concept Order { total : string?; } '
+    public static readonly Namespace = 'namespace acme {'
+    public static readonly Concept = 'concept Order { total : string?; } '
+    public static readonly Schema = TwoBlockFx.Namespace + ' ' + TwoBlockFx.Concept
     public static readonly HeaderA = 'model A : acme {'
     public static readonly HeaderB = 'model B : acme {'
     public static readonly Text = TwoBlockFx.Schema + TwoBlockFx.HeaderA + ' Order o1 { total = "1"; } } ' + TwoBlockFx.HeaderB + ' Order o2 { total = "2"; } } }'
@@ -1190,8 +1183,9 @@ describe('DevCypherExecute persist (ported from host/model/tests/dev-model-write
             const result = await fx.Run(TwoBlockFx.Create, TwoBlockFx.ModelA)
             assert.equal(result.status, AppWriteStatus.Applied)
             const extra = fx.File(ExecFx.ExtraFile)
-            // the schema segment is kept byte for byte, ahead of the first model block
-            assert.ok(extra.startsWith(TwoBlockFx.Schema + TwoBlockFx.HeaderA), extra)
+            // the schema segment is kept, ahead of the first model block (TODL 0.56 adds `import todl.system;` to the namespace)
+            assert.ok(extra.startsWith(TwoBlockFx.Namespace), extra)
+            assert.ok(extra.includes(TwoBlockFx.Concept + TwoBlockFx.HeaderA), extra)
             const blockA = extra.slice(extra.indexOf(TwoBlockFx.HeaderA), extra.indexOf(TwoBlockFx.HeaderB))
             const blockB = extra.slice(extra.indexOf(TwoBlockFx.HeaderB))
             // o1 stays in A and o2 in B, each with its own total

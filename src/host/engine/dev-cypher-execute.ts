@@ -1,8 +1,8 @@
-import { AccessDefault, AccessError, AccessScope, ConceptIs, ConflictError, ConnectorError, Cypher, Or, OwnerIs } from '@pragmatic-tech-ai/graph'
-import type { GraphEngine, GraphReader, ISchemaDescription, IWriteRules } from '@pragmatic-tech-ai/graph'
+import { ConnectorError, Cypher } from '@pragmatic-tech-ai/graph'
+import type { AccessScope, GraphEngine, GraphReader } from '@pragmatic-tech-ai/graph'
 import { AppWriteStatus, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherExecuteResultDto, CypherQueryPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { EngineBridgeError, EngineBridgeErrorCode, TodlNames } from '@pragmatic-tech-ai/todl/engine'
+import { EngineBridgeError, EngineBridgeErrorCode } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { StructuredLogger } from '../../observability/logger.js'
@@ -13,7 +13,6 @@ import { CypherResultMapper } from '../cypher/cypher-result-mapper.js'
 import { InProcessWriteLock, WriteLockBusyError } from '../cypher/write-lock.js'
 import type { IWriteLease, IWriteLock } from '../cypher/write-lock.js'
 import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
-import { AccessScopeConjunction } from './access-scope-conjunction.js'
 import type { IGraphScopeSource } from './access-scope-source.js'
 import { EngineCypherQuery, EngineCypherQueryError, EngineCypherQueryErrorCode } from './engine-cypher-query.js'
 import { BoundedWait, TimeoutUpgradeTimer } from './bounded-wait.js'
@@ -21,7 +20,8 @@ import type { IUpgradeTimer } from './bounded-wait.js'
 import { DevGraphEngineHost } from './dev-graph-engine-host.js'
 import type { IDevGraphEngine } from './dev-graph-engine-host.js'
 import type { DevSnapshot } from './dev-snapshot-source.js'
-import { EngineSchemaCatalog } from './engine-schema-catalog.js'
+import { EngineWriteFailure } from './engine-write-failure.js'
+import { ModelWriteScopes } from './model-write-scopes.js'
 import type { IWriteFence } from './server-model-workspace.js'
 
 /** A validated cypher/execute request, free of wire concerns (the handler converts the parameters once). */
@@ -34,10 +34,13 @@ export interface DevCypherRequest
     maxVarLength: number
 }
 
-/** The dev `cypher/execute` endpoint's engine side. */
-export interface IDevCypherExecute
+/**
+ * The `cypher/execute` endpoint's engine side, for any engine host (ruling S1: dev DevCypherExecute, runtime
+ * EnvironmentCypherExecute). `modelId` confines the write to one model; dev requires it, runtime takes it optionally.
+ */
+export interface IGraphCypherExecute
 {
-    Run(context: AccessContext, modelId: string, request: DevCypherRequest): Promise<CypherExecuteResultDto>
+    Run(context: AccessContext, modelId: string | undefined, request: DevCypherRequest): Promise<CypherExecuteResultDto>
 }
 
 /** What a failed engine write means for the caller (see the status mapping on {@link DevCypherExecute}). */
@@ -52,48 +55,42 @@ export enum DevWriteFailureKind
     Failed,
 }
 
-/** Classifies an engine write failure; undefined for an error that is not a write outcome (rethrown). */
+/**
+ * Classifies a dev engine write failure; undefined for an error that is not a write outcome (rethrown). Only the
+ * file-specific cases are dev's own: the `.todl` connector's EngineBridgeError Stale (the saved sources changed) and
+ * NotEditable (a term or another file-owned element); everything else is the shared {@link EngineWriteFailure} table
+ * (ruling S1), its status giving the kind.
+ */
 export class DevWriteFailure
 {
+    private static readonly ByStatus: ReadonlyMap<AppWriteStatus, DevWriteFailureKind> = new Map([
+        [AppWriteStatus.Conflict, DevWriteFailureKind.EngineConflict],
+        [AppWriteStatus.Denied, DevWriteFailureKind.Denied],
+        [AppWriteStatus.Invalid, DevWriteFailureKind.Invalid],
+        [AppWriteStatus.Failed, DevWriteFailureKind.Failed],
+    ])
+
     public static KindOf(error: unknown): DevWriteFailureKind | undefined
     {
-        if (error instanceof ConflictError) return DevWriteFailureKind.EngineConflict
-        if (error instanceof AccessError) return DevWriteFailureKind.Denied
-        if (error instanceof ConnectorError) return DevWriteFailure.ConnectorKind(error)
-        if (error instanceof EngineBridgeError) return DevWriteFailure.BridgeKind(error)
-        if (!(error instanceof Cypher.CypherWriteError)) return undefined
-        switch (error.WriteCode)
-        {
-            case Cypher.CypherWriteErrorCode.Conflict:
-                return DevWriteFailureKind.EngineConflict
-            case Cypher.CypherWriteErrorCode.Denied:
-                return DevWriteFailureKind.Denied
-            case Cypher.CypherWriteErrorCode.ConnectorFailed:
-                return error.cause instanceof ConnectorError ? DevWriteFailure.ConnectorKind(error.cause) : DevWriteFailureKind.Failed
-            default:
-                return DevWriteFailureKind.Invalid
-        }
-    }
-
-    /** The connector's own failure decides; a revert that also failed (an AggregateError cause) is Failed. */
-    private static ConnectorKind(error: ConnectorError): DevWriteFailureKind
-    {
-        return error.cause instanceof EngineBridgeError ? DevWriteFailure.BridgeKind(error.cause) : DevWriteFailureKind.Failed
-    }
-
-    private static BridgeKind(error: EngineBridgeError): DevWriteFailureKind
-    {
-        switch (error.Code)
+        switch (DevWriteFailure.FileCode(error))
         {
             case EngineBridgeErrorCode.Stale:
                 return DevWriteFailureKind.SourcesChanged
             case EngineBridgeErrorCode.NotEditable:
-            case EngineBridgeErrorCode.ForeignId:
-            case EngineBridgeErrorCode.UnsupportedValue:
                 return DevWriteFailureKind.Invalid
             default:
-                return DevWriteFailureKind.Failed
+                break
         }
+        const outcome = EngineWriteFailure.Map(error)
+        return outcome === undefined ? undefined : DevWriteFailure.ByStatus.get(outcome.Status) ?? DevWriteFailureKind.Failed
+    }
+
+    /** The file connector's bridge code behind a Cypher write or connector failure (undefined when there is none). */
+    private static FileCode(error: unknown): EngineBridgeErrorCode | undefined
+    {
+        if (error instanceof Cypher.CypherWriteError) return DevWriteFailure.FileCode(error.cause)
+        if (error instanceof ConnectorError) return DevWriteFailure.FileCode(error.cause)
+        return error instanceof EngineBridgeError ? error.Code : undefined
     }
 }
 
@@ -152,47 +149,6 @@ class LeaseFence implements IWriteFence
     }
 }
 
-/**
- * The caller's scope with its writes confined to one model (ruling T7-b): `Or(ConceptIs todl.Term, OwnerIs(modelId))`
- * ANDed into the `todl.Element` Create, Update and Delete rules (deny-wins), so a write to another model's instance is
- * Denied while reads stay tenant-wide; terms keep the caller's own rules (their writes stay NotEditable -> Invalid).
- * Cached per scope object (one per schema version) and model id.
- */
-class ModelWriteScopes
-{
-    private readonly scopes = new WeakMap<AccessScope, Map<string, AccessScope>>()
-    private catalog: { readonly Description: ISchemaDescription; readonly Catalog: EngineSchemaCatalog } | undefined
-
-    public For(scope: AccessScope, modelId: string, description: ISchemaDescription): AccessScope
-    {
-        let byModel = this.scopes.get(scope)
-        if (byModel === undefined)
-        {
-            byModel = new Map<string, AccessScope>()
-            this.scopes.set(scope, byModel)
-        }
-        let confined = byModel.get(modelId)
-        if (confined === undefined)
-        {
-            const own = new Or([new ConceptIs(TodlNames.Term), new OwnerIs(new Set([modelId]))])
-            const rules: IWriteRules = { Create: own, Update: own, Delete: own }
-            const writes = new Map([[TodlNames.Element, rules]])
-            confined = AccessScopeConjunction.And(scope, AccessScope.Build({ Default: AccessDefault.Allow, Writes: writes }), this.CatalogOf(description))
-            byModel.set(modelId, confined)
-        }
-        return confined
-    }
-
-    private CatalogOf(description: ISchemaDescription): EngineSchemaCatalog
-    {
-        if (this.catalog === undefined || this.catalog.Description !== description)
-        {
-            this.catalog = { Description: description, Catalog: new EngineSchemaCatalog(description) }
-        }
-        return this.catalog.Catalog
-    }
-}
-
 /** One attempt's outcome: the wire result, or that the engine conflicted (nothing applied) and a retry may succeed. */
 class Attempt
 {
@@ -241,7 +197,7 @@ class Attempt
  *   CypherResultMapper. Engine Syntax / Semantic / IntegerOverflow errors are InvalidParams, a timeout -32030
  *   (EngineCypherQuery.WireError).
  */
-export class DevCypherExecute implements IDevCypherExecute
+export class DevCypherExecute implements IGraphCypherExecute
 {
     public static readonly MaxAttempts = 2
     /** How long a write waits for its connector writes to settle before the tenant is wedged (ruling F-f). */
@@ -249,6 +205,7 @@ export class DevCypherExecute implements IDevCypherExecute
     private static readonly WedgedReason = 'an earlier write is still persisting; retry later'
     private static readonly MaxSettles = 5
     private static readonly ModelNotFoundMessage = `${InvalidParamsPrefix.Text}model not found`
+    private static readonly ModelIdRequiredMessage = `${InvalidParamsPrefix.Text}modelId is required: a write must name its target model`
     private static readonly RevisionReason = 'graph revision has advanced'
     private static readonly LeaseLostReason = 'the tenant write lease was lost before the write could persist'
     private static readonly SourcesChangedReason = 'model sources changed during the write'
@@ -288,8 +245,12 @@ export class DevCypherExecute implements IDevCypherExecute
     {
     }
 
-    public async Run(context: AccessContext, modelId: string, request: DevCypherRequest): Promise<CypherExecuteResultDto>
+    public async Run(context: AccessContext, modelId: string | undefined, request: DevCypherRequest): Promise<CypherExecuteResultDto>
     {
+        if (modelId === undefined)
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, DevCypherExecute.ModelIdRequiredMessage)
+        }
         if (!(await this.host.Snapshot()).Models.includes(modelId))
         {
             throw new ResponseError(ErrorCodes.InvalidParams, DevCypherExecute.ModelNotFoundMessage)

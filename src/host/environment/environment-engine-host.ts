@@ -4,6 +4,7 @@ import { StoragePackageSource } from '@pragmatic-tech-ai/todl'
 import { EngineCellMapper, EnvironmentCatalogComposer, SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import type { IEnvironmentCatalog, IPackageDelivery } from '@pragmatic-tech-ai/todl/engine'
 import type { IDisposable, IServiceProvider, IStorage } from '@pragmatic-tech-ai/todl-runtime'
+import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
 import { AsyncMutex } from '../cypher/async-mutex.js'
@@ -23,6 +24,16 @@ import type { DeliveryChange, EnvironmentDeliveries, IDeliveryGate } from './env
 export type EnvironmentSnapshot = IEngineSnapshot & {
     readonly Catalog: IEnvironmentCatalog
     readonly Deliveries: readonly IPackageDelivery[]
+}
+
+/**
+ * The runtime-side promote seam a runtime tenant exposes (`graph/load`, `graph/loaded`); the handler reaches it without
+ * knowing the server type.
+ */
+export interface IEnvironmentGraphHost
+{
+    LoadEnvironmentGraph(params: GraphLoadParamsDto): Promise<GraphLoadedDto>
+    LoadedGraph(): Promise<GraphLoadedDto | null>
 }
 
 /** Where the environment host reports what it never throws at a caller, or throws only after reporting. */

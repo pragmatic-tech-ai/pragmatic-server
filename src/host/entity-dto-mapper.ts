@@ -1,7 +1,7 @@
 import type { ReflectedEntity } from '@pragmatic-tech-ai/todl'
 import type { EntityDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { WireScalar } from './wire-scalar.js'
-import type { IFieldReadMask } from './cypher/field-masked-graph-query.js'
+import type { IFieldReadMask } from './cypher/field-read-mask.js'
 
 /** The minimal node shape projected (structurally satisfied by the engine's ReflectedNode). */
 export interface EntityNodeShape

@@ -14,8 +14,8 @@ import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, ResourceAu
 import type { ISecurityModelConfig, ITenantConfigStore } from '@pragmatic-tech-ai/todl-identity'
 import { TenantReadAuthorization } from '../cypher/read-filter-source.js'
 import type { IInstanceFilter, IInstanceView } from '@pragmatic-tech-ai/todl'
-import { AllowAllFieldReadMask } from '../cypher/field-masked-graph-query.js'
-import type { IFieldReadMask } from '../cypher/field-masked-graph-query.js'
+import { AllowAllFieldReadMask } from '../cypher/field-read-mask.js'
+import type { IFieldReadMask } from '../cypher/field-read-mask.js'
 
 class Ctx
 {

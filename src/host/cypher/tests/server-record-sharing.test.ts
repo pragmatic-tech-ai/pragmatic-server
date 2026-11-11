@@ -41,7 +41,7 @@ class RecordSharingFixture
     private static readonly SecretValue = 'hush'
     private static readonly Profile = 'secret-readers'
     private static readonly ProfileName = 'Secret readers'
-    public static readonly Query = 'MATCH (w:Widget) RETURN w.label AS label, w.secret AS secret'
+    public static readonly Query = 'MATCH (w:Widget) RETURN w.label AS label'
     public static readonly Principal = 'p1'
     public static readonly Other = 'p2'
     /** Sales-owned: visible by depth. */
@@ -139,15 +139,12 @@ class RecordSharingFixture
         PpSecurityHarness.ClearKey()
     }
 
-    /** label -> secret (null when masked), sorted by label. */
-    public static Rows(graph: IGraphQuery): Array<[string, string | null]>
+    /** The visible labels, sorted (the legacy graph no longer masks fields: field security is the engine scope's). */
+    public static Rows(graph: IGraphQuery): string[]
     {
         return Cypher.CypherEngine.OverQuery(graph).Execute(RecordSharingFixture.Query).Rows
-            .map(r => [
-                r[0] instanceof Cypher.ScalarValue ? String(r[0].Value) : '',
-                r[1] instanceof Cypher.ScalarValue && r[1].Value !== null ? String(r[1].Value) : null,
-            ] as [string, string | null])
-            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(r => r[0] instanceof Cypher.ScalarValue ? String(r[0].Value) : '')
+            .sort((a, b) => a.localeCompare(b))
     }
 
     /** BusinessUnit-level Read for both principals (sales); `secret` is secured and no profile is assigned to anyone. */
@@ -198,7 +195,7 @@ test('without a share, the root-owned records are hidden', async () =>
     {
         const server = await fx.Setup()
         const graph = await server.GraphForPragmaticApp(PpSecurityHarness.Context(RecordSharingFixture.Principal), RecordSharingFixture.Name, Cypher.ReferencedLabels.Of(RecordSharingFixture.Query))
-        assert.deepEqual(RecordSharingFixture.Rows(graph), [[RecordSharingFixture.VisibleLabel, null]])
+        assert.deepEqual(RecordSharingFixture.Rows(graph), [RecordSharingFixture.VisibleLabel])
     }
     finally
     {
@@ -206,7 +203,7 @@ test('without a share, the root-owned records are hidden', async () =>
     }
 })
 
-test('a Read share bypasses depth for that record only; the unshared record stays hidden; field mask stays', async () =>
+test('a Read share bypasses depth for that record only; the unshared record stays hidden', async () =>
 {
     const fx = new RecordSharingFixture()
     try
@@ -215,8 +212,8 @@ test('a Read share bypasses depth for that record only; the unshared record stay
         await fx.ShareWithPrincipal(server, RecordSharingFixture.Principal)
         const graph = await server.GraphForPragmaticApp(PpSecurityHarness.Context(RecordSharingFixture.Principal), RecordSharingFixture.Name, Cypher.ReferencedLabels.Of(RecordSharingFixture.Query))
         assert.deepEqual(RecordSharingFixture.Rows(graph), [
-            [RecordSharingFixture.VisibleLabel, null],
-            [RecordSharingFixture.SharedLabel, null],
+            RecordSharingFixture.VisibleLabel,
+            RecordSharingFixture.SharedLabel,
         ])
     }
     finally
@@ -233,9 +230,9 @@ test('a share to another principal does not widen this principal', async () =>
         const server = await fx.Setup()
         await fx.ShareWithPrincipal(server, RecordSharingFixture.Other)
         const graph = await server.GraphForPragmaticApp(PpSecurityHarness.Context(RecordSharingFixture.Principal), RecordSharingFixture.Name, Cypher.ReferencedLabels.Of(RecordSharingFixture.Query))
-        assert.deepEqual(RecordSharingFixture.Rows(graph), [[RecordSharingFixture.VisibleLabel, null]])
+        assert.deepEqual(RecordSharingFixture.Rows(graph), [RecordSharingFixture.VisibleLabel])
         const other = await server.GraphForPragmaticApp(PpSecurityHarness.Context(RecordSharingFixture.Other), RecordSharingFixture.Name, Cypher.ReferencedLabels.Of(RecordSharingFixture.Query))
-        assert.deepEqual(RecordSharingFixture.Rows(other), [[RecordSharingFixture.VisibleLabel, null], [RecordSharingFixture.SharedLabel, null]])
+        assert.deepEqual(RecordSharingFixture.Rows(other), [RecordSharingFixture.VisibleLabel, RecordSharingFixture.SharedLabel])
     }
     finally
     {
@@ -284,15 +281,15 @@ test('share ops round-trip via the cascade: a Share grant lets the actor share t
         const subject = { kind: ShareSubjectKind.Principal, id: RecordSharingFixture.Other }
         const labels = Cypher.ReferencedLabels.Of(RecordSharingFixture.Query)
         const rowsFor = async () => RecordSharingFixture.Rows(await server.GraphForPragmaticApp(p2, RecordSharingFixture.Name, labels))
-        assert.deepEqual(await rowsFor(), [[RecordSharingFixture.VisibleLabel, null]])
+        assert.deepEqual(await rowsFor(), [RecordSharingFixture.VisibleLabel])
         const shared = await server.ShareForPragmaticApp(actor, RecordSharingFixture.Name, { ...params, subject, rights: [PrivilegeAction.Read] })
         assert.equal(shared.status, ShareStatus.Applied)
-        assert.deepEqual(await rowsFor(), [[RecordSharingFixture.VisibleLabel, null], [RecordSharingFixture.SharedLabel, null]])
+        assert.deepEqual(await rowsFor(), [RecordSharingFixture.VisibleLabel, RecordSharingFixture.SharedLabel])
         const listed = await server.ListSharesForPragmaticApp(actor, RecordSharingFixture.Name, params)
         assert.ok(listed.grants.some(g => g.subject.id === RecordSharingFixture.Other))
         const removed = await server.UnshareForPragmaticApp(actor, RecordSharingFixture.Name, { ...params, subject })
         assert.equal(removed.status, ShareStatus.Applied)
-        assert.deepEqual(await rowsFor(), [[RecordSharingFixture.VisibleLabel, null]])
+        assert.deepEqual(await rowsFor(), [RecordSharingFixture.VisibleLabel])
     }
     finally
     {
@@ -313,7 +310,7 @@ test('write shares authorize by id though the record is unreadable: Update/Delet
         await store.Grant({ concept, recordId: 'rec-del', subject, rights: [PrivilegeAction.Delete] })
         const actor = PpSecurityHarness.Context(RecordSharingFixture.Principal)
         const labels = Cypher.ReferencedLabels.Of(RecordSharingFixture.Query)
-        assert.deepEqual(RecordSharingFixture.Rows(await server.GraphForPragmaticApp(actor, RecordSharingFixture.Name, labels)), [[RecordSharingFixture.VisibleLabel, null]])
+        assert.deepEqual(RecordSharingFixture.Rows(await server.GraphForPragmaticApp(actor, RecordSharingFixture.Name, labels)), [RecordSharingFixture.VisibleLabel])
         const status = async (op: AppWriteOpKind, id: string) =>
             (await server.WriteForPragmaticApp(actor, RecordSharingFixture.Name, [{ op, concept, id, fields: op === AppWriteOpKind.Delete ? undefined : { label: 'changed' } }])).results[0].status
         assert.equal(await status(AppWriteOpKind.Update, 'rec-hidden'), AppWriteStatus.Applied)

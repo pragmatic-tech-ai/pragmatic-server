@@ -8,8 +8,8 @@ import { SolutionConnectorPlanner } from '../../connectors/solution-connector-pl
 import { ConnectorRuntime } from '../../connectors/connector-runtime.js'
 import { ConnectorService } from '../connector-service.js'
 import type { IConnectorReadAuthorization } from '../connector-read-authorization.js'
-import { AllowAllFieldReadMask } from '../cypher/field-masked-graph-query.js'
-import type { IFieldReadMask } from '../cypher/field-masked-graph-query.js'
+import { AllowAllFieldReadMask } from '../cypher/field-read-mask.js'
+import type { IFieldReadMask } from '../cypher/field-read-mask.js'
 
 /** Hand-authored customers and CRM rows are the same people (matched on email); `merge` picks the CRM name. */
 class DecisionsFixture

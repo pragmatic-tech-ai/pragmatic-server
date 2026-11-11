@@ -45,12 +45,12 @@ class ModelScopedWorld
         return [(await this.server.DevEngine().Engine()).SchemaVersion, digest]
     }
 
-    public Connect(context: AccessContext, purpose: TenantPurpose = TenantPurpose.Development): ServerConnectionHandler
+    public Connect(context: AccessContext): ServerConnectionHandler
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
             serverSocket, this.language, this.manager, context, () => Promise.reject(new Error(ModelScopedFixture.NoConnectors)), this.server.DevCypher(),
-            undefined, undefined, undefined, undefined, undefined, undefined, purpose, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
             this.fieldMasks, ctx => this.server.ConnectorReadAuthorizationFor(ctx), undefined)
         this.clients.push(PragmaticClient.CreateOverSocket(clientSocket))
         this.handlers.push(handler)
@@ -342,16 +342,6 @@ test('no-identity / no-modelId cursor is a keyset cursor over the engine fingerp
     })
 })
 
-test('modelId on a Runtime-purpose connection is InvalidParams', async () =>
-{
-    await ModelScopedFixture.With(false, async world =>
-    {
-        const handler = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Plain), TenantPurpose.Runtime)
-        const error = await ModelScopedFixture.CodeOf(handler.RunCypherQuery(ModelScopedFixture.Params(world.ModelIds[0])))
-        assert.equal(error.code, ErrorCodes.InvalidParams)
-    })
-})
-
 test('cypher/models lists exactly the shard ids model-scoped queries accept', async () =>
 {
     await ModelScopedFixture.With(true, async world =>
@@ -366,12 +356,3 @@ test('cypher/models lists exactly the shard ids model-scoped queries accept', as
     })
 })
 
-test('cypher/models on a Runtime-purpose connection is InvalidParams', async () =>
-{
-    await ModelScopedFixture.With(false, async world =>
-    {
-        const handler = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Plain), TenantPurpose.Runtime)
-        const error = await ModelScopedFixture.CodeOf(handler.RunCypherModels())
-        assert.equal(error.code, ErrorCodes.InvalidParams)
-    })
-})

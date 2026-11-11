@@ -1,5 +1,5 @@
 import type { Repository, IInstanceFilter, Node } from '@pragmatic-tech-ai/todl'
-import type { IFieldReadMask } from './cypher/field-masked-graph-query.js'
+import type { IFieldReadMask } from './cypher/field-read-mask.js'
 import { FieldReadMaskGate } from './model-member-builder.js'
 import { ModelProjection } from './model-projection.js'
 import type { IModelNodeGate, ModelMemberPage } from './model-projection.js'

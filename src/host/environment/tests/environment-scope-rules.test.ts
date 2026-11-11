@@ -447,11 +447,15 @@ describe('environment scope rules', () =>
         await ScopeFx.Run({ Identity: true, SecurityModel: ScopeFx.Model() }, async (fx, server) =>
         {
             await ScopeFx.SeedAccounts(fx, [[ScopeFx.R1, ScopeFx.P1]])
-            const before = await ScopeFx.Scope(server, ScopeFx.P1)
+            // written before the first scope build, so the build that follows would be the one to read it
             ScopeFx.WritePolicyFile(fx)
-            const after = await ScopeFx.Scope(server, ScopeFx.P1)
-            assert.equal(after.Digest, before.Digest)
-            assert.deepEqual(await ScopeFx.Column(server, after.Scope, ScopeFx.Accounts), [ScopeFx.R1], 'a retired access-policy.json changes nothing (A1)')
+            const first = await ScopeFx.Scope(server, ScopeFx.P1)
+            assert.deepEqual(await ScopeFx.Column(server, first.Scope, ScopeFx.Accounts), [ScopeFx.R1], 'a retired access-policy.json denies nothing (A1)')
+            // and a rebuild after an invalidation does not pick it up either
+            ;(await server.SecurityModelReload()).Invalidate(EnvironmentFixture.TenantId)
+            const rebuilt = await ScopeFx.Scope(server, ScopeFx.P1)
+            assert.notEqual(rebuilt, first, 'the scope was compiled again (a new security-model generation)')
+            assert.deepEqual(await ScopeFx.Column(server, rebuilt.Scope, ScopeFx.Accounts), [ScopeFx.R1])
         })
     })
 })

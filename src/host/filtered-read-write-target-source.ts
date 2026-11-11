@@ -59,7 +59,7 @@ export class FilteredReadWriteTargetSource implements IWriteTargetSource
         let graph = this.graphs.get(concept)
         if (graph === undefined)
         {
-            graph = this.server.GraphForPragmaticApp(this.context, this.app, { labels: [concept], wildcard: false, parseFailed: false }, false)
+            graph = this.server.GraphForPragmaticApp(this.context, this.app, { labels: [concept], wildcard: false, parseFailed: false })
             this.graphs.set(concept, graph)
         }
         return graph

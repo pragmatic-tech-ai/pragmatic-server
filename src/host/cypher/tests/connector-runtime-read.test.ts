@@ -130,14 +130,6 @@ namespace shop {
         return ConnectorReadFixture.Column(graph, query, params)
     }
 
-    /** Reads through the runtime query path: the query text and parameters ride along, so its filters are pushed down. */
-    public static async PushedLabels(server: PragmaticServer, query: string, params?: { [k: string]: string }): Promise<string[]>
-    {
-        const parameters = CypherParamConverter.ToMap(params)
-        const graph = await server.GraphForPragmaticApp(ConnectorReadFixture.Context(), ConnectorReadFixture.AppName, Cypher.ReferencedLabels.Of(query), true, { text: query, parameters })
-        return ConnectorReadFixture.Column(graph, query, params)
-    }
-
     public static Referenced(query: string): ReferencedLabelSet
     {
         return Cypher.ReferencedLabels.Of(query)
@@ -291,20 +283,6 @@ test('fail-closed: a concept whose adapter cannot be resolved is empty while oth
     {
         assert.deepEqual(await Case.Read(server, ConnectorReadFixture.GadgetLabels), [])
         assert.deepEqual(await Case.Read(server, ConnectorReadFixture.WidgetLabels), ['R1', 'S1', 'S2'])
-    })
-})
-
-test('push-down: the query WHERE reaches the source SQL, and the rows match the unpushed read', async () =>
-{
-    await Case.Run(undefined, async (fx, server) =>
-    {
-        const unpushed = await Case.Read(server, ConnectorReadFixture.WhereQuery, { v: 'S2' })
-        fx.Queries.length = 0
-        const pushed = await ConnectorReadFixture.PushedLabels(server, ConnectorReadFixture.WhereQuery, { v: 'S2' })
-        assert.deepEqual(pushed, unpushed)
-        assert.deepEqual(pushed, ['S2'])
-        const widgetSql = fx.Queries.filter(q => q.includes('"Widget"'))
-        assert.ok(widgetSql.length > 0 && widgetSql.every(q => /where/i.test(q) && q.includes('label')), JSON.stringify(fx.Queries))
     })
 })
 

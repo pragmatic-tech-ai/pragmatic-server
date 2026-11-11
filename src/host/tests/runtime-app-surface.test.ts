@@ -3,63 +3,41 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, cpSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, ResponseError, CursorStaleError, AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
-import {
-    Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink,
-    type PackageDocument, type CompiledPackage,
-} from '@pragmatic-tech-ai/todl'
+import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 
+/**
+ * The cross-purpose surface of the runtime application methods (the runtime `cypher/*` endpoints on the environment
+ * engine are covered by host/environment/tests/environment-cypher.test.ts).
+ */
 class RuntimeSurfaceFixture
 {
     private static readonly PkgPrefix = 'rs-pkgs-'
     private static readonly AppsPrefix = 'rs-apps-'
     private static readonly SolPrefix = 'rs-sol-'
     private static readonly ManifestFile = 'application.json'
-    private static readonly SourceSuffix = '.todl'
+    private static readonly LivePointerFile = 'live'
     private static readonly NoConnectors = 'no connectors'
-    private static readonly Namespace = 'shop'
-    private static readonly Label = 'label'
-    private static readonly Next = 'next'
-    private static readonly Prev = 'prev'
-    private static readonly Element = 'Element'
-    private static readonly StringType = 'string'
     private static readonly SolutionModelFile = join('models', 'model.todl')
     private static readonly SolutionModel = 'namespace acme { concept Service { } model Shop : acme { Service s1 { label = "alpha"; } } }'
     public static readonly Version = '1.0.0'
-    public static readonly Widget = 'Widget'
-    public static readonly Gadget = 'Gadget'
     public static readonly AppA = 'demo'
-    public static readonly AppB = 'demo2'
-    public static readonly PkgA = 'shop'
-    public static readonly PkgB = 'depot'
-    public static readonly WidgetLabels = 'MATCH (w:Widget) RETURN w.label AS label'
-    public static readonly GadgetLabels = 'MATCH (g:Gadget) RETURN g.label AS label'
     public static readonly ServiceLabels = 'MATCH (a:Service) RETURN a.label'
-    public static readonly Hi = 'Hi'
-    public static readonly Bye = 'Bye'
-    public static readonly Cog = 'Cog'
-    public static readonly Nut = 'Nut'
-    public static readonly Bolt = 'Bolt'
     public static readonly Alpha = 'alpha'
-    public static readonly NoEnvironmentGraph = /no environment graph is loaded/i
     public static readonly NotRuntime = /operation requires a runtime tenant/
     public static readonly NameMismatch = /does not match requested name/
     public static readonly TenantId = 't1'
     public static readonly PrincipalId = 'p1'
     public static readonly TenantName = 'Tenant One'
     public static readonly Renamed = 'other-name'
-    public static readonly UnknownLabel = /unknown label/i
 
     public readonly Packages = mkdtempSync(join(tmpdir(), RuntimeSurfaceFixture.PkgPrefix))
     public readonly Apps = mkdtempSync(join(tmpdir(), RuntimeSurfaceFixture.AppsPrefix))
     private readonly disposables: Array<() => Promise<void>> = []
-    private runtime: PragmaticServer | undefined
 
     public static Permissive(): AccessContext
     {
@@ -82,61 +60,25 @@ class RuntimeSurfaceFixture
         }
     }
 
-    /** Publishes a package and writes an application bound to it. */
-    public async Seed(app: string, pkgId: string, concept: string, labels: string[], linkFirstToSecond: boolean): Promise<void>
+    /** Makes version `Version` of `app` live with a manifest named `name` and no packages. */
+    public LiveManifest(app: string, name: string): void
     {
-        const repo = new Repository()
-        const builder = repo.builder()
-            .defineConcept(RuntimeSurfaceFixture.Element)
-            .defineConcept(concept, RuntimeSurfaceFixture.Element)
-            .addField(concept, RuntimeSurfaceFixture.Label, RuntimeSurfaceFixture.StringType, Cardinality.Optional)
-            .addConceptRelationship(concept, RuntimeSurfaceFixture.Next, [concept], Cardinality.Optional, RuntimeSurfaceFixture.Prev)
-            .setNamespace(RuntimeSurfaceFixture.Namespace)
-        const ids = labels.map((_, i) => `${RuntimeSurfaceFixture.Namespace}.${pkgId}${i}`)
-        labels.forEach((label, i) => builder.assertInstance(concept, ids[i]!).setField(ids[i]!, RuntimeSurfaceFixture.Label, label))
-        if (linkFirstToSecond)
-        {
-            builder.addRelationship(ids[0]!, RuntimeSurfaceFixture.Next, ids[1]!)
-        }
-        builder.commit()
-        const doc = toJSON(repo) as PackageDocument
-        const pkg: CompiledPackage = {
-            id: pkgId, version: RuntimeSurfaceFixture.Version, document: doc, fullDocument: doc,
-            sources: [{ uri: pkgId + RuntimeSurfaceFixture.SourceSuffix, text: '' }], classes: [],
-        }
-        await new BlobPackageStore(new StoragePackageSink(new NodeFsStorage(this.Packages))).persist(pkg)
-        mkdirSync(join(this.Apps, app))
-        writeFileSync(join(this.Apps, app, RuntimeSurfaceFixture.ManifestFile), JSON.stringify({
-            name: app, version: RuntimeSurfaceFixture.Version, packages: [{ id: pkgId, version: RuntimeSurfaceFixture.Version }],
-        }))
+        mkdirSync(join(this.Apps, app, RuntimeSurfaceFixture.Version), { recursive: true })
+        writeFileSync(join(this.Apps, app, RuntimeSurfaceFixture.Version, RuntimeSurfaceFixture.ManifestFile), JSON.stringify({ name, version: RuntimeSurfaceFixture.Version, packages: [] }))
+        writeFileSync(join(this.Apps, app, RuntimeSurfaceFixture.LivePointerFile), RuntimeSurfaceFixture.Version)
     }
 
-    public RenameManifest(app: string, name: string): void
-    {
-        writeFileSync(join(this.Apps, app, RuntimeSurfaceFixture.ManifestFile), JSON.stringify({ name, version: RuntimeSurfaceFixture.Version, packages: [] }))
-    }
-
-    /** Creates one `concept` record labelled `label` in the running Runtime server's built-in store (a data change). */
-    public async CreateRecord(app: string, concept: string, label: string): Promise<void>
-    {
-        const result = await this.runtime!.WriteForPragmaticApp(RuntimeSurfaceFixture.Permissive(), app, [{ op: AppWriteOpKind.Create, concept, fields: { [RuntimeSurfaceFixture.Label]: label } }])
-        assert.equal(result.results[0]?.status, AppWriteStatus.Applied, JSON.stringify(result))
-    }
-
-    /** Starts a Runtime server over the seeded dirs and returns a function producing connected clients. */
-    public async Runtime(): Promise<() => PragmaticClient>
+    /** Starts a Runtime server over the fixture's directories and returns a function producing connected clients. */
+    public async Runtime(): Promise<() => Promise<PragmaticClient>>
     {
         const server = new PragmaticServer({ packagesRoot: this.Packages, applicationsRoot: this.Apps, purpose: TenantPurpose.Runtime })
-        this.runtime = server
         await server.Start()
-        const languageService = await server.LanguageService()
-        const manager = await server.Manager()
         this.disposables.push(async () =>
         {
-            await (languageService as SolutionLanguageService).WhenIdle()
+            await (await server.LanguageService() as SolutionLanguageService).WhenIdle()
             await server.Dispose()
         })
-        return () => this.Connect(server, languageService, manager, TenantPurpose.Runtime)
+        return () => this.Connect(server)
     }
 
     /** Starts a Development server with an opened sample solution. */
@@ -148,16 +90,15 @@ class RuntimeSurfaceFixture
         const server = new PragmaticServer({ packagesRoot: this.Packages })
         await server.Start()
         await server.OpenSolution(solution)
-        const languageService = await server.LanguageService()
         const manager = await server.Manager()
         this.disposables.push(async () =>
         {
-            await (languageService as SolutionLanguageService).WhenIdle()
+            await (await server.LanguageService() as SolutionLanguageService).WhenIdle()
             await manager.CloseSolution()
             await server.Dispose()
             rmSync(solution, { recursive: true, force: true })
         })
-        return this.Connect(server, languageService, manager, TenantPurpose.Development)
+        return this.Connect(server)
     }
 
     public async Dispose(): Promise<void>
@@ -175,18 +116,18 @@ class RuntimeSurfaceFixture
         return result.items.map(r => r[0]).sort()
     }
 
-    private Connect(server: PragmaticServer, languageService: Awaited<ReturnType<PragmaticServer['LanguageService']>>, manager: Awaited<ReturnType<PragmaticServer['Manager']>>, purpose: TenantPurpose): PragmaticClient
+    /** A connection wired as the hosts wire it (the purpose's attach arguments). */
+    private async Connect(server: PragmaticServer): Promise<PragmaticClient>
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const runtime = purpose === TenantPurpose.Runtime
+        const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
+        const development = ServerConnectionHandler.DevelopmentAttachArgs(server)
         const handler = ServerConnectionHandler.Attach(
-            serverSocket, languageService, manager, RuntimeSurfaceFixture.Permissive(),
-            () => Promise.reject(new Error(RuntimeSurfaceFixture.NoConnectors)), server.DevCypher(),
-            undefined, undefined, undefined, undefined, undefined, undefined, purpose,
-            runtime ? server.Applications() : undefined,
-            runtime ? (ctx, name, labels) => server.GraphForPragmaticApp(ctx, name, labels) : undefined,
-            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-            runtime ? server : undefined)
+            serverSocket, await server.LanguageService(), await server.Manager(), RuntimeSurfaceFixture.Permissive(),
+            () => Promise.reject(new Error(RuntimeSurfaceFixture.NoConnectors)), runtime.cypherQuery ?? development.cypherQuery,
+            undefined, undefined, undefined, undefined, undefined, undefined, server.Purpose(), runtime.applications,
+            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, runtime.cypherExecute ?? development.cypherExecute,
+            undefined, development.devGraphService, runtime.environmentGraphHost)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.disposables.push(async () =>
         {
@@ -197,37 +138,11 @@ class RuntimeSurfaceFixture
     }
 }
 
-test('runtime e2e: list, open and query an application', async () =>
-{
-    await RuntimeSurfaceFixture.Run(async fx =>
-    {
-        await fx.Seed(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.PkgA, RuntimeSurfaceFixture.Widget, [RuntimeSurfaceFixture.Hi, RuntimeSurfaceFixture.Bye], true)
-        const client = (await fx.Runtime())()
-        const apps = await client.ListApplications()
-        assert.ok(apps.some(a => a.name === RuntimeSurfaceFixture.AppA))
-        const summary = await client.OpenApplication(RuntimeSurfaceFixture.AppA)
-        assert.equal(summary.name, RuntimeSurfaceFixture.AppA)
-        assert.equal(summary.version, RuntimeSurfaceFixture.Version)
-        const result = await client.CypherQuery(RuntimeSurfaceFixture.WidgetLabels)
-        assert.deepEqual(RuntimeSurfaceFixture.Column(result), [RuntimeSurfaceFixture.Bye, RuntimeSurfaceFixture.Hi])
-    })
-})
-
-test('runtime e2e: query before opening an application reports no environment graph loaded', async () =>
-{
-    await RuntimeSurfaceFixture.Run(async fx =>
-    {
-        await fx.Seed(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.PkgA, RuntimeSurfaceFixture.Widget, [RuntimeSurfaceFixture.Hi], false)
-        const client = (await fx.Runtime())()
-        await assert.rejects(() => client.CypherQuery(RuntimeSurfaceFixture.WidgetLabels), RuntimeSurfaceFixture.NoEnvironmentGraph)
-    })
-})
-
 test('runtime e2e: runtime tenant rejects solution/open (cross-purpose)', async () =>
 {
     await RuntimeSurfaceFixture.Run(async fx =>
     {
-        const client = (await fx.Runtime())()
+        const client = await (await fx.Runtime())()
         await assert.rejects(() => client.OpenSolution(fx.Packages), (e: unknown) => e instanceof ResponseError && e.code === ErrorCodes.MethodNotFound)
     })
 })
@@ -244,72 +159,12 @@ test('runtime e2e: development tenant rejects application/* but still queries it
     })
 })
 
-test('runtime e2e: each connection sees only its own bound application', async () =>
-{
-    await RuntimeSurfaceFixture.Run(async fx =>
-    {
-        await fx.Seed(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.PkgA, RuntimeSurfaceFixture.Widget, [RuntimeSurfaceFixture.Hi, RuntimeSurfaceFixture.Bye], false)
-        await fx.Seed(RuntimeSurfaceFixture.AppB, RuntimeSurfaceFixture.PkgB, RuntimeSurfaceFixture.Gadget, [RuntimeSurfaceFixture.Cog], false)
-        const connect = await fx.Runtime()
-        const one = connect()
-        const two = connect()
-        await one.OpenApplication(RuntimeSurfaceFixture.AppA)
-        await two.OpenApplication(RuntimeSurfaceFixture.AppB)
-        assert.deepEqual(RuntimeSurfaceFixture.Column(await one.CypherQuery(RuntimeSurfaceFixture.WidgetLabels)), [RuntimeSurfaceFixture.Bye, RuntimeSurfaceFixture.Hi])
-        await assert.rejects(() => one.CypherQuery(RuntimeSurfaceFixture.GadgetLabels), RuntimeSurfaceFixture.UnknownLabel)
-        assert.deepEqual(RuntimeSurfaceFixture.Column(await two.CypherQuery(RuntimeSurfaceFixture.GadgetLabels)), [RuntimeSurfaceFixture.Cog])
-        await assert.rejects(() => two.CypherQuery(RuntimeSurfaceFixture.WidgetLabels), RuntimeSurfaceFixture.UnknownLabel)
-    })
-})
-
-test('runtime e2e: same-named concepts in two applications do not leak instances across connections', async () =>
-{
-    await RuntimeSurfaceFixture.Run(async fx =>
-    {
-        await fx.Seed(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.PkgA, RuntimeSurfaceFixture.Widget, [RuntimeSurfaceFixture.Hi, RuntimeSurfaceFixture.Bye], false)
-        await fx.Seed(RuntimeSurfaceFixture.AppB, RuntimeSurfaceFixture.PkgB, RuntimeSurfaceFixture.Widget, [RuntimeSurfaceFixture.Nut, RuntimeSurfaceFixture.Bolt], false)
-        const connect = await fx.Runtime()
-        const one = connect()
-        const two = connect()
-        await one.OpenApplication(RuntimeSurfaceFixture.AppA)
-        await two.OpenApplication(RuntimeSurfaceFixture.AppB)
-        assert.deepEqual(RuntimeSurfaceFixture.Column(await one.CypherQuery(RuntimeSurfaceFixture.WidgetLabels)), [RuntimeSurfaceFixture.Bye, RuntimeSurfaceFixture.Hi])
-        assert.deepEqual(RuntimeSurfaceFixture.Column(await two.CypherQuery(RuntimeSurfaceFixture.WidgetLabels)), [RuntimeSurfaceFixture.Bolt, RuntimeSurfaceFixture.Nut])
-    })
-})
-
 test('runtime e2e: open rejects a manifest whose name differs from its directory', async () =>
 {
     await RuntimeSurfaceFixture.Run(async fx =>
     {
-        await fx.Seed(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.PkgA, RuntimeSurfaceFixture.Widget, [RuntimeSurfaceFixture.Hi], false)
-        fx.RenameManifest(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.Renamed)
-        const client = (await fx.Runtime())()
+        fx.LiveManifest(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.Renamed)
+        const client = await (await fx.Runtime())()
         await assert.rejects(() => client.OpenApplication(RuntimeSurfaceFixture.AppA), RuntimeSurfaceFixture.NameMismatch)
-    })
-})
-
-class RuntimeCursorFixture
-{
-    public static readonly Ordered = 'MATCH (w:Widget) RETURN w.label AS label ORDER BY label'
-
-    public static IsStale(error: { code?: number }): boolean
-    {
-        return error.code === CursorStaleError.Code
-    }
-}
-
-test('runtime e2e: a cursor stays valid while the app data is unchanged and goes stale when the data behind it changes', async () =>
-{
-    await RuntimeSurfaceFixture.Run(async fx =>
-    {
-        await fx.Seed(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.PkgA, RuntimeSurfaceFixture.Widget, [RuntimeSurfaceFixture.Bolt, RuntimeSurfaceFixture.Cog, RuntimeSurfaceFixture.Nut], false)
-        const client = (await fx.Runtime())()
-        await client.OpenApplication(RuntimeSurfaceFixture.AppA)
-        const first = await client.CypherQuery(RuntimeCursorFixture.Ordered, undefined, { pageSize: 1 })
-        const second = await client.CypherQuery(RuntimeCursorFixture.Ordered, undefined, { cursor: first.nextCursor, pageSize: 1 })
-        assert.deepEqual(RuntimeSurfaceFixture.Column(second), [RuntimeSurfaceFixture.Cog])
-        await fx.CreateRecord(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.Widget, RuntimeSurfaceFixture.Alpha)
-        await assert.rejects(() => client.CypherQuery(RuntimeCursorFixture.Ordered, undefined, { cursor: second.nextCursor, pageSize: 1 }), RuntimeCursorFixture.IsStale)
     })
 })
