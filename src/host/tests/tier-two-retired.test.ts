@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { InMemoryMessageSocket, PragmaticClient, AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
+import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { compilePackage, BlobPackageStore, StoragePackageSink, PolicyNodeKind, PolicyRefRoot, PolicyCompareOp, type SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AccessLevel, PrivilegeAction, OwnershipSourceKind } from '@pragmatic-tech-ai/todl-identity'
@@ -20,22 +21,22 @@ import { PpSecurityHarness } from '../cypher/tests/pp-security-harness.js'
  * tenant security model (tier 1) decides runtime and dev visibility.
  */
 
-/** One wire connection a fixture owns: the client and the handler it talks to, disposed together. */
-class WireConnection
+/** One wire connection a fixture owns: the client and the handler it talks to, disposed together (dispose resolves once torn down). */
+class WireConnection implements IDisposable
 {
     public constructor(public readonly Client: PragmaticClient, private readonly handler: ServerConnectionHandler)
     {
     }
 
-    public async Dispose(): Promise<void>
+    public async dispose(): Promise<void>
     {
         await this.Client.DisposeAsync()
         this.handler.Dispose()
     }
 }
 
-/** One development server with an opened solution and one connection to it, and the temp dirs it owns. */
-class DevSession
+/** One development server with an opened solution and one connection to it, and the temp dirs it owns (dispose resolves once torn down). */
+class DevSession implements IDisposable
 {
     public constructor(
         public readonly Connection: WireConnection,
@@ -46,9 +47,9 @@ class DevSession
     {
     }
 
-    public async Dispose(): Promise<void>
+    public async dispose(): Promise<void>
     {
-        await this.Connection.Dispose()
+        await this.Connection.dispose()
         await this.language.WhenIdle()
         await this.manager.CloseSolution()
         await this.server.Dispose()
@@ -193,7 +194,7 @@ class RuntimeTierFixture
     {
         for (const connection of this.connections.reverse())
         {
-            await connection.Dispose()
+            await connection.dispose()
         }
         await this.server?.Dispose()
         rmSync(this.packages, { recursive: true, force: true })
@@ -267,7 +268,7 @@ class DevTierFixture
     {
         for (const session of this.sessions.reverse())
         {
-            await session.Dispose()
+            await session.dispose()
         }
     }
 }
