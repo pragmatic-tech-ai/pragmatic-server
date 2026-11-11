@@ -11,6 +11,7 @@ import { AsyncMutex } from '../cypher/async-mutex.js'
 import { BoundedWait, TimeoutUpgradeTimer } from '../engine/bounded-wait.js'
 import type { IUpgradeTimer } from '../engine/bounded-wait.js'
 import { ConnectorSetKey } from '../engine/connector-set-key.js'
+import { EngineCypherQueryError, EngineCypherQueryErrorCode } from '../engine/engine-cypher-query.js'
 import { EngineHostChanged } from '../engine/engine-host-changed.js'
 import type { IEngineSnapshot, IGraphEngineHost } from '../engine/graph-engine-host.js'
 import { LazyExternalConnector } from '../engine/lazy-external-connector.js'
@@ -209,6 +210,7 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
     /** How long teardown waits for the running open or delivery before it disposes the engine anyway. */
     public static readonly MaxDrainMs = 2 * EnvironmentEngineHost.PrepareTimeoutMs
     private static readonly DisposedMessage = 'The environment engine host has been disposed'
+    private static readonly MaxSettles = 5
 
     public readonly Changed: ISignal<void>
 
@@ -248,6 +250,22 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
     public async Description(): Promise<ISchemaDescription>
     {
         return (await this.Current()).Snapshot.Description
+    }
+
+    /**
+     * The engine and the snapshot it runs, once their versions agree (an upgrade being applied installs its snapshot
+     * after the engine upgraded); EngineCypherQueryError Unsettled when they still differ after `MaxSettles` yields.
+     */
+    public async Settled(): Promise<readonly [GraphEngine, EnvironmentSnapshot]>
+    {
+        for (let settle = 0; settle < EnvironmentEngineHost.MaxSettles; settle++)
+        {
+            const engine = await this.Engine()
+            const snapshot = await this.Snapshot()
+            if (snapshot.Description.Version === engine.SchemaVersion) return [engine, snapshot]
+            await new Promise<void>(resolve => setImmediate(resolve))
+        }
+        throw new EngineCypherQueryError(EngineCypherQueryErrorCode.Unsettled)
     }
 
     /**

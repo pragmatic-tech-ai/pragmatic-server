@@ -294,11 +294,12 @@ export class DevCypherExecute implements IGraphCypherExecute
         // one deadline for every attempt: a retry never extends the caller's timeout
         const deadline = Cypher.Deadline.After(request.timeoutMs)
         let outcome = ExecuteAttempt.Conflicted
-        for (let attempt = 1; attempt <= DevCypherExecute.MaxAttempts && outcome.Result === undefined; attempt++)
+        // the last attempt never answers Conflicted, so the loop always ends with a result
+        for (let attempt = 1; outcome.Result === undefined; attempt++)
         {
             outcome = await this.Attempt(context, modelId, request, fence, deadline, attempt === DevCypherExecute.MaxAttempts)
         }
-        return outcome.Result ?? this.Refuse(DevWriteFailureKind.EngineConflict)
+        return outcome.Result
     }
 
     private async Attempt(context: AccessContext, modelId: string, request: ICypherExecuteRequest, fence: LeaseFence, deadline: Cypher.Deadline, last: boolean): Promise<ExecuteAttempt>

@@ -62,8 +62,8 @@ class DevSession implements IDisposable
 
 /**
  * A runtime tenant with identity: app `crm` binds packages crm (crm.Account, governed) and notes (notes.Note, NOT
- * governed). Its data/write still runs on the legacy app graph (Task 9 moves it); runtime reads are the environment
- * engine's (environment-scope-rules.test.ts pins that a retired access-policy.json changes nothing).
+ * governed). Its data/write runs on the environment engine under the caller's scope (ruling S10); runtime reads are the
+ * environment engine's (environment-scope-rules.test.ts pins that a retired access-policy.json changes nothing).
  */
 class RuntimeTierFixture
 {
@@ -75,6 +75,7 @@ class RuntimeTierFixture
     private static readonly CrmPkg = 'crm'
     private static readonly NotesPkg = 'notes'
     private static readonly ManifestFile = 'application.json'
+    private static readonly LivePointerFile = 'live'
     private static readonly ReaderRole = 'reader'
     private static readonly ReaderRoleName = 'Reader'
     private static readonly RootName = 'Root'
@@ -83,12 +84,14 @@ class RuntimeTierFixture
     private static readonly PackagesPrefix = 'tier2-pkgs-'
     private static readonly AppsPrefix = 'tier2-apps-'
     private static readonly IdentityPrefix = 'tier2-id-'
+    private static readonly GraphsPrefix = 'tier2-graphs-'
     private static readonly CrmTodl = 'namespace crm { concept Account { owningBu : string; } model Crm : crm { annotate entrypoint { } Account a1 { label = "acme"; owningBu = "sales"; } } }'
     private static readonly NotesTodl = 'namespace notes { concept Note { } model Notes : notes { annotate entrypoint { } Note n1 { label = "hello"; } } }'
 
     private readonly packages = mkdtempSync(join(tmpdir(), RuntimeTierFixture.PackagesPrefix))
     private readonly apps = mkdtempSync(join(tmpdir(), RuntimeTierFixture.AppsPrefix))
     private readonly identityRoot = mkdtempSync(join(tmpdir(), RuntimeTierFixture.IdentityPrefix))
+    private readonly graphs = mkdtempSync(join(tmpdir(), RuntimeTierFixture.GraphsPrefix))
     private server: PragmaticServer | undefined
 
     public static async Run(body: (fx: RuntimeTierFixture) => Promise<void>): Promise<void>
@@ -116,13 +119,15 @@ class RuntimeTierFixture
         PpSecurityHarness.SetKey()
         await this.Publish(RuntimeTierFixture.CrmPkg, RuntimeTierFixture.CrmTodl)
         await this.Publish(RuntimeTierFixture.NotesPkg, RuntimeTierFixture.NotesTodl)
-        mkdirSync(join(this.apps, RuntimeTierFixture.AppName))
-        writeFileSync(join(this.apps, RuntimeTierFixture.AppName, RuntimeTierFixture.ManifestFile), JSON.stringify({
+        // a live app (`<app>/<version>/application.json` + `<app>/live`): its packages are environment deliveries
+        mkdirSync(join(this.apps, RuntimeTierFixture.AppName, RuntimeTierFixture.Version), { recursive: true })
+        writeFileSync(join(this.apps, RuntimeTierFixture.AppName, RuntimeTierFixture.Version, RuntimeTierFixture.ManifestFile), JSON.stringify({
             name: RuntimeTierFixture.AppName, version: RuntimeTierFixture.Version,
             packages: [{ id: RuntimeTierFixture.CrmPkg, version: RuntimeTierFixture.Version }, { id: RuntimeTierFixture.NotesPkg, version: RuntimeTierFixture.Version }],
         }))
+        writeFileSync(join(this.apps, RuntimeTierFixture.AppName, RuntimeTierFixture.LivePointerFile), RuntimeTierFixture.Version)
         this.server = new PragmaticServer({
-            packagesRoot: this.packages, applicationsRoot: this.apps, purpose: TenantPurpose.Runtime,
+            packagesRoot: this.packages, applicationsRoot: this.apps, graphsRoot: this.graphs, purpose: TenantPurpose.Runtime,
             builtinStoreEngine: BuiltinStoreEngine.Document, identity: PpSecurityHarness.Identity(this.identityRoot),
         })
         await this.server.Start()
@@ -158,6 +163,7 @@ class RuntimeTierFixture
         rmSync(this.packages, { recursive: true, force: true })
         rmSync(this.apps, { recursive: true, force: true })
         rmSync(this.identityRoot, { recursive: true, force: true })
+        rmSync(this.graphs, { recursive: true, force: true })
         PpSecurityHarness.ClearKey()
     }
 }

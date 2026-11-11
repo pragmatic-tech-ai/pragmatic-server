@@ -29,12 +29,6 @@ export interface IWriteAuthorizer
     Allows(concept: string, action: PrivilegeAction): boolean
 }
 
-/** Produces the write authorizer for a request. One of two impls is chosen by the server per the identity state. */
-export interface IWriteAuthorizerSource
-{
-    WriteAuthorizerFor(context: AccessContext): Promise<IWriteAuthorizer>
-}
-
 /** Drops a tenant's cached access evaluator so the next request re-reads its SecurityModel from the store (live reload, no restart). */
 export interface ISecurityModelReload
 {
@@ -58,27 +52,6 @@ class AccessFieldReadMask implements IFieldReadMask
     public CanRead(concept: string, field: string): boolean
     {
         return this.evaluator.CanReadField(this.principal, concept, field)
-    }
-}
-
-class AllowAllWriteAuthorizer implements IWriteAuthorizer
-{
-    public static readonly Instance = new AllowAllWriteAuthorizer()
-
-    public Allows(): boolean
-    {
-        return true
-    }
-}
-
-/** No identity subsystem: the write axis is inactive; every concept/action is allowed. */
-export class AllowAllWriteAuthorizerSource implements IWriteAuthorizerSource
-{
-    public static readonly Instance = new AllowAllWriteAuthorizerSource()
-
-    public async WriteAuthorizerFor(): Promise<IWriteAuthorizer>
-    {
-        return AllowAllWriteAuthorizer.Instance
     }
 }
 
@@ -123,7 +96,7 @@ class SecurityModelInvalidated implements ISignal<string>
  * to drop the cached evaluator so the next request re-reads the store — live, without a restart.
  * `Invalidated` is raised after each Invalidate so per-principal caches built on the evaluator drop too.
  */
-export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthorizerSource, IFieldReadMaskSource, ISecurityModelReload
+export class TenantReadAuthorization implements IReadFilterSource, IFieldReadMaskSource, ISecurityModelReload
 {
     public readonly Invalidated: ISignal<string>
 

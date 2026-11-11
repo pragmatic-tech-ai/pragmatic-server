@@ -8,7 +8,7 @@ import { CypherExecuteResultMapper } from '../cypher/cypher-execute-result-mappe
 import { CypherResultMapper } from '../cypher/cypher-result-mapper.js'
 import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
 import type { IGraphScopeSource } from '../engine/access-scope-source.js'
-import { EngineCypherQuery, EngineCypherQueryError, EngineCypherQueryErrorCode } from '../engine/engine-cypher-query.js'
+import { EngineCypherQuery } from '../engine/engine-cypher-query.js'
 import { EngineWriteFailure } from '../engine/engine-write-failure.js'
 import type { IWriteFailureOutcome } from '../engine/engine-write-failure.js'
 import { ExecuteAttempt, LoggerExecuteDiagnostics } from '../engine/graph-cypher-execute.js'
@@ -42,7 +42,6 @@ import type { EnvironmentEngineHost, EnvironmentSnapshot } from './environment-e
 export class EnvironmentCypherExecute implements IGraphCypherExecute
 {
     public static readonly MaxAttempts = 2
-    private static readonly MaxSettles = 5
     private static readonly ModelNotFoundMessage = `${InvalidParamsPrefix.Text}model not found`
     private static readonly RevisionReason = 'graph revision has advanced'
     private static readonly NoRows: CypherQueryPageDto = { columns: [], items: [], truncated: false }
@@ -81,7 +80,7 @@ export class EnvironmentCypherExecute implements IGraphCypherExecute
 
     private async Attempt(context: AccessContext, modelId: string | undefined, request: ICypherExecuteRequest, deadline: Cypher.Deadline, last: boolean): Promise<ExecuteAttempt>
     {
-        const [engine, snapshot] = await this.Settled()
+        const [engine, snapshot] = await this.host.Settled()
         if (request.expectedRevision !== undefined)
         {
             const revision = await EnvironmentCypherExecute.Revision(engine)
@@ -131,19 +130,6 @@ export class EnvironmentCypherExecute implements IGraphCypherExecute
         return CypherExecuteResultMapper.Refused(failure.Status, await EnvironmentCypherExecute.Revision(engine), failure.Reason)
     }
 
-    /** The engine and the snapshot it runs, once their versions agree (an upgrade being applied installs its snapshot after). */
-    private async Settled(): Promise<[GraphEngine, EnvironmentSnapshot]>
-    {
-        for (let settle = 0; settle < EnvironmentCypherExecute.MaxSettles; settle++)
-        {
-            const engine = await this.host.Engine()
-            const snapshot = await this.host.Snapshot()
-            if (snapshot.Description.Version === engine.SchemaVersion) return [engine, snapshot]
-            await EnvironmentCypherExecute.Yield()
-        }
-        throw new EngineCypherQueryError(EngineCypherQueryErrorCode.Unsettled)
-    }
-
     /** The latest commit number (the wire `revision`). */
     private static async Revision(engine: GraphEngine): Promise<number>
     {
@@ -171,10 +157,5 @@ export class EnvironmentCypherExecute implements IGraphCypherExecute
         {
             reader?.dispose()
         }
-    }
-
-    private static Yield(): Promise<void>
-    {
-        return new Promise<void>(resolve => setImmediate(resolve))
     }
 }

@@ -36,20 +36,16 @@ import { PolicyConnectionResolver } from './host/policy-connection-resolver.js'
 import type { ConnectorsPolicy } from './host/connector-policy.js'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { TenantReadAuthorization, AllowAllReadFilterSource, AllowAllFieldReadMaskSource } from './host/cypher/read-filter-source.js'
-import { AllowAllWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
-import type { IReadFilterSource, IWriteAuthorizerSource, IFieldReadMaskSource, ISecurityModelReload } from './host/cypher/read-filter-source.js'
+import type { IReadFilterSource, IFieldReadMaskSource, ISecurityModelReload } from './host/cypher/read-filter-source.js'
 import { ConnectorReadAuthorizations } from './host/connector-read-authorization.js'
 import type { IConnectorReadAuthorization } from './host/connector-read-authorization.js'
 import { ConnectorHydrateWriter } from './host/connector-hydrate-writer.js'
 import type { IHydrateAuthorization } from './host/connector-hydrate-writer.js'
 import type { IWriteTargetSource } from './host/write-target-source.js'
-import { AllowAllWriteInstanceGate } from './host/cypher/write-instance-gate.js'
-import type { IWriteInstanceGate } from './host/cypher/write-instance-gate.js'
 import { FilteredReadWriteTargetSource } from './host/filtered-read-write-target-source.js'
-import { RuntimeAppWriter } from './host/runtime-app-writer.js'
 import { RuntimeWritePayloadValidator } from './host/runtime-write-payload-validator.js'
 import type { AppWriteOpDto, AppWriteResultDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { ResponseError, ErrorCodes, AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ShareService } from './host/sharing/share-service.js'
 import { AssignService } from './host/sharing/assign-service.js'
 import { FilteredGraphQuery } from './host/cypher/filtered-graph-query.js'
@@ -72,8 +68,6 @@ import { ShareStore } from './host/sharing/share-store.js'
 import { ShareGrantIndex } from './host/sharing/share-grant-index.js'
 import { ShareWideningInstanceFilter } from './host/sharing/share-widening-instance-filter.js'
 import { ConceptIdFields } from './host/sharing/concept-id-fields.js'
-import { ShareWideningWriteInstanceGate } from './host/sharing/share-widening-write-instance-gate.js'
-import { ShareWideningWriteAuthorizer } from './host/sharing/share-widening-write-authorizer.js'
 import { DevGraphStore } from './host/graphs/dev-graph-store.js'
 import { GraphPackageIngest } from './host/graphs/graph-package-ingest.js'
 import { GraphPackageReader } from './host/graphs/graph-package-reader.js'
@@ -90,6 +84,7 @@ import { EnvironmentDeliveries } from './host/environment/environment-deliveries
 import { EnvironmentEngineHost, EnvironmentUpgradeFailedError, LoggerEnvironmentDiagnostics } from './host/environment/environment-engine-host.js'
 import type { IEnvironmentGraphHost } from './host/environment/environment-engine-host.js'
 import { EnvironmentCypherExecute } from './host/environment/environment-cypher-execute.js'
+import { EnvironmentDataWriter } from './host/environment/environment-data-writer.js'
 import { EnvironmentScopeRules } from './host/environment/environment-scope-rules.js'
 import { InvalidParamsPrefix } from './host/invalid-params-prefix.js'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -207,6 +202,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private environmentScopes: Promise<AccessScopeSource> | undefined
     private environmentCypher: EngineCypherQuery | undefined
     private environmentExecute: EnvironmentCypherExecute | undefined
+    private environmentWriter: EnvironmentDataWriter | undefined
     private readonly appGraphs = new Map<string, Promise<AppBase>>()
     private readonly shareStores = new Map<string, ShareStore>()
     private readAuth: Promise<TenantReadAuthorization> | undefined
@@ -365,32 +361,6 @@ export class PragmaticServer implements IEnvironmentGraphHost
             return AllowAllReadFilterSource.Instance
         }
         return this.ReadAuthorization()
-    }
-
-    private async WriteAuthorizerSource(): Promise<IWriteAuthorizerSource>
-    {
-        if (this.identity === undefined)
-        {
-            return AllowAllWriteAuthorizerSource.Instance
-        }
-        return this.ReadAuthorization()
-    }
-
-    private async WriteInstanceGate(context: AccessContext, name: string): Promise<IWriteInstanceGate>
-    {
-        if (this.identity === undefined)
-        {
-            return AllowAllWriteInstanceGate.Instance
-        }
-        const target = new FilteredReadWriteTargetSource(this, context, name)
-        const auth = await this.ReadAuthorization()
-        const gate = await auth.WriteInstanceGateFor(context, target)
-        const shareIndex = await this.ShareIndexFor(context, name)
-        if (shareIndex.IsEmpty())
-        {
-            return gate
-        }
-        return new ShareWideningWriteInstanceGate(gate, shareIndex, ConceptIdFields.From((await this.BaseGraphFor(name)).plan))
     }
 
     private ReadAuthorization(): Promise<TenantReadAuthorization>
@@ -575,6 +545,14 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.environmentExecute
     }
 
+    /** The runtime `data/write` (ruling S10) on the environment engine, under each caller's environment scope. Memoized; runtime tenants only. */
+    public EnvironmentWriter(): EnvironmentDataWriter
+    {
+        this.AssertRuntimePurpose()
+        this.environmentWriter ??= new EnvironmentDataWriter(this.EnvironmentEngine(), () => this.EnvironmentScopes(), new RuntimeWritePayloadValidator())
+        return this.environmentWriter
+    }
+
     private async BuildEnvironmentScopes(): Promise<AccessScopeSource>
     {
         const host = this.EnvironmentEngine()
@@ -696,42 +674,14 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return (await this.AssignServiceFor(context, name)).Assign(params)
     }
 
-    public async WriteForPragmaticApp(context: AccessContext, name: string, operations: readonly AppWriteOpDto[]): Promise<AppWriteResultDto>
+    /**
+     * `data/write` (ruling S10): one engine transaction per batch on the environment engine under the caller's
+     * environment scope ({@link PragmaticServer.EnvironmentWriter}). The app name is the bound `application/open`
+     * app; it selects nothing here (S7).
+     */
+    public WriteForPragmaticApp(context: AccessContext, _name: string, operations: readonly AppWriteOpDto[]): Promise<AppWriteResultDto>
     {
-        const built = await this.BaseGraphFor(name)
-        const services = this.root.Services()
-        const catalog = services.getRequired(DataSourceAdapterCatalog.ServiceKey)
-        const baseAuthorizer = await (await this.WriteAuthorizerSource()).WriteAuthorizerFor(context)
-        const shareIndex = await this.ShareIndexFor(context, name)
-        const authorizer = shareIndex.IsEmpty() ? baseAuthorizer : new ShareWideningWriteAuthorizer(baseAuthorizer, shareIndex)
-        const gate = await this.WriteInstanceGate(context, name)
-        const writer = new RuntimeAppWriter(built.plan, built.nativeBase, catalog, services, authorizer, new RuntimeWritePayloadValidator(), gate)
-        const result = await writer.Apply(operations)
-        await this.RevokeSharesForDeletedRecords(name, operations, result)
-        return result
-    }
-
-    /** Removes the share grants of every record whose delete was applied, so a recreated id is not widened by stale grants. */
-    private async RevokeSharesForDeletedRecords(name: string, operations: readonly AppWriteOpDto[], result: AppWriteResultDto): Promise<void>
-    {
-        let store: ShareStore
-        try
-        {
-            store = this.AppShareStore(name)
-        }
-        catch
-        {
-            return
-        }
-        for (let index = 0; index < operations.length; index++)
-        {
-            const op = operations[index]
-            const outcome = result.results[index]
-            if (op.op === AppWriteOpKind.Delete && op.id !== undefined && op.id.length > 0 && outcome?.status === AppWriteStatus.Applied)
-            {
-                await store.RevokeAllForRecord(op.concept, op.id)
-            }
-        }
+        return this.EnvironmentWriter().Apply(context, operations)
     }
 
     /** Resolves the query's labels to the connector-backed concept ids to prefetch; a wildcard selects every connector concept. */

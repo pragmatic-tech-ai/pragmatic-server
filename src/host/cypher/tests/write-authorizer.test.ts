@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Principal, PrincipalKind, PrivilegeAction, AccessLevel } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
-import { TenantReadAuthorization, AllowAllWriteAuthorizerSource } from '../read-filter-source.js'
+import { TenantReadAuthorization } from '../read-filter-source.js'
 
 class Fixture
 {
@@ -54,11 +54,5 @@ test('tenant write authorizer allows a granted create and denies an ungranted de
     assert.equal(writer.Allows(Fixture.OrderConcept, PrivilegeAction.Create), true)
     assert.equal(writer.Allows(Fixture.OrderConcept, PrivilegeAction.Delete), false)
     assert.equal(writer.Allows(Fixture.Other, PrivilegeAction.Create), false)
-})
-
-test('allow-all write authorizer source allows everything', async () =>
-{
-    const writer = await AllowAllWriteAuthorizerSource.Instance.WriteAuthorizerFor()
-    assert.equal(writer.Allows('any.Concept', PrivilegeAction.Delete), true)
 })
 
