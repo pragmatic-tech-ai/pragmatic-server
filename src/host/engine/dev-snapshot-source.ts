@@ -1,6 +1,7 @@
-import type { Diagnostic, Repository, TodlDocument } from '@pragmatic-tech-ai/todl'
-import { EngineCellMapper, SavedModelCompiler, SnapshotDescriber, TodlNames } from '@pragmatic-tech-ai/todl/engine'
-import type { IExternalConnectorPlan, ISavedModel, ISnapshotDescription } from '@pragmatic-tech-ai/todl/engine'
+import { ConnectorPlanEmitter } from '@pragmatic-tech-ai/todl'
+import type { Diagnostic, ModelConnectorPlan, NodeId, Repository, TodlDocument } from '@pragmatic-tech-ai/todl'
+import { EngineCellMapper, ExternalCatalogDescriber, SavedModelCompiler, TodlNames } from '@pragmatic-tech-ai/todl/engine'
+import type { ISavedModel, ISnapshotDescription } from '@pragmatic-tech-ai/todl/engine'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDevLanguageService } from './dev-language-service.js'
 import type { IDevSolution } from './dev-solution.js'
@@ -12,7 +13,8 @@ import { SavedMember, SavedMemberReader } from './saved-member-reader.js'
  * (an error means the saved sources do not compile, for example a commit only half on disk), the mapper that
  * renders the engine's Cypher cells in TODL's wire shape against the same compiled metadata, and `Models`: the model
  * ids the compile accepted (one package each, with or without instances), sorted, without the solution package.
- * `Connectors` is empty and `Identity` undefined: the dev host binds no external connector yet.
+ * `Connectors` are the external connector plans the description binds (one per datasource a model populates from,
+ * sorted by name) and `Identity` the public ids and keys of their records (ruling S18).
  */
 export type DevSnapshot = ISnapshotDescription & IEngineSnapshot & { Repository: Repository; CompileDiagnostics: readonly Diagnostic[] }
 
@@ -41,14 +43,18 @@ class SnapshotKey
 
 /**
  * The dev tenant's engine snapshot: every member's SAVED `.todl` sources (never unsaved editor buffers) compiled by
- * `SavedModelCompiler` into one package per model id, described with the `.todl` file connector as the default.
+ * `SavedModelCompiler` into one package per model id, described by TODL's `ExternalCatalogDescriber` (ruling S18) with
+ * the `.todl` file connector as both the default and the local connector, and each accepted model's connector plan
+ * (`ConnectorPlanEmitter.PlanFor`, re-keyed to the model's package id, delivered by the solution). External bindings
+ * are emitted, so a concept a model populates from a datasource is bound to that datasource's engine connector.
  * `Description.Version` is the description's content digest, so a snapshot changes exactly when saved content does.
+ * A plan set the environment rules reject (TODL's `EnvironmentCatalogError`, e.g. two models binding one source)
+ * fails `Current()` with that error; nothing is cached, so the next call after a save describes again.
  */
 export class DevSnapshotSource
 {
     /** The solution package name when no solution is open (no models, so nothing it owns). */
     private static readonly NoSolutionName = 'no-solution'
-    private static readonly NoConnectors: readonly IExternalConnectorPlan[] = []
 
     private readonly reader: SavedMemberReader
     private last: SnapshotKey | undefined
@@ -101,8 +107,38 @@ export class DevSnapshotSource
     private static Describe(models: readonly ISavedModel[], bases: readonly TodlDocument[], solutionName: string): DevSnapshot
     {
         const saved = SavedModelCompiler.Compile(models, bases, solutionName)
-        const described = SnapshotDescriber.Describe(saved.Snapshot, { DefaultConnector: TodlNames.FileConnector })
-        return { ...described, Repository: saved.Repository, CompileDiagnostics: saved.Diagnostics, CellMapper: new EngineCellMapper(saved.Snapshot), Models: DevSnapshotSource.ModelsOf(saved.Snapshot.manifests, solutionName), Connectors: DevSnapshotSource.NoConnectors, Identity: undefined }
+        const accepted = DevSnapshotSource.ModelsOf(saved.Snapshot.manifests, solutionName)
+        const catalog = ExternalCatalogDescriber.Describe(saved.Snapshot, DevSnapshotSource.PlansOf(saved.Repository, accepted), {
+            DefaultConnector: TodlNames.FileConnector,
+            LocalConnector: TodlNames.FileConnector,
+            Deliveries: new Map(accepted.map(model => [model, [solutionName]])),
+        })
+        return {
+            Description: catalog.Description,
+            External: catalog.External,
+            Diagnostics: catalog.Diagnostics,
+            Repository: saved.Repository,
+            CompileDiagnostics: saved.Diagnostics,
+            CellMapper: new EngineCellMapper(saved.Snapshot),
+            Models: accepted,
+            Connectors: catalog.Connectors,
+            Identity: catalog.Identity,
+        }
+    }
+
+    /**
+     * Each accepted model's connector plan, its `Model` re-keyed from the TODL declaration name the emitter gives to the
+     * model's package id (the seed Owner id the describer binds by); a model with no population has none.
+     */
+    private static PlansOf(repository: Repository, models: readonly string[]): ModelConnectorPlan[]
+    {
+        const plans: ModelConnectorPlan[] = []
+        for (const model of models)
+        {
+            const plan = ConnectorPlanEmitter.PlanFor(repository, model as NodeId)
+            if (plan !== undefined) plans.push({ ...plan, Model: model })
+        }
+        return plans
     }
 
     /** The compiled packages' model ids (SavedModelCompiler binds one per accepted model id), without the solution's. */

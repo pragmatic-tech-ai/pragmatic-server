@@ -835,8 +835,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
         if (this.devEngine === undefined)
         {
             const logger = this.options.logger ?? new NullLogger()
+            // external plans borrow their adapters from the process-wide DataSourceAdapterCatalog (ruling S18)
             this.devEngine = new DevGraphEngineHost(async () => (await this.Manager()).ActiveSolution, () => this.SolutionLanguageService(), undefined,
-                new LoggerDevEngineDiagnostics(logger), new LoggerDevWriteDiagnostics(logger))
+                new LoggerDevEngineDiagnostics(logger), new LoggerDevWriteDiagnostics(logger), undefined, undefined, () => this.root.Services())
         }
         return this.devEngine
     }
