@@ -6,7 +6,7 @@ import type { IWriteTargetSource } from './write-target-source.js'
 import { RecordKey } from './sharing/record-keyed-view.js'
 import type { IRecordKeyedView } from './sharing/record-keyed-view.js'
 
-/** Reflects an Update/Delete subject through the policy-filtered read graph, one graph built per concept per request. */
+/** Reflects an Update/Delete subject through the security-filtered read graph, one graph built per concept per request. */
 export class FilteredReadWriteTargetSource implements IWriteTargetSource
 {
     private static readonly HashSep = '#'

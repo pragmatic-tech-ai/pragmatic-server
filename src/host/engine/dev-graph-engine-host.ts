@@ -1,7 +1,7 @@
 import { CommitKind, GraphEngine, StorageKind, WriteOp } from '@pragmatic-tech-ai/graph'
 import type { BatchOp, ConnectorChangeSet, ICommitApplied, IConnectorTransaction, IGraphConnector, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { Severity } from '@pragmatic-tech-ai/todl'
-import type { Diagnostic, Repository } from '@pragmatic-tech-ai/todl'
+import type { Diagnostic } from '@pragmatic-tech-ai/todl'
 import { TodlFileConnector } from '@pragmatic-tech-ai/todl/engine'
 import { Disposable, Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
@@ -17,14 +17,13 @@ import type { IDevWriteDiagnostics, IWriteFence } from './server-model-workspace
 
 /**
  * The dev tenant's embedded graph engine, run from the saved solution. `Changed` is raised after each applied
- * upgrade (a saved edit recompiled to a new description); `Repository` / `Description` are the snapshot the engine
+ * upgrade (a saved edit recompiled to a new description); `Description` is the snapshot's description the engine
  * currently runs, and `Snapshot` is that whole snapshot in one read (its `Description.Version` equals the engine's
  * `SchemaVersion` except while an upgrade is being applied).
  */
 export interface IDevGraphEngine
 {
     Engine(): Promise<GraphEngine>
-    Repository(): Promise<Repository>
     Description(): Promise<ISchemaDescription>
     Snapshot(): Promise<DevSnapshot>
     /**
@@ -485,11 +484,6 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
     public async Engine(): Promise<GraphEngine>
     {
         return (await this.Opened()).Engine
-    }
-
-    public async Repository(): Promise<Repository>
-    {
-        return (await this.Opened()).Snapshot.Repository
     }
 
     public async Description(): Promise<ISchemaDescription>

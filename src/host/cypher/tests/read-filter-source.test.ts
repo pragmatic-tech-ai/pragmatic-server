@@ -116,40 +116,6 @@ test('AllowAllReadFilterSource keeps everything', async () =>
     assert.equal(filter.Keep(ReadFilterFixture.Widget), true)
 })
 
-test('TenantReadAuthorization.GovernedConceptsFor returns the concepts the model governs', async () =>
-{
-    const auth = new TenantReadAuthorization(new FakeStore(ReadFilterFixture.OrgModel(ReadFilterFixture.PrincipalId)))
-    const governed = await auth.GovernedConceptsFor(ReadFilterFixture.Context(ReadFilterFixture.PrincipalId))
-    assert.equal(governed.has(ReadFilterFixture.Concept), true)
-})
-
-test('TenantReadAuthorization.GovernedConceptsFor reuses the cached evaluator (no second store read)', async () =>
-{
-    const store = new FakeStore(ReadFilterFixture.OrgModel(ReadFilterFixture.PrincipalId))
-    const auth = new TenantReadAuthorization(store)
-    const context = ReadFilterFixture.Context(ReadFilterFixture.PrincipalId)
-    await auth.ReadFilterFor(context)
-    await auth.GovernedConceptsFor(context)
-    assert.equal(store.gets, 1)
-})
-
-test('TenantReadAuthorization.GovernedConceptsFor reflects an updated model after Invalidate', async () =>
-{
-    const store = new FakeStore(undefined)
-    const auth = new TenantReadAuthorization(store)
-    const context = ReadFilterFixture.Context(ReadFilterFixture.PrincipalId)
-    assert.equal((await auth.GovernedConceptsFor(context)).size, 0)
-    store.model = ReadFilterFixture.OrgModel(ReadFilterFixture.PrincipalId)
-    auth.Invalidate(ReadFilterFixture.TenantId)
-    assert.equal((await auth.GovernedConceptsFor(context)).has(ReadFilterFixture.Concept), true)
-})
-
-test('AllowAllReadFilterSource.GovernedConceptsFor returns an empty set', async () =>
-{
-    const governed = await AllowAllReadFilterSource.Instance.GovernedConceptsFor()
-    assert.equal(governed.size, 0)
-})
-
 test('TenantReadAuthorization.HasSecurityModelFor is false with no model (fail-closed) and true once one is set', async () =>
 {
     const store = new FakeStore(undefined)

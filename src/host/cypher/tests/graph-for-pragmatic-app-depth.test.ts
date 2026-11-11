@@ -6,14 +6,12 @@ import { join } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import {
     Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink, Cypher,
-    PolicyNodeKind, PolicyRefRoot, PolicyCompareOp,
     type PackageDocument, type CompiledPackage,
 } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
-import { AccessPolicySetting } from '../../apps/access-policy-setting.js'
 import { PpSecurityHarness } from './pp-security-harness.js'
 
 class DepthFixture
@@ -30,8 +28,6 @@ class DepthFixture
     private static readonly EdgeQuery = 'MATCH (a:Widget)-[:next]->(b:Widget) RETURN a.label AS label'
     private static readonly Label = 'label'
     private static readonly Link = 'next'
-    private static readonly Deny = 'deny'
-    private static readonly Read = 'read'
     private static readonly Principal = 'p1'
     public static readonly SalesLabel = 'S1'
     public static readonly SalesLabel2 = 'S2'
@@ -82,24 +78,6 @@ class DepthFixture
     public static Bu(): ISecurityModelConfig
     {
         return PpSecurityHarness.BuSecurityModel(DepthFixture.Principal)
-    }
-
-    public static Org(): ISecurityModelConfig
-    {
-        return PpSecurityHarness.OrgSecurityModel(DepthFixture.Principal)
-    }
-
-    public DenyLabel(label: string): void
-    {
-        const rules = [{
-            effect: DepthFixture.Deny, action: DepthFixture.Read,
-            predicate: {
-                kind: PolicyNodeKind.Compare, op: PolicyCompareOp.Eq,
-                left: { kind: PolicyNodeKind.Ref, root: PolicyRefRoot.Entity, member: DepthFixture.Label },
-                right: { kind: PolicyNodeKind.Literal, value: label },
-            },
-        }]
-        writeFileSync(join(this.apps, DepthFixture.AppName, AccessPolicySetting.PolicyFile), JSON.stringify({ [PpSecurityHarness.Concept]: rules }))
     }
 
     public static Labels(graph: IGraphQuery): string[]
@@ -174,26 +152,6 @@ test('state 1: an edge from a visible node to a depth-denied node is not travers
         const server = await fx.Setup(DepthFixture.Bu())
         const graph = await server.GraphForPragmaticApp(DepthFixture.Context(), DepthFixture.Name)
         assert.deepEqual(DepthFixture.EdgeSources(graph), [])
-    }
-    finally
-    {
-        await fx.Dispose()
-    }
-})
-
-test('compose: a predicate deny still drops an instance the depth axis allows', async () =>
-{
-    const fx = new DepthFixture()
-    try
-    {
-        const server = await fx.Setup(DepthFixture.Org())
-        const ctx = DepthFixture.Context()
-        const before = await server.GraphForPragmaticApp(ctx, DepthFixture.Name)
-        assert.deepEqual(DepthFixture.Labels(before), [DepthFixture.RootLabel, DepthFixture.SalesLabel, DepthFixture.SalesLabel2])
-        assert.deepEqual(DepthFixture.EdgeSources(before), [DepthFixture.SalesLabel], 'the edge exists when depth allows both ends')
-        fx.DenyLabel(DepthFixture.SalesLabel)
-        const after = await server.GraphForPragmaticApp(ctx, DepthFixture.Name)
-        assert.deepEqual(DepthFixture.Labels(after), [DepthFixture.RootLabel, DepthFixture.SalesLabel2])
     }
     finally
     {

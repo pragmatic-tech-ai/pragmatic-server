@@ -117,12 +117,10 @@ class DevCypherFx
     public static readonly Granted = 'p2'
     public static readonly Secret = 'hush'
     public static readonly SecretField = 'secret'
-    public static readonly PeerField = 'peer'
     public static readonly UnknownModel = 'acme.Nope'
     /** The sample solution's name: its package owns what lies outside every model. */
     public static readonly SolutionName = 'Sample'
     public static readonly Alpha = 'alpha'
-    public static readonly Linker = 'linker'
     public static readonly Kinds = 'kinds'
     public static readonly Term = 'todl.Term'
     public static readonly EmptyModel = 'acme.Empty'
@@ -132,10 +130,8 @@ class DevCypherFx
     public static readonly CountAll = 'MATCH (x) RETURN count(x) AS c'
     public static readonly NodeAll = 'MATCH (n) RETURN n'
     public static readonly WidgetLabels = 'MATCH (w:Widget) RETURN w.label AS l'
-    public static readonly WidgetCount = 'MATCH (w:Widget) RETURN count(w) AS c'
     public static readonly OrderedLabels = 'MATCH (w:Widget) RETURN w.label AS l ORDER BY l'
     public static readonly PeerTargets = 'MATCH (a)-[:peer]->(b) RETURN b.label AS l'
-    public static readonly PeerSources = 'MATCH (b)<-[:peer]-(a) RETURN b.label AS l'
     public static readonly SecretColumn = 'MATCH (w:Widget) RETURN w.secret AS s'
     public static readonly SecretWhere = "MATCH (w:Widget) WHERE w.secret = 'hush' RETURN w.label AS l"
     public static readonly WidgetNodes = 'MATCH (w:Widget) RETURN w'
@@ -179,7 +175,7 @@ class DevCypherFx
         }
     }
 
-    /** The tenant owner (no identity subsystem: policies still apply, depth does not). */
+    /** The tenant owner (no identity subsystem: depth does not apply). */
     public static Permissive(): AccessContext
     {
         return DevCypherFx.ContextOf(DevCypherFx.Plain, Role.Owner)
@@ -206,14 +202,6 @@ class DevCypherFx
         return `namespace acme { concept Widget { ${bu} : string?; secret : string?; relationship peer -> Widget?; } `
             + `model ShopA : acme { Widget a1 { ${bu} = "${sales}"; label = "alpha"; secret = "${DevCypherFx.Secret}"; peer = b1; } Widget a2 { ${bu} = "${root}"; label = "beta"; } } `
             + `model ShopB : acme { Widget b1 { ${bu} = "${sales}"; label = "gamma"; } } }`
-    }
-
-    /** a1 / a3 in eu, a2 in us, a3 links to a2; with the policy only eu widgets are readable (for every principal). */
-    public static RegionModel(withPolicy: boolean): string
-    {
-        const policy = withPolicy ? 'policy Widget { allow read when entity.region == "eu"; } ' : ''
-        return `namespace acme { concept Widget { region : string?; relationship peer -> Widget?; } ${policy}`
-            + 'model Bank : acme { Widget a1 { region = "eu"; label = "visible"; } Widget a2 { region = "us"; label = "hidden"; } Widget a3 { region = "eu"; label = "linker"; peer = a2; } } }'
     }
 
     public static readonly TwoWidgets = 'namespace acme { concept Widget { } model Shop : acme { Widget w1 {} Widget w2 {} } }'
@@ -282,25 +270,19 @@ class DepthPortFx
     public static readonly RootLabel = 'beta'
     public static readonly SalesLabelB = 'gamma'
 
-    public static Model(withPolicy: boolean): string
+    public static Model(): string
     {
         const concept = PpSecurityHarness.Concept
         const field = PpSecurityHarness.OwningBuField
-        const policy = withPolicy ? `policy ${concept} { allow read when entity.${field} == "${PpSecurityHarness.SalesBu}"; allow read when entity.${field} == "${PpSecurityHarness.RootBu}"; deny read when entity.label == "${DepthPortFx.SalesLabelB}"; } ` : ''
         const instances = `${concept} w1 { ${field} = "${PpSecurityHarness.SalesBu}"; label = "${DepthPortFx.SalesLabelA}"; } `
             + `${concept} w2 { ${field} = "${PpSecurityHarness.RootBu}"; label = "${DepthPortFx.RootLabel}"; } `
             + `${concept} w3 { ${field} = "${PpSecurityHarness.SalesBu}"; label = "${DepthPortFx.SalesLabelB}"; }`
-        return `namespace ${DevCypherFx.Namespace} { concept ${concept} { ${field} : string?; } ${policy}model Shop : ${DevCypherFx.Namespace} { ${instances} } }`
+        return `namespace ${DevCypherFx.Namespace} { concept ${concept} { ${field} : string?; } model Shop : ${DevCypherFx.Namespace} { ${instances} } }`
     }
 
     public static Bu(): ISecurityModelConfig
     {
         return DevCypherFx.Qualify(PpSecurityHarness.BuSecurityModel(DevCypherFx.Plain))
-    }
-
-    public static Org(): ISecurityModelConfig
-    {
-        return DevCypherFx.Qualify(PpSecurityHarness.OrgSecurityModel(DevCypherFx.Plain))
     }
 
     public static get All(): string[]
@@ -311,16 +293,6 @@ class DepthPortFx
     public static get SalesOnly(): string[]
     {
         return [DepthPortFx.SalesLabelA, DepthPortFx.SalesLabelB].sort()
-    }
-
-    public static get Alpha(): string[]
-    {
-        return [DepthPortFx.SalesLabelA]
-    }
-
-    public static get Beta(): string[]
-    {
-        return [DepthPortFx.SalesLabelA, DepthPortFx.RootLabel].sort()
     }
 }
 
@@ -346,7 +318,7 @@ test('the dev graph composes the open solution into a queryable graph', async ()
 
 test('state 1: BusinessUnit depth keeps only sales-owned widgets on the dev graph', async () =>
 {
-    await DevCypherFx.With(DepthPortFx.Model(false), DepthPortFx.Bu(), async world =>
+    await DevCypherFx.With(DepthPortFx.Model(), DepthPortFx.Bu(), async world =>
     {
         assert.deepEqual(await world.Column(PpSecurityHarness.Context(DevCypherFx.Plain), DevCypherFx.WidgetLabels), DepthPortFx.SalesOnly)
     })
@@ -354,31 +326,15 @@ test('state 1: BusinessUnit depth keeps only sales-owned widgets on the dev grap
 
 test('depth leaves no extra nodes: the all-node count equals the surviving widgets (structural nodes are not graph-visible)', async () =>
 {
-    await DevCypherFx.With(DepthPortFx.Model(false), DepthPortFx.Bu(), async world =>
+    await DevCypherFx.With(DepthPortFx.Model(), DepthPortFx.Bu(), async world =>
     {
         assert.equal(await world.Count(PpSecurityHarness.Context(DevCypherFx.Plain), DevCypherFx.CountAll), DepthPortFx.SalesOnly.length)
     })
 })
 
-test('compose: predicate deny wins over depth allow-all (Organization level)', async () =>
-{
-    await DevCypherFx.With(DepthPortFx.Model(true), DepthPortFx.Org(), async world =>
-    {
-        assert.deepEqual(await world.Column(PpSecurityHarness.Context(DevCypherFx.Plain), DevCypherFx.WidgetLabels), DepthPortFx.Beta)
-    })
-})
-
-test('compose: depth deny wins over predicate allow, and the predicate still denies (BusinessUnit level)', async () =>
-{
-    await DevCypherFx.With(DepthPortFx.Model(true), DepthPortFx.Bu(), async world =>
-    {
-        assert.deepEqual(await world.Column(PpSecurityHarness.Context(DevCypherFx.Plain), DevCypherFx.WidgetLabels), DepthPortFx.Alpha)
-    })
-})
-
 test('state 3: an identity-less dev server returns every widget (depth inactive)', async () =>
 {
-    await DevCypherFx.With(DepthPortFx.Model(false), undefined, async world =>
+    await DevCypherFx.With(DepthPortFx.Model(), undefined, async world =>
     {
         assert.deepEqual(await world.Column(PpSecurityHarness.Context(DevCypherFx.Plain), DevCypherFx.WidgetLabels), DepthPortFx.All)
     })
@@ -419,30 +375,6 @@ test('upgrade between pages stales the cursor', async () =>
         await world.Upgraded(version)
         assert.equal(await DevCypherFx.CodeOf(world.Run(context, DevCypherFx.OrderedLabels, { pageSize: 1, cursor: first.nextCursor })), CursorStaleError.Code)
         assert.deepEqual((await world.Run(context, DevCypherFx.OrderedLabels, { pageSize: 1 })).items, [['0']], 'a fresh walk reads the upgraded graph')
-    })
-})
-
-test('a policy-hidden instance is absent from count, return and traversal', async () =>
-{
-    // without the policy the same solution has three widgets and the link, so every absence below is the scope's doing
-    await DevCypherFx.With(DevCypherFx.RegionModel(false), undefined, async world =>
-    {
-        const viewer = DevCypherFx.Viewer()
-        assert.equal(await world.Count(viewer, DevCypherFx.WidgetCount), 3)
-        assert.deepEqual(await world.Column(viewer, DevCypherFx.PeerTargets), ['hidden'])
-        const linker = DevCypherFx.Nodes(await world.Run(viewer, DevCypherFx.WidgetNodes)).find(node => node.label === DevCypherFx.Linker)!
-        assert.equal(linker.refs[DevCypherFx.PeerField]?.length, 1)
-    })
-    await DevCypherFx.With(DevCypherFx.RegionModel(true), undefined, async world =>
-    {
-        const viewer = DevCypherFx.Viewer()
-        assert.equal(await world.Count(viewer, DevCypherFx.WidgetCount), 2)
-        assert.equal(await world.Count(viewer, DevCypherFx.CountAll), 2)
-        assert.deepEqual(await world.Column(viewer, DevCypherFx.WidgetLabels), ['linker', 'visible'])
-        assert.deepEqual(await world.Column(viewer, DevCypherFx.PeerTargets), [])
-        assert.deepEqual(await world.Column(viewer, DevCypherFx.PeerSources), [])
-        const linker = DevCypherFx.Nodes(await world.Run(viewer, DevCypherFx.WidgetNodes)).find(node => node.label === DevCypherFx.Linker)!
-        assert.deepEqual(linker.refs[DevCypherFx.PeerField] ?? [], [], 'the node cell links to nothing hidden')
     })
 })
 

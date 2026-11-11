@@ -29,7 +29,6 @@ import type { ConnectorRuntime } from '../connectors/connector-runtime.js'
 import { ModelReadFilter } from './model-read-filter.js'
 import { AllowAllFieldReadMaskSource } from './cypher/read-filter-source.js'
 import type { IFieldReadMaskSource } from './cypher/read-filter-source.js'
-import { AllowAllFieldReadMask } from './cypher/field-masked-graph-query.js'
 import { AdminService, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, AdminTokenNotFoundError, ForeignTenantResourceError } from './admin-service.js'
 import { AdminEnums, AdminEnumError } from './admin-enums.js'
 import { TenantPurpose } from '../tenancy/tenant-purpose.js'
@@ -1252,30 +1251,12 @@ export class ServerConnectionHandler
         return candidate
     }
 
-    /** Dev tenants: the caller's engine scope decides (DevModelView); runtime tenants: the TODL policies, as before. */
+    /** Dev tenants: the caller's engine scope decides (DevModelView); a runtime model/view hides no node. */
     private async ResourceHidden(nodeId: string): Promise<boolean>
     {
         if (this.IsDevelopment())
         {
             return this.RequireDevModelView().Hidden(this.accessContext, nodeId)
-        }
-        const solution = this.manager.ActiveSolution
-        if (solution === undefined)
-        {
-            return false
-        }
-        for (const member of solution.Members.ToArray())
-        {
-            if (member.Storage === undefined)
-            {
-                continue
-            }
-            const view = await this.languageService.ModelView(member.Storage)
-            if (view === undefined || view.model.resolve(nodeId) === undefined)
-            {
-                continue
-            }
-            return new ModelReadFilter(view.model, this.accessContext, AllowAllFieldReadMask.Instance).Hidden(nodeId)
         }
         return false
     }
@@ -1308,7 +1289,7 @@ export class ServerConnectionHandler
         const fingerprint = PageFingerprint.Of(ServerConnectionHandler.ModelViewFingerprintTag, memberId, String(this.languageService.GraphRevision))
         const page = PageRequest.Resolve(params, fingerprint, this.paging)
         const mask = await this.fieldMasks.FieldReadMaskFor(this.accessContext)
-        const members = new ModelReadFilter(view.model, this.accessContext, mask).Page(view.provenanceOf, page.Offset, page.Size)
+        const members = new ModelReadFilter(view.model, mask).Page(view.provenanceOf, page.Offset, page.Size)
         const nextCursor = page.NextCursor(members.HasMore)
         return nextCursor === undefined
             ? { items: members.Items, provenanceOf: members.ProvenanceOf }

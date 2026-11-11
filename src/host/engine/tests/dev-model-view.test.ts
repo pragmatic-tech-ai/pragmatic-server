@@ -26,7 +26,7 @@ import type { IDevGraphEngine } from '../dev-graph-engine-host.js'
  * Ported from host/tests/model-read-filter.test.ts, model-view-paging.test.ts and model-surface.test.ts: the dev
  * model/view now takes instance visibility and masking from the caller's engine scope. The unit ports keep their
  * in-memory structure (FixedStructure) and run the visibility on the dev engine over an equivalent SAVED solution
- * (same ids, same values, the policy / field security as TODL source or tenant security model); the wire ports run
+ * (same ids, same values, the depth / field security as tenant security model); the wire ports run
  * the real language service through a handler attached with the development arguments.
  */
 
@@ -350,7 +350,7 @@ class ViewFx
     public static readonly All = 1000
 }
 
-/** Ported from model-read-filter.test.ts: two customers (eu, us), optionally under an eu-only read policy. */
+/** Ported from model-read-filter.test.ts: two customers (eu, us). */
 class ModelFixture
 {
     public static readonly Concept = 'shop.Customer'
@@ -359,27 +359,16 @@ class ModelFixture
     public static readonly Eu = 'shop.custEu'
     public static readonly Us = 'shop.custUs'
     public static readonly Unknown = 'shop.doesNotExist'
-    public static readonly EuFile = 'a.todl'
-    public static readonly UsFile = 'b.todl'
 
-    public static Todl(withPolicy: boolean): string
-    {
-        const policy = withPolicy ? 'policy Customer { allow read when entity.region == "eu"; } ' : ''
-        return `namespace shop { concept Customer { region : string?; } ${policy}model M : shop { Customer custEu { region = "eu"; } Customer custUs { region = "us"; } } }`
-    }
+    public static readonly Todl = 'namespace shop { concept Customer { region : string?; } model M : shop { Customer custEu { region = "eu"; } Customer custUs { region = "us"; } } }'
 
-    public static Build(withPolicy: boolean): Repository
+    public static Build(): Repository
     {
         const repo = new Repository()
         const b = repo.builder()
         b.definePrimitive('string')
         b.defineConcept(ModelFixture.Concept)
         b.addField(ModelFixture.Concept, ModelFixture.Region, 'string')
-        if (withPolicy)
-        {
-            const predicate = { kind: 2, op: 0, left: { kind: 0, root: 1, member: ModelFixture.Region }, right: { kind: 1, value: 'eu' } }
-            b.definePolicy(`${ModelFixture.Concept}@policy`, ModelFixture.Concept, JSON.stringify([{ effect: 'allow', action: 'read', predicate }]))
-        }
         b.assertInstance(ModelFixture.Concept, ModelFixture.Eu)
         b.setField(ModelFixture.Eu, ModelFixture.Region, 'eu')
         b.assertInstance(ModelFixture.Concept, ModelFixture.Us)
@@ -395,7 +384,7 @@ class ModelFixture
     }
 }
 
-/** Ported from model-view-paging.test.ts: five customers (two eu, three us), optionally eu-only, with peer/manager edges. */
+/** Ported from model-view-paging.test.ts: five customers (two eu, three us) with peer/manager edges. */
 class FilterFixture
 {
     public static readonly Namespace = 'shop'
@@ -413,33 +402,23 @@ class FilterFixture
     public static readonly EuValue = 'eu'
     public static readonly UsValue = 'us'
     public static readonly SecretValue = 's3cr3t'
-    public static readonly HiddenCount = 3
     public static readonly RelationshipKind = 'Relationship'
     public static readonly InstanceTier = 'Instance'
     public static readonly OntologyTier = 'Ontology'
     public static readonly Ghost = 'shop.ghost'
     public static readonly Eu2Local = 'eu2'
     private static readonly StringType = 'string'
-    private static readonly PolicySuffix = '@policy'
-    private static readonly AllowEffect = 'allow'
-    private static readonly ReadAction = 'read'
     private static readonly MissingMemberPrefix = 'member must be on the page: '
-    private static readonly SizePrefix = 'size '
 
     /**
      * The saved TODL the engine runs for {@link FilterFixture.Build}: the same instances, values and edges. The engine
      * schema also declares a field named `eu2` (the via-localId port secures it).
      */
-    public static Todl(withPolicy: boolean): string
-    {
-        const policy = withPolicy ? 'policy Customer { allow read when entity.region == "eu"; } ' : ''
-        return 'namespace shop { concept Customer { region : string?; secret : string?; eu2 : string?; relationship peer -> Customer[]; relationship manager -> Customer?; } '
-            + policy
-            + 'model M : shop { Customer eu1 { region = "eu"; secret = "s3cr3t"; peer = [eu2, us1]; manager = eu2; } Customer eu2 { region = "eu"; } '
-            + 'Customer us1 { region = "us"; } Customer us2 { region = "us"; } Customer us3 { region = "us"; } } }'
-    }
+    public static readonly Todl = 'namespace shop { concept Customer { region : string?; secret : string?; eu2 : string?; relationship peer -> Customer[]; relationship manager -> Customer?; } '
+        + 'model M : shop { Customer eu1 { region = "eu"; secret = "s3cr3t"; peer = [eu2, us1]; manager = eu2; } Customer eu2 { region = "eu"; } '
+        + 'Customer us1 { region = "us"; } Customer us2 { region = "us"; } Customer us3 { region = "us"; } } }'
 
-    public static Build(withPolicy: boolean, repo: Repository = new Repository()): Repository
+    public static Build(repo: Repository = new Repository()): Repository
     {
         const b = repo.builder()
         b.setNamespace(FilterFixture.Namespace)
@@ -447,11 +426,6 @@ class FilterFixture
         b.defineConcept(FilterFixture.Concept)
         b.addField(FilterFixture.Concept, FilterFixture.Region, FilterFixture.StringType)
         b.addField(FilterFixture.Concept, FilterFixture.Secret, FilterFixture.StringType)
-        if (withPolicy)
-        {
-            const predicate = { kind: 2, op: 0, left: { kind: 0, root: 1, member: FilterFixture.Region }, right: { kind: 1, value: FilterFixture.EuValue } }
-            b.definePolicy(FilterFixture.Concept + FilterFixture.PolicySuffix, FilterFixture.Concept, JSON.stringify([{ effect: FilterFixture.AllowEffect, action: FilterFixture.ReadAction, predicate }]))
-        }
         FilterFixture.Customer(b, FilterFixture.Eu1, FilterFixture.EuValue)
         b.setField(FilterFixture.Eu1, FilterFixture.Secret, FilterFixture.SecretValue)
         FilterFixture.Customer(b, FilterFixture.Eu2, FilterFixture.EuValue)
@@ -470,11 +444,6 @@ class FilterFixture
         const member = page.items.find(m => m.id === id)
         assert.ok(member !== undefined, FilterFixture.MissingMemberPrefix + id)
         return member
-    }
-
-    public static SizeLabel(size: number): string
-    {
-        return FilterFixture.SizePrefix + size
     }
 
     /** One all-members page of `view` for the reader `context`. */
@@ -496,17 +465,9 @@ class WireFx
     public static readonly ServiceConcept = 'acme.Service'
     public static readonly Label = 'label'
     public static readonly ModelTodl = 'namespace acme { concept Service { } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } } }'
-    public static readonly PolicyModelTodl = 'namespace acme { concept Service { } policy Service { allow read when entity.label == "a"; allow read when entity.label == "b"; allow read when entity.label == "c"; } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } } }'
-    public static readonly HiddenServices = ['acme.s1', 'acme.s4']
-    public static readonly VisibleServices = ['acme.s2', 'acme.s3', 'acme.s5']
     public static readonly RevisionMustMove = 'the edit must move the graph revision'
     public static readonly EditedModelTodl = 'namespace acme { concept Service { } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } Service s6 { label = "f"; } } }'
-    /** Unsaved: adds s6 labelled "a", which the policy would admit. */
-    public static readonly PolicyEditedTodl = 'namespace acme { concept Service { } policy Service { allow read when entity.label == "a"; allow read when entity.label == "b"; allow read when entity.label == "c"; } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Service s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } Service s6 { label = "a"; } } }'
     public static readonly S6 = 'acme.s6'
-    /** Unsaved: s3 (saved as a Service the policy admits) re-typed to a new concept Other. */
-    public static readonly RetypedTodl = 'namespace acme { concept Service { } concept Other { } policy Service { allow read when entity.label == "a"; allow read when entity.label == "b"; allow read when entity.label == "c"; } model Shop : acme { Service s1 { label = "e"; } Service s2 { label = "c"; } Other s3 { label = "a"; } Service s4 { label = "d"; } Service s5 { label = "b"; } } }'
-    public static readonly S3 = 'acme.s3'
 }
 
 /** Ported from model-surface.test.ts. */
@@ -554,15 +515,10 @@ class ClassFx
         return repo
     }
 
-    public static Todl(withPolicy: boolean): string
-    {
-        const policy = withPolicy ? 'policy Widget { allow read when entity.region == "eu"; } ' : ''
-        return 'namespace acme { concept Widget { region : string?; } '
-            + `taxonomy Kinds : represents Widget { term Big { annotate icon { path = "${ClassFx.IconPath}"; } } } `
-            + 'class Widget Premium { region = "eu"; } class Widget Basic { region = "us"; } '
-            + policy
-            + 'model Shop : acme { Widget w1 { region = "eu"; } } }'
-    }
+    public static readonly Todl = 'namespace acme { concept Widget { region : string?; } '
+        + `taxonomy Kinds : represents Widget { term Big { annotate icon { path = "${ClassFx.IconPath}"; } } } `
+        + 'class Widget Premium { region = "eu"; } class Widget Basic { region = "us"; } '
+        + 'model Shop : acme { Widget w1 { region = "eu"; } } }'
 }
 
 /** The dev engine host with every reader's `Admits` throwing a plain Error (an engine fault, not SchemaViolation). */
@@ -606,6 +562,10 @@ class DepthFx
         + `Widget w2 { ${PpSecurityHarness.OwningBuField} = "${PpSecurityHarness.RootBu}"; label = "beta"; } `
         + `Widget w3 { ${PpSecurityHarness.OwningBuField} = "${PpSecurityHarness.SalesBu}"; label = "gamma"; } } }`
     public static readonly W3 = 'acme.w3'
+    /** Unsaved: w1 (saved as a Widget the reader's depth admits) re-typed to a new concept Other. */
+    public static readonly RetypedTodl = `namespace acme { concept Widget { ${PpSecurityHarness.OwningBuField} : string?; } concept Other { ${PpSecurityHarness.OwningBuField} : string?; } model Shop : acme { `
+        + `Other w1 { ${PpSecurityHarness.OwningBuField} = "${PpSecurityHarness.SalesBu}"; label = "alpha"; } `
+        + `Widget w2 { ${PpSecurityHarness.OwningBuField} = "${PpSecurityHarness.RootBu}"; label = "beta"; } } }`
 
     public static Bu(): ISecurityModelConfig
     {
@@ -615,42 +575,11 @@ class DepthFx
 
 // ── ported from host/tests/model-read-filter.test.ts ───────────────────────────────────────────────
 
-test('a policy allow-where rule keeps the matching instance and drops the rest', async () =>
+test('an unrestricted scope keeps every instance', async () =>
 {
-    await DevWorld.With(ModelFixture.Todl(true), undefined, async world =>
+    await DevWorld.With(ModelFixture.Todl, undefined, async world =>
     {
-        const ids = await ModelFixture.Ids(world.View(new FixedStructure(ModelFixture.Build(true))), world.MemberId)
-        assert.ok(ids.includes(ModelFixture.Eu))
-        assert.ok(!ids.includes(ModelFixture.Us))
-    })
-})
-
-test('a hidden instance id does not leak through provenanceOf', async () =>
-{
-    await DevWorld.With(ModelFixture.Todl(true), undefined, async world =>
-    {
-        const provenance = new Map([[ModelFixture.Eu, ModelFixture.EuFile], [ModelFixture.Us, ModelFixture.UsFile]])
-        const projection = await DevWorld.Page(world.View(new FixedStructure(ModelFixture.Build(true), provenance)), DevWorld.Reader(), world.MemberId, ViewFx.All)
-        assert.equal(projection.provenanceOf[ModelFixture.Eu], ModelFixture.EuFile)
-        assert.equal(ModelFixture.Us in projection.provenanceOf, false)
-    })
-})
-
-test('Hidden reports the dropped instance and not the permitted one', async () =>
-{
-    await DevWorld.With(ModelFixture.Todl(true), undefined, async world =>
-    {
-        const view = world.View(new FixedStructure(ModelFixture.Build(true)))
-        assert.equal(await view.Hidden(DevWorld.Reader(), ModelFixture.Us), true)
-        assert.equal(await view.Hidden(DevWorld.Reader(), ModelFixture.Eu), false)
-    })
-})
-
-test('a model with no policy keeps every instance', async () =>
-{
-    await DevWorld.With(ModelFixture.Todl(false), undefined, async world =>
-    {
-        const ids = await ModelFixture.Ids(world.View(new FixedStructure(ModelFixture.Build(false))), world.MemberId)
+        const ids = await ModelFixture.Ids(world.View(new FixedStructure(ModelFixture.Build())), world.MemberId)
         assert.ok(ids.includes(ModelFixture.Eu))
         assert.ok(ids.includes(ModelFixture.Us))
     })
@@ -658,17 +587,17 @@ test('a model with no policy keeps every instance', async () =>
 
 test('Hidden is false for an id the model cannot resolve', async () =>
 {
-    await DevWorld.With(ModelFixture.Todl(true), undefined, async world =>
+    await DevWorld.With(ModelFixture.Todl, undefined, async world =>
     {
-        assert.equal(await world.View(new FixedStructure(ModelFixture.Build(true))).Hidden(DevWorld.Reader(), ModelFixture.Unknown), false)
+        assert.equal(await world.View(new FixedStructure(ModelFixture.Build())).Hidden(DevWorld.Reader(), ModelFixture.Unknown), false)
     })
 })
 
 test('a structural definition node survives filtering', async () =>
 {
-    await DevWorld.With(ModelFixture.Todl(true), undefined, async world =>
+    await DevWorld.With(ModelFixture.Todl, undefined, async world =>
     {
-        const ids = await ModelFixture.Ids(world.View(new FixedStructure(ModelFixture.Build(true))), world.MemberId)
+        const ids = await ModelFixture.Ids(world.View(new FixedStructure(ModelFixture.Build())), world.MemberId)
         assert.ok(ids.includes(ModelFixture.Concept))
     })
 })
@@ -677,9 +606,9 @@ test('a structural definition node survives filtering', async () =>
 
 test('member carries localId/namespace/tier/isClass/attrs/edges', async () =>
 {
-    await DevWorld.With(FilterFixture.Todl(false), undefined, async world =>
+    await DevWorld.With(FilterFixture.Todl, undefined, async world =>
     {
-        const page = await FilterFixture.All(world.View(new FixedStructure(FilterFixture.Build(false))), world)
+        const page = await FilterFixture.All(world.View(new FixedStructure(FilterFixture.Build())), world)
         const member = FilterFixture.Member(page, FilterFixture.Eu1)
         assert.equal(member.kind, FilterFixture.Concept)
         assert.equal(member.localId, FilterFixture.Eu1Local)
@@ -716,38 +645,12 @@ test('walks every visible member once in id order', async () =>
     })
 })
 
-test('hidden nodes are excluded before paging', async () =>
-{
-    await DevWorld.With(FilterFixture.Todl(true), undefined, async world =>
-    {
-        const repo = FilterFixture.Build(true)
-        const n = repo.allNodes().length
-        const visible = n - FilterFixture.HiddenCount
-        const view = world.View(new FixedStructure(repo))
-        for (const size of [1, 2, 3, visible, visible + 1])
-        {
-            const pages = await DevWorld.WalkView(view, DevWorld.Reader(), world.MemberId, size)
-            const items = pages.flatMap(p => p.items.map(m => m.id))
-            assert.equal(items.length, visible, FilterFixture.SizeLabel(size))
-            assert.equal(new Set(items).size, visible, FilterFixture.SizeLabel(size))
-            assert.equal(pages.length, Math.ceil(visible / size), FilterFixture.SizeLabel(size))
-            assert.ok(pages.slice(0, -1).every(p => p.nextCursor !== undefined), FilterFixture.SizeLabel(size))
-            assert.equal(pages[pages.length - 1]!.nextCursor, undefined, FilterFixture.SizeLabel(size))
-            assert.ok(pages.every(p => p.items.length > 0), FilterFixture.SizeLabel(size))
-            for (const hidden of [FilterFixture.Us1, FilterFixture.Us2, FilterFixture.Us3])
-            {
-                assert.ok(!items.includes(hidden))
-            }
-        }
-    })
-})
-
 test('a field-masked attr is absent', async () =>
 {
     // DenyOneFieldMask(Concept, Secret) -> field security: `secret` is secured and the reader holds no profile for it
-    await DevWorld.With(FilterFixture.Todl(false), SecurityFx.OrgRead(FilterFixture.Concept, [ViewFx.ReaderId], [FilterFixture.Secret]), async world =>
+    await DevWorld.With(FilterFixture.Todl, SecurityFx.OrgRead(FilterFixture.Concept, [ViewFx.ReaderId], [FilterFixture.Secret]), async world =>
     {
-        const member = FilterFixture.Member(await FilterFixture.All(world.View(new FixedStructure(FilterFixture.Build(false))), world), FilterFixture.Eu1)
+        const member = FilterFixture.Member(await FilterFixture.All(world.View(new FixedStructure(FilterFixture.Build())), world), FilterFixture.Eu1)
         assert.deepEqual(member.attrs, { [FilterFixture.Region]: FilterFixture.EuValue })
     })
     // DenyOneFieldMaskSource(Service, label) -> `label` secured; p1 holds no profile for it, p2 does (the open connection)
@@ -762,24 +665,12 @@ test('a field-masked attr is absent', async () =>
     })
 })
 
-test('an edge to a hidden node is dropped', async () =>
-{
-    await DevWorld.With(FilterFixture.Todl(true), undefined, async world =>
-    {
-        const member = FilterFixture.Member(await FilterFixture.All(world.View(new FixedStructure(FilterFixture.Build(true))), world), FilterFixture.Eu1)
-        assert.deepEqual(member.edges, [
-            { kind: FilterFixture.RelationshipKind, via: FilterFixture.Peer, to: FilterFixture.Eu2 },
-            { kind: FilterFixture.RelationshipKind, via: FilterFixture.Manager, to: FilterFixture.Eu2 },
-        ])
-    })
-})
-
 test('an edge whose via field is masked is dropped', async () =>
 {
     // DenyOneFieldMask(Concept, Manager) -> field security on the `manager` relationship member
-    await DevWorld.With(FilterFixture.Todl(false), SecurityFx.OrgRead(FilterFixture.Concept, [ViewFx.ReaderId], [FilterFixture.Manager]), async world =>
+    await DevWorld.With(FilterFixture.Todl, SecurityFx.OrgRead(FilterFixture.Concept, [ViewFx.ReaderId], [FilterFixture.Manager]), async world =>
     {
-        const member = FilterFixture.Member(await FilterFixture.All(world.View(new FixedStructure(FilterFixture.Build(false))), world), FilterFixture.Eu1)
+        const member = FilterFixture.Member(await FilterFixture.All(world.View(new FixedStructure(FilterFixture.Build())), world), FilterFixture.Eu1)
         assert.deepEqual(member.edges, [
             { kind: FilterFixture.RelationshipKind, via: FilterFixture.Peer, to: FilterFixture.Eu2 },
             { kind: FilterFixture.RelationshipKind, via: FilterFixture.Peer, to: FilterFixture.Us1 },
@@ -789,9 +680,9 @@ test('an edge whose via field is masked is dropped', async () =>
 
 test('provenanceOf holds only page members', async () =>
 {
-    await DevWorld.With(FilterFixture.Todl(true), undefined, async world =>
+    await DevWorld.With(FilterFixture.Todl, undefined, async world =>
     {
-        const repo = FilterFixture.Build(true)
+        const repo = FilterFixture.Build()
         const provenance = new Map(repo.allNodes().map(node => [node.id, `${node.id}.todl`] as [string, string]))
         for (const page of await DevWorld.WalkView(world.View(new FixedStructure(repo, provenance)), DevWorld.Reader(), world.MemberId, 2))
         {
@@ -838,10 +729,10 @@ test('a non-positive pageSize is rejected', async () =>
 
 test('an edge to an unresolvable node is dropped', async () =>
 {
-    await DevWorld.With(FilterFixture.Todl(false), undefined, async world =>
+    await DevWorld.With(FilterFixture.Todl, undefined, async world =>
     {
         // the graph store rejects a dangling edge on insert, so a repository surfaces one from outEdges instead
-        const repo = FilterFixture.Build(false, new DanglingEdgeRepository(FilterFixture.Eu1, FilterFixture.Peer, FilterFixture.Ghost))
+        const repo = FilterFixture.Build(new DanglingEdgeRepository(FilterFixture.Eu1, FilterFixture.Peer, FilterFixture.Ghost))
         assert.equal(repo.resolve(FilterFixture.Ghost), undefined)
         assert.ok(repo.outEdges(FilterFixture.Eu1).some(e => e.to === FilterFixture.Ghost))
         const member = FilterFixture.Member(await FilterFixture.All(world.View(new FixedStructure(repo)), world), FilterFixture.Eu1)
@@ -856,9 +747,9 @@ test('a via that resolves to a visible node is kept and masked by its localId', 
     // u1 holds a profile reading it, p2 does not. Masking by the localId keeps the edge for u1 and drops it for p2;
     // masking by the full id `shop.eu2` (no member of that name exists to hide) would keep it for p2.
     const security = SecurityFx.OrgRead(FilterFixture.Concept, [ViewFx.ReaderId, ViewFx.OtherId], [FilterFixture.Eu2Local], [ViewFx.ReaderId])
-    await DevWorld.With(FilterFixture.Todl(true), security, async world =>
+    await DevWorld.With(FilterFixture.Todl, security, async world =>
     {
-        const repo = FilterFixture.Build(true)
+        const repo = FilterFixture.Build()
         repo.addEdge({ kind: EdgeKind.Relationship, via: FilterFixture.Eu2, from: FilterFixture.Eu1, to: FilterFixture.Eu2 })
         const view = world.View(new FixedStructure(repo))
         const member = FilterFixture.Member(await FilterFixture.All(view, world), FilterFixture.Eu1)
@@ -870,45 +761,6 @@ test('a via that resolves to a visible node is kept and masked by its localId', 
         const otherPage = await FilterFixture.All(view, world, DevWorld.Reader(ViewFx.OtherId))
         assert.ok(otherPage.items.some(m => m.id === FilterFixture.Eu2))
         assert.ok(masked.edges.some(e => e.to === FilterFixture.Eu2 && e.via === FilterFixture.Peer))
-    })
-})
-
-test('a via that resolves to a hidden node is dropped', async () =>
-{
-    await DevWorld.With(FilterFixture.Todl(true), undefined, async world =>
-    {
-        const repo = FilterFixture.Build(true)
-        repo.addEdge({ kind: EdgeKind.Relationship, via: FilterFixture.Us2, from: FilterFixture.Eu1, to: FilterFixture.Eu2 })
-        assert.ok(repo.outEdges(FilterFixture.Eu1).some(e => e.via === FilterFixture.Us2))
-        const member = FilterFixture.Member(await FilterFixture.All(world.View(new FixedStructure(repo)), world), FilterFixture.Eu1)
-        assert.ok(member.edges.length > 0)
-        assert.ok(member.edges.every(e => e.via !== FilterFixture.Us2))
-    })
-})
-
-test('under a hiding policy the wire nextCursor is absent exactly on the last page', async () =>
-{
-    await DevWorld.With(WireFx.PolicyModelTodl, undefined, async world =>
-    {
-        const client = world.Connect()
-        const unpaged = await client.ModelView(world.MemberId)
-        const ids = unpaged.items.map(m => m.id)
-        for (const hidden of WireFx.HiddenServices)
-        {
-            assert.ok(!ids.includes(hidden))
-        }
-        for (const shown of WireFx.VisibleServices)
-        {
-            assert.ok(ids.includes(shown))
-        }
-        for (const size of [1, 2, ids.length])
-        {
-            const pages = await DevWorld.Walk(client, world.MemberId, size)
-            assert.deepEqual(pages.flatMap(p => p.items.map(m => m.id)), ids, FilterFixture.SizeLabel(size))
-            assert.equal(pages.length, Math.ceil(ids.length / size), FilterFixture.SizeLabel(size))
-            assert.ok(pages.slice(0, -1).every(p => p.nextCursor !== undefined && p.items.length === size), FilterFixture.SizeLabel(size))
-            assert.equal(pages[pages.length - 1]!.nextCursor, undefined, FilterFixture.SizeLabel(size))
-        }
     })
 })
 
@@ -984,54 +836,9 @@ test('depth hides an instance from model/view', async () =>
     })
 })
 
-test('Hidden reports policy-hidden instances (the model/resources gate)', async () =>
-{
-    // TODL rejects annotations on concrete instances, so an instance holds no resources: this pins the Hidden decision
-    // model/resources asks; the annotated-term tests below show a non-empty result suppressed
-    await DevWorld.With(WireFx.PolicyModelTodl, undefined, async world =>
-    {
-        const view = world.Server.DevModelView()
-        for (const hidden of WireFx.HiddenServices)
-        {
-            assert.equal(await view.Hidden(DevWorld.Owner(), hidden), true)
-        }
-        for (const shown of WireFx.VisibleServices)
-        {
-            assert.equal(await view.Hidden(DevWorld.Owner(), shown), false)
-        }
-    })
-})
-
-test('a term and a class typed by a policy-governed concept are judged by its read policy', async () =>
-{
-    await DevWorld.With(ClassFx.Todl(true), undefined, async world =>
-    {
-        const client = world.Connect()
-        const ids = (await client.ModelView(world.MemberId)).items.map(m => m.id)
-        // the term has no region (the policy cannot admit it), Premium is eu, Basic is us
-        assert.ok(!ids.includes(ClassFx.Big))
-        assert.ok(ids.includes(ClassFx.Premium))
-        assert.ok(!ids.includes(ClassFx.Basic))
-        assert.ok(ids.includes(ClassFx.W1))
-        const view = world.Server.DevModelView()
-        assert.equal(await view.Hidden(DevWorld.Owner(), ClassFx.Big), true)
-        assert.equal(await view.Hidden(DevWorld.Owner(), ClassFx.Premium), false)
-        // resources of a hidden term are empty
-        assert.deepEqual(await client.Resources(ClassFx.Big), [])
-    })
-    // control: without the policy every one of them is shown and the term's resource resolves
-    await DevWorld.With(ClassFx.Todl(false), undefined, async world =>
-    {
-        const client = world.Connect()
-        const ids = (await client.ModelView(world.MemberId)).items.map(m => m.id)
-        for (const id of [ClassFx.Big, ClassFx.Premium, ClassFx.Basic]) assert.ok(ids.includes(id), id)
-        assert.deepEqual((await client.Resources(ClassFx.Big)).map(r => r.path), [ClassFx.IconPath])
-    })
-})
-
 test('an annotated term is admitted with its resources under an org read, and DenyAll hides terms and classes', async () =>
 {
-    await DevWorld.WithIdentity(ClassFx.Todl(false), SecurityFx.OrgRead(ClassFx.Widget, [ViewFx.OwnerId]), async world =>
+    await DevWorld.WithIdentity(ClassFx.Todl, SecurityFx.OrgRead(ClassFx.Widget, [ViewFx.OwnerId]), async world =>
     {
         const client = world.Connect()
         const ids = (await client.ModelView(world.MemberId)).items.map(m => m.id)
@@ -1039,7 +846,7 @@ test('an annotated term is admitted with its resources under an org read, and De
         assert.deepEqual((await client.Resources(ClassFx.Big)).map(r => r.path), [ClassFx.IconPath])
     })
     // identity with no security model: the tenant is DenyAll, so the Widget-typed term and classes are not admitted
-    await DevWorld.WithIdentity(ClassFx.Todl(false), undefined, async world =>
+    await DevWorld.WithIdentity(ClassFx.Todl, undefined, async world =>
     {
         const client = world.Connect()
         const ids = (await client.ModelView(world.MemberId)).items.map(m => m.id)
@@ -1052,7 +859,8 @@ test('an annotated term is admitted with its resources under an org read, and De
 
 test('a class node whose values the engine refuses is hidden, the page succeeds and a diagnostic is reported', async () =>
 {
-    await DevWorld.With(ClassFx.Todl(true), undefined, async world =>
+    // an organisation read restricts the scope (Default Deny), so class nodes are judged by the engine's Admits
+    await DevWorld.WithIdentity(ClassFx.Todl, SecurityFx.OrgRead(ClassFx.Widget, [ViewFx.ReaderId]), async world =>
     {
         const repo = ClassFx.Repository(ClassFx.LoneSurrogate)
         assert.equal(repo.resolve(ClassFx.Premium)?.isClass, true)
@@ -1072,7 +880,7 @@ test('a class node whose values the engine refuses is hidden, the page succeeds 
 
 test('an Admits error other than SchemaViolation is a fault: EngineModelGate rethrows it and reports nothing', async () =>
 {
-    await DevWorld.With(ClassFx.Todl(true), undefined, async world =>
+    await DevWorld.WithIdentity(ClassFx.Todl, SecurityFx.OrgRead(ClassFx.Widget, [ViewFx.ReaderId]), async world =>
     {
         const diagnostics = new RecordingDiagnostics()
         const host = AdmitsFaultHost.Over(world.Server.DevEngine())
@@ -1091,12 +899,12 @@ test('an Admits error other than SchemaViolation is a fault: EngineModelGate ret
 
 test('switching to a rebuilt scope source drops the subscription to the previous one', async () =>
 {
-    await DevWorld.With(ClassFx.Todl(true), undefined, async world =>
+    await DevWorld.With(ClassFx.Todl, undefined, async world =>
     {
         const first = new CountingScopeSource(() => world.Server.DevScopes())
         const second = new CountingScopeSource(() => world.Server.DevScopes())
         let current: IDevScopeSource = first
-        const view = world.View(new FixedStructure(ModelFixture.Build(false)), undefined, async () => current)
+        const view = world.View(new FixedStructure(ModelFixture.Build()), undefined, async () => current)
         await DevWorld.Page(view, DevWorld.Reader(), world.MemberId, ViewFx.All)
         await DevWorld.Page(view, DevWorld.Reader(), world.MemberId, ViewFx.All)
         assert.equal(first.Dropped.Active, 1)
@@ -1129,7 +937,7 @@ test('a role downgrade hides an instance on the next model/view and stales an ol
 
 test('an instance only in an unsaved buffer is hidden under a restricted scope, visible under an unrestricted one', async () =>
 {
-    // no identity, no policy: the scope restricts no read, so the unsaved instance shows as before the engine
+    // no identity: the scope restricts no read, so the unsaved instance shows as before the engine
     await DevWorld.With(WireFx.ModelTodl, undefined, async world =>
     {
         const client = world.Connect()
@@ -1137,33 +945,30 @@ test('an instance only in an unsaved buffer is hidden under a restricted scope, 
         await world.Language.WhenIdle()
         assert.ok((await client.ModelView(world.MemberId)).items.some(m => m.id === WireFx.S6))
     })
-    // a policy restricts the scope: the saved snapshot has no s6, so it stays hidden even though the policy would admit it
-    await DevWorld.With(WireFx.PolicyModelTodl, undefined, async world =>
+    // depth restricts the scope: the saved snapshot has no w3, so it stays hidden even though depth would admit it
+    await DevWorld.With(DepthFx.Todl, DepthFx.Bu(), async world =>
     {
         const client = world.Connect()
-        world.Language.DidChange(world.ModelUri, WireFx.PolicyEditedTodl)
+        world.Language.DidChange(world.ModelUri, DepthFx.SavedTodl)
         await world.Language.WhenIdle()
         const ids = (await client.ModelView(world.MemberId)).items.map(m => m.id)
-        assert.ok(!ids.includes(WireFx.S6))
-        assert.equal(await world.Server.DevModelView().Hidden(DevWorld.Owner(), WireFx.S6), true)
-        for (const shown of WireFx.VisibleServices)
-        {
-            assert.ok(ids.includes(shown))
-        }
+        assert.ok(!ids.includes(DepthFx.W3))
+        assert.equal(await world.Server.DevModelView().Hidden(DevWorld.Owner(), DepthFx.W3), true)
+        assert.ok(ids.includes(DepthFx.W1))
     })
 })
 
 test('an instance whose unsaved buffer changes its concept is hidden under a restricted scope', async () =>
 {
-    await DevWorld.With(WireFx.PolicyModelTodl, undefined, async world =>
+    await DevWorld.With(DepthFx.Todl, DepthFx.Bu(), async world =>
     {
         const client = world.Connect()
-        assert.ok((await client.ModelView(world.MemberId)).items.some(m => m.id === WireFx.S3))
-        world.Language.DidChange(world.ModelUri, WireFx.RetypedTodl)
+        assert.ok((await client.ModelView(world.MemberId)).items.some(m => m.id === DepthFx.W1))
+        world.Language.DidChange(world.ModelUri, DepthFx.RetypedTodl)
         await world.Language.WhenIdle()
         const ids = (await client.ModelView(world.MemberId)).items.map(m => m.id)
-        assert.ok(!ids.includes(WireFx.S3))
-        assert.ok(ids.includes(WireFx.VisibleServices[0]!))
+        assert.ok(!ids.includes(DepthFx.W1))
+        assert.ok(ids.includes(DepthFx.Widget))
     })
 })
 
