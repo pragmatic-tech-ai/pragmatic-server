@@ -1,4 +1,4 @@
-import { TeamMemberOrigin } from '../../../tenant-types.js'
+import { SecurityRoleKind, TeamMemberOrigin } from '../../../tenant-types.js'
 import type { FieldAccess } from './security-overrides.js'
 import { AccessLevel, Actions, PrivilegeAction } from './security-model-enums.js'
 
@@ -46,6 +46,9 @@ export class SecurityModelText
     private static readonly FieldUpdateName = 'update'
     private static readonly FieldCreateName = 'create'
     public static readonly SystemAdministratorText = 'Full access to every record and field in this environment. Not editable.'
+    private static readonly BaseRoleKindText = 'Base role'
+    private static readonly PackageRoleKindText = 'Package role'
+    private static readonly NoPackageText = ''
     private static readonly SyncedText = 'From identity provider'
     private static readonly ManualText = 'Added here'
     private static readonly UnsavedManualText = 'Added here (not saved)'
@@ -113,8 +116,26 @@ export class SecurityModelText
         return SecurityModelText.LevelNames.get(level) ?? SecurityModelText.NoneName
     }
 
+    // A catalog role's kind, in words.
+    public static RoleKindText(kind: SecurityRoleKind): string
+    {
+        return kind === SecurityRoleKind.Package ? SecurityModelText.PackageRoleKindText : SecurityModelText.BaseRoleKindText
+    }
+
+    // The package declaring a catalog role ('' for a base role).
+    public static RolePackageText(pkg: string | undefined): string
+    {
+        return pkg ?? SecurityModelText.NoPackageText
+    }
+
     // The catalog default of a secured field, in words ("Default: read, update").
     public static FieldDefaultText(access: FieldAccess): string
+    {
+        return SecurityModelText.DefaultPrefix + SecurityModelText.FieldAccessNames(access)
+    }
+
+    // A field access as its permission names ("read, update"; "no access" when none).
+    private static FieldAccessNames(access: FieldAccess): string
     {
         const names: string[] = []
         if (access.Read)
@@ -129,7 +150,7 @@ export class SecurityModelText
         {
             names.push(SecurityModelText.FieldCreateName)
         }
-        return SecurityModelText.DefaultPrefix + (names.length === 0 ? SecurityModelText.FieldNoneName : names.join(SecurityModelText.CommaSpace))
+        return names.length === 0 ? SecurityModelText.FieldNoneName : names.join(SecurityModelText.CommaSpace)
     }
 
     // One legend line: the glyph, then the level's name.
@@ -251,7 +272,7 @@ export class SecurityModelText
         {
             return SecurityModelText.NotListedText
         }
-        return SecurityModelText.FieldDefaultText(access).slice(SecurityModelText.DefaultPrefix.length)
+        return SecurityModelText.FieldAccessNames(access)
     }
 
     private static JoinParts(parts: readonly string[]): string

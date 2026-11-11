@@ -123,7 +123,7 @@ export class AssignmentTeamRowViewModel extends Observable
     }
 }
 
-// Who holds the selected role (People tab) or field profile (Fields tab):
+// Who holds the selected role (Roles › People) or field profile (Profiles › People):
 // by person (principal ids) and by team (a picker over the teams not yet
 // granted). One instance per side lives as long as the editor; Rebuild
 // points it at the current draft and target (a role or profile name).
@@ -142,7 +142,6 @@ export class AssignmentEditorViewModel extends Observable
     ])
     private static readonly Empty = ''
 
-    private draft: SecurityModelDraft | undefined
     private targetId: string | undefined
     private principalRows = new ObservableCollection<AssignmentPrincipalRowViewModel>()
     private teamRows = new ObservableCollection<AssignmentTeamRowViewModel>()
@@ -246,7 +245,6 @@ export class AssignmentEditorViewModel extends Observable
     public Rebuild(draft: SecurityModelDraft | undefined, targetId: string | undefined): void
     {
         const before = [this.principalRows, this.teamRows, this.teamOptions, this.selectedTeamOption, this.HasNoAssignments, this.HasTeamOptions] as const
-        this.draft = draft
         this.targetId = targetId
         this.principalRows = new ObservableCollection<AssignmentPrincipalRowViewModel>()
         this.teamRows = new ObservableCollection<AssignmentTeamRowViewModel>()
@@ -323,7 +321,8 @@ export class AssignmentEditorViewModel extends Observable
     private Restructure(change: (assignments: SecurityAssignments, target: string) => void): void
     {
         const target = this.targetId
-        if (target === undefined || this.draft === undefined)
+        // Apply refuses the edit when no draft is loaded.
+        if (target === undefined)
         {
             return
         }

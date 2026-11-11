@@ -346,12 +346,6 @@ export class TeamMemberRowViewModel extends OrgRowViewModel
         return this.origin
     }
 
-    // True when added in this draft and not yet on the server.
-    public get IsUnsaved(): boolean
-    {
-        return this.unsaved
-    }
-
     public get OriginText(): string
     {
         return SecurityModelText.MemberOrigin(this.origin, this.unsaved)

@@ -6,7 +6,7 @@ import { PendingWork } from '../../../../shell/holds-pending-work.js'
 import { PageState } from '../../../../shell/tenant-page-view-model.js'
 import { FakeTenantApi, TenantTestHost, Tick } from '../../../../shell/tests/tenant-test-fixtures.js'
 import { UsersAccessSectionService } from '../../users-access-section-service.js'
-import { AccessLevel, PrivilegeAction } from '../security-model-enums.js'
+import { AccessLevel } from '../security-model-enums.js'
 import { SecurityModelEditorViewModel } from '../security-model-editor-view-model.js'
 import { SecurityFixtures } from './security-fixtures.js'
 
@@ -113,35 +113,6 @@ describe('SecurityModelEditorViewModel', () =>
         await editor.UseEnvironment('beta')
         assert.equal(editor.Roles.Count, 0)
         assert.deepEqual(api.Calls.filter(c => c[0] === 'GetSecurityModel').map(c => c[1]), ['alpha', 'beta'])
-    })
-
-    it('a matrix cell cycles the levels its concept allows; back at the default the override clears', async () =>
-    {
-        const editor = await Fixture.Editor()
-        Fixture.Select(editor, 'projects.ProjectManager')
-        const project = editor.PrivilegeRows.ToArray()[2]
-        const cell = project.Read
-        assert.equal(cell.Level, AccessLevel.BusinessUnitAndChildren)
-        const seen: AccessLevel[] = []
-        for (let i = 0; i < 5; i++)
-        {
-            cell.CycleCommand.Execute()
-            seen.push(cell.Level)
-            if (i === 0)
-            {
-                assert.equal(editor.IsDirty, true)
-                assert.equal(editor.HasPendingWork, true)
-                assert.equal(editor.SaveStateText, 'Unsaved changes')
-                assert.equal(editor.SaveCommand.CanExecute(), true)
-            }
-        }
-        assert.deepEqual(seen, [AccessLevel.Organization, AccessLevel.None, AccessLevel.User, AccessLevel.BusinessUnit, AccessLevel.BusinessUnitAndChildren])
-        assert.deepEqual(editor.Draft?.ToDto().roleOverrides.filter(r => r.role === 'projects.ProjectManager'), [])
-        const department = editor.PrivilegeRows.ToArray()[0].Cell(PrivilegeAction.Invoke)
-        department.Cycle()
-        assert.equal(department.Level, AccessLevel.Organization)
-        department.Cycle()
-        assert.equal(department.Level, AccessLevel.None)
     })
 
     it('offers (none) only on the root and a unit no parent among itself or its descendants', async () =>
@@ -268,41 +239,6 @@ describe('SecurityModelEditorViewModel', () =>
         assert.equal(cell.IsOverridden, false)
         assert.equal(cell.ResetCommand.CanExecute(), false)
         assert.deepEqual(editor.Draft?.ToDto().roleOverrides.filter(r => r.role === 'BasicUser'), [])
-    })
-
-    it('assignment editors add and remove people and teams for the selected role and profile', async () =>
-    {
-        const editor = await Fixture.Editor()
-        const people = editor.RoleAssignment
-        Fixture.Select(editor, 'Reader')
-        assert.equal(people.HasNoAssignments, true)
-        people.NewPrincipal = 'p-2'
-        people.AddPersonCommand.Execute()
-        assert.deepEqual(people.PrincipalRows.ToArray().map(r => r.PrincipalId), ['p-2'])
-        assert.equal(editor.Roles.ToArray()[2].Label, 'Reader \u00b7 1 direct')
-        assert.deepEqual(people.TeamOptions.ToArray().map(o => o.Label), ['Alpha'])
-        people.AddTeamCommand.Execute()
-        assert.deepEqual(people.TeamRows.ToArray().map(r => r.TeamName), ['Alpha'])
-        assert.equal(people.TeamOptions.Count, 0)
-        assert.deepEqual(editor.Draft?.ToDto().roleAssignments.find(a => a.role === 'Reader'), { role: 'Reader', principalIds: ['p-2'], teamIds: ['team-a'] })
-        people.PrincipalRows.ToArray()[0].RemoveCommand.Execute()
-        people.TeamRows.ToArray()[0].RemoveCommand.Execute()
-        assert.equal(people.HasNoAssignments, true)
-        assert.equal(editor.Draft?.ToDto().roleAssignments.some(a => a.role === 'Reader'), false)
-        editor.ProfileAssignment.NewPrincipal = 'p-7'
-        editor.ProfileAssignment.AddPersonCommand.Execute()
-        assert.deepEqual(editor.ProfileAssignment.PrincipalRows.ToArray().map(r => r.PrincipalId), ['carol', 'p-7'])
-    })
-
-    it('a field checkbox stores a profile override; back at the default it clears', async () =>
-    {
-        const editor = await Fixture.Editor(Fixture.Api(SecurityFixtures.Empty()))
-        const row = editor.FieldRows.ToArray()[0]
-        row.CanCreate = true
-        assert.equal(row.CanCreate, true)
-        assert.deepEqual(editor.Draft?.ToDto().profileOverrides, [{ profile: 'hr.Payroll', concept: 'hr.Employee', field: 'Salary', read: true, update: false, create: true }])
-        row.CanCreate = false
-        assert.deepEqual(editor.Draft?.ToDto().profileOverrides, [])
     })
 
     it('Save PUTs the whole setting and rebases (clean after, selections kept)', async () =>

@@ -1,6 +1,6 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { TenantApiError } from '../../../tenant-api-client.js'
-import { SecurityRoleKind, type SecurityRoleDto, type TeamMemberDto } from '../../../tenant-types.js'
+import { SecurityRoleKind, type SecurityProfileDto, type SecurityRoleDto, type TeamMemberDto } from '../../../tenant-types.js'
 import { AdminCapability } from '../../../shell/admin-capability.js'
 import { PendingWork, type IHoldsPendingWork } from '../../../shell/holds-pending-work.js'
 import type { TenantSessionService } from '../../../shell/tenant-session-service.js'
@@ -112,6 +112,8 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly SelectedRoleNameProperty = 'SelectedRoleName'
     private static readonly PrivilegeRowsProperty = 'PrivilegeRows'
     private static readonly ProfilesProperty = 'Profiles'
+    private static readonly HasProfilesProperty = 'HasProfiles'
+    private static readonly HasNoProfilesProperty = 'HasNoProfiles'
     private static readonly SelectedProfileProperty = 'SelectedProfile'
     private static readonly HasSelectedProfileProperty = 'HasSelectedProfile'
     private static readonly HasNoSelectedProfileProperty = 'HasNoSelectedProfile'
@@ -507,6 +509,17 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         return this.profiles
     }
 
+    public get HasProfiles(): boolean
+    {
+        return this.profiles.Count > 0
+    }
+
+    // Whether the catalog lists no field profiles (none loaded yet).
+    public get HasNoProfiles(): boolean
+    {
+        return !this.HasProfiles
+    }
+
     public get SelectedProfile(): ProfileItemViewModel | undefined
     {
         const id = this.selectedProfileId
@@ -792,6 +805,11 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         }
         if (this.dirty && !this.discarding)
         {
+            // The kept draft is not reloaded, but the change log still follows the reload.
+            if (this.IsChangesMode)
+            {
+                void this.securityChanges.Refresh()
+            }
             return true
         }
         const generation = this.LoadGeneration
@@ -937,7 +955,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         this.teamInputs.clear()
         this.savedTeamMembers = new Map((draft?.ToDto().teams ?? []).map(t => [t.id, t.manualMembers]))
         const roles = SecurityModelEditorViewModel.OrderedRoles(draft?.Catalog.roles ?? [])
-        const profiles = draft?.Catalog.profiles ?? []
+        const profiles = SecurityModelEditorViewModel.OrderedProfiles(draft?.Catalog.profiles ?? [])
         this.selectedRoleId = roles.some(r => r.name === this.selectedRoleId) ? this.selectedRoleId : roles[0]?.name
         this.selectedProfileId = profiles.some(p => p.name === this.selectedProfileId) ? this.selectedProfileId : profiles[0]?.name
         this.Rebuild()
@@ -974,6 +992,12 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         return [...roles].sort((a, b) => rank(a) - rank(b) || SecurityModelEditorViewModel.Ordinal(a.name, b.name))
     }
 
+    // Profiles by name (ordinal), as the package roles are.
+    private static OrderedProfiles(profiles: readonly SecurityProfileDto[]): SecurityProfileDto[]
+    {
+        return [...profiles].sort((a, b) => SecurityModelEditorViewModel.Ordinal(a.name, b.name))
+    }
+
     private RebuildRoles(): void
     {
         const draft = this.draft
@@ -995,7 +1019,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
                 item = new RoleItemViewModel(role.name)
                 this.roleItems.set(role.name, item)
             }
-            item.Update(role.name, draft?.Assignments.Holders(role.name).PrincipalIds.length ?? 0)
+            item.Update(role, draft?.Assignments.Holders(role.name).PrincipalIds.length ?? 0)
             this.roles.Add(item)
         }
         const P = SecurityModelEditorViewModel
@@ -1020,7 +1044,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
 
     private RebuildProfiles(): void
     {
-        const profiles = this.draft?.Catalog.profiles ?? []
+        const profiles = SecurityModelEditorViewModel.OrderedProfiles(this.draft?.Catalog.profiles ?? [])
         const live = new Set<string>(profiles.map(p => p.name))
         for (const id of [...this.profileItems.keys()])
         {
@@ -1042,7 +1066,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
             this.profiles.Add(item)
         }
         const P = SecurityModelEditorViewModel
-        this.Raise(P.ProfilesProperty, P.SelectedProfileProperty, P.HasSelectedProfileProperty, P.HasNoSelectedProfileProperty)
+        this.Raise(P.ProfilesProperty, P.HasProfilesProperty, P.HasNoProfilesProperty, P.SelectedProfileProperty, P.HasSelectedProfileProperty, P.HasNoSelectedProfileProperty)
     }
 
     private RebuildFieldGrants(): void

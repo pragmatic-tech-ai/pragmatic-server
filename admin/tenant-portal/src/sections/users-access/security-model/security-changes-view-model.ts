@@ -70,6 +70,8 @@ export class SecurityChangesViewModel extends Observable
     private entries = new ObservableCollection<SecurityChangeEntryViewModel>()
     private errorText = SecurityChangesViewModel.Empty
     private generation = 0
+    // Whether a log has been shown since the last Invalidate: "no changes" is only true once one loaded.
+    private loaded = false
 
     public constructor(private readonly session: TenantSessionService, private readonly host: ISecurityChangesHost)
     {
@@ -83,7 +85,7 @@ export class SecurityChangesViewModel extends Observable
 
     public get HasNoEntries(): boolean
     {
-        return this.entries.Count === 0 && this.errorText.length === 0
+        return this.loaded && this.entries.Count === 0 && !this.HasError
     }
 
     public get NoEntriesText(): string
@@ -121,7 +123,7 @@ export class SecurityChangesViewModel extends Observable
         }
         if (generation === this.generation)
         {
-            this.Show(loaded, failure)
+            this.Show(loaded, failure, true)
         }
     }
 
@@ -129,10 +131,10 @@ export class SecurityChangesViewModel extends Observable
     public Invalidate(): void
     {
         this.generation++
-        this.Show([], SecurityChangesViewModel.Empty)
+        this.Show([], SecurityChangesViewModel.Empty, false)
     }
 
-    private Show(changes: readonly SecurityChangesDto[], failure: string): void
+    private Show(changes: readonly SecurityChangesDto[], failure: string, loaded: boolean): void
     {
         const P = SecurityChangesViewModel
         const before = [this.entries, this.HasNoEntries, this.errorText, this.HasError] as const
@@ -142,6 +144,7 @@ export class SecurityChangesViewModel extends Observable
             this.entries.Add(new SecurityChangeEntryViewModel(change))
         }
         this.errorText = failure
+        this.loaded = loaded
         this.RaisePropertyChanged(P.EntriesProperty, before[0], this.entries)
         this.RaisePropertyChanged(P.HasNoEntriesProperty, before[1], this.HasNoEntries)
         this.RaisePropertyChanged(P.ErrorTextProperty, before[2], this.errorText)

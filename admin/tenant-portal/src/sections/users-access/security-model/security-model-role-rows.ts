@@ -1,22 +1,27 @@
 import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
+import { SecurityRoleKind, type SecurityRoleDto } from '../../../tenant-types.js'
 import type { SecurityModelDraft } from './security-model-draft.js'
 import type { ISecurityModelEditHost } from './security-model-edit-host.js'
 import { AccessLevel, Actions, BaseRole, FieldPermission, PrivilegeAction } from './security-model-enums.js'
 import { SecurityModelText } from './security-model-text.js'
 
-// One catalog role in the role list: its name and how many people hold it
-// directly. Kept per role name across rebuilds, so the list's selection
-// survives them.
+// One catalog role in the role list: its name, how many people hold it
+// directly, its kind (base or package) and package. Kept per role name across
+// rebuilds, so the list's selection survives them.
 export class RoleItemViewModel extends Observable
 {
     private static readonly LabelProperty = 'Label'
+    private static readonly KindTextProperty = 'KindText'
+    private static readonly PackageTextProperty = 'PackageText'
     private static readonly DirectTemplate = '{name} \u00b7 {count} direct'
     private static readonly NameToken = '{name}'
     private static readonly CountToken = '{count}'
 
     private name = ''
     private direct = 0
+    private kind = SecurityRoleKind.Base
+    private package: string | undefined
 
     public constructor(public readonly Id: string)
     {
@@ -28,6 +33,18 @@ export class RoleItemViewModel extends Observable
         return this.name
     }
 
+    // "Base role" or "Package role".
+    public get KindText(): string
+    {
+        return SecurityModelText.RoleKindText(this.kind)
+    }
+
+    // The package that declares the role ('' for a base role).
+    public get PackageText(): string
+    {
+        return SecurityModelText.RolePackageText(this.package)
+    }
+
     public get Label(): string
     {
         return RoleItemViewModel.DirectTemplate
@@ -35,12 +52,16 @@ export class RoleItemViewModel extends Observable
             .replace(RoleItemViewModel.CountToken, String(this.direct))
     }
 
-    public Update(name: string, direct: number): void
+    public Update(role: SecurityRoleDto, direct: number): void
     {
-        const old = this.Label
-        this.name = name
+        const old = [this.Label, this.KindText, this.PackageText] as const
+        this.name = role.name
         this.direct = direct
-        this.RaisePropertyChanged(RoleItemViewModel.LabelProperty, old, this.Label)
+        this.kind = role.kind
+        this.package = role.package
+        this.RaisePropertyChanged(RoleItemViewModel.LabelProperty, old[0], this.Label)
+        this.RaisePropertyChanged(RoleItemViewModel.KindTextProperty, old[1], this.KindText)
+        this.RaisePropertyChanged(RoleItemViewModel.PackageTextProperty, old[2], this.PackageText)
     }
 }
 
@@ -80,6 +101,8 @@ export class PrivilegeCellViewModel extends Observable
     private static readonly LevelNameProperty = 'LevelName'
     private static readonly DefaultTextProperty = 'DefaultText'
     private static readonly IsOverriddenProperty = 'IsOverridden'
+    private static readonly ToolTipTextProperty = 'ToolTipText'
+    private static readonly ToolTipSeparator = ' \u00b7 '
 
     private readonly cycleCommand: RelayCommand
     private readonly resetCommand: RelayCommand
@@ -121,6 +144,12 @@ export class PrivilegeCellViewModel extends Observable
         return SecurityModelText.DefaultPrefix + SecurityModelText.LevelName(this.draft.Overrides.DefaultLevel(this.row.Role, this.row.Concept, this.Action))
     }
 
+    // The cell's tooltip: the effective level, then its default ("User \u00b7 Default: Business unit").
+    public get ToolTipText(): string
+    {
+        return this.LevelName + PrivilegeCellViewModel.ToolTipSeparator + this.DefaultText
+    }
+
     public get IsOverridden(): boolean
     {
         return this.draft.Overrides.OverrideLevel(this.row.Role, this.row.Concept, this.Action) !== undefined
@@ -160,7 +189,7 @@ export class PrivilegeCellViewModel extends Observable
 
     private Edit(change: (draft: SecurityModelDraft) => void): void
     {
-        const before = [this.Glyph, this.LevelName, this.DefaultText, this.IsOverridden] as const
+        const before = [this.Glyph, this.LevelName, this.DefaultText, this.IsOverridden, this.ToolTipText] as const
         if (!this.host.Apply(change))
         {
             return
@@ -169,6 +198,7 @@ export class PrivilegeCellViewModel extends Observable
         this.RaisePropertyChanged(PrivilegeCellViewModel.LevelNameProperty, before[1], this.LevelName)
         this.RaisePropertyChanged(PrivilegeCellViewModel.DefaultTextProperty, before[2], this.DefaultText)
         this.RaisePropertyChanged(PrivilegeCellViewModel.IsOverriddenProperty, before[3], this.IsOverridden)
+        this.RaisePropertyChanged(PrivilegeCellViewModel.ToolTipTextProperty, before[4], this.ToolTipText)
         this.resetCommand.RaiseCanExecuteChanged()
         this.row.LevelsChanged()
     }

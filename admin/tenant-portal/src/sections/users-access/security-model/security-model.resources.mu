@@ -11,8 +11,8 @@
 // controls bind IsEnabled to CanEdit (the Manage users & access permission):
 // visible but disabled without it, with the reason shown. Text boxes bind
 // two-way to row view-models; a keystroke never replaces the collection the
-// box lives in. A privilege cell / assignment editor binds through a nested
-// DataContext (a dotted $A.B path only re-reads on its first segment).
+// box lives in. A privilege cell / assignment editor is a ContentControl over its
+// view-model, rendered by an implicit (DataType-matched) DataTemplate.
 
 import SecurityModelEditorViewModel from "./security-model-editor-view-model.js"
 import AssignmentEditorViewModel from "./assignment-editor-view-model.js"
@@ -24,6 +24,7 @@ import SecurityChangeLineViewModel from "./security-changes-view-model.js"
 import RoleItemViewModel from "./security-model-role-rows.js"
 import ProfileItemViewModel from "./security-model-role-rows.js"
 import PrivilegeRowViewModel from "./security-model-role-rows.js"
+import PrivilegeCellViewModel from "./security-model-role-rows.js"
 import LegendEntryViewModel from "./security-model-role-rows.js"
 import FieldGrantRowViewModel from "./security-model-role-rows.js"
 import BusinessUnitRowViewModel from "./security-model-org-rows.js"
@@ -166,9 +167,10 @@ resources SecurityModelResources {
                         StackPanel [ Grid.Column = 0, Orientation = Vertical, Margin = (0,0,16,0) ] {
                             TextBlock [ Text = "Field profiles", Style = @TenantSectionCaption ]
                             TextBlock [ Text = "This environment's catalog lists no field profiles yet.", Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,8),
-                                        Visibility = $HasNoSelectedProfile << ToVisibility ]
+                                        Visibility = $HasNoProfiles << ToVisibility ]
                             ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $Profiles,
-                                      SelectedItem = $SelectedProfile, ItemTemplate = @SecurityModelProfileItemTemplate ]
+                                      SelectedItem = $SelectedProfile, ItemTemplate = @SecurityModelProfileItemTemplate,
+                                      Visibility = $HasProfiles << ToVisibility ]
                         }
 
                         // The selected profile's tabs.
@@ -306,15 +308,32 @@ resources SecurityModelResources {
 
     // ---- Roles mode rows ----
 
+    // A role: its name and direct holders, then its kind and package.
     DataTemplate x:key="SecurityModelRoleItemTemplate" [ DataType = RoleItemViewModel ] {
-        TextBlock [ Text = $Label, Foreground = @Fg0, Margin = (8,6,8,6) ]
+        StackPanel [ Orientation = Vertical, Margin = (8,6,8,6) ] {
+            TextBlock [ Text = $Label, Foreground = @Fg0 ]
+            StackPanel [ Orientation = Horizontal ] {
+                TextBlock [ Text = $KindText, Style = @BodySm, Foreground = @Fg2 ]
+                TextBlock [ Text = $PackageText, Style = @BodySm, Foreground = @Fg2, Margin = (8,0,0,0) ]
+            }
+        }
     }
 
     DataTemplate x:key="SecurityModelProfileItemTemplate" [ DataType = ProfileItemViewModel ] {
         TextBlock [ Text = $Label, Foreground = @Fg0, Margin = (8,6,8,6) ]
     }
 
-    // A concept row: the concept, a level button per action (same ten
+    // One privilege cell (implicit: each row's cells pick it by type): the
+    // level button (tooltip: level and default), the override marker, reset.
+    DataTemplate [ DataType = PrivilegeCellViewModel ] {
+        StackPanel [ Orientation = Horizontal ] {
+            Button [ Variant = Ghost, Command = $CycleCommand, HorizontalAlignment = Left, ToolTipService.ToolTip = $ToolTipText ] { TextBlock [ Text = $Glyph ] }
+            TextBlock [ Text = "•", Foreground = @Fg2, VerticalAlignment = Center, Visibility = $IsOverridden << ToVisibility ]
+            Button [ Variant = Ghost, Command = $ResetCommand, Visibility = $IsOverridden << ToVisibility ] { TextBlock [ Text = "↺" ] }
+        }
+    }
+
+    // A concept row: the concept, a level cell per action (same ten
     // columns as the header), then the plain-words sentence beneath.
     DataTemplate x:key="SecurityModelPrivilegeRowTemplate" [ DataType = PrivilegeRowViewModel ] {
         Grid [ Style = @TenantTableColumns ] {
@@ -335,69 +354,15 @@ resources SecurityModelResources {
                 RowDefinition [ Height = GridLength.Auto ]
             }
             TextBlock [ Grid.Column = 0, Text = $Concept, Style = @UiLabel, Foreground = @Fg0, VerticalAlignment = Center ]
-            Border [ Grid.Column = 1, DataContext = $Create ] {
-                StackPanel [ Orientation = Horizontal ] {
-                    Button [ Variant = Ghost, Command = $CycleCommand, HorizontalAlignment = Left, ToolTipService.ToolTip = $DefaultText ] { TextBlock [ Text = $Glyph ] }
-                    TextBlock [ Text = "•", Foreground = @Fg2, VerticalAlignment = Center, Visibility = $IsOverridden << ToVisibility ]
-                    Button [ Variant = Ghost, Command = $ResetCommand, Visibility = $IsOverridden << ToVisibility ] { TextBlock [ Text = "↺" ] }
-                }
-            }
-            Border [ Grid.Column = 2, DataContext = $Read ] {
-                StackPanel [ Orientation = Horizontal ] {
-                    Button [ Variant = Ghost, Command = $CycleCommand, HorizontalAlignment = Left, ToolTipService.ToolTip = $DefaultText ] { TextBlock [ Text = $Glyph ] }
-                    TextBlock [ Text = "•", Foreground = @Fg2, VerticalAlignment = Center, Visibility = $IsOverridden << ToVisibility ]
-                    Button [ Variant = Ghost, Command = $ResetCommand, Visibility = $IsOverridden << ToVisibility ] { TextBlock [ Text = "↺" ] }
-                }
-            }
-            Border [ Grid.Column = 3, DataContext = $Update ] {
-                StackPanel [ Orientation = Horizontal ] {
-                    Button [ Variant = Ghost, Command = $CycleCommand, HorizontalAlignment = Left, ToolTipService.ToolTip = $DefaultText ] { TextBlock [ Text = $Glyph ] }
-                    TextBlock [ Text = "•", Foreground = @Fg2, VerticalAlignment = Center, Visibility = $IsOverridden << ToVisibility ]
-                    Button [ Variant = Ghost, Command = $ResetCommand, Visibility = $IsOverridden << ToVisibility ] { TextBlock [ Text = "↺" ] }
-                }
-            }
-            Border [ Grid.Column = 4, DataContext = $Delete ] {
-                StackPanel [ Orientation = Horizontal ] {
-                    Button [ Variant = Ghost, Command = $CycleCommand, HorizontalAlignment = Left, ToolTipService.ToolTip = $DefaultText ] { TextBlock [ Text = $Glyph ] }
-                    TextBlock [ Text = "•", Foreground = @Fg2, VerticalAlignment = Center, Visibility = $IsOverridden << ToVisibility ]
-                    Button [ Variant = Ghost, Command = $ResetCommand, Visibility = $IsOverridden << ToVisibility ] { TextBlock [ Text = "↺" ] }
-                }
-            }
-            Border [ Grid.Column = 5, DataContext = $Append ] {
-                StackPanel [ Orientation = Horizontal ] {
-                    Button [ Variant = Ghost, Command = $CycleCommand, HorizontalAlignment = Left, ToolTipService.ToolTip = $DefaultText ] { TextBlock [ Text = $Glyph ] }
-                    TextBlock [ Text = "•", Foreground = @Fg2, VerticalAlignment = Center, Visibility = $IsOverridden << ToVisibility ]
-                    Button [ Variant = Ghost, Command = $ResetCommand, Visibility = $IsOverridden << ToVisibility ] { TextBlock [ Text = "↺" ] }
-                }
-            }
-            Border [ Grid.Column = 6, DataContext = $AppendTo ] {
-                StackPanel [ Orientation = Horizontal ] {
-                    Button [ Variant = Ghost, Command = $CycleCommand, HorizontalAlignment = Left, ToolTipService.ToolTip = $DefaultText ] { TextBlock [ Text = $Glyph ] }
-                    TextBlock [ Text = "•", Foreground = @Fg2, VerticalAlignment = Center, Visibility = $IsOverridden << ToVisibility ]
-                    Button [ Variant = Ghost, Command = $ResetCommand, Visibility = $IsOverridden << ToVisibility ] { TextBlock [ Text = "↺" ] }
-                }
-            }
-            Border [ Grid.Column = 7, DataContext = $Assign ] {
-                StackPanel [ Orientation = Horizontal ] {
-                    Button [ Variant = Ghost, Command = $CycleCommand, HorizontalAlignment = Left, ToolTipService.ToolTip = $DefaultText ] { TextBlock [ Text = $Glyph ] }
-                    TextBlock [ Text = "•", Foreground = @Fg2, VerticalAlignment = Center, Visibility = $IsOverridden << ToVisibility ]
-                    Button [ Variant = Ghost, Command = $ResetCommand, Visibility = $IsOverridden << ToVisibility ] { TextBlock [ Text = "↺" ] }
-                }
-            }
-            Border [ Grid.Column = 8, DataContext = $Share ] {
-                StackPanel [ Orientation = Horizontal ] {
-                    Button [ Variant = Ghost, Command = $CycleCommand, HorizontalAlignment = Left, ToolTipService.ToolTip = $DefaultText ] { TextBlock [ Text = $Glyph ] }
-                    TextBlock [ Text = "•", Foreground = @Fg2, VerticalAlignment = Center, Visibility = $IsOverridden << ToVisibility ]
-                    Button [ Variant = Ghost, Command = $ResetCommand, Visibility = $IsOverridden << ToVisibility ] { TextBlock [ Text = "↺" ] }
-                }
-            }
-            Border [ Grid.Column = 9, DataContext = $Invoke ] {
-                StackPanel [ Orientation = Horizontal ] {
-                    Button [ Variant = Ghost, Command = $CycleCommand, HorizontalAlignment = Left, ToolTipService.ToolTip = $DefaultText ] { TextBlock [ Text = $Glyph ] }
-                    TextBlock [ Text = "•", Foreground = @Fg2, VerticalAlignment = Center, Visibility = $IsOverridden << ToVisibility ]
-                    Button [ Variant = Ghost, Command = $ResetCommand, Visibility = $IsOverridden << ToVisibility ] { TextBlock [ Text = "↺" ] }
-                }
-            }
+            ContentControl [ Grid.Column = 1, Content = $Create ]
+            ContentControl [ Grid.Column = 2, Content = $Read ]
+            ContentControl [ Grid.Column = 3, Content = $Update ]
+            ContentControl [ Grid.Column = 4, Content = $Delete ]
+            ContentControl [ Grid.Column = 5, Content = $Append ]
+            ContentControl [ Grid.Column = 6, Content = $AppendTo ]
+            ContentControl [ Grid.Column = 7, Content = $Assign ]
+            ContentControl [ Grid.Column = 8, Content = $Share ]
+            ContentControl [ Grid.Column = 9, Content = $Invoke ]
             TextBlock [ Grid.Row = 1, Grid.Column = 0, Grid.ColumnSpan = 10, Text = $Sentence, Style = @BodySm, Foreground = @Fg2,
                         TextWrapping = Wrap, Margin = (0,2,0,4) ]
         }
