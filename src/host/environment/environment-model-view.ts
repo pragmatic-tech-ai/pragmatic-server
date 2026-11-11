@@ -77,14 +77,15 @@ class EnvironmentModelMember
  * resource.
  *
  * - `Page`: `memberId` must be one of the snapshot's `Models` (a delivered package id, never `todl.system`), else
- *   InvalidRequest "unknown solution member"; a non-positive page size is InvalidParams. Items = the nodes
- *   ``MATCH (n:`todl.Element`) RETURN n`` returns under the caller's scope AND the S12 model filter
- *   ({@link ModelScopes}), keyset-paged ({@link CypherKeysetPage}, S11), each mapped by {@link EnvironmentModelMember};
- *   `provenanceOf` is `{}`.
- *   Cursor fingerprint: `modelView`, the member id, the engine schema version and the scope digest (a commit between
- *   pages neither repeats nor skips a member; an upgrade or another principal stales the cursor). A page that saw the
- *   engine upgrade is read again (`MaxAttempts`); one that never settles is CursorStale for a continuation, else
- *   EngineCypherQueryError Unsettled. The scope alone decides what is visible; nothing is filtered or masked here.
+ *   InvalidRequest "unknown solution member" (checked before the page size, as dev); a non-positive page size is
+ *   InvalidParams. Items = the nodes ``MATCH (n:`todl.Element`) RETURN n`` returns under the caller's scope AND the
+ *   owner-only model filter (`ModelScopes.ForOwner`, ruling R53: the package's own nodes, so another package's taxonomy
+ *   terms are not listed), keyset-paged ({@link CypherKeysetPage}, S11), each mapped by {@link EnvironmentModelMember};
+ *   `provenanceOf` is `{}`. Cursor fingerprint: `modelView`, the member id, the engine schema version and the scope
+ *   digest (a commit between pages neither repeats nor skips a member; an upgrade or another principal stales the
+ *   cursor). A page that saw the engine upgrade is read again (`MaxAttempts`); one that never settles is CursorStale for
+ *   a continuation, else EngineCypherQueryError Unsettled. The scope alone decides what is visible; nothing is filtered
+ *   or masked here.
  * - `Hidden`: the engine holds `nodeId` (a System read) and the caller's scope does not show it.
  * - `Resources`: always `[]` (the runtime holds no source resources).
  */
@@ -103,7 +104,6 @@ export class EnvironmentModelView implements IGraphModelView
 
     public async Page(context: AccessContext, memberId: string | undefined, page: IModelViewPage): Promise<ModelViewPageDto>
     {
-        PageRequest.ValidatePageSize(page.Params)
         for (let attempt = 1; attempt <= EnvironmentModelView.MaxAttempts; attempt++)
         {
             const last = attempt === EnvironmentModelView.MaxAttempts
@@ -120,8 +120,9 @@ export class EnvironmentModelView implements IGraphModelView
             {
                 throw new ResponseError(ErrorCodes.InvalidRequest, EnvironmentModelView.UnknownMemberError)
             }
+            PageRequest.ValidatePageSize(page.Params)
             const graphScope = await (await this.scopes()).ScopeFor(context)
-            const scope = this.modelScopes.For(graphScope.Scope, memberId, snapshot.Description)
+            const scope = this.modelScopes.ForOwner(graphScope.Scope, memberId, snapshot.Description)
             const fingerprint = PageFingerprint.Of(EnvironmentModelView.FingerprintTag, memberId, before, graphScope.Digest)
             const keyset = CypherKeysetPage.Resolve(page.Params, fingerprint, page.Limits)
             let result: Cypher.CypherResult

@@ -2,7 +2,8 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { AccessScope } from '@pragmatic-tech-ai/graph'
 import { EdgeKind, Tier } from '@pragmatic-tech-ai/todl'
-import { ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { DeliveryChannel } from '@pragmatic-tech-ai/todl/engine'
+import { CursorStaleError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ModelMemberDto, ModelViewPageDto, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessLevel, OwnershipSourceKind, Principal, PrincipalKind, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
@@ -51,6 +52,11 @@ class ViewFx
     public static readonly B = 'b'
     public static readonly D = 'd'
     public static readonly F = 'f'
+    public static readonly Term = 'todl.Term'
+    public static readonly ForeignTerm = 'notes.t1'
+    public static readonly ExtraApp = 'extra-app'
+    public static readonly Extra = { id: 'extra', version: '1.0.0' }
+    public static readonly ExtraTodl = 'namespace extra { concept Thing { name : string?; } }'
     public static readonly Relationship = EdgeKind[EdgeKind.Relationship]
     public static readonly Instance = Tier[Tier.Instance]
 
@@ -223,6 +229,46 @@ describe('runtime model/view on the environment engine', () =>
             {
                 assert.equal(await ViewFx.CodeOf(client.ModelView(unknown)), ErrorCodes.InvalidRequest, unknown)
             }
+            assert.equal(await ViewFx.CodeOf(client.ModelView(ViewFx.Unknown, { pageSize: 0 })), ErrorCodes.InvalidRequest, 'the member is checked before the page size')
+            assert.equal(await ViewFx.CodeOf(client.ModelView(ViewFx.Crm.id, { pageSize: 0 })), ErrorCodes.InvalidParams, 'a known member with a bad page size')
+        })
+    })
+
+    test('another package\'s term is not listed', async () =>
+    {
+        await ViewFx.Run({}, async fx =>
+        {
+            await fx.Seed([{ Concept: ViewFx.Account, Id: ViewFx.A1 }, { Concept: ViewFx.Term, Id: ViewFx.ForeignTerm, Owner: ViewFx.Notes.id }])
+            const client = await fx.Connect(ViewFx.Principal(ViewFx.P1))
+            assert.deepEqual(ViewFx.Ids(await client.ModelView(ViewFx.Crm.id)), [ViewFx.A1], 'R53: the crm view lists crm-owned nodes only')
+            assert.deepEqual(ViewFx.Ids(await client.ModelView(ViewFx.Notes.id)), [ViewFx.ForeignTerm], 'the owning package lists its term')
+        })
+    })
+
+    test('Hidden is false for an unknown id and true for an out-of-scope node', async () =>
+    {
+        await ViewFx.Run({ Identity: true, SecurityModel: ViewFx.Model() }, async fx =>
+        {
+            await ViewFx.SeedAccounts(fx)
+            const view = fx.Server.EnvironmentModelView()
+            const context = fx.ContextFor(ViewFx.Principal(ViewFx.P1))
+            assert.equal(await view.Hidden(context, ViewFx.Unknown), false)
+            assert.equal(await view.Hidden(context, ViewFx.A2), true, 'p2\'s account is outside p1\'s scope')
+        })
+    })
+
+    test('an upgrade between pages stales the cursor', async () =>
+    {
+        await ViewFx.Run({}, async fx =>
+        {
+            await fx.Seed([ViewFx.B, ViewFx.D].map(id => ({ Concept: ViewFx.Account, Id: id })))
+            const client = await fx.Connect(ViewFx.Principal(ViewFx.P1))
+            const first = await client.ModelView(ViewFx.Crm.id, { pageSize: 1 })
+            assert.ok(first.nextCursor !== undefined)
+            await fx.Package(ViewFx.Extra.id, ViewFx.Extra.version, ViewFx.ExtraTodl)
+            await fx.Server.EnvironmentEngine().Deliver({ Channel: DeliveryChannel.Deploy, Name: ViewFx.ExtraApp, Packages: [{ model: ViewFx.Extra.id, version: ViewFx.Extra.version }] },
+                async () => fx.Live(ViewFx.ExtraApp, ViewFx.AppVersion, [ViewFx.Extra]))
+            assert.equal(await ViewFx.CodeOf(client.ModelView(ViewFx.Crm.id, { pageSize: 1, cursor: first.nextCursor })), CursorStaleError.Code)
         })
     })
 
