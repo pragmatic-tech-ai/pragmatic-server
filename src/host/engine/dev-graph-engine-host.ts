@@ -715,9 +715,9 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
 
     /**
      * Replaces the running engine with one launched from `snapshot`, new callers waiting on the host gate meanwhile;
-     * the replaced engine is retired, not disposed, so the readers already handed out finish.
+     * the replaced engine is retired, not disposed, so the readers already handed out finish. True when the launched
+     * engine was swapped in; false when teardown began meanwhile (nothing applied).
      */
-    /** True when the launched engine was swapped in; false when teardown began meanwhile (nothing applied). */
     private async Reopen(opened: OpenedEngine, snapshot: DevSnapshot): Promise<boolean>
     {
         let release: () => void = () => undefined

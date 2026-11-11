@@ -4,7 +4,11 @@ import { mkdtempSync, cpSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { CursorStaleError, CypherCells, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { AccessScope, Cypher, GraphEngine, StorageKind } from '@pragmatic-tech-ai/graph'
+import type { ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
+import { TodlFileConnector, TodlNodePlacement } from '@pragmatic-tech-ai/todl/engine'
+import { Disposable } from '@pragmatic-tech-ai/todl-runtime'
+import { CursorStaleError, CypherCells, ErrorCodes, PageCursorCodec } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherCellDto, CypherParamValue, CypherQueryPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
@@ -14,7 +18,13 @@ import { PagingLimits } from '../../../config/paging-limits.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { PpSecurityHarness } from '../../cypher/tests/pp-security-harness.js'
 import { CypherParamConverter } from '../../cypher/cypher-param-converter.js'
+import { EngineCypherQuery } from '../engine-cypher-query.js'
 import type { IDevCypherRequest } from '../engine-cypher-query.js'
+import type { IGraphScope } from '../access-scope-source.js'
+import { DevSnapshotSource } from '../dev-snapshot-source.js'
+import type { IEngineSnapshot, IGraphEngineHost } from '../graph-engine-host.js'
+import { ServerModelWorkspace } from '../server-model-workspace.js'
+import { EngineHostFx, HeldFence } from './engine-host-fixture.js'
 
 /** What one dev query asks beyond its text. */
 interface IQueryOptions
@@ -53,6 +63,21 @@ class DevCypherWorld
     {
         const page = await this.Run(context, source, options)
         return page.items.map(row => (typeof row[0] === 'string' ? row[0] : '')).sort()
+    }
+
+    /** Walks every page of `source` at `pageSize`, returning each page's rows (first cells). */
+    public async Walk(context: AccessContext, source: string, pageSize: number): Promise<unknown[][]>
+    {
+        const pages: unknown[][] = []
+        let cursor: string | undefined
+        do
+        {
+            const page = await this.Run(context, source, { pageSize, ...(cursor === undefined ? {} : { cursor }) })
+            pages.push(page.items.map(row => row[0]))
+            cursor = page.nextCursor
+        }
+        while (cursor !== undefined)
+        return pages
     }
 
     public async Count(context: AccessContext, source: string, options: IQueryOptions = {}): Promise<number>
@@ -135,6 +160,11 @@ class DevCypherFx
     public static readonly SecretColumn = 'MATCH (w:Widget) RETURN w.secret AS s'
     public static readonly SecretWhere = "MATCH (w:Widget) WHERE w.secret = 'hush' RETURN w.label AS l"
     public static readonly WidgetNodes = 'MATCH (w:Widget) RETURN w'
+    /** Ordered by an expression that is no returned column (the engine refuses ORDER BY over an unreturned `w.rank`). */
+    public static readonly RankOrdered = 'MATCH (w:Widget) RETURN w.label AS l, w.rank AS r ORDER BY r + 0'
+    public static readonly ManyCount = 25
+    public static readonly PageSize = 10
+    public static readonly KeySeparator = '\u0000'
     private static readonly SolutionPrefix = 'dcq-sol-'
     private static readonly PackagesPrefix = 'dcq-pkgs-'
     private static readonly IdentityPrefix = 'dcq-id-'
@@ -209,6 +239,18 @@ class DevCypherFx
     public static readonly Taxonomy = 'namespace acme { concept Widget { kinds : Kinds[]; } taxonomy Kinds : represents Widget { term Big { } term Small { } } '
         + 'model ShopA : acme { Widget a1 { label = "alpha"; kinds = [Big, Small]; } } model ShopB : acme { Widget b1 { label = "gamma"; } } model ShopC : acme { } }'
     public static readonly Three = 'namespace acme { concept Widget { } model Shop : acme { Widget w1 { label = "a"; } Widget w2 { label = "b"; } Widget w3 { label = "c"; } } }'
+    /** 25 widgets labelled l01..l25 whose rank runs the other way (l01 has rank 25), so rank order is label order reversed. */
+    public static Many(): string
+    {
+        const widgets = Array.from({ length: DevCypherFx.ManyCount }, (_, at) => `Widget w${at + 1} { label = "${DevCypherFx.Label(at + 1)}"; rank = ${DevCypherFx.ManyCount - at}; }`)
+        return `namespace acme { concept Widget { rank : integer?; } model Shop : acme { ${widgets.join(' ')} } }`
+    }
+
+    public static Label(at: number): string
+    {
+        return `l${String(at).padStart(2, '0')}`
+    }
+
     public static readonly ThreeEdited = 'namespace acme { concept Widget { } model Shop : acme { Widget w0 { label = "0"; } Widget w1 { label = "a"; } Widget w2 { label = "b"; } Widget w3 { label = "c"; } } }'
 
     /** The harness model with its concept namespace-qualified (dev-graph concepts are acme.Widget). */
@@ -296,6 +338,87 @@ class DepthPortFx
     }
 }
 
+/** A subscribe-only signal that never fires: the fixed-schema host never upgrades. */
+class SilentSignal implements ISignal<void>
+{
+    public Subscribe(): ISubscription
+    {
+        return new Disposable(() => undefined)
+    }
+}
+
+/** EngineHostFx's saved snapshot on a memory engine no language service upgrades, so commits leave the schema version. */
+class FixedSchemaWorld implements IGraphEngineHost
+{
+    public static readonly OrderedNames = 'MATCH (n:shop.Customer) RETURN n.name AS name ORDER BY name'
+    public static readonly CreateAa = "CREATE (n:shop.Customer {name: 'Aa'})"
+    private static readonly ScopeDigest = 'system'
+    public readonly Changed: ISignal<void> = new SilentSignal()
+    private readonly query: EngineCypherQuery
+
+    private constructor(private readonly engine: GraphEngine, private readonly snapshot: IEngineSnapshot)
+    {
+        const scope: IGraphScope = { Scope: AccessScope.System, Digest: FixedSchemaWorld.ScopeDigest, Placement: () => FixedSchemaWorld.Placement() }
+        this.query = new EngineCypherQuery(this, async () => ({ ScopeFor: async () => scope, Dropped: new SilentSignal() }))
+    }
+
+    public static async With(body: (world: FixedSchemaWorld) => Promise<void>): Promise<void>
+    {
+        const fx = new EngineHostFx()
+        const snapshot = await new DevSnapshotSource(fx.Source, fx.Lang).Current()
+        const workspace = new ServerModelWorkspace(fx.Source, fx.Lang, undefined, undefined, HeldFence.Slot())
+        const engine = await GraphEngine.Open({ Description: snapshot.Description, Storage: { Kind: StorageKind.Memory }, Connectors: [new TodlFileConnector(workspace)] })
+        try
+        {
+            await body(new FixedSchemaWorld(engine, snapshot))
+        }
+        finally
+        {
+            await engine.dispose()
+        }
+    }
+
+    public async Engine(): Promise<GraphEngine>
+    {
+        return this.engine
+    }
+
+    public async Snapshot(): Promise<IEngineSnapshot>
+    {
+        return this.snapshot
+    }
+
+    public async Description(): Promise<ISchemaDescription>
+    {
+        return this.snapshot.Description
+    }
+
+    public Run(source: string, pageSize: number, cursor?: string): Promise<CypherQueryPageDto>
+    {
+        const limits = new CypherLimits()
+        return this.query.Run(DevCypherFx.Permissive(), {
+            Source: source,
+            Parameters: new Map(),
+            CanonicalParameters: CypherParamConverter.Canonical(undefined),
+            Page: { Params: { pageSize, cursor }, Limits: new PagingLimits(), RowCap: limits.RowCap },
+            TimeoutMs: limits.TimeoutMs,
+            MaxVarLength: limits.MaxVarLength,
+        })
+    }
+
+    /** Runs a write on the engine (placed in shop.M) and returns its commit. */
+    public async Commit(source: string): Promise<bigint>
+    {
+        const result = await new Cypher.CypherEngine(this.engine).Execute(AccessScope.System, source, { Placement: FixedSchemaWorld.Placement() })
+        return result.Commit!
+    }
+
+    private static Placement(): Cypher.INodePlacement
+    {
+        return new TodlNodePlacement(EngineHostFx.ModelM, EngineHostFx.Namespace)
+    }
+}
+
 // ── ported from host/cypher/tests/server-graph.test.ts ─────────────────────────────────────────────
 
 test('the dev graph with no solution open is an empty graph, not an error', async () =>
@@ -375,6 +498,49 @@ test('upgrade between pages stales the cursor', async () =>
         await world.Upgraded(version)
         assert.equal(await DevCypherFx.CodeOf(world.Run(context, DevCypherFx.OrderedLabels, { pageSize: 1, cursor: first.nextCursor })), CursorStaleError.Code)
         assert.deepEqual((await world.Run(context, DevCypherFx.OrderedLabels, { pageSize: 1 })).items, [['0']], 'a fresh walk reads the upgraded graph')
+    })
+})
+
+test('pages concatenate to the full result', async () =>
+{
+    await DevCypherFx.With(DevCypherFx.Many(), undefined, async world =>
+    {
+        const context = DevCypherFx.Permissive()
+        const pages = await world.Walk(context, DevCypherFx.OrderedLabels, DevCypherFx.PageSize)
+        assert.deepEqual(pages.map(page => page.length), [10, 10, 5])
+        assert.deepEqual(pages.flat(), (await world.Run(context, DevCypherFx.OrderedLabels)).items.map(row => row[0]))
+    })
+})
+
+test('order by a non-returned expression pages by offset', async () =>
+{
+    await DevCypherFx.With(DevCypherFx.Many(), undefined, async world =>
+    {
+        const context = DevCypherFx.Permissive()
+        const first = await world.Run(context, DevCypherFx.RankOrdered, { pageSize: DevCypherFx.PageSize })
+        const wire = PageCursorCodec.Decode(first.nextCursor!)!
+        assert.equal(wire.offset, DevCypherFx.PageSize, 'the engine gave no keyset cursor: page 2 runs with Skip 10 (Q10)')
+        assert.ok(!wire.fingerprint.includes(DevCypherFx.KeySeparator), 'an offset cursor carries no Cypher cursor')
+        const pages = await world.Walk(context, DevCypherFx.RankOrdered, DevCypherFx.PageSize)
+        const reversed = Array.from({ length: DevCypherFx.ManyCount }, (_, at) => DevCypherFx.Label(DevCypherFx.ManyCount - at))
+        assert.deepEqual(pages.flat(), reversed)
+    })
+})
+
+test('commit between pages neither repeats nor skips', async () =>
+{
+    // a host whose schema stays put across commits (as the runtime environment engine): on dev every write saves the
+    // sources and upgrades the engine, which stales a cursor by design
+    await FixedSchemaWorld.With(async world =>
+    {
+        const first = await world.Run(FixedSchemaWorld.OrderedNames, 1)
+        assert.deepEqual(first.items, [['Ada']])
+        // a create that sorts before the cursor commits between the pages
+        assert.ok(await world.Commit(FixedSchemaWorld.CreateAa) > 0n)
+        assert.deepEqual((await world.Run(FixedSchemaWorld.OrderedNames, 10)).items, [['Aa'], ['Ada'], ['Bo']], 'the commit is visible')
+        const second = await world.Run(FixedSchemaWorld.OrderedNames, 1, first.nextCursor)
+        assert.deepEqual(second.items, [['Bo']], 'page 2 starts exactly after page 1\'s last row')
+        assert.equal(second.nextCursor, undefined)
     })
 })
 

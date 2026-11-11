@@ -3,19 +3,17 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, cpSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, CursorStaleError } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, CursorStaleError, PageCursorCodec } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherQueryParams, CypherQueryPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AccessScope } from '@pragmatic-tech-ai/graph'
+import { Cypher } from '@pragmatic-tech-ai/graph'
 import { toJSON, ModelShardExtractor } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { AccessContext, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
 import { PragmaticServer } from '../../pragmatic-server.js'
-import { CypherLimits } from '../../config/cypher-limits.js'
-import { PagingLimits } from '../../config/paging-limits.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
-import { PageFingerprint, PageRequest } from '../paging/page-request.js'
+import { PageFingerprint } from '../paging/page-request.js'
 import { CypherParamConverter } from '../cypher/cypher-param-converter.js'
 import type { IFieldReadMaskSource } from '../cypher/read-filter-source.js'
 import { PpSecurityHarness } from '../cypher/tests/pp-security-harness.js'
@@ -44,19 +42,11 @@ class ModelScopedWorld
      * The dev engine's schema version and latest commit (they replace GraphRevision in a dev cursor's fingerprint), then
      * the caller's scope digest (every dev cursor carries it).
      */
-    public async EngineRevision(context: AccessContext): Promise<string[]>
+    /** The engine part of a cursor fingerprint: the schema version and the caller's scope digest (no commit, S11). */
+    public async EngineState(context: AccessContext): Promise<string[]>
     {
         const digest = (await (await this.server.DevScopes()).ScopeFor(context)).Digest
-        const engine = await this.server.DevEngine().Engine()
-        const reader = await engine.BeginRead(AccessScope.System)
-        try
-        {
-            return [engine.SchemaVersion, String(reader.SnapshotCommit), digest]
-        }
-        finally
-        {
-            reader.dispose()
-        }
+        return [(await this.server.DevEngine().Engine()).SchemaVersion, digest]
     }
 
     public Connect(context: AccessContext, purpose: TenantPurpose = TenantPurpose.Development): ServerConnectionHandler
@@ -339,15 +329,20 @@ test('a model-scoped cursor is stale across principals when identity-backed', as
     })
 })
 
-test('no-identity / no-modelId path is byte-unchanged', async () =>
+test('no-identity / no-modelId cursor is a keyset cursor over the engine fingerprint', async () =>
 {
     await ModelScopedFixture.With(false, async world =>
     {
         const handler = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Plain))
         const page = await handler.RunCypherQuery(ModelScopedFixture.Params(undefined, ModelScopedFixture.LabelQuery, { pageSize: 1 }))
-        const fingerprint = PageFingerprint.Of('cypher', ModelScopedFixture.LabelQuery, CypherParamConverter.Canonical(undefined), ...await world.EngineRevision(ModelScopedFixture.Context(ModelScopedFixture.Plain)))
-        const expected = PageRequest.Resolve({ pageSize: 1 }, fingerprint, new PagingLimits(), new CypherLimits().RowCap).NextCursor(true)
-        assert.equal(page.nextCursor, expected)
+        const fingerprint = PageFingerprint.Of('cypher', ModelScopedFixture.LabelQuery, CypherParamConverter.Canonical(undefined), ...await world.EngineState(ModelScopedFixture.Context(ModelScopedFixture.Plain)))
+        // a keyset cursor (S11): offset 0, the fingerprint, then the engine's cursor of the page's last row
+        const wire = PageCursorCodec.Decode(page.nextCursor!)!
+        const prefix = `${fingerprint}\u0000`
+        assert.equal(wire.offset, 0)
+        assert.ok(wire.fingerprint.startsWith(prefix))
+        const after = Cypher.CypherCursor.Decode(wire.fingerprint.slice(prefix.length)).After
+        assert.deepEqual(after.map(cell => (cell as Cypher.ScalarValue).Value), [page.items[0]![0]])
     })
 })
 

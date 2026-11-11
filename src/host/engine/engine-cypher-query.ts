@@ -7,9 +7,10 @@ import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { PagingLimits } from '../../config/paging-limits.js'
 import { CypherResultMapper } from '../cypher/cypher-result-mapper.js'
 import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
-import { PageFingerprint, PageRequest } from '../paging/page-request.js'
+import { PageFingerprint } from '../paging/page-request.js'
 import { AccessScopeConjunction } from './access-scope-conjunction.js'
 import type { IGraphScope, IGraphScopeSource } from './access-scope-source.js'
+import { CypherKeysetPage } from './cypher-keyset-page.js'
 import { EngineSchemaCatalog } from './engine-schema-catalog.js'
 import type { IGraphEngineHost } from './graph-engine-host.js'
 
@@ -45,7 +46,7 @@ export interface IGraphCypherQuery
 
 export enum EngineCypherQueryErrorCode
 {
-    /** The engine kept upgrading or committing on every attempt; a later request runs on the settled engine. */
+    /** The engine kept upgrading on every attempt; a later request runs on the settled engine. */
     Unsettled = 1,
 }
 
@@ -60,32 +61,6 @@ export class EngineCypherQueryError extends Error
     {
         super(EngineCypherQueryError.Messages[Code])
         this.name = EngineCypherQueryError.ErrorName
-    }
-}
-
-/** The engine's schema version and latest commit: a page is only valid for the state it was read at. */
-class EngineState
-{
-    public constructor(public readonly Version: string, public readonly Commit: bigint)
-    {
-    }
-
-    public static async Of(engine: GraphEngine): Promise<EngineState>
-    {
-        const reader = await engine.BeginRead(AccessScope.System)
-        try
-        {
-            return new EngineState(engine.SchemaVersion, reader.SnapshotCommit)
-        }
-        finally
-        {
-            reader.dispose()
-        }
-    }
-
-    public Equals(other: EngineState): boolean
-    {
-        return this.Version === other.Version && this.Commit === other.Commit
     }
 }
 
@@ -114,10 +89,12 @@ class Attempt
  *   (owned by the solution package), which the caller's own scope alone governs, so term refs survive.
  * - The result cells are mapped to TODL's wire shape by the running snapshot's EngineCellMapper, with a reader under
  *   the same scope telling it which relationship-held fields are hidden; then to the wire page (CypherResultMapper).
- * - Cursor fingerprint: `cypher`, the text, the canonical parameters, the engine schema version and commit, the scope
- *   digest, and for a model-scoped query `model` and the model id. A query that saw the engine move (an upgrade or a
- *   commit while it ran) is run again, up to {@link EngineCypherQuery.MaxAttempts} times; a continuation page that never
- *   settles is CursorStale, a first page EngineCypherQueryError Unsettled.
+ * - Pages are keyset pages ({@link CypherKeysetPage}, ruling S11; offset pages only for an order over no returned column,
+ *   Q10). Cursor fingerprint: `cypher`, the text, the canonical parameters, the engine schema version, the scope digest,
+ *   and for a model-scoped query `model` and the model id. The commit is not in it: commits between pages neither repeat
+ *   nor skip rows, while an upgrade or another principal stales the cursor. A query that saw the engine upgrade while it
+ *   ran is run again, up to {@link EngineCypherQuery.MaxAttempts} times; a continuation page that never settles is
+ *   CursorStale, a first page EngineCypherQueryError Unsettled.
  * - Engine Syntax / Semantic / IntegerOverflow errors are InvalidParams; a timeout is {@link EngineCypherQuery.TimeoutCode}.
  */
 export class EngineCypherQuery implements IGraphCypherQuery
@@ -155,9 +132,9 @@ export class EngineCypherQuery implements IGraphCypherQuery
     private async Attempt(context: AccessContext, request: IDevCypherRequest, last: boolean): Promise<Attempt>
     {
         const engine = await this.host.Engine()
-        const before = await EngineState.Of(engine)
+        const before = engine.SchemaVersion
         const snapshot = await this.host.Snapshot()
-        if (snapshot.Description.Version !== before.Version)
+        if (snapshot.Description.Version !== before)
         {
             // an upgrade is being applied: its snapshot is installed once the engine has upgraded
             await EngineCypherQuery.Yield()
@@ -169,7 +146,7 @@ export class EngineCypherQuery implements IGraphCypherQuery
         }
         const graphScope = await (await this.scopes()).ScopeFor(context)
         const scope = request.ModelId === undefined ? graphScope.Scope : this.ModelScope(graphScope.Scope, request.ModelId, snapshot.Description)
-        const page = PageRequest.Resolve(request.Page.Params, EngineCypherQuery.Fingerprint(request, before, graphScope), request.Page.Limits, request.Page.RowCap)
+        const page = CypherKeysetPage.Resolve(request.Page.Params, EngineCypherQuery.Fingerprint(request, before, graphScope), request.Page.Limits, request.Page.RowCap)
         let mapped: CypherQueryPageDto
         let reader: GraphReader | undefined
         try
@@ -177,20 +154,20 @@ export class EngineCypherQuery implements IGraphCypherQuery
             // one reader under the query's scope per attempt: it tells the mapper which members the scope hides
             reader = await engine.BeginRead(scope)
             const cypher = new Cypher.CypherEngine(engine, { MaxVarLength: request.MaxVarLength })
-            const result = await cypher.Execute(scope, request.Source, { Parameters: request.Parameters, Limits: { Skip: page.Offset, RowCap: page.Size, Cancel: Cypher.Deadline.After(request.TimeoutMs) } })
-            mapped = CypherResultMapper.ToWire(snapshot.CellMapper.MapResult(Cypher.CypherEngine.ToDto(result), reader), page.NextCursor(result.HasMore))
+            const result = await cypher.Execute(scope, request.Source, { Parameters: request.Parameters, Limits: page.Limits(Cypher.Deadline.After(request.TimeoutMs)) })
+            mapped = CypherResultMapper.ToWire(snapshot.CellMapper.MapResult(Cypher.CypherEngine.ToDto(result), reader), page.NextCursor(result))
         }
         catch (error)
         {
             // a scope or plan made for a schema the engine left while the query ran: run it again on the new one
-            if (!last && !(await EngineCypherQuery.Settled(engine, before))) return Attempt.Moved
+            if (!last && !EngineCypherQuery.Settled(engine, before)) return Attempt.Moved
             throw EngineCypherQuery.WireError(error)
         }
         finally
         {
             reader?.dispose()
         }
-        if (!(await EngineCypherQuery.Settled(engine, before)))
+        if (!EngineCypherQuery.Settled(engine, before))
         {
             if (!last) return Attempt.Moved
             // never settled: a continuation cannot be served from a state its cursor was not minted for
@@ -227,17 +204,17 @@ export class EngineCypherQuery implements IGraphCypherQuery
         return this.catalog.Catalog
     }
 
-    private static Fingerprint(request: IDevCypherRequest, state: EngineState, scope: IGraphScope): string
+    private static Fingerprint(request: IDevCypherRequest, schemaVersion: string, scope: IGraphScope): string
     {
-        const parts = [EngineCypherQuery.FingerprintTag, request.Source, request.CanonicalParameters, state.Version, String(state.Commit), scope.Digest]
+        const parts = [EngineCypherQuery.FingerprintTag, request.Source, request.CanonicalParameters, schemaVersion, scope.Digest]
         if (request.ModelId !== undefined) parts.push(EngineCypherQuery.ModelScopeTag, request.ModelId)
         return PageFingerprint.Of(...parts)
     }
 
-    /** True when the engine is still at `before` (no upgrade and no commit since). */
-    private static async Settled(engine: GraphEngine, before: EngineState): Promise<boolean>
+    /** True when the engine is still at the schema version `before` (no upgrade since; commits do not matter, S11). */
+    private static Settled(engine: GraphEngine, before: string): boolean
     {
-        return (await EngineState.Of(engine)).Equals(before)
+        return engine.SchemaVersion === before
     }
 
     private static Continues(params: PageParams): boolean
