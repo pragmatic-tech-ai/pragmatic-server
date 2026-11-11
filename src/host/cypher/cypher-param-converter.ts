@@ -1,5 +1,5 @@
 import type { CypherParamValue } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { Cypher } from '@pragmatic-tech-ai/todl'
+import type { Cypher } from '@pragmatic-tech-ai/graph'
 
 type ParameterValue = Cypher.ParameterValue
 

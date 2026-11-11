@@ -59,7 +59,7 @@ test('a guarded RPC through the real handler emits one audit event via the threa
     const languageService = await server.LanguageService()
     const manager = await server.Manager()
     const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.OwnerContext(), () => Promise.reject(new Error('no connectors')), undefined, undefined, undefined, sink)
+    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.OwnerContext(), undefined, undefined, undefined, undefined, sink)
     const client = PragmaticClient.CreateOverSocket(clientSocket)
     try
     {
@@ -92,7 +92,7 @@ test('an unauthorized RPC through the real handler emits exactly one Deny event'
     const languageService = await server.LanguageService()
     const manager = await server.Manager()
     const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.ViewerContext(), () => Promise.reject(new Error('no connectors')), undefined, undefined, undefined, sink)
+    const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.ViewerContext(), undefined, undefined, undefined, undefined, sink)
     const client = PragmaticClient.CreateOverSocket(clientSocket)
     try
     {

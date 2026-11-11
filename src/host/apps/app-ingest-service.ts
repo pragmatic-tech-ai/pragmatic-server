@@ -1,16 +1,13 @@
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { randomUUID } from 'node:crypto'
+import { DeliveryChannel, EnvironmentCatalogError } from '@pragmatic-tech-ai/todl/engine'
 import { AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppDeployResultDto, CypherAppDeployParamsDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { PragmaticAppsRegistry } from './pragmatic-apps-registry.js'
+import { EnvironmentUpgradeFailedError } from '../environment/environment-engine-host.js'
+import type { DeliveryChange, IDeliveryGate } from '../environment/environment-deliveries.js'
 import { NullLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
-
-/** Evicts a cached app graph keyed `name@version`; implemented by the server that owns the cache. */
-export interface IAppCacheInvalidator
-{
-    InvalidateApp(nameAtVersion: string): void
-}
 
 /** A client-supplied value failed validation; the message is secret-free and safe to return. */
 class IngestRejection extends Error
@@ -45,7 +42,15 @@ interface IngestPlan
  * an already-present `name@version` is refused (versions are immutable), package and UI files are staged under
  * unique temp names and renamed into place, and `application.json` is renamed in LAST as the commit marker, so a
  * version tree is never treated as complete while half-ingested. The `<app>/live` pointer, written after the tree, is the app-level
- * gate: until it names a version the app serves the previous one. A hard crash mid-commit can still leave
+ * gate: until it names a version the app serves the previous one.
+ *
+ * Ruling S4: the packages are stored first (immutable), then the deploy is handed to the environment's delivery gate,
+ * which composes every live app plus this one over the stored packages BEFORE anything else is written: a composition
+ * error (EnvironmentCatalogError: incompatible versions, conflicting connectors or definitions, duplicate or invalid
+ * bindings, ...) answers `invalid` with its message, and neither the version tree nor the pointer is written. Only a
+ * set that composes commits the version tree and the pointer (the gate's persist step), after which the gate upgrades
+ * the environment engine; an upgrade that fails then answers `failed` with EnvironmentUpgradeFailedError's reason (the
+ * app is live; the engine retries on next use). A hard crash mid-commit can still leave
  * non-servable orphan files (no `application.json` in the version tree means the version is incomplete and never
  * made live). A same-version retry whose tree is complete but whose pointer is not yet written only rewrites the pointer.
  * Concurrent ingests of one app are serialized per app (the lock does NOT serialize shared-package writes across DIFFERENT apps: a pathological
@@ -89,7 +94,6 @@ export class AppIngestService
     private static readonly ListSeparator = ', '
     private static readonly VersionExistsMessage = 'this application version is already deployed; versions are immutable'
     private static readonly PackageDiffersMessage = 'a package version is already deployed with different content; versions are immutable'
-    private static readonly InvalidateFailedLine = 'app cache invalidation failed after a successful deploy'
     private static readonly WriteFailedLine = 'app ingest write failed'
     private static readonly ErrorClassField = 'errorClass'
     private static readonly ErrorCodeField = 'errorCode'
@@ -97,16 +101,16 @@ export class AppIngestService
 
     private readonly packages: IStorage
     private readonly applications: IStorage
-    private readonly invalidator: IAppCacheInvalidator
+    private readonly gate: IDeliveryGate
     private readonly logger: ILogger
     private readonly locks = new Map<string, Promise<unknown>>()
 
-    public constructor(packages: IStorage, applications: IStorage, invalidator: IAppCacheInvalidator, logger: ILogger = new NullLogger())
+    public constructor(packages: IStorage, applications: IStorage, gate: IDeliveryGate, logger: ILogger = new NullLogger())
     {
         this.logger = logger
         this.packages = packages
         this.applications = applications
-        this.invalidator = invalidator
+        this.gate = gate
     }
 
     public async Ingest(params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>
@@ -127,32 +131,50 @@ export class AppIngestService
             try
             {
                 const resume = await this.AssertImmutable(plan, params)
-                if (!resume)
+                // S4 step 1: the packages are stored (immutably) first, so the gate composes over them; on a resume
+                // only the ones still missing are written.
+                await this.Commit(plan.files.filter(file => file.storage === this.packages && file.skip !== true))
+                // S4 steps 2-4: the gate validates the prospective deliveries, runs the persist step, then upgrades.
+                await this.gate.Deliver(AppIngestService.ChangeOf(params), async () =>
                 {
-                    await this.Commit(plan)
-                }
-                // The final commit point: the whole version tree is in place, so atomically repoint the app at it.
-                await this.applications.WriteText([appName, AppIngestService.LivePointerFile].join(AppIngestService.Separator), appVersion)
+                    if (!resume)
+                    {
+                        await this.Commit([...plan.files.filter(file => file.storage === this.applications), plan.marker])
+                    }
+                    // The final commit point: the whole version tree is in place, so atomically repoint the app at it.
+                    await this.applications.WriteText([appName, AppIngestService.LivePointerFile].join(AppIngestService.Separator), appVersion)
+                })
             }
             catch (error)
             {
                 return this.Failure(error, appName, appVersion)
             }
-            // The deploy has landed: an eviction failure must not turn it into a Failed result.
-            try
-            {
-                this.invalidator.InvalidateApp(appName + AppIngestService.KeySeparator + appVersion)
-            }
-            catch (error)
-            {
-                this.logger.Warn(AppIngestService.InvalidateFailedLine, AppIngestService.ErrorFields(error))
-            }
             return { status: AppWriteStatus.Applied, appName, appVersion }
         })
     }
 
+    /** The Deploy delivery this ingest makes: the app's manifest packages under the app name. */
+    private static ChangeOf(params: CypherAppDeployParamsDto): DeliveryChange
+    {
+        return {
+            Channel: DeliveryChannel.Deploy,
+            Name: params.appName,
+            Packages: params.manifest.packages.map(ref => ({ model: ref.id, version: ref.version })),
+        }
+    }
+
     private Failure(error: unknown, appName: string, appVersion: string): AppDeployResultDto
     {
+        if (error instanceof EnvironmentCatalogError)
+        {
+            // S4 step 2: the prospective deliveries do not compose; nothing beyond the immutable packages was written.
+            return { status: AppWriteStatus.Invalid, reason: error.message, appName, appVersion }
+        }
+        if (error instanceof EnvironmentUpgradeFailedError)
+        {
+            // S4 step 4: the app is live, the engine upgrade failed (the host reported it and retries on next use).
+            return { status: AppWriteStatus.Failed, reason: EnvironmentUpgradeFailedError.Reason, appName, appVersion }
+        }
         const rejected = error instanceof IngestRejection
         if (!rejected)
         {
@@ -196,9 +218,13 @@ export class AppIngestService
         }
     }
 
-    /** Versions are immutable: refuse an already-deployed name@version and a package version whose content differs. */
+    /**
+     * Versions are immutable: refuse an already-deployed name@version and a package version whose content differs; marks
+     * already-stored packages skip. True when this is a resume (the complete version tree is stored, not yet live).
+     */
     private async AssertImmutable(plan: IngestPlan, params: CypherAppDeployParamsDto): Promise<boolean>
     {
+        let resume = false
         if (await this.applications.Exists(plan.marker.path))
         {
             let existing: unknown
@@ -223,9 +249,11 @@ export class AppIngestService
                 {
                     throw new IngestRejection(AppWriteStatus.Conflict, AppIngestService.VersionExistsMessage)
                 }
-                return true
+                resume = true
             }
         }
+        // Stored packages are marked skip (a resume included: MatchesStored tolerates a package not yet written, which
+        // the package commit then writes, so the gate can compose over it).
         for (const file of plan.files)
         {
             if (file.storage === this.packages && await this.packages.Exists(file.path))
@@ -238,7 +266,7 @@ export class AppIngestService
                 file.skip = true
             }
         }
-        return false
+        return resume
     }
 
     /** True when the marker and every UI file are byte-identical to what is stored, and no already-stored package file differs. */
@@ -367,9 +395,9 @@ export class AppIngestService
         return { files, marker }
     }
 
-    private async Commit(plan: IngestPlan): Promise<void>
+    /** Stages `ordered` under temp names, then renames each into place in order; on failure removes only what it created. */
+    private async Commit(ordered: readonly PlannedFile[]): Promise<void>
     {
-        const ordered = [...plan.files.filter(f => f.skip !== true), plan.marker]
         const suffix = AppIngestService.TempPrefix + randomUUID() + AppIngestService.TempSuffix
         const staged: PlannedFile[] = []
         const renamed: PlannedFile[] = []

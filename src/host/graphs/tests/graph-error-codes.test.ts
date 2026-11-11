@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { GraphNotFoundError, GraphExistsError, GraphNameInvalidError } from '../dev-graph-service.js'
 import { GraphPackageConflictError, GraphPackageSegmentError } from '../graph-package-ingest.js'
 import { GraphPackageMissingError } from '../graph-package-reader.js'
-import { NoEnvironmentGraphError } from '../environment-graph.js'
 import { GraphErrorCode, GraphErrorCodes } from '../graph-error-codes.js'
 
 class CodeFixture
@@ -44,7 +43,7 @@ test('each graph error maps to its code and keeps its message', () =>
 
 test('a non-graph error has no code', () =>
 {
-    for (const value of [new Error(CodeFixture.PlainMessage), new NoEnvironmentGraphError(), CodeFixture.PlainText])
+    for (const value of [new Error(CodeFixture.PlainMessage), CodeFixture.PlainText])
     {
         assert.equal(GraphErrorCodes.CodeOf(value), undefined)
         assert.equal(GraphErrorCodes.ToResponseError(value), undefined)

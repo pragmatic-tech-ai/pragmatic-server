@@ -46,6 +46,18 @@ export class PolicyGate
         return decision
     }
 
+    /** `Authorize`'s decision for `method` without an audit event (a server push re-checks it per send). */
+    public Permits(method: string): boolean
+    {
+        const policy = PolicyGate.Table.get(method)
+        if (policy === undefined)
+        {
+            return false
+        }
+        const resource = new ResourceRef(policy.resourceKind, this.context.Tenant.Id, this.path())
+        return this.context.Policy.Decide(this.context, policy.action, resource).Allowed
+    }
+
     public CanRead(): boolean
     {
         const resource = new ResourceRef(ResourceKind.Model, this.context.Tenant.Id, this.path())

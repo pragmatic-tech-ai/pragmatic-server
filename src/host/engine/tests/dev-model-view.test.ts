@@ -18,8 +18,9 @@ import { PragmaticServer } from '../../../pragmatic-server.js'
 import { PpSecurityHarness } from '../../cypher/tests/pp-security-harness.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
 import { DevModelView } from '../dev-model-view.js'
-import type { IDevModelStructure, IDevModelView, IDevModelViewDiagnostics } from '../dev-model-view.js'
-import type { IDevScope, IDevScopeSource } from '../dev-access-scope-source.js'
+import type { IDevModelResource, IDevModelStructure, IDevModelViewDiagnostics } from '../dev-model-view.js'
+import type { IGraphModelView } from '../graph-model-view.js'
+import type { IGraphScope, IGraphScopeSource } from '../access-scope-source.js'
 import type { IDevGraphEngine } from '../dev-graph-engine-host.js'
 
 /**
@@ -42,6 +43,11 @@ class FixedStructure implements IDevModelStructure
     public async ModelView(): Promise<{ model: Repository; provenanceOf: ReadonlyMap<string, string> }>
     {
         return { model: this.model, provenanceOf: this.provenance }
+    }
+
+    public async Resources(): Promise<readonly IDevModelResource[]>
+    {
+        return []
     }
 }
 
@@ -78,15 +84,15 @@ class CountingDropped implements ISignal<void>
 }
 
 /** A scope source that delegates to the server's and counts the subscriptions to its Dropped. */
-class CountingScopeSource implements IDevScopeSource
+class CountingScopeSource implements IGraphScopeSource
 {
     public readonly Dropped = new CountingDropped()
 
-    public constructor(private readonly inner: () => Promise<IDevScopeSource>)
+    public constructor(private readonly inner: () => Promise<IGraphScopeSource>)
     {
     }
 
-    public async ScopeFor(context: AccessContext): Promise<IDevScope>
+    public async ScopeFor(context: AccessContext): Promise<IGraphScope>
     {
         return (await this.inner()).ScopeFor(context)
     }
@@ -257,16 +263,15 @@ class DevWorld
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const development = ServerConnectionHandler.DevelopmentAttachArgs(this.Server)
-        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, context, () => Promise.reject(new Error(DevWorld.NoConnectors)), development.devCypher,
-            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-            undefined, undefined, undefined, undefined, development.devGraphService, undefined, development.devModelView)
+        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, context, undefined, development.cypherQuery,
+            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, development.devGraphService, undefined, development.modelView)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.connections.push({ client, handler })
         return client
     }
 
     /** A DevModelView on this server's engine and scopes whose structure is `structure` (the unit ports). */
-    public View(structure: IDevModelStructure, diagnostics?: IDevModelViewDiagnostics, scopes: () => Promise<IDevScopeSource> = () => this.Server.DevScopes()): DevModelView
+    public View(structure: IDevModelStructure, diagnostics?: IDevModelViewDiagnostics, scopes: () => Promise<IGraphScopeSource> = () => this.Server.DevScopes()): DevModelView
     {
         const view = new DevModelView(this.Server.DevEngine(), scopes, async () => this.manager.ActiveSolution, async () => structure, diagnostics)
         this.views.push(view)
@@ -305,13 +310,13 @@ class DevWorld
         return new AccessContext(principal, tenant, [], new ResourceAuthorizationPolicy())
     }
 
-    public static Page(view: IDevModelView, context: AccessContext, memberId: string, pageSize: number, cursor?: string): Promise<ModelViewPageDto>
+    public static Page(view: IGraphModelView, context: AccessContext, memberId: string, pageSize: number, cursor?: string): Promise<ModelViewPageDto>
     {
         return view.Page(context, memberId, { Params: { pageSize, cursor }, Limits: new PagingLimits() })
     }
 
     /** Pages the view from the first page to the end, returning every page. */
-    public static async WalkView(view: IDevModelView, context: AccessContext, memberId: string, size: number): Promise<ModelViewPageDto[]>
+    public static async WalkView(view: IGraphModelView, context: AccessContext, memberId: string, size: number): Promise<ModelViewPageDto[]>
     {
         const pages: ModelViewPageDto[] = []
         let cursor: string | undefined
@@ -381,7 +386,6 @@ class ModelFixture
     /** The originals used `shop.Customer:cust-eu`; a TODL instance id cannot hold a colon, so the engine id is `shop.custEu`. */
     public static readonly Eu = 'shop.custEu'
     public static readonly Us = 'shop.custUs'
-    public static readonly Unknown = 'shop.doesNotExist'
     /** The provenance value (source of origin) the structure reports for each customer. */
     public static readonly EuProvenance = 'a.todl'
     public static readonly UsProvenance = 'b.todl'
@@ -410,7 +414,7 @@ class ModelFixture
     }
 
     /** The ids on one all-members page of `view` for `memberId`. */
-    public static async Ids(view: IDevModelView, memberId: string): Promise<string[]>
+    public static async Ids(view: IGraphModelView, memberId: string): Promise<string[]>
     {
         return (await DevWorld.Page(view, DevWorld.Reader(), memberId, ViewFx.All)).items.map(member => member.id)
     }
@@ -493,7 +497,7 @@ class FilterFixture
     }
 
     /** One all-members page of `view` for the reader `context`. */
-    public static All(view: IDevModelView, world: DevWorld, context: AccessContext = DevWorld.Reader()): Promise<ModelViewPageDto>
+    public static All(view: IGraphModelView, world: DevWorld, context: AccessContext = DevWorld.Reader()): Promise<ModelViewPageDto>
     {
         return DevWorld.Page(view, context, world.MemberId, 100)
     }
@@ -649,14 +653,6 @@ test('a hidden instance id does not leak through provenanceOf', async () =>
         const projection = await DevWorld.Page(world.View(new FixedStructure(ModelFixture.Build(), provenance)), DevWorld.Reader(), world.MemberId, ViewFx.All)
         assert.equal(projection.provenanceOf[ModelFixture.Eu], ModelFixture.EuProvenance)
         assert.equal(ModelFixture.Us in projection.provenanceOf, false)
-    })
-})
-
-test('Hidden is false for an id the model cannot resolve', async () =>
-{
-    await DevWorld.With(ModelFixture.Todl, undefined, async world =>
-    {
-        assert.equal(await world.View(new FixedStructure(ModelFixture.Build())).Hidden(DevWorld.Reader(), ModelFixture.Unknown), false)
     })
 })
 
@@ -970,9 +966,6 @@ test('depth hides an instance from model/view', async () =>
         assert.ok(!ids.includes(DepthFx.W2))
         // the concept itself is schema: depth never hides it
         assert.ok(ids.includes(DepthFx.Widget))
-        const view = world.Server.DevModelView()
-        assert.equal(await view.Hidden(DevWorld.Owner(), DepthFx.W2), true)
-        assert.equal(await view.Hidden(DevWorld.Owner(), DepthFx.W1), false)
         // a principal outside the security model sees no instance (fail-closed), and p1's cursor is stale for it
         const other = world.Connect(DevWorld.Owner(ViewFx.OtherId))
         const otherIds = (await other.ModelView(world.MemberId)).items.map(m => m.id)
@@ -1000,7 +993,6 @@ test('an annotated term is admitted with its resources under an org read, and De
         for (const id of [ClassFx.Big, ClassFx.Premium, ClassFx.Basic, ClassFx.W1]) assert.ok(!ids.includes(id), id)
         assert.ok(ids.includes(ClassFx.Widget))
         assert.deepEqual(await client.Resources(ClassFx.Big), [])
-        assert.equal(await world.Server.DevModelView().Hidden(DevWorld.Owner(), ClassFx.Big), true)
     })
 })
 
@@ -1050,7 +1042,7 @@ test('switching to a rebuilt scope source drops the subscription to the previous
     {
         const first = new CountingScopeSource(() => world.Server.DevScopes())
         const second = new CountingScopeSource(() => world.Server.DevScopes())
-        let current: IDevScopeSource = first
+        let current: IGraphScopeSource = first
         const view = world.View(new FixedStructure(ModelFixture.Build()), undefined, async () => current)
         await DevWorld.Page(view, DevWorld.Reader(), world.MemberId, ViewFx.All)
         await DevWorld.Page(view, DevWorld.Reader(), world.MemberId, ViewFx.All)
@@ -1100,7 +1092,6 @@ test('an instance only in an unsaved buffer is hidden under a restricted scope, 
         await world.Language.WhenIdle()
         const ids = (await client.ModelView(world.MemberId)).items.map(m => m.id)
         assert.ok(!ids.includes(DepthFx.W3))
-        assert.equal(await world.Server.DevModelView().Hidden(DevWorld.Owner(), DepthFx.W3), true)
         assert.ok(ids.includes(DepthFx.W1))
     })
 })
@@ -1135,12 +1126,12 @@ test('a saved edit is seen once the engine upgrades, and a cursor minted before 
     })
 })
 
-test('a development handler without the dev model view reports it unavailable', async () =>
+test('a handler without a model view reports it unavailable', async () =>
 {
     await DevWorld.With(SurfaceFx.SampleTodl, undefined, async world =>
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, world.Language, await world.Server.Manager(), DevWorld.Owner(), () => Promise.reject(new Error(SurfaceFx.UnknownNode)), undefined)
+        const handler = ServerConnectionHandler.Attach(serverSocket, world.Language, await world.Server.Manager(), DevWorld.Owner(), undefined, undefined)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

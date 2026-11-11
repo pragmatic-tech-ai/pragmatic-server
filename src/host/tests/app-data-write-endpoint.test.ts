@@ -4,14 +4,49 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { InMemoryMessageSocket, PragmaticClient, AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { AppWriteOpDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { AppWriteOpDto, AppWriteResultDto, AssignResultDto, ListSharesResultDto, ShareResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
-import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
 import type { PragmaticAppsRegistry } from '../apps/pragmatic-apps-registry.js'
+import type { IEnvironmentDataService } from '../environment/environment-data-service.js'
+
+/** A data service whose data/write is the test's stub; the share and assign ops are not used here. */
+class WriteOnlyData implements IEnvironmentDataService
+{
+    private static readonly Unused = 'not used by this test'
+
+    public constructor(private readonly write: (name: string, ops: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>)
+    {
+    }
+
+    public Write(_context: AccessContext, appName: string, operations: readonly AppWriteOpDto[]): Promise<AppWriteResultDto>
+    {
+        return this.write(appName, operations)
+    }
+
+    public Share(): Promise<ShareResultDto>
+    {
+        return Promise.reject(new Error(WriteOnlyData.Unused))
+    }
+
+    public Unshare(): Promise<ShareResultDto>
+    {
+        return Promise.reject(new Error(WriteOnlyData.Unused))
+    }
+
+    public ListShares(): Promise<ListSharesResultDto>
+    {
+        return Promise.reject(new Error(WriteOnlyData.Unused))
+    }
+
+    public Assign(): Promise<AssignResultDto>
+    {
+        return Promise.reject(new Error(WriteOnlyData.Unused))
+    }
+}
 
 class EndpointFixture
 {
@@ -59,10 +94,8 @@ class EndpointFixture
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const runtime = purpose === TenantPurpose.Runtime
-        const applications = { List: async () => [], ApplicationFor: async (name: string) => ({ Manifest: { name, version: '1.0.0' } }) } as unknown as PragmaticAppsRegistry
-        const appGraph = async (): Promise<IGraphQuery> => Promise.reject(new Error(EndpointFixture.NoConnectors))
-        const appWrite = (_c: AccessContext, name: string, ops: readonly AppWriteOpDto[]): Promise<AppWriteResultDto> => write(name, ops)
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, context, () => Promise.reject(new Error(EndpointFixture.NoConnectors)), server.DevCypher(), undefined, undefined, undefined, undefined, undefined, undefined, purpose, runtime ? applications : undefined, runtime ? appGraph : undefined, runtime ? appWrite : undefined)
+        const applications = { List: async () => [], LiveApplicationFor: async (name: string) => ({ Manifest: { name, version: '1.0.0' } }) } as unknown as PragmaticAppsRegistry
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, context, undefined, server.DevCypher(), undefined, undefined, undefined, undefined, undefined, undefined, purpose, runtime ? applications : undefined, runtime ? new WriteOnlyData(write) : undefined)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

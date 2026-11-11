@@ -55,7 +55,7 @@ class DepthCase
         return Instances.Names.filter(name => DevScopeFx.Admits(scope, concept, axis, Instances.All[name]!))
     }
 
-    /** Today's per-instance decision (AccessDepthInstanceFilter / AccessDepthWriteInstanceGate) on the node's own concept. */
+    /** The per-instance depth decision (AccessDepthInstanceFilter; the retired write-instance gate decided writes alike) on the node's own concept. */
     public Expected(action: PrivilegeAction, concept: string = DevScopeFx.Widget): string[]
     {
         return Instances.Names.filter(name => this.evaluator.Allows(this.principal, action, { Concept: concept, Field: (field: string) => Instances.All[name]![field] as string | undefined }))
@@ -234,6 +234,27 @@ describe('DepthScopeCompiler judges each instance on its own concept (ConceptIs,
         assert.equal(DevScopeFx.Admits(depth.Depth.Scope(), DevScopeFx.Gizmo, ScopeAxis.Create, Object.fromEntries(depth.Depth.Defaults(DevScopeFx.Gizmo))), true)
         assert.equal(DevScopeFx.Admits(depth.Depth.Scope(), DevScopeFx.Widget, ScopeAxis.Create, Object.fromEntries(depth.Depth.Defaults(DevScopeFx.Widget))), true, 'a defaulted Widget passes its own User rule')
         assert.equal(DevScopeFx.Admits(depth.Depth.Scope(), DevScopeFx.Widget, ScopeAxis.Create, {}), false)
+    })
+
+    test('skipped concept is allowed and never secured', async () =>
+    {
+        // the principal reads Widgets only and holds nothing on the root-level Gadget
+        const { Auth } = await DevScopeFx.Authorization(DevScopeFx.Model([DevScopeFx.Privilege(PrivilegeAction.Read, AccessLevel.Organization)], DevScopeFx.Fields([DevScopeFx.Secret, DevScopeFx.Code], [{ field: DevScopeFx.Code, read: true }])))
+        const context = DevScopeFx.Context(DevScopeFx.P1)
+        const evaluator = await Auth.EvaluatorForContext(context)
+        const governed = DepthScopeCompiler.Compile(evaluator, context.Principal, DevScopeFx.Description(), true)
+        const skipped = DepthScopeCompiler.Compile(evaluator, context.Principal, DevScopeFx.Description(), true, { Skip: concept => concept === DevScopeFx.Widget || concept === DevScopeFx.Gadget })
+        for (const [, axis] of DepthFx.Actions)
+        {
+            assert.equal(DevScopeFx.Admits(governed.Scope(), DevScopeFx.Gadget, axis, {}), false, `governed ${axis}`)
+            assert.equal(DevScopeFx.Admits(skipped.Scope(), DevScopeFx.Gadget, axis, {}), true, `skipped ${axis}: outside the depth scope`)
+        }
+        assert.equal(skipped.HiddenExact.has(DevScopeFx.Widget), false)
+        assert.equal(skipped.ReadOnlyExact.has(DevScopeFx.Widget), false)
+        assert.equal(governed.HiddenExact.has(DevScopeFx.Widget), true, 'the unskipped compile secures it')
+        assert.equal(skipped.Defaults(DevScopeFx.Widget).size, 0)
+        assert.deepEqual(skipped.Rows.get(DevScopeFx.Gizmo), governed.Rows.get(DevScopeFx.Gizmo), 'other concepts are unchanged')
+        assert.deepEqual(skipped.Writes.get(DevScopeFx.Gizmo), governed.Writes.get(DevScopeFx.Gizmo))
     })
 
     test('taxonomy terms stay readable but not writable', async () =>

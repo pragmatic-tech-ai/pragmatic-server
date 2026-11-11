@@ -6,9 +6,10 @@ import { join } from 'node:path'
 import { AccessDefault, AccessScope, ConceptIs, Or, OwnerIs } from '@pragmatic-tech-ai/graph'
 import type { AccessScope as EngineScope, CellValue, GraphEngine } from '@pragmatic-tech-ai/graph'
 import { AppWriteStatus, CypherCells, InMemoryMessageSocket, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { CypherCellDto, CypherNodeCellDto, ModelMemberDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CypherCellDto, CypherNodeCellDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
+import { SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import { AccessLevel, OwnershipSourceKind, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext, IPrivilegeConfig, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import type { FieldSecurityEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
@@ -16,14 +17,16 @@ import { PragmaticServer } from '../../../pragmatic-server.js'
 import { TenantReadAuthorization } from '../../cypher/read-filter-source.js'
 import { PpSecurityHarness } from '../../cypher/tests/pp-security-harness.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
+import { Coverage, Invariant, InvariantText } from './scope-invariant-assertions.js'
+import type { IExpectedVisibility } from './scope-invariant-assertions.js'
 
 /**
  * Spec §12: no endpoint returns a row or member outside its AccessScope. One dev tenant, three principals (one the
  * security model does not know, a BusinessUnit-level reader/writer, an Organization-level reader/writer holding the
  * secured-field profile); every dev read endpoint, and cypher/execute RETURN after writes, is asked over the wire.
  * Every instance id an answer holds must be in the set the ENGINE shows that principal (GraphReader.ScanNodes under
- * DevAccessScopeSource.ScopeFor(ctx).Scope, intersected for a model-scoped read with an independently built
- * Or(ConceptIs todl.Term, OwnerIs model) scope), every attribute readable under the tenant's FieldSecurityEvaluator.
+ * AccessScopeSource.ScopeFor(ctx).Scope, intersected for a model-scoped read with an independently built
+ * Or(ConceptIs todl.Term, ConceptIs todl.system.ShareGrant, OwnerIs model) scope, R58), every attribute readable under the tenant's FieldSecurityEvaluator.
  * The expected sets are computed from the engine and the identity evaluator directly, never through endpoint code.
  */
 
@@ -163,66 +166,17 @@ class InvariantFx
     }
 }
 
-/** Endpoint labels and assertion messages. */
-class InvariantText
-{
-    public static readonly NoModel = '(no model)'
-    public static readonly CypherQuery = 'cypher/query'
-    public static readonly CypherExecute = 'cypher/execute'
-    public static readonly ModelView = 'model/view'
-    public static readonly Resources = 'model/resources'
-    public static readonly Space = ' '
-    public static readonly Nothing = ''
-    public static readonly Colon = ': '
-    public static readonly Arrow = ' -> '
-    public static readonly Of = ' of '
-    public static readonly Node = 'node '
-    public static readonly Member = 'member '
-    public static readonly OutsideScope = ' is outside the scope'
-    public static readonly Field = 'unreadable field '
-    public static readonly Ref = 'unreadable ref member '
-    public static readonly RefTarget = 'ref to a hidden node '
-    public static readonly RelEnd = 'relationship end outside the scope '
-    public static readonly Attr = 'unreadable attr '
-    public static readonly Edge = 'edge to a hidden node '
-    public static readonly EdgeVia = 'unreadable edge member '
-    public static readonly Projected = 'projected unreadable '
-    public static readonly FilterLeak = 'a filter on an unreadable attribute selected rows'
-    public static readonly NotApplied = 'statement was not applied'
-    public static readonly NoTenantAuthorization = 'the field-read mask source is not the tenant read authorization'
-    public static readonly ModelCount = 'the fixture has two models'
-    /** Common to every unreadable-member message (Field, Ref, Attr, EdgeVia, Projected). */
-    public static readonly Unreadable = 'unreadable '
-
-    /** True for an invariant violation (a node outside the scope, an unreadable member, a ref to a hidden node), never another assertion. */
-    public static IsViolation(error: unknown): boolean
-    {
-        if (!(error instanceof assert.AssertionError)) return false
-        return [InvariantText.OutsideScope, InvariantText.Unreadable, InvariantText.RefTarget].some(text => error.message.includes(text))
-    }
-
-    public static At(...parts: string[]): string
-    {
-        return parts.join(InvariantText.Space)
-    }
-
-    public static Says(where: string, ...parts: string[]): string
-    {
-        return where + InvariantText.Colon + parts.join(InvariantText.Nothing)
-    }
-}
-
 /**
  * What one principal may see, computed from the engine and the identity evaluator alone:
  * - `Cypher`: the ids `ScanNodes(todl.Element)` yields under the principal's scope (tenant-wide reads, and every
  *   cypher/execute read, which stays tenant-wide);
- * - `ModelOf(id)`: `Cypher` intersected with the ids a scan under `Or(ConceptIs todl.Term, OwnerIs id)` alone yields
+ * - `ModelOf(id)`: `Cypher` intersected with the ids a scan under `Or(ConceptIs todl.Term, ConceptIs ShareGrant, OwnerIs id)` alone yields
  *   (deny-wins conjunction, built here without endpoint code);
  * - `ModelView`: `Cypher` without the term and the class node, plus each of them the engine admits as a hypothetical
  *   node of its represented concept (`GraphReader.Admits` on its fixture values): model/view judges them that way;
  * - `Held` / `ConceptOf`: every node the engine holds and its concept (unscoped), to tell instances from structure.
  */
-class ExpectedVisibility
+class ExpectedVisibility implements IExpectedVisibility
 {
     private constructor(
         public readonly Cypher: ReadonlySet<string>,
@@ -263,7 +217,7 @@ class ExpectedVisibility
         {
             reader.dispose()
         }
-        const authorization = await server.FieldReadMaskSource()
+        const authorization = await server.SecurityModelReload()
         assert.ok(authorization instanceof TenantReadAuthorization, InvariantText.NoTenantAuthorization)
         const fields = (await authorization.EvaluatorForContext(context)).FieldSecurity()
         return new ExpectedVisibility(cypher, perModel, modelView, concepts, fields, context)
@@ -296,7 +250,8 @@ class ExpectedVisibility
 
     private static ModelScope(model: string): EngineScope
     {
-        const owned = new Or([new ConceptIs(InvariantFx.Term), new OwnerIs(new Set([model]))])
+        // R58: the caller's share grants pass the model filter too (none exist on this dev tenant)
+        const owned = new Or([new ConceptIs(InvariantFx.Term), new ConceptIs(SystemNames.ShareGrant), new OwnerIs(new Set([model]))])
         return AccessScope.Build({ Default: AccessDefault.Allow, Rows: new Map([[InvariantFx.Root, owned]]) })
     }
 
@@ -328,119 +283,6 @@ class ExpectedVisibility
         {
             reader.dispose()
         }
-    }
-}
-
-/** What an answer held, so the invariant is never vacuously true. */
-class Coverage
-{
-    public Nodes = 0
-    public Rels = 0
-    public SecretValues = 0
-    public Members = 0
-    public Resources = 0
-    public Applied = 0
-}
-
-/** The assertions every endpoint's answer must pass. */
-class Invariant
-{
-    private static readonly RelFrom = 'from'
-    private static readonly RelTo = 'to'
-    private static readonly RelType = 'type'
-    private static readonly RelKeys = [Invariant.RelFrom, Invariant.RelTo, Invariant.RelType]
-
-    /** Every node cell anywhere in `rows` (lists, maps, paths) and every relationship cell's two ends. */
-    public static CypherRows(rows: readonly (readonly CypherCellDto[])[], visible: ReadonlySet<string>, expected: ExpectedVisibility, where: string, seen: Coverage): void
-    {
-        for (const row of rows)
-        {
-            for (const cell of row) Invariant.Cell(cell, visible, expected, where, seen)
-        }
-    }
-
-    /** A projected `secret` column: a non-null value needs a readable attribute on the row's node. */
-    public static ProjectedSecret(rows: readonly (readonly CypherCellDto[])[], expected: ExpectedVisibility, where: string, seen: Coverage): void
-    {
-        for (const row of rows)
-        {
-            const node = CypherCells.AsNode(row[0])!
-            if (row[1] === null) continue
-            seen.SecretValues += 1
-            assert.ok(expected.CanRead(node.concept, InvariantFx.Secret), InvariantText.Says(where, InvariantText.Projected, InvariantFx.Secret, InvariantText.Of, node.id))
-        }
-    }
-
-    /**
-     * A model/view member the engine holds (or the fixture's term / class node): in the principal's model/view set, attrs
-     * and edge members readable for its own concept, edge targets visible. Other members (schema, models) are structure.
-     */
-    public static ModelMember(member: ModelMemberDto, expected: ExpectedVisibility, where: string): boolean
-    {
-        const concept = expected.MemberConcept(member.id)
-        if (concept === undefined) return false
-        assert.ok(expected.ModelView.has(member.id), InvariantText.Says(where, InvariantText.Member, member.id, InvariantText.OutsideScope))
-        for (const field of Object.keys(member.attrs))
-        {
-            assert.ok(expected.CanRead(concept, field), InvariantText.Says(where, InvariantText.Attr, field, InvariantText.Of, member.id))
-        }
-        for (const edge of member.edges)
-        {
-            if (expected.MemberConcept(edge.to) !== undefined)
-            {
-                assert.ok(expected.ModelView.has(edge.to), InvariantText.Says(where, InvariantText.Edge, member.id, InvariantText.Arrow, edge.to))
-            }
-            if (edge.via !== null) assert.ok(expected.CanRead(concept, edge.via), InvariantText.Says(where, InvariantText.EdgeVia, edge.via, InvariantText.Of, member.id))
-        }
-        return true
-    }
-
-    private static Cell(cell: CypherCellDto | undefined, visible: ReadonlySet<string>, expected: ExpectedVisibility, where: string, seen: Coverage): void
-    {
-        const node = CypherCells.AsNode(cell)
-        if (node !== undefined)
-        {
-            seen.Nodes += 1
-            Invariant.Node(node, visible, expected, where)
-            return
-        }
-        if (Array.isArray(cell))
-        {
-            for (const item of cell) Invariant.Cell(item, visible, expected, where, seen)
-            return
-        }
-        const map = CypherCells.AsMap(cell)
-        if (map === undefined) return
-        if (Invariant.IsRel(map))
-        {
-            seen.Rels += 1
-            for (const end of [map[Invariant.RelFrom] as string, map[Invariant.RelTo] as string])
-            {
-                assert.ok(visible.has(end), InvariantText.Says(where, InvariantText.RelEnd, end))
-            }
-            return
-        }
-        for (const value of Object.values(map)) Invariant.Cell(value, visible, expected, where, seen)
-    }
-
-    private static Node(node: CypherNodeCellDto, visible: ReadonlySet<string>, expected: ExpectedVisibility, where: string): void
-    {
-        assert.ok(visible.has(node.id), InvariantText.Says(where, InvariantText.Node, node.id, InvariantText.OutsideScope))
-        for (const field of Object.keys(node.fields))
-        {
-            assert.ok(expected.CanRead(node.concept, field), InvariantText.Says(where, InvariantText.Field, field, InvariantText.Of, node.id))
-        }
-        for (const [member, targets] of Object.entries(node.refs))
-        {
-            assert.ok(expected.CanRead(node.concept, member), InvariantText.Says(where, InvariantText.Ref, member, InvariantText.Of, node.id))
-            for (const target of targets) assert.ok(visible.has(target), InvariantText.Says(where, InvariantText.RefTarget, node.id, InvariantText.Arrow, target))
-        }
-    }
-
-    private static IsRel(map: { [k: string]: CypherCellDto }): boolean
-    {
-        const keys = Object.keys(map).sort()
-        return keys.length === Invariant.RelKeys.length && keys.every((key, i) => key === Invariant.RelKeys[i] && typeof map[key] === 'string')
     }
 }
 
@@ -496,11 +338,10 @@ class InvariantWorld
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const server = this.Server
         const development = ServerConnectionHandler.DevelopmentAttachArgs(server)
-        const fieldMasks = await server.FieldReadMaskSource()
-        const handler = ServerConnectionHandler.Attach(serverSocket, this.language, this.manager, context, () => Promise.reject(new Error(InvariantFx.NoConnectors)), development.devCypher,
-            undefined, undefined, undefined, undefined, undefined, undefined, server.Purpose(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-            fieldMasks, ctx => server.ConnectorReadAuthorizationFor(ctx), (ctx, target) => server.ConnectorWriteAuthorizationFor(ctx, target), (ctx, id, request) => server.ExecuteCypher(ctx, id, request),
-            undefined, development.devGraphService, undefined, development.devModelView)
+        const handler = ServerConnectionHandler.Attach(serverSocket, this.language, this.manager, context, undefined, development.cypherQuery,
+            undefined, undefined, undefined, undefined, undefined, undefined, server.Purpose(), undefined, undefined, undefined,
+            development.cypherExecute,
+            undefined, development.devGraphService, undefined, development.modelView)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.handlers.push(handler)
         this.clients.push(client)
@@ -600,7 +441,7 @@ class PrincipalSweep
     private Check(rows: CypherCellDto[][], query: string, visible: ReadonlySet<string>, expected: ExpectedVisibility, where: string): void
     {
         Invariant.CypherRows(rows, visible, expected, where, this.Seen)
-        if (query === InvariantFx.Projection) Invariant.ProjectedSecret(rows, expected, where, this.Seen)
+        if (query === InvariantFx.Projection) Invariant.ProjectedField(rows, InvariantFx.Secret, expected, where, this.Seen)
         if (query === InvariantFx.SecretFilter)
         {
             // only Widget secures `secret` (field security is exact per concept): an unreadable one may match a Gadget/Gizmo row, never a Widget row
@@ -617,7 +458,7 @@ class PrincipalSweep
             const page = await this.client.ModelView(this.world.MemberId, { cursor, pageSize: InvariantFx.ModelViewPageSize })
             for (const member of page.items)
             {
-                if (Invariant.ModelMember(member, expected, InvariantText.ModelView)) this.Seen.Members += 1
+                if (Invariant.ModelMember(member, expected.ModelView, expected, InvariantText.ModelView)) this.Seen.Members += 1
             }
             cursor = page.nextCursor
         }

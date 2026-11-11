@@ -62,7 +62,7 @@ class Harness
         const service = (await server.LanguageService()) as SolutionLanguageService
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, Fixtures.Gated(service, gate), manager, Fixtures.OwnerContext(), () => Promise.reject(new Error('no connectors')), undefined, instrumentation)
+        const handler = ServerConnectionHandler.Attach(serverSocket, Fixtures.Gated(service, gate), manager, Fixtures.OwnerContext(), undefined, undefined, instrumentation)
         return new Harness(server, service, handler, PragmaticClient.CreateOverSocket(clientSocket))
     }
 

@@ -162,9 +162,9 @@ class GraphFixture
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
-            serverSocket, language, {} as SolutionManagerService, context, () => Promise.reject(new Error()), undefined,
-            undefined, undefined, undefined, undefined, undefined, undefined, purpose, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-            undefined, undefined, undefined, undefined, undefined, wired ? this.Service : undefined)
+            serverSocket, language, {} as SolutionManagerService, context, undefined, undefined,
+            undefined, undefined, undefined, undefined, undefined, undefined, purpose, undefined, undefined, undefined,
+            undefined, undefined, wired ? this.Service : undefined)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

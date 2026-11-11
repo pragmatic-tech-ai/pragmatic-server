@@ -29,6 +29,9 @@ class MtFixture
 {
     public static readonly Host = '127.0.0.1'
     public static readonly KeyEnv = 'PS_MT_KEY'
+    public static readonly ReleaseWaitMs = 10000
+    public static readonly ReleasePollMs = 5
+    public static readonly NotReleasedMessage = 'the host never saw the connection close'
 
     public static Start(...tenantIds: string[]): { baseDir: string }
     {
@@ -64,6 +67,17 @@ class MtFixture
         await pack.Grants.Save(new Grant(tenantId, Role.Admin, new ResourceRef(ResourceKind.Tenant, tenantId, [])))
         const tenant = await host.TenantForTest(tenantId)
         return (await pack.Tokens.Issue(tenant, tenantId, [], null)).Token
+    }
+
+    /** Resolves once the host has seen every connection close (its close handler releases the tenant synchronously). */
+    public static async UntilReleased(host: PragmaticServerHost): Promise<void>
+    {
+        const deadline = Date.now() + MtFixture.ReleaseWaitMs
+        while (host.HandlerCountForTest() > 0)
+        {
+            if (Date.now() > deadline) throw new Error(MtFixture.NotReleasedMessage)
+            await new Promise(resolve => setTimeout(resolve, MtFixture.ReleasePollMs))
+        }
     }
 
     public static Cleanup(baseDir: string): void
@@ -155,9 +169,11 @@ test('closing the only connection releases the tenant so an idle sweep evicts it
         const c1 = await PragmaticClient.ConnectAsync(`ws://${addr.host}:${addr.port}/?environment=t1`, { bearerToken: token1 })
         await c1.OpenSolution(join(baseDir, 't1', 'solution'))
         await ((await host.LanguageServiceForTest('t1')) as SolutionLanguageService).WhenIdle()
+        assert.equal(host.HandlerCountForTest(), 1)
         await c1.DisposeAsync()
-        await new Promise(resolve => setTimeout(resolve, 50))
-        await host.RegistryForTest().EvictIdle(Date.now(), 0)
+        // the client's dispose does not wait for the server to see the close: await the release, never a fixed sleep
+        await MtFixture.UntilReleased(host)
+        await host.RegistryForTest().EvictIdle(Number.MAX_SAFE_INTEGER, 0)
         const after = await host.RegistryForTest().ServerFor('t1')
         assert.notStrictEqual(after, before)
     }

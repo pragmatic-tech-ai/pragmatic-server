@@ -14,6 +14,7 @@ import { ConnectorsPolicy } from '../connector-policy.js'
 import { SandboxStrategy } from '../../config/server-config.js'
 import type { AdapterPacksConfig } from '../../config/server-config.js'
 import { ServerConfigLoader } from '../../config/server-config-loader.js'
+import { DevConnectorRead } from '../engine/tests/dev-connector-read.js'
 
 class CountingNpm implements INpmCli
 {
@@ -140,9 +141,7 @@ namespace shop {
         {
             await server.Start()
             await server.OpenSolution(dir)
-            const runtime = await server.Connectors()
-            const models = runtime.ModelsWithConnectors()
-            await body(async () => (await runtime.ReadEntities(models[0]!.ModelId, Fixture.ConceptId)).Entities)
+            await body(() => DevConnectorRead.Rows(server, Fixture.ConceptId))
         }
         finally
         {

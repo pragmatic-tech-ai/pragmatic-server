@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { NpmAdapterPackProvider, NpmCli, WorkerThreadSandboxFactory } from '@pragmatic-tech-ai/todl-connectors-host'
 import type { INpmCli } from '@pragmatic-tech-ai/todl-connectors-host'
 import { PragmaticServer } from '../pragmatic-server.js'
+import { DevConnectorRead } from '../host/engine/tests/dev-connector-read.js'
 
 /** Opt-in gate for the real-npm / fake-registry e2e (mirrors TCH's PACK_INSTALLER_IT). */
 class Gate
@@ -119,12 +120,11 @@ namespace shop {
     {
         await server.Start()
         await server.OpenSolution(dir)
-        const runtime = await server.Connectors()
-        const models = runtime.ModelsWithConnectors()
+        const models = await server.DevConnectors().List()
         assert.equal(models.length, 1)
-        assert.equal(models[0]!.Bindings[0]!.Source, PackE2E.WidgetsSource)
-        const entities = (await runtime.ReadEntities(models[0]!.ModelId, PackE2E.WidgetConcept)).Entities
-        const names = entities.map(e => String((e.Snapshot() as Record<string, unknown>)[PackE2E.NameField])).sort()
+        assert.equal(models[0]!.bindings[0]!.source, PackE2E.WidgetsSource)
+        const entities = await DevConnectorRead.Rows(server, PackE2E.WidgetConcept)
+        const names = entities.map(e => String(e.fields[PackE2E.NameField])).sort()
         assert.deepEqual(names, [PackE2E.Alpha, PackE2E.Beta])
     }
 }

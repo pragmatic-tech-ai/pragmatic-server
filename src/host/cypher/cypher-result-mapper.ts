@@ -1,13 +1,13 @@
 import { CypherCells } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherCellDto, CypherQueryPageDto, CypherNodeCellDto, CypherFieldSnapshotDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { Cypher } from '@pragmatic-tech-ai/todl'
+import { CypherWire } from '@pragmatic-tech-ai/todl'
 
 /** Maps the engine's PascalCase result DTO to the camelCase plain-JSON wire page, carrying the page's continuation cursor. */
 export class CypherResultMapper
 {
     private static readonly NoOrigin = ''
 
-    public static ToWire(dto: Cypher.CypherResultDto, nextCursor?: string): CypherQueryPageDto
+    public static ToWire(dto: CypherWire.CypherResultDto, nextCursor?: string): CypherQueryPageDto
     {
         const page: CypherQueryPageDto = {
             columns: [...dto.Columns],
@@ -41,12 +41,12 @@ export class CypherResultMapper
             return cell.map(c => CypherResultMapper.Cell(c))
         }
         // Node vs map is decided by the engine's reserved-key discriminator, never by shape (a query can build any map).
-        const node = Cypher.CypherCellCodec.AsNode(cell)
+        const node = CypherWire.CypherCellCodec.AsNode(cell)
         if (node !== undefined)
         {
             return { [CypherCells.NodeKey]: CypherResultMapper.Node(node as unknown as Record<string, unknown>) } as CypherCellDto
         }
-        const entries = Cypher.CypherCellCodec.AsMap(cell)
+        const entries = CypherWire.CypherCellCodec.AsMap(cell)
         if (entries === undefined)
         {
             return null

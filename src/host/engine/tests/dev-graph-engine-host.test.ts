@@ -5,7 +5,8 @@ import type { BatchOp, GraphEngine, ICommitApplied, IConnectorTransaction, IGrap
 import { Disposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { DevGraphEngineHost, DevSnapshotCompileError, EngineWriteTracker } from '../dev-graph-engine-host.js'
-import type { IDevEngineDiagnostics, IUpgradeTimer } from '../dev-graph-engine-host.js'
+import type { IDevEngineDiagnostics } from '../dev-graph-engine-host.js'
+import type { IUpgradeTimer } from '../bounded-wait.js'
 import { DevSnapshotSource } from '../dev-snapshot-source.js'
 import { EngineHostFx, HeldFence, ManualGate, ManualTimer } from './engine-host-fixture.js'
 
@@ -45,6 +46,16 @@ class RecordingDiagnostics implements IDevEngineDiagnostics
     public readonly HandlerFailures: unknown[] = []
 
     public UpgradeFailed(error: unknown): void
+    {
+        this.Failures.push(error)
+    }
+
+    public CatalogFailed(error: unknown): void
+    {
+        this.Failures.push(error)
+    }
+
+    public RetireFailed(error: unknown): void
     {
         this.Failures.push(error)
     }

@@ -8,7 +8,71 @@ import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-s
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
+import type { IGraphConnectorService } from '../engine/engine-connector-service.js'
 import type { RequestInstrumentation } from '../../observability/request-instrumentation.js'
+
+/** Connector endpoints whose every call rejects with `thrown` (the dispatch path under test sees the raw error). */
+class FailingConnectors implements IGraphConnectorService
+{
+    public constructor(private readonly thrown: unknown)
+    {
+    }
+
+    public List(): Promise<never>
+    {
+        return this.Fail()
+    }
+
+    public Prepare(): Promise<never>
+    {
+        return this.Fail()
+    }
+
+    public Refresh(): Promise<never>
+    {
+        return this.Fail()
+    }
+
+    public RefreshModel(): Promise<never>
+    {
+        return this.Fail()
+    }
+
+    public Read(): Promise<never>
+    {
+        return this.Fail()
+    }
+
+    public ReadPage(): Promise<never>
+    {
+        return this.Fail()
+    }
+
+    public WritePaged(): Promise<never>
+    {
+        return this.Fail()
+    }
+
+    public WriteBack(): Promise<never>
+    {
+        return this.Fail()
+    }
+
+    public Decisions(): Promise<never>
+    {
+        return this.Fail()
+    }
+
+    public Test(): Promise<never>
+    {
+        return this.Fail()
+    }
+
+    private Fail(): Promise<never>
+    {
+        return Promise.reject(this.thrown)
+    }
+}
 
 class Fixtures
 {
@@ -34,7 +98,7 @@ class Fixtures
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const development = ServerConnectionHandler.DevelopmentAttachArgs(server)
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.OwnerContext(), () => Promise.reject(new Error('no connectors')), development.devCypher, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, development.devGraphService, undefined, development.devModelView)
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.OwnerContext(), undefined, development.cypherQuery, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, development.devGraphService, undefined, development.modelView)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {
@@ -60,7 +124,7 @@ class Fixtures
         }
     }
 
-    /** Drives Connectors() through the real dispatch path with a connector factory that rejects with the given error. */
+    /** Drives Connectors() through the real dispatch path with connector endpoints that reject with the given error. */
     public static async Failure(thrown: unknown, instrumentation?: RequestInstrumentation): Promise<{ code?: number, message?: string, data?: unknown, serialized: string }>
     {
         const packages = mkdtempSync(join(tmpdir(), 'ps-pkgs-'))
@@ -69,7 +133,7 @@ class Fixtures
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.OwnerContext(), () => Promise.reject(thrown), undefined, instrumentation)
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, Fixtures.OwnerContext(), new FailingConnectors(thrown), undefined, instrumentation)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

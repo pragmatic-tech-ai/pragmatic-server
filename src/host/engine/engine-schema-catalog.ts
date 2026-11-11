@@ -12,6 +12,7 @@ export class EngineSchemaCatalog
     private readonly byName: ReadonlyMap<string, IDefinitionDescription>
     private readonly members = new Map<string, ReadonlyMap<string, MemberInput>>()
     private readonly applicable = new Map<string, ReadonlySet<string>>()
+    private readonly descendants = new Map<string, readonly string[]>()
 
     public constructor(public readonly Description: ISchemaDescription)
     {
@@ -45,6 +46,27 @@ export class EngineSchemaCatalog
         return chain
     }
 
+    /**
+     * True when an instance of `actual` is a record of `concept` (ruling S8): `actual` is `concept` or one of its
+     * subconcepts. An aspect `actual` carries does not qualify.
+     */
+    public IsConceptOrSubtype(actual: string, concept: string): boolean
+    {
+        return actual === concept || this.Ancestors(actual).includes(concept)
+    }
+
+    /** Every concept that has `concept` as a proper ancestor, in description order (empty for an unknown name or a leaf). */
+    public Descendants(concept: string): readonly string[]
+    {
+        let below = this.descendants.get(concept)
+        if (below === undefined)
+        {
+            below = this.Concepts().filter(name => this.Ancestors(name).includes(concept))
+            this.descendants.set(concept, below)
+        }
+        return below
+    }
+
     /** The keys whose scope entries apply to an instance of `concept`: itself, its ancestors and every carried aspect. */
     public Applicable(concept: string): ReadonlySet<string>
     {
@@ -73,6 +95,12 @@ export class EngineSchemaCatalog
     public IsProperty(concept: string, member: string): boolean
     {
         return this.EffectiveMembers(concept).get(member)?.Kind === MemberKind.Property
+    }
+
+    /** True iff `member` is an effective relationship (not a property) of `concept`. */
+    public IsRelationship(concept: string, member: string): boolean
+    {
+        return this.EffectiveMembers(concept).get(member)?.Kind === MemberKind.Relationship
     }
 
     /** The value type of an effective property of `concept` (String when the description leaves it unset); undefined when not a property. */
