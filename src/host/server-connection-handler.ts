@@ -9,7 +9,7 @@ import { ResourceRef, IdentityConfig, PresentedSecret, LocalAccountNotFoundError
 import { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { AccessContext, ISecurityModelConfig, Grant, Role, LocalAccount, ServiceTokenSummary, ServiceTokenGrant } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
-import { Cypher } from '@pragmatic-tech-ai/todl'
+import { Cypher } from '@pragmatic-tech-ai/graph'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { InvalidParamsPrefix } from './invalid-params-prefix.js'

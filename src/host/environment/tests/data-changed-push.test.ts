@@ -118,6 +118,24 @@ class Inbox
         return this.Payloads
     }
 
+    /** Waits until a payload carrying `commit` arrived and returns it (other payloads, e.g. a reopen's root, may come first). */
+    public async AwaitCommit(commit: string): Promise<DataChangedPayload>
+    {
+        const deadline = Date.now() + Inbox.WaitMs
+        let found = this.Payloads.find(payload => payload.commit === commit)
+        while (found === undefined)
+        {
+            if (Date.now() > deadline) throw new Error(Inbox.TimeoutMessage)
+            await new Promise<void>(resolve =>
+            {
+                this.waiter = resolve
+                setTimeout(resolve, 20)
+            })
+            found = this.Payloads.find(payload => payload.commit === commit)
+        }
+        return found
+    }
+
     /** Lets any further push arrive (beyond the coalescing window). */
     public static Quiet(): Promise<void>
     {
@@ -464,10 +482,9 @@ describe('data/changed push', () =>
             assert.notEqual(await host.Engine(), first, 'the engine was reopened')
             await PushFx.Applied(fx, [{ op: AppWriteOpKind.Create, concept: PushFx.Account, fields: { [PushFx.Name]: PushFx.A } }])
             const commit = await PushFx.Commit(fx)
-            // the reopen's root may share the write's window
-            const last = (await inbox.Await()).at(-1)!
-            assert.equal(last.commit, commit)
-            assert.ok(last.concepts.includes(PushFx.Account), JSON.stringify(last))
+            // the reopen's root may arrive separately or share the write's window: wait for the write's own commit
+            const pushed = await inbox.AwaitCommit(commit)
+            assert.ok(pushed.concepts.includes(PushFx.Account), JSON.stringify(pushed))
         }, false)
     })
 
