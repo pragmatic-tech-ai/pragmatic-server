@@ -40,6 +40,28 @@ export interface ISecurityModelEditHost
     // The server's member rows for a saved team, once loaded (undefined before).
     ServerTeamMembers(teamId: string): readonly TeamMemberDto[] | undefined
 
-    // Loads (and remembers) the server's member rows for a team; rejects on failure.
-    LoadTeamMembers(teamId: string): Promise<TeamMemberDto[]>
+    // Whether the team exists in the saved setting (a team added in this draft has no server rows).
+    IsSavedTeam(teamId: string): boolean
+
+    // The team's manual members as last saved: the baseline for "not saved" marks.
+    SavedManualMembers(teamId: string): readonly string[]
+
+    // The last members-load failure text for the team ('' when none).
+    TeamMembersError(teamId: string): string
+
+    // Loads the server's member rows for a team into the editor's state and
+    // rebuilds the team rows; a failure is recorded as the team's error text.
+    // Never rejects; a result that lands after the draft changed is discarded.
+    LoadTeamMembers(teamId: string): Promise<void>
+
+    // The text typed into one of a team's "add" boxes, kept across rebuilds.
+    TeamInput(teamId: string, field: TeamInputField): string
+    SetTeamInput(teamId: string, field: TeamInputField, value: string): void
+}
+
+// The typed-in boxes on a team row.
+export enum TeamInputField
+{
+    IdpGroup,
+    Member,
 }

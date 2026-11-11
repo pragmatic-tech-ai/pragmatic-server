@@ -87,4 +87,43 @@ describe('team members', () =>
         assert.deepEqual(editor.Draft?.Org.Teams[0].manualMembers, ['a', 'b'])
         assert.equal(editor.IsDirty, true)
     })
+
+    it('unsaved manual member is marked unsaved', async () =>
+    {
+        const { editor, team } = await Fixture.Team()
+        team().NewManualMember = 'b'
+        team().AddManualMemberCommand.Execute()
+        assert.equal(team().NewManualMember, '')
+        assert.deepEqual(team().Members.ToArray().map(m => [m.PrincipalId, m.OriginText]), [['a', 'Added here'], ['b', 'Added here (not saved)']])
+        assert.equal(team().AreMembersLoaded, false)
+        assert.equal(team().ShowMembersHint, true)
+        team().LoadMembersCommand.Execute()
+        await Tick.Settle()
+        assert.equal(team().ShowMembersHint, false)
+        assert.deepEqual(team().Members.ToArray().map(m => m.OriginText), ['From identity provider', 'Added here', 'Added here (not saved)'])
+        assert.equal(editor.IsDirty, true)
+    })
+
+    it('a members load keeps its result and unsent text across a structural edit', async () =>
+    {
+        const { editor, api, team } = await Fixture.Team()
+        api.FailOn.set('ListTeamMembers', new Error('members unavailable'))
+        team().LoadMembersCommand.Execute()
+        team().NewIdpGroup = 'typed'
+        await Tick.Settle()
+        editor.AddBusinessUnitCommand.Execute()
+        assert.equal(team().MembersErrorText, 'members unavailable')
+        assert.equal(team().NewIdpGroup, 'typed')
+    })
+
+    it('a team added in this draft cannot load members', async () =>
+    {
+        const { editor, api } = await Fixture.Team()
+        editor.NewTeamName = 'Fresh'
+        editor.AddTeamCommand.Execute()
+        const fresh = editor.TeamRows.ToArray()[1]
+        assert.equal(fresh.LoadMembersCommand.CanExecute(), false)
+        await fresh.LoadMembers()
+        assert.equal(api.Count('ListTeamMembers'), 0)
+    })
 })

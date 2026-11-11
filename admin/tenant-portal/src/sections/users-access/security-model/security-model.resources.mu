@@ -523,6 +523,8 @@ resources SecurityModelResources {
                     TextBlock [ Text = "Show members" ]
                 }
             }
+            TextBlock [ Text = "Members from the identity provider are not shown until you press Show members.", Foreground = @Fg2,
+                        Visibility = $ShowMembersHint << ToVisibility ]
             TextBlock [ Text = $MembersErrorText, Foreground = @Fg2, Visibility = $HasMembersError << ToVisibility ]
             ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $Members,
                       ItemTemplate = @SecurityModelTeamMemberTemplate ]

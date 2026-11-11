@@ -8,7 +8,7 @@ import { EnvironmentScopedPageViewModel } from '../environment-scoped-page-view-
 import type { UsersAccessSectionService } from '../users-access-section-service.js'
 import { AssignmentEditorViewModel, AssignmentSide } from './assignment-editor-view-model.js'
 import { SecurityModelDraft } from './security-model-draft.js'
-import { SecurityModelPart, type ISecurityModelEditHost } from './security-model-edit-host.js'
+import { SecurityModelPart, TeamInputField, type ISecurityModelEditHost } from './security-model-edit-host.js'
 import { LevelCycle } from './security-model-enums.js'
 import { BusinessUnitRowViewModel, NoneChoice, TeamRowViewModel, UnitChoices, UnitOptionViewModel, UserPlacementRowViewModel } from './security-model-org-rows.js'
 import { FieldGrantRowViewModel, LegendEntryViewModel, PrivilegeRowViewModel, ProfileItemViewModel, RoleItemViewModel } from './security-model-role-rows.js'
@@ -104,6 +104,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly UserRowsProperty = 'UserRows'
     private static readonly HasNoUsersProperty = 'HasNoUsers'
     private static readonly TeamRowsProperty = 'TeamRows'
+    private static readonly TeamInputKeySeparator = '|'
     private static readonly HasNoTeamsProperty = 'HasNoTeams'
     private static readonly IsDirtyProperty = 'IsDirty'
     private static readonly HasPendingWorkProperty = 'HasPendingWork'
@@ -150,6 +151,9 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private readonly unitOptions = new Map<string, UnitOptionViewModel>()
     // The server's member rows per saved team, loaded on demand; dropped with the draft.
     private readonly teamMembers = new Map<string, readonly TeamMemberDto[]>()
+    private readonly teamMemberErrors = new Map<string, string>()
+    private readonly teamInputs = new Map<string, string>()
+    private savedTeamMembers = new Map<string, readonly string[]>()
     private readonly noneUnit = new UnitOptionViewModel(undefined, SecurityModelEditorViewModel.NoneChoice)
     private roles = new ObservableCollection<RoleItemViewModel>()
     private privilegeRows = new ObservableCollection<PrivilegeRowViewModel>()
@@ -614,19 +618,68 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         return this.teamMembers.get(teamId)
     }
 
-    public async LoadTeamMembers(teamId: string): Promise<TeamMemberDto[]>
+    public IsSavedTeam(teamId: string): boolean
+    {
+        return this.savedTeamMembers.has(teamId)
+    }
+
+    public SavedManualMembers(teamId: string): readonly string[]
+    {
+        return this.savedTeamMembers.get(teamId) ?? []
+    }
+
+    public TeamMembersError(teamId: string): string
+    {
+        return this.teamMemberErrors.get(teamId) ?? SecurityModelEditorViewModel.Empty
+    }
+
+    public async LoadTeamMembers(teamId: string): Promise<void>
     {
         const environment = this.Environment
-        if (environment === undefined)
+        const draft = this.draft
+        if (environment === undefined || draft === undefined || !this.IsSavedTeam(teamId))
         {
-            return []
+            return
         }
-        const rows = await this.Session.Client.ListTeamMembers(environment, teamId)
-        if (this.Environment === environment)
+        let rows: TeamMemberDto[] | undefined
+        let failure = SecurityModelEditorViewModel.Empty
+        try
         {
+            rows = await this.Session.Client.ListTeamMembers(environment, teamId)
+        }
+        catch (e)
+        {
+            failure = e instanceof Error ? e.message : String(e)
+        }
+        if (this.draft !== draft || this.Environment !== environment)
+        {
+            return
+        }
+        if (rows === undefined)
+        {
+            this.teamMemberErrors.set(teamId, failure)
+        }
+        else
+        {
+            this.teamMemberErrors.delete(teamId)
             this.teamMembers.set(teamId, rows)
         }
-        return rows
+        this.RebuildPart(SecurityModelPart.Teams)
+    }
+
+    public TeamInput(teamId: string, field: TeamInputField): string
+    {
+        return this.teamInputs.get(SecurityModelEditorViewModel.TeamInputKey(teamId, field)) ?? SecurityModelEditorViewModel.Empty
+    }
+
+    public SetTeamInput(teamId: string, field: TeamInputField, value: string): void
+    {
+        this.teamInputs.set(SecurityModelEditorViewModel.TeamInputKey(teamId, field), value)
+    }
+
+    private static TeamInputKey(teamId: string, field: TeamInputField): string
+    {
+        return `${field}${SecurityModelEditorViewModel.TeamInputKeySeparator}${teamId}`
     }
 
     // ---- Loading and saving --------------------------------------------
@@ -787,6 +840,9 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     {
         this.draft = draft
         this.teamMembers.clear()
+        this.teamMemberErrors.clear()
+        this.teamInputs.clear()
+        this.savedTeamMembers = new Map((draft?.ToDto().teams ?? []).map(t => [t.id, t.manualMembers]))
         const roles = draft?.Catalog.roles ?? []
         const profiles = draft?.Catalog.profiles ?? []
         this.selectedRoleId = roles.some(r => r.name === this.selectedRoleId) ? this.selectedRoleId : roles[0]?.name

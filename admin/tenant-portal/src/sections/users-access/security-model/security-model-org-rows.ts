@@ -1,10 +1,10 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import { TeamMemberOrigin, type BusinessUnitDto, type TeamDto, type TeamMemberDto, type UserPlacementDto } from '../../../tenant-types.js'
+import { TeamMemberOrigin, type BusinessUnitDto, type TeamDto, type UserPlacementDto } from '../../../tenant-types.js'
 import type { SecurityModelDraft } from './security-model-draft.js'
 import type { SecurityModelOrg } from './security-model-org.js'
 import { SecurityModelText } from './security-model-text.js'
-import { SecurityModelPart, type ISecurityModelEditHost } from './security-model-edit-host.js'
+import { SecurityModelPart, TeamInputField, type ISecurityModelEditHost } from './security-model-edit-host.js'
 
 // One business-unit choice in a ComboBox: a unit, or "(none)" (Id
 // undefined). Kept per unit id across rebuilds, so a ComboBox holding it
@@ -360,19 +360,13 @@ export class TeamRowViewModel extends OrgRowViewModel
     private static readonly SelectedUnitProperty = 'SelectedUnit'
     private static readonly NewIdpGroupProperty = 'NewIdpGroup'
     private static readonly NewManualMemberProperty = 'NewManualMember'
-    private static readonly MembersProperty = 'Members'
-    private static readonly MembersErrorTextProperty = 'MembersErrorText'
-    private static readonly HasMembersErrorProperty = 'HasMembersError'
     private static readonly NoText = ''
 
     private readonly idpGroups = new ObservableCollection<IdpGroupRowViewModel>()
     private readonly addIdpGroupCommand: RelayCommand
     private readonly addManualMemberCommand: RelayCommand
     private readonly loadMembersCommand: RelayCommand
-    private members: ObservableCollection<TeamMemberRowViewModel>
-    private newIdpGroup = TeamRowViewModel.NoText
-    private newManualMember = TeamRowViewModel.NoText
-    private membersErrorText = TeamRowViewModel.NoText
+    private readonly members: ObservableCollection<TeamMemberRowViewModel>
 
     public constructor(host: ISecurityModelEditHost, private readonly team: TeamDto, private readonly choices: UnitChoices)
     {
@@ -383,7 +377,8 @@ export class TeamRowViewModel extends OrgRowViewModel
         }
         this.addIdpGroupCommand = new RelayCommand(() => this.AddIdpGroup(), () => this.host.CanEdit)
         this.addManualMemberCommand = new RelayCommand(() => this.AddManualMember(), () => this.host.CanEdit)
-        this.loadMembersCommand = new RelayCommand(() => { void this.LoadMembers() })
+        // A team added in this draft has no server rows to read.
+        this.loadMembersCommand = new RelayCommand(() => { void this.LoadMembers() }, () => this.host.IsSavedTeam(this.team.id))
         this.members = this.BuildMembers()
     }
 
@@ -434,14 +429,12 @@ export class TeamRowViewModel extends OrgRowViewModel
 
     public get NewIdpGroup(): string
     {
-        return this.newIdpGroup
+        return this.host.TeamInput(this.team.id, TeamInputField.IdpGroup)
     }
 
     public set NewIdpGroup(value: string)
     {
-        const old = this.newIdpGroup
-        this.newIdpGroup = typeof value === 'string' ? value : TeamRowViewModel.NoText
-        this.RaisePropertyChanged(TeamRowViewModel.NewIdpGroupProperty, old, this.newIdpGroup)
+        this.SetInput(TeamInputField.IdpGroup, value, TeamRowViewModel.NewIdpGroupProperty)
     }
 
     public get AddIdpGroupCommand(): RelayCommand
@@ -449,8 +442,8 @@ export class TeamRowViewModel extends OrgRowViewModel
         return this.addIdpGroupCommand
     }
 
-    // The server's rows for the saved team (each with its origin) plus this
-    // draft's manual additions the server does not have yet.
+    // The server's synced rows (once loaded) plus the draft's manual members,
+    // each marked unsaved when it is not in the saved setting.
     public get Members(): ObservableCollection<TeamMemberRowViewModel>
     {
         return this.members
@@ -461,26 +454,36 @@ export class TeamRowViewModel extends OrgRowViewModel
         return this.loadMembersCommand
     }
 
+    // Whether the server's rows (synced members) have been read for this team.
+    public get AreMembersLoaded(): boolean
+    {
+        return this.host.ServerTeamMembers(this.team.id) !== undefined
+    }
+
+    // Shown while a saved team's synced members have not been read yet.
+    public get ShowMembersHint(): boolean
+    {
+        return this.host.IsSavedTeam(this.team.id) && !this.AreMembersLoaded
+    }
+
     public get MembersErrorText(): string
     {
-        return this.membersErrorText
+        return this.host.TeamMembersError(this.team.id)
     }
 
     public get HasMembersError(): boolean
     {
-        return this.membersErrorText.length > 0
+        return this.MembersErrorText.length > 0
     }
 
     public get NewManualMember(): string
     {
-        return this.newManualMember
+        return this.host.TeamInput(this.team.id, TeamInputField.Member)
     }
 
     public set NewManualMember(value: string)
     {
-        const old = this.newManualMember
-        this.newManualMember = typeof value === 'string' ? value : TeamRowViewModel.NoText
-        this.RaisePropertyChanged(TeamRowViewModel.NewManualMemberProperty, old, this.newManualMember)
+        this.SetInput(TeamInputField.Member, value, TeamRowViewModel.NewManualMemberProperty)
     }
 
     public get AddManualMemberCommand(): RelayCommand
@@ -488,22 +491,14 @@ export class TeamRowViewModel extends OrgRowViewModel
         return this.addManualMemberCommand
     }
 
-    // Reads the server's member rows; a failure shows its text on the row and
-    // leaves the draft (and every unsaved edit) as it was.
+    // Reads the server's member rows. The editor owns the result and the
+    // failure text and rebuilds the team rows; the draft is never touched.
     public async LoadMembers(): Promise<void>
     {
-        try
+        if (this.host.IsSavedTeam(this.team.id))
         {
             await this.host.LoadTeamMembers(this.team.id)
         }
-        catch (e)
-        {
-            this.SetMembersError(e instanceof Error ? e.message : String(e))
-            return
-        }
-        this.SetMembersError(TeamRowViewModel.NoText)
-        this.members = this.BuildMembers()
-        this.RaisePropertyChanged(TeamRowViewModel.MembersProperty, undefined, this.members)
     }
 
     protected RemoveFrom(draft: SecurityModelDraft): void
@@ -513,30 +508,38 @@ export class TeamRowViewModel extends OrgRowViewModel
 
     private AddIdpGroup(): void
     {
-        const group = this.newIdpGroup.trim()
+        const group = this.NewIdpGroup.trim()
         if (group.length > 0 && this.host.Apply(d => d.Org.AddIdpGroup(this.team.id, group)))
         {
+            this.NewIdpGroup = TeamRowViewModel.NoText
             this.host.Rebuild()
         }
     }
 
     private AddManualMember(): void
     {
-        const id = this.newManualMember.trim()
+        const id = this.NewManualMember.trim()
         if (id.length > 0 && this.host.Apply(d => d.Org.AddManualMember(this.team.id, id)))
         {
+            this.NewManualMember = TeamRowViewModel.NoText
             this.host.Rebuild()
         }
     }
 
-    // Synced rows come from the server; manual rows are the draft's list (the
-    // draft is the truth for manual membership), marked unsaved once the
-    // server's rows are known and lack them.
+    private SetInput(field: TeamInputField, value: unknown, property: string): void
+    {
+        const old = this.host.TeamInput(this.team.id, field)
+        this.host.SetTeamInput(this.team.id, field, typeof value === 'string' ? value : TeamRowViewModel.NoText)
+        this.RaisePropertyChanged(property, old, this.host.TeamInput(this.team.id, field))
+    }
+
+    // Synced rows come from the server (once read); manual rows are the
+    // draft's list, marked unsaved when the saved setting lacks them.
     private BuildMembers(): ObservableCollection<TeamMemberRowViewModel>
     {
         const rows = new ObservableCollection<TeamMemberRowViewModel>()
-        const server: readonly TeamMemberDto[] | undefined = this.host.ServerTeamMembers(this.team.id)
-        for (const row of server ?? [])
+        const saved = this.host.SavedManualMembers(this.team.id)
+        for (const row of this.host.ServerTeamMembers(this.team.id) ?? [])
         {
             if (row.origin === TeamMemberOrigin.Synced)
             {
@@ -545,17 +548,8 @@ export class TeamRowViewModel extends OrgRowViewModel
         }
         for (const id of this.team.manualMembers)
         {
-            const saved = server === undefined || server.some(r => r.origin === TeamMemberOrigin.Manual && r.principalId === id)
-            rows.Add(new TeamMemberRowViewModel(this.host, this.team.id, id, TeamMemberOrigin.Manual, !saved))
+            rows.Add(new TeamMemberRowViewModel(this.host, this.team.id, id, TeamMemberOrigin.Manual, !saved.includes(id)))
         }
         return rows
-    }
-
-    private SetMembersError(text: string): void
-    {
-        const old = this.membersErrorText
-        this.membersErrorText = text
-        this.RaisePropertyChanged(TeamRowViewModel.MembersErrorTextProperty, old, text)
-        this.RaisePropertyChanged(TeamRowViewModel.HasMembersErrorProperty, old.length > 0, text.length > 0)
     }
 }
