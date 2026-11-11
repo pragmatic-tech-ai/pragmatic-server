@@ -4,6 +4,7 @@ import { Repository, EdgeKind } from '@pragmatic-tech-ai/todl'
 import type { Edge } from '@pragmatic-tech-ai/todl'
 import { ModelReadFilter } from '../model-read-filter.js'
 import type { ModelMemberPage } from '../model-projection.js'
+import { AllowAllInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
 import { AllowAllFieldReadMask } from '../cypher/field-masked-graph-query.js'
 import type { IFieldReadMask } from '../cypher/field-masked-graph-query.js'
 
@@ -61,6 +62,8 @@ class DanglingEdgeRepository extends Repository
 /** An in-memory repository: five customers (two eu, three us) with peer/manager edges. */
 class FilterFixture
 {
+    /** No identity: the access-depth axis keeps every instance (these cases pin paging and masking). */
+    public static readonly KeepAll = new AllowAllInstanceFilter()
     public static readonly Namespace = 'shop'
     public static readonly Concept = 'shop.Customer'
     public static readonly Region = 'region'
@@ -137,7 +140,7 @@ class FilterFixture
 
 test('member carries localId/namespace/tier/isClass/attrs/edges', () =>
 {
-    const filter = new ModelReadFilter(FilterFixture.Build(), AllowAllFieldReadMask.Instance)
+    const filter = new ModelReadFilter(FilterFixture.Build(), FilterFixture.KeepAll, AllowAllFieldReadMask.Instance)
     const page = filter.Page(new Map(), 0, 100)
     const member = FilterFixture.Member(page, FilterFixture.Eu1)
     assert.equal(member.kind, FilterFixture.Concept)
@@ -157,14 +160,14 @@ test('member carries localId/namespace/tier/isClass/attrs/edges', () =>
 
 test('a field-masked attr is absent', () =>
 {
-    const filter = new ModelReadFilter(FilterFixture.Build(), new DenyOneFieldMask(FilterFixture.Concept, FilterFixture.Secret))
+    const filter = new ModelReadFilter(FilterFixture.Build(), FilterFixture.KeepAll, new DenyOneFieldMask(FilterFixture.Concept, FilterFixture.Secret))
     const member = FilterFixture.Member(filter.Page(new Map(), 0, 100), FilterFixture.Eu1)
     assert.deepEqual(member.attrs, { [FilterFixture.Region]: FilterFixture.EuValue })
 })
 
 test('an edge whose via field is masked is dropped', () =>
 {
-    const filter = new ModelReadFilter(FilterFixture.Build(), new DenyOneFieldMask(FilterFixture.Concept, FilterFixture.Manager))
+    const filter = new ModelReadFilter(FilterFixture.Build(), FilterFixture.KeepAll, new DenyOneFieldMask(FilterFixture.Concept, FilterFixture.Manager))
     const member = FilterFixture.Member(filter.Page(new Map(), 0, 100), FilterFixture.Eu1)
     assert.deepEqual(member.edges, [
         { kind: FilterFixture.RelationshipKind, via: FilterFixture.Peer, to: FilterFixture.Eu2 },
@@ -176,7 +179,7 @@ test('provenanceOf holds only page members', () =>
 {
     const repo = FilterFixture.Build()
     const provenance = new Map(repo.allNodes().map(node => [node.id, `${node.id}.todl`] as [string, string]))
-    const filter = new ModelReadFilter(repo, AllowAllFieldReadMask.Instance)
+    const filter = new ModelReadFilter(repo, FilterFixture.KeepAll, AllowAllFieldReadMask.Instance)
     for (const page of FilterFixture.Walk(filter, provenance, 2))
     {
         assert.deepEqual(Object.keys(page.ProvenanceOf).sort(), page.Items.map(m => m.id).filter(id => provenance.has(id)).sort())
@@ -189,7 +192,7 @@ test('an edge to an unresolvable node is dropped', () =>
     const repo = FilterFixture.Build(new DanglingEdgeRepository(FilterFixture.Eu1, FilterFixture.Peer, FilterFixture.Ghost))
     assert.equal(repo.resolve(FilterFixture.Ghost), undefined)
     assert.ok(repo.outEdges(FilterFixture.Eu1).some(e => e.to === FilterFixture.Ghost))
-    const filter = new ModelReadFilter(repo, AllowAllFieldReadMask.Instance)
+    const filter = new ModelReadFilter(repo, FilterFixture.KeepAll, AllowAllFieldReadMask.Instance)
     const member = FilterFixture.Member(filter.Page(new Map(), 0, 100), FilterFixture.Eu1)
     assert.ok(member.edges.length > 0)
     assert.ok(member.edges.every(e => e.to !== FilterFixture.Ghost))
@@ -200,7 +203,7 @@ test('a via that resolves to a visible node is kept and masked by its localId', 
     const repo = FilterFixture.Build()
     repo.addEdge({ kind: EdgeKind.Relationship, via: FilterFixture.Eu2, from: FilterFixture.Eu1, to: FilterFixture.Eu2 })
     const mask = new RecordingFieldMask()
-    const filter = new ModelReadFilter(repo, mask)
+    const filter = new ModelReadFilter(repo, FilterFixture.KeepAll, mask)
     const member = FilterFixture.Member(filter.Page(new Map(), 0, 100), FilterFixture.Eu1)
     assert.ok(member.edges.some(e => e.via === FilterFixture.Eu2 && e.to === FilterFixture.Eu2))
     assert.ok(mask.Asked.includes(RecordingFieldMask.Key(FilterFixture.Concept, FilterFixture.Eu2Local)))

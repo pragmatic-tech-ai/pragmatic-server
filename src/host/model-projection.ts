@@ -21,7 +21,7 @@ export interface IModelNodeGate
  * The ONLY builder of ModelMemberDto pages: drops the nodes its node gate hides BEFORE paging (so pages count only
  * visible members), masks attrs by its member gate, drops edges whose target is hidden or whose via field is hidden or
  * masked (ModelMemberBuilder), and strips non-page ids from provenance. It decides nothing itself: the runtime path
- * keeps every node and masks by the field-read mask (ModelReadFilter), the dev path gates with the engine scope
+ * gates by the access-depth read filter and masks by the field-read mask (ModelReadFilter), the dev path gates with the engine scope
  * (DevModelView).
  */
 export class ModelProjection

@@ -210,10 +210,13 @@ class DevTierFixture
     public static readonly MemberId = 'models'
     public static readonly OrderLabels = 'MATCH (o:Order) RETURN o.label AS label'
     public static readonly HiddenId = 'acme.o2'
+    public static readonly VisibleId = 'acme.o1'
     /** Both seeded Order labels: the policy would admit only the first. */
     public static readonly AllLabels = ['a', 'b']
     private static readonly PackagesPrefix = 'tier2-dev-pkgs-'
     private static readonly SolutionPrefix = 'tier2-dev-sol-'
+    private static readonly IdentityPrefix = 'tier2-dev-id-'
+    private static readonly Order = 'acme.Order'
     private static readonly NoConnectors = 'no connectors'
     private static readonly SolutionModelFile = join('models', 'model.todl')
     private static readonly Policy = 'policy Order { allow read when entity.label == "a"; } '
@@ -236,7 +239,42 @@ class DevTierFixture
     private static Todl(withPolicy: boolean): string
     {
         const policy = withPolicy ? DevTierFixture.Policy : ''
-        return `namespace acme { concept Order { } ${policy}model Shop : acme { Order o1 { label = "a"; } Order o2 { label = "b"; } } }`
+        return `namespace acme { concept Order { owningBu : string?; } ${policy}model Shop : acme { Order o1 { label = "a"; owningBu = "sales"; } Order o2 { label = "b"; owningBu = "root"; } } }`
+    }
+
+    /** The harness BU-depth model on acme.Order: the reader (home unit sales) reads sales-owned Orders only, so o2 (root) is hidden. */
+    private static SalesOnly(): ISecurityModelConfig
+    {
+        const model = PpSecurityHarness.BuSecurityModel(RuntimeTierFixture.Reader)
+        return {
+            ...model,
+            ownershipRules: model.ownershipRules.map(rule => ({ ...rule, concept: DevTierFixture.Order })),
+            roles: model.roles.map(role => ({ ...role, privileges: role.privileges.map(privilege => ({ ...privilege, concept: DevTierFixture.Order })) })),
+        }
+    }
+
+    /** A runtime connection over a server with identity, the solution open and the sales-only security model seeded. */
+    public async RuntimeClientWithIdentity(): Promise<PragmaticClient>
+    {
+        const packages = mkdtempSync(join(tmpdir(), DevTierFixture.PackagesPrefix))
+        const solution = mkdtempSync(join(tmpdir(), DevTierFixture.SolutionPrefix))
+        const identityRoot = mkdtempSync(join(tmpdir(), DevTierFixture.IdentityPrefix))
+        cpSync(join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution'), solution, { recursive: true })
+        writeFileSync(join(solution, DevTierFixture.SolutionModelFile), DevTierFixture.Todl(true))
+        PpSecurityHarness.SetKey()
+        const server = new PragmaticServer({ packagesRoot: packages, identity: PpSecurityHarness.Identity(identityRoot) })
+        await server.Start()
+        await server.OpenSolution(solution)
+        await PpSecurityHarness.Seed(server, DevTierFixture.SalesOnly())
+        const language = await server.LanguageService() as SolutionLanguageService
+        const manager = await server.Manager()
+        const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
+        const handler = ServerConnectionHandler.Attach(serverSocket, language, manager, PpSecurityHarness.Context(RuntimeTierFixture.Reader), () => Promise.reject(new Error(DevTierFixture.NoConnectors)), undefined,
+            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Runtime, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+            await server.FieldReadMaskSource(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, await server.DepthFilterSource())
+        const session = new DevSession(new WireConnection(PragmaticClient.CreateOverSocket(clientSocket), handler), server, language, manager, [solution, packages, identityRoot])
+        this.sessions.push(session)
+        return session.Connection.Client
     }
 
     /** A client over a server with the solution open, attached with the development arguments or as a runtime connection. */
@@ -270,6 +308,7 @@ class DevTierFixture
         {
             await session.dispose()
         }
+        PpSecurityHarness.ClearKey()
     }
 }
 
@@ -322,5 +361,17 @@ test('runtime model view ignores model policies', async () =>
         const client = await fx.Client(true, TenantPurpose.Runtime)
         const page = await client.ModelView(DevTierFixture.MemberId)
         assert.ok(page.items.some(member => member.id === DevTierFixture.HiddenId), JSON.stringify(page.items.map(member => member.id)))
+    })
+})
+
+test('runtime model view hides an instance the access depth hides', async () =>
+{
+    await DevTierFixture.Run(async fx =>
+    {
+        const client = await fx.RuntimeClientWithIdentity()
+        const page = await client.ModelView(DevTierFixture.MemberId)
+        const ids = page.items.map(member => member.id)
+        assert.ok(ids.includes(DevTierFixture.VisibleId), JSON.stringify(ids))
+        assert.ok(!ids.includes(DevTierFixture.HiddenId), JSON.stringify(ids))
     })
 })

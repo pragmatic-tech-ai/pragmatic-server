@@ -338,7 +338,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return { authorizer: await auth.WriteAuthorizerFor(context), gate: await auth.WriteInstanceGateFor(context, target) }
     }
 
-    private async DepthFilterSource(): Promise<IReadFilterSource>
+    /** The per-request access-depth read filter source: allow-all without identity, else the tenant security model's depth filter. */
+    public async DepthFilterSource(): Promise<IReadFilterSource>
     {
         if (this.identity === undefined)
         {
