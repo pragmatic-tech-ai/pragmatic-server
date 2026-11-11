@@ -1,4 +1,3 @@
-import { FalsePredicate } from '@pragmatic-tech-ai/graph'
 import { ShareGrantScope, ShareRight, SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import type { IShareSubjects } from '@pragmatic-tech-ai/todl/engine'
 import { WriteRule } from '../engine/access-scope-conjunction.js'
@@ -13,11 +12,12 @@ import type { ScopeDraft } from './scope-draft.js'
  * entry of a key `widens` admits becomes `Or(E, ShareGrantScope.Widening(s, Read))`, every Update rule
  * `Or(U, Widening(s, Update))`, every Delete rule `Or(D, Widening(s, Delete))`. `Widening` carries the exact
  * `ConceptIs(todl.system.ShareGrant)` guard on the far node (R114), so a lookalike concept cannot forge a grant.
- * `widens` excludes the system concepts and the connector-bound ones (A3: connector data is outside platform security).
+ * `widens` admits only a delivered package's own concepts: never a built-in (`todl.Element`, `todl.Term`), a system
+ * or a connector-bound one (A3: connector data is outside platform security).
  *
  * (b) `Rows[ShareGrant] = ShareGrantScope.GrantRows(s)`: required, since a Related target is judged under the same
- * scope (R66) and a scope whose grant rows are False widens nothing (R114); `Writes[ShareGrant]` Create / Update /
- * Delete are False: only the share, assign and data-write service scopes write grants.
+ * scope (R66) and a scope whose grant rows are False widens nothing (R114). (`Writes[ShareGrant]` Create / Update /
+ * Delete False is set by EnvironmentScopeRules.Finish for every scope, with or without identity, ruling R31.)
  */
 export class ShareWidening
 {
@@ -25,7 +25,6 @@ export class ShareWidening
         [WriteRule.Update, ShareRight.Update],
         [WriteRule.Delete, ShareRight.Delete],
     ]
-    private static readonly GrantRules: readonly WriteRule[] = [WriteRule.Create, WriteRule.Update, WriteRule.Delete]
 
     public static Apply(draft: ScopeDraft, subjects: IShareSubjects, widens: (key: string) => boolean): void
     {
@@ -38,6 +37,5 @@ export class ShareWidening
             for (const key of draft.RuleKeys(rule).filter(widens)) draft.OrRule(key, rule, widening)
         }
         draft.SetRow(SystemNames.ShareGrant, ShareGrantScope.GrantRows(subjects))
-        for (const rule of ShareWidening.GrantRules) draft.SetRule(SystemNames.ShareGrant, rule, FalsePredicate.Instance)
     }
 }

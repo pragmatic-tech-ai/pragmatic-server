@@ -1,16 +1,16 @@
 import { AccessDefault, AccessScope, GraphError, GraphErrorCode } from '@pragmatic-tech-ai/graph'
-import type { CellValue, Cypher, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
+import type { CellValue, Cypher } from '@pragmatic-tech-ai/graph'
 import { TodlNodePlacement } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { Signal } from '@pragmatic-tech-ai/todl-runtime'
-import { AccessScopeError, AccessScopeErrorCode, NoPlacementDefaults } from './access-scope-source.js'
-import type { IPreparedRules, IScopeRecords, IScopeRules, ITenantSecuritySource, ScopeSchema } from './access-scope-source.js'
+import { NoPlacementDefaults } from './access-scope-source.js'
+import type { IPreparedRules, IScopeRecords, ITenantSecuritySource, ScopeSchema } from './access-scope-source.js'
 import { DepthScopeCompiler } from './depth-scope-compiler.js'
 import type { IPlacementDefaults } from './depth-scope-compiler.js'
 import type { IDevGraphEngine } from './dev-graph-engine-host.js'
 import type { DevSnapshot } from './dev-snapshot-source.js'
 import { ExternalConcepts } from './external-concepts.js'
 import { SavedMemberReader } from './saved-member-reader.js'
+import { SecuredScopeRules } from './secured-scope-rules.js'
 
 /** TODL placement (the model's namespace and the model as owner) plus the principal's create defaults. */
 class DevNodePlacement implements Cypher.INodePlacement
@@ -24,22 +24,6 @@ class DevNodePlacement implements Cypher.INodePlacement
         const place = this.inner.Place(concept, properties)
         const defaults = this.defaults.Defaults(concept)
         return defaults.size === 0 ? place : { ...place, Defaults: defaults }
-    }
-}
-
-/** The subscribe side of the rules' change signal (raised when the tenant security model is invalidated). */
-class RulesChanged implements ISignal<void>
-{
-    private readonly signal = new Signal<void>()
-
-    public Subscribe(handler: (value: void) => void): ISubscription
-    {
-        return this.signal.subscribe(handler)
-    }
-
-    public Raise(): void
-    {
-        this.signal.emit(undefined)
     }
 }
 
@@ -96,58 +80,25 @@ class DevPreparedRules implements IPreparedRules
  *
  * Identity configured without a security source is refused at construction (AccessScopeError MissingSecuritySource).
  */
-export class DevScopeRules implements IScopeRules
+export class DevScopeRules extends SecuredScopeRules<DevSnapshot>
 {
-    private static readonly MaxSnapshotReads = 5
-
-    public readonly Changed: ISignal<void>
-
-    private readonly changed = new RulesChanged()
-    private readonly security: ITenantSecuritySource | undefined
-    private readonly subscription: ISubscription | undefined
-    private generation = 0
-
     public constructor(
         private readonly host: IDevGraphEngine,
         security: ITenantSecuritySource | undefined,
         identityConfigured: boolean,
         private readonly solutionName: () => Promise<string | undefined> = () => Promise.resolve(undefined))
     {
-        this.Changed = this.changed
-        if (identityConfigured && security === undefined) throw new AccessScopeError(AccessScopeErrorCode.MissingSecuritySource)
-        this.security = identityConfigured ? security : undefined
-        this.subscription = this.security?.Invalidated.Subscribe(() =>
-        {
-            this.generation += 1
-            this.changed.Raise()
-        })
+        super(security, identityConfigured)
     }
 
     public async Prepare(schema: ScopeSchema): Promise<IPreparedRules>
     {
         const snapshot = await this.SnapshotOf(schema)
-        return new DevPreparedRules(schema, this.security, new ExternalConcepts(snapshot.Identity, schema.Catalog), await this.solutionName(), String(this.generation))
+        return new DevPreparedRules(schema, this.security, new ExternalConcepts(snapshot.Identity, schema.Catalog), await this.solutionName(), this.Generation)
     }
 
-    public dispose(): void
+    protected Snapshot(): Promise<DevSnapshot>
     {
-        this.subscription?.dispose()
-    }
-
-    /** The snapshot of `schema`'s version, so its Identity and the schema's catalog agree; an upgrade racing it is re-read. */
-    private async SnapshotOf(schema: ScopeSchema): Promise<DevSnapshot>
-    {
-        for (let attempt = 0; attempt < DevScopeRules.MaxSnapshotReads; attempt++)
-        {
-            const snapshot = await this.host.Snapshot()
-            if (snapshot.Description.Version === schema.Version) return snapshot
-            await DevScopeRules.Yield()
-        }
-        throw new AccessScopeError(AccessScopeErrorCode.SchemaUnsettled)
-    }
-
-    private static Yield(): Promise<void>
-    {
-        return new Promise<void>(resolve => setImmediate(resolve))
+        return this.host.Snapshot()
     }
 }
