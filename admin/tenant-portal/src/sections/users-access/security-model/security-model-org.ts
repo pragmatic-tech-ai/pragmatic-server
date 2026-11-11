@@ -1,6 +1,6 @@
-import type { BusinessUnitDto, SecurityModelDto, TeamDto } from '../../../tenant-types.js'
+import type { BusinessUnitDto, SecurityModelDto, TeamDto, UserPlacementDto } from '../../../tenant-types.js'
 
-// Edits the organization-structure sections (business units, teams) of a live
+// Edits the organization-structure sections (business units, user placement, teams) of a live
 // SecurityModelDto and keeps dependent references consistent on removal.
 export class SecurityModelOrg
 {
@@ -34,6 +34,11 @@ export class SecurityModelOrg
     public get Teams(): readonly TeamDto[]
     {
         return this.model.teams
+    }
+
+    public get Users(): readonly UserPlacementDto[]
+    {
+        return this.model.users
     }
 
     // The root unit (the one with no parent); undefined before any unit exists.
@@ -100,6 +105,43 @@ export class SecurityModelOrg
         }
         const units = this.model.businessUnits
         units.splice(units.findIndex(u => u.id === id), 1)
+        this.dirty = true
+    }
+
+    // Places a principal in a unit; one placement per principal, so an
+    // existing one is replaced. A blank id or an unknown unit is a no-op.
+    public PlaceUser(principalId: string, businessUnitId: string): void
+    {
+        const id = principalId.trim()
+        if (id.length === 0 || this.UnknownUnit(businessUnitId))
+        {
+            return
+        }
+        const placement = this.model.users.find(p => p.principalId === id)
+        if (placement === undefined)
+        {
+            this.model.users.push({ principalId: id, businessUnitId })
+        }
+        else if (placement.businessUnitId !== businessUnitId)
+        {
+            placement.businessUnitId = businessUnitId
+        }
+        else
+        {
+            return
+        }
+        this.dirty = true
+    }
+
+    public UnplaceUser(principalId: string): void
+    {
+        const users = this.model.users
+        const i = users.findIndex(p => p.principalId === principalId)
+        if (i < 0)
+        {
+            return
+        }
+        users.splice(i, 1)
         this.dirty = true
     }
 

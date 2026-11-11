@@ -25,6 +25,7 @@ import LegendEntryViewModel from "./security-model-role-rows.js"
 import FieldGrantRowViewModel from "./security-model-role-rows.js"
 import BusinessUnitRowViewModel from "./security-model-org-rows.js"
 import TeamRowViewModel from "./security-model-org-rows.js"
+import UserPlacementRowViewModel from "./security-model-org-rows.js"
 
 resources SecurityModelResources {
     DataTemplate [ DataType = SecurityModelEditorViewModel ] {
@@ -203,6 +204,33 @@ resources SecurityModelResources {
                                 TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $NewBusinessUnitName, Placeholder = "New business unit name", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
                                 Button [ Grid.Column = 1, Variant = Secondary, Command = $AddBusinessUnitCommand ] {
                                     TextBlock [ Text = "Add business unit" ]
+                                }
+                            }
+                        }
+
+                        // People.
+                        StackPanel [ Orientation = Vertical, Visibility = $IsOrgPeopleTab << ToVisibility ] {
+                            TextBlock [ Text = "No one is placed yet. Add a person to put them in a business unit.", Foreground = @Fg2,
+                                        Visibility = $HasNoUsers << ToVisibility ]
+                            Grid [ Style = @TenantTableColumns ] {
+                                ColumnDefinitions {
+                                    ColumnDefinition [ Width = GridLength.Star ]
+                                    ColumnDefinition [ Width = GridLength.Star ]
+                                    ColumnDefinition [ Width = GridLength.Auto ]
+                                }
+                                TextBlock [ Grid.Column = 0, Text = "Person", Style = @TenantTableHeader ]
+                                TextBlock [ Grid.Column = 1, Text = "Business unit", Style = @TenantTableHeader ]
+                            }
+                            ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $UserRows,
+                                      ItemTemplate = @SecurityModelUserPlacementTemplate ]
+                            Grid [ Margin = (0,8,0,0) ] {
+                                ColumnDefinitions {
+                                    ColumnDefinition [ Width = GridLength.Star ]
+                                    ColumnDefinition [ Width = GridLength.Auto ]
+                                }
+                                TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $NewUserPrincipalId, Placeholder = "Person id", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+                                Button [ Grid.Column = 1, Variant = Secondary, Command = $PlaceUserCommand ] {
+                                    TextBlock [ Text = "Add person" ]
                                 }
                             }
                         }
@@ -399,6 +427,25 @@ resources SecurityModelResources {
                 TextBox [ UsesNativeInput = true, Text = $Name, Placeholder = "Business unit name", IsEnabled = $CanEdit ]
             }
             ComboBox [ Grid.Column = 1, ItemsSource = $ParentOptions, SelectedItem = $SelectedParent, IsEnabled = $CanEdit,
+                       HorizontalAlignment = Stretch, Margin = (0,0,8,0) ]
+            StackPanel [ Grid.Column = 2, Orientation = Vertical ] {
+                Button [ Variant = Ghost, Command = $RemoveCommand ] {
+                    TextBlock [ Text = "Remove" ]
+                }
+                TextBlock [ Text = $CannotRemoveText, Foreground = @Fg2, Visibility = $IsRemoveBlocked << ToVisibility ]
+            }
+        }
+    }
+
+    DataTemplate x:key="SecurityModelUserPlacementTemplate" [ DataType = UserPlacementRowViewModel ] {
+        Grid [ Style = @TenantTableColumns ] {
+            ColumnDefinitions {
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Auto ]
+            }
+            TextBlock [ Grid.Column = 0, Text = $PrincipalId, Foreground = @Fg0, VerticalAlignment = Center, Margin = (0,0,8,0) ]
+            ComboBox [ Grid.Column = 1, ItemsSource = $UnitOptions, SelectedItem = $SelectedUnit, IsEnabled = $CanEdit,
                        HorizontalAlignment = Stretch, Margin = (0,0,8,0) ]
             Button [ Grid.Column = 2, Variant = Ghost, Command = $RemoveCommand ] {
                 TextBlock [ Text = "Remove" ]

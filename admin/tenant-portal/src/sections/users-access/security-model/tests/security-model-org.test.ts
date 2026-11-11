@@ -163,5 +163,20 @@ describe('SecurityModelOrg', () =>
         assert.deepEqual(model.profileAssignments[0].teamIds, ['t2'])
         assert.equal(org.Dirty, true)
     })
+
+    it('placing a user twice replaces the placement', () =>
+    {
+        const model = Fixtures.Referenced()
+        const org = new SecurityModelOrg(model)
+        org.PlaceUser('  alice  ', 'bu1')
+        org.PlaceUser('alice', 'bu2')
+        assert.deepEqual(model.users, [{ principalId: 'alice', businessUnitId: 'bu2' }])
+        const before = JSON.stringify(model)
+        org.PlaceUser('   ', 'bu1')
+        org.PlaceUser('bob', 'missing')
+        assert.equal(JSON.stringify(model), before)
+        org.UnplaceUser('alice')
+        assert.deepEqual(model.users, [])
+    })
 })
 

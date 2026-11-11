@@ -1,6 +1,6 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import type { BusinessUnitDto, TeamDto } from '../../../tenant-types.js'
+import type { BusinessUnitDto, TeamDto, UserPlacementDto } from '../../../tenant-types.js'
 import type { SecurityModelDraft } from './security-model-draft.js'
 import type { SecurityModelOrg } from './security-model-org.js'
 import { SecurityModelPart, type ISecurityModelEditHost } from './security-model-edit-host.js'
@@ -151,6 +151,8 @@ export class BusinessUnitRowViewModel extends OrgRowViewModel
     private static readonly ParentOptionsProperty = 'ParentOptions'
     private static readonly SelectedParentProperty = 'SelectedParent'
     private static readonly IndentUnit = '\u00a0\u00a0\u00a0\u00a0'
+    private static readonly RemoveBlockedProperty = 'IsRemoveBlocked'
+    private static readonly CannotRemoveUnitText = 'Move its units, people and teams first.'
 
     private depth = 0
     private choices: UnitChoices | undefined
@@ -169,6 +171,18 @@ export class BusinessUnitRowViewModel extends OrgRowViewModel
     public get Id(): string
     {
         return this.unit.id
+    }
+
+    // Shown on the row when removal is blocked (the root is never removable
+    // and carries no hint).
+    public get IsRemoveBlocked(): boolean
+    {
+        return this.unit.parent !== undefined && !this.CanRemove
+    }
+
+    public get CannotRemoveText(): string
+    {
+        return BusinessUnitRowViewModel.CannotRemoveUnitText
     }
 
     public get Parent(): string | undefined
@@ -235,11 +249,54 @@ export class BusinessUnitRowViewModel extends OrgRowViewModel
         this.RaisePropertyChanged(BusinessUnitRowViewModel.SelectedParentProperty, undefined, this.SelectedParent)
         // A parent change can add or drop this unit's children.
         this.RemoveCommand.RaiseCanExecuteChanged()
+        this.RaisePropertyChanged(BusinessUnitRowViewModel.RemoveBlockedProperty, undefined, this.IsRemoveBlocked)
     }
 
     protected RemoveFrom(draft: SecurityModelDraft): void
     {
         draft.Org.RemoveBusinessUnit(this.unit.id)
+    }
+}
+
+// One placed user: the unit they sit in (always exactly one), unplace.
+export class UserPlacementRowViewModel extends OrgRowViewModel
+{
+    private static readonly SelectedUnitProperty = 'SelectedUnit'
+
+    public constructor(host: ISecurityModelEditHost, private readonly placement: UserPlacementDto, private readonly choices: UnitChoices)
+    {
+        super(host)
+    }
+
+    public get PrincipalId(): string
+    {
+        return this.placement.principalId
+    }
+
+    public get UnitOptions(): ObservableCollection<UnitOptionViewModel>
+    {
+        return this.choices.Options
+    }
+
+    public get SelectedUnit(): UnitOptionViewModel
+    {
+        return this.choices.OptionFor(this.placement.businessUnitId)
+    }
+
+    // The choices omit "(none)": a placed user always sits in a unit. A move
+    // changes which units can be removed, so the unit rows follow.
+    public set SelectedUnit(value: UnitOptionViewModel)
+    {
+        if (this.PickUnit(value, this.placement.businessUnitId, (d, id) => { if (id !== undefined) d.Org.PlaceUser(this.placement.principalId, id) },
+            UserPlacementRowViewModel.SelectedUnitProperty, () => this.SelectedUnit))
+        {
+            this.host.Rebuild(SecurityModelPart.Users)
+        }
+    }
+
+    protected RemoveFrom(draft: SecurityModelDraft): void
+    {
+        draft.Org.UnplaceUser(this.placement.principalId)
     }
 }
 

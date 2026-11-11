@@ -9,7 +9,7 @@ import { AssignmentEditorViewModel, AssignmentSide } from './assignment-editor-v
 import { SecurityModelDraft } from './security-model-draft.js'
 import { SecurityModelPart, type ISecurityModelEditHost } from './security-model-edit-host.js'
 import { LevelCycle } from './security-model-enums.js'
-import { BusinessUnitRowViewModel, NoneChoice, TeamRowViewModel, UnitChoices, UnitOptionViewModel } from './security-model-org-rows.js'
+import { BusinessUnitRowViewModel, NoneChoice, TeamRowViewModel, UnitChoices, UnitOptionViewModel, UserPlacementRowViewModel } from './security-model-org-rows.js'
 import { FieldGrantRowViewModel, LegendEntryViewModel, PrivilegeRowViewModel, ProfileItemViewModel, RoleItemViewModel } from './security-model-role-rows.js'
 import { TabSelection } from './tab-selection.js'
 
@@ -32,6 +32,7 @@ export enum RoleTab
 export enum OrgTab
 {
     BusinessUnits,
+    People,
     Teams,
 }
 
@@ -39,6 +40,7 @@ export enum OrgTab
 enum NewInput
 {
     BusinessUnit,
+    User,
     Team,
 }
 
@@ -63,6 +65,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly PeopleLabel = 'People'
     private static readonly BusinessUnitsLabel = 'Business units'
     private static readonly TeamsLabel = 'Teams'
+    private static readonly OrgPeopleLabel = 'People'
     private static readonly NoneChoice = '(none)'
     private static readonly UnsavedText = 'Unsaved changes'
     private static readonly NoChangesText = 'No unsaved changes'
@@ -81,6 +84,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly SelectedOrgTabProperty = 'SelectedOrgTab'
     private static readonly IsBusinessUnitsTabProperty = 'IsBusinessUnitsTab'
     private static readonly IsTeamsTabProperty = 'IsTeamsTab'
+    private static readonly IsOrgPeopleTabProperty = 'IsOrgPeopleTab'
     private static readonly RolesProperty = 'Roles'
     private static readonly HasRolesProperty = 'HasRoles'
     private static readonly HasNoRolesProperty = 'HasNoRoles'
@@ -97,6 +101,8 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly HasNoFieldRowsProperty = 'HasNoFieldRows'
     private static readonly BusinessUnitRowsProperty = 'BusinessUnitRows'
     private static readonly HasNoBusinessUnitsProperty = 'HasNoBusinessUnits'
+    private static readonly UserRowsProperty = 'UserRows'
+    private static readonly HasNoUsersProperty = 'HasNoUsers'
     private static readonly TeamRowsProperty = 'TeamRows'
     private static readonly HasNoTeamsProperty = 'HasNoTeams'
     private static readonly IsDirtyProperty = 'IsDirty'
@@ -105,13 +111,14 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly IsBusyProperty = 'IsBusy'
     private static readonly InputProperties: ReadonlyMap<NewInput, string> = new Map<NewInput, string>([
         [NewInput.BusinessUnit, 'NewBusinessUnitName'],
+        [NewInput.User, 'NewUserPrincipalId'],
         [NewInput.Team, 'NewTeamName'],
     ])
 
     private static readonly Parts: readonly SecurityModelPart[] = [
         SecurityModelPart.Roles, SecurityModelPart.Privileges, SecurityModelPart.RoleAssignment,
         SecurityModelPart.Profiles, SecurityModelPart.FieldGrants, SecurityModelPart.ProfileAssignment,
-        SecurityModelPart.BusinessUnits, SecurityModelPart.Teams,
+        SecurityModelPart.BusinessUnits, SecurityModelPart.Users, SecurityModelPart.Teams,
     ]
 
     private readonly mode = new TabSelection<SecurityModelMode>([
@@ -125,6 +132,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     ])
     private readonly orgTab = new TabSelection<OrgTab>([
         [OrgTab.BusinessUnits, SecurityModelEditorViewModel.BusinessUnitsLabel],
+        [OrgTab.People, SecurityModelEditorViewModel.OrgPeopleLabel],
         [OrgTab.Teams, SecurityModelEditorViewModel.TeamsLabel],
     ])
 
@@ -146,6 +154,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private profiles = new ObservableCollection<ProfileItemViewModel>()
     private fieldRows = new ObservableCollection<FieldGrantRowViewModel>()
     private businessUnitRows = new ObservableCollection<BusinessUnitRowViewModel>()
+    private userRows = new ObservableCollection<UserPlacementRowViewModel>()
     private teamRows = new ObservableCollection<TeamRowViewModel>()
     private readonly legend = new ObservableCollection<LegendEntryViewModel>()
     private readonly roleAssignment: AssignmentEditorViewModel
@@ -153,6 +162,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private readonly saveCommand: RelayCommand
     private readonly discardCommand: RelayCommand
     private readonly addBusinessUnitCommand: RelayCommand
+    private readonly placeUserCommand: RelayCommand
     private readonly addTeamCommand: RelayCommand
 
     public constructor(session: TenantSessionService, protected readonly section: UsersAccessSectionService)
@@ -168,6 +178,8 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         this.saveCommand = this.MutatingCommand(AdminCapability.Access, () => this.Save(), dirtyAndIdle)
         this.discardCommand = this.MutatingCommand(AdminCapability.Access, () => this.Discard(), dirtyAndIdle)
         this.addBusinessUnitCommand = this.EditCommand(() => this.AddBusinessUnit())
+        // A user needs a unit to sit in: disabled until the root exists.
+        this.placeUserCommand = new RelayCommand(() => this.PlaceUser(), () => this.CanEdit && this.draft?.Org.RootBusinessUnitId !== undefined)
         // A team needs a unit to sit in: disabled until the root exists.
         this.addTeamCommand = new RelayCommand(() => this.AddTeam(), () => this.CanEdit && this.draft?.Org.RootBusinessUnitId !== undefined)
         PendingWork.Register(this)
@@ -303,13 +315,18 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         if (this.orgTab.Select(label))
         {
             const P = SecurityModelEditorViewModel
-            this.Raise(P.SelectedOrgTabProperty, P.IsBusinessUnitsTabProperty, P.IsTeamsTabProperty)
+            this.Raise(P.SelectedOrgTabProperty, P.IsBusinessUnitsTabProperty, P.IsOrgPeopleTabProperty, P.IsTeamsTabProperty)
         }
     }
 
     public get IsBusinessUnitsTab(): boolean
     {
         return this.orgTab.Is(OrgTab.BusinessUnits)
+    }
+
+    public get IsOrgPeopleTab(): boolean
+    {
+        return this.orgTab.Is(OrgTab.People)
     }
 
     public get IsTeamsTab(): boolean
@@ -470,6 +487,31 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         return this.addBusinessUnitCommand
     }
 
+    public get UserRows(): ObservableCollection<UserPlacementRowViewModel>
+    {
+        return this.userRows
+    }
+
+    public get HasNoUsers(): boolean
+    {
+        return this.userRows.Count === 0
+    }
+
+    public get NewUserPrincipalId(): string
+    {
+        return this.Input(NewInput.User)
+    }
+
+    public set NewUserPrincipalId(value: string)
+    {
+        this.SetInput(NewInput.User, value)
+    }
+
+    public get PlaceUserCommand(): RelayCommand
+    {
+        return this.placeUserCommand
+    }
+
     public get TeamRows(): ObservableCollection<TeamRowViewModel>
     {
         return this.teamRows
@@ -550,6 +592,9 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
                 break
             case SecurityModelPart.BusinessUnits:
                 this.RebuildBusinessUnits()
+                break
+            case SecurityModelPart.Users:
+                this.RebuildUsers()
                 break
             case SecurityModelPart.Teams:
                 this.RebuildTeams()
@@ -672,6 +717,18 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         if (name.length > 0 && this.Apply(d => { d.Org.AddBusinessUnit(name) }))
         {
             this.SetInput(NewInput.BusinessUnit, SecurityModelEditorViewModel.Empty)
+            this.Rebuild()
+        }
+    }
+
+    // A new placement starts in the root unit; the row's picker moves it.
+    private PlaceUser(): void
+    {
+        const id = this.Input(NewInput.User).trim()
+        const root = this.draft?.Org.RootBusinessUnitId
+        if (id.length > 0 && root !== undefined && this.Apply(d => { d.Org.PlaceUser(id, root) }))
+        {
+            this.SetInput(NewInput.User, SecurityModelEditorViewModel.Empty)
             this.Rebuild()
         }
     }
@@ -816,7 +873,19 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         }
         this.SyncUnitTree(false)
         this.addTeamCommand.RaiseCanExecuteChanged()
+        this.placeUserCommand.RaiseCanExecuteChanged()
         this.Raise(SecurityModelEditorViewModel.BusinessUnitRowsProperty, SecurityModelEditorViewModel.HasNoBusinessUnitsProperty)
+    }
+
+    private RebuildUsers(): void
+    {
+        const choices = new UnitChoices(this.noneUnit, this.unitOptions, (this.draft?.Org.BusinessUnits ?? []).map(u => u.id), NoneChoice.Omitted)
+        this.userRows = new ObservableCollection<UserPlacementRowViewModel>()
+        for (const placement of this.draft?.Org.Users ?? [])
+        {
+            this.userRows.Add(new UserPlacementRowViewModel(this, placement, choices))
+        }
+        this.Raise(SecurityModelEditorViewModel.UserRowsProperty, SecurityModelEditorViewModel.HasNoUsersProperty)
     }
 
     private RebuildTeams(): void
