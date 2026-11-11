@@ -746,10 +746,13 @@ class ScriptedHost implements IDevGraphEngine
     private async Begin(engine: GraphEngine, scope: unknown): Promise<GraphTransaction>
     {
         const transaction = await engine.Begin(scope as Parameters<GraphEngine['Begin']>[0])
-        return new Proxy(transaction, { get: (target, name) => (name === 'Commit' ? () => this.Commit(target) : ScriptedHost.Bound(target, name)) })
+        // Shadow Commit on the real transaction: the engine keys its federated read channel by the reader's identity, so a Proxy would lose it.
+        const realCommit = transaction.Commit.bind(transaction)
+        Object.defineProperty(transaction, 'Commit', { value: () => this.Commit(transaction, realCommit), configurable: true })
+        return transaction
     }
 
-    private async Commit(transaction: GraphTransaction): Promise<bigint>
+    private async Commit(transaction: GraphTransaction, realCommit: () => Promise<bigint>): Promise<bigint>
     {
         this.Commits += 1
         if (this.conflicts > 0)
@@ -759,7 +762,7 @@ class ScriptedHost implements IDevGraphEngine
             this.script.OnConflict?.()
             throw new ConflictError(ScriptedHost.RacedMessage)
         }
-        const commit = await transaction.Commit()
+        const commit = await realCommit()
         this.committed = true
         return commit
     }
