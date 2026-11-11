@@ -90,6 +90,7 @@ import { EnvironmentGraph, EnvironmentGraphOverlay, NoEnvironmentGraphError } fr
 import { PromoteRecordStore } from './host/environment/promote-record-store.js'
 import { EnvironmentDeliveries } from './host/environment/environment-deliveries.js'
 import { EnvironmentEngineHost, EnvironmentUpgradeFailedError, LoggerEnvironmentDiagnostics } from './host/environment/environment-engine-host.js'
+import { EnvironmentScopeRules } from './host/environment/environment-scope-rules.js'
 import { InvalidParamsPrefix } from './host/invalid-params-prefix.js'
 import type { IEnvironmentGraphHost } from './host/graphs/environment-graph.js'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -207,6 +208,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private environmentGraph: EnvironmentGraph | undefined
     private promoteRecords: PromoteRecordStore | undefined
     private environmentEngine: EnvironmentEngineHost | undefined
+    private environmentScopes: Promise<AccessScopeSource> | undefined
     private readonly appGraphs = new Map<string, Promise<AppBase>>()
     private readonly shareStores = new Map<string, ShareStore>()
     private readAuth: Promise<TenantReadAuthorization> | undefined
@@ -547,6 +549,42 @@ export class PragmaticServer implements IEnvironmentGraphHost
                 new LoggerEnvironmentDiagnostics(this.options.logger ?? new NullLogger()))
         }
         return this.environmentEngine
+    }
+
+    /**
+     * The runtime environment's access scopes over {@link PragmaticServer.EnvironmentEngine} (AccessScopeSource under
+     * EnvironmentScopeRules, ruling S5 as amended by A3, placement S6): with identity, the tenant security model's depth
+     * (connector-bound concepts outside it), share widening, read-only bindings and seeded nodes; without identity
+     * Default Allow with the read-only guards. Built on first use (a failed build is retried), disposed with the server
+     * before the engine host. Runtime tenants only.
+     */
+    public EnvironmentScopes(): Promise<AccessScopeSource>
+    {
+        if (this.disposing !== undefined)
+        {
+            return Promise.reject(new Error(PragmaticServer.DisposedMessage))
+        }
+        this.AssertRuntimePurpose()
+        if (this.environmentScopes === undefined)
+        {
+            const built = this.BuildEnvironmentScopes()
+            this.environmentScopes = built
+            built.catch(() =>
+            {
+                if (this.environmentScopes === built)
+                {
+                    this.environmentScopes = undefined
+                }
+            })
+        }
+        return this.environmentScopes
+    }
+
+    private async BuildEnvironmentScopes(): Promise<AccessScopeSource>
+    {
+        const host = this.EnvironmentEngine()
+        const authorization = this.identity === undefined ? undefined : await this.ReadAuthorization()
+        return new AccessScopeSource(host, new EnvironmentScopeRules(host, authorization, this.identity !== undefined), new LoggerScopeDiagnostics(this.options.logger ?? new NullLogger()))
     }
 
     /** The environment's promote record (`graphs/loaded-graph.json`, ruling S3). */
@@ -1043,6 +1081,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
     {
         try
         {
+            // the scope source unsubscribes from the engine host and the security source before the host goes
+            const environmentScopes = await this.environmentScopes?.catch(() => undefined)
+            environmentScopes?.dispose()
             // the environment engine's connectors borrow adapters from the connectors host's catalog: it closes first
             await this.environmentEngine?.dispose()
         }

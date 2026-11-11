@@ -240,7 +240,8 @@ export class EnvironmentFixture
         return new PromoteRecordStore(new NodeFsStorage(this.GraphsDir))
     }
 
-    private async SaveSecurityModel(model: ISecurityModelConfig): Promise<void>
+    /** Saves `model` as the tenant security model (the server reloads it on its next Invalidate). */
+    public async SaveSecurityModel(model: ISecurityModelConfig): Promise<void>
     {
         const store = await this.Server.TenantConfigStore()
         const seeded = await store.Get(EnvironmentFixture.TenantId)
