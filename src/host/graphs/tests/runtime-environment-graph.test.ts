@@ -16,24 +16,26 @@ class RuntimeGraphFixture
 {
     private static readonly PackagesPrefix = 'env-pkgs-'
     private static readonly GraphsPrefix = 'env-graphs-'
+    private static readonly AppsPrefix = 'env-apps-'
     public static readonly Version = '1.0.0'
     private static readonly SourceSuffix = '.todl'
 
     private readonly packages = mkdtempSync(join(tmpdir(), RuntimeGraphFixture.PackagesPrefix))
     private readonly graphs = mkdtempSync(join(tmpdir(), RuntimeGraphFixture.GraphsPrefix))
+    private readonly apps = mkdtempSync(join(tmpdir(), RuntimeGraphFixture.AppsPrefix))
     private server: PragmaticServer | undefined
     private readonly coldServers: PragmaticServer[] = []
 
     public Server(purpose: TenantPurpose = TenantPurpose.Runtime): PragmaticServer
     {
-        this.server ??= new PragmaticServer({ purpose, packagesRoot: this.packages, graphsRoot: this.graphs })
+        this.server ??= new PragmaticServer({ purpose, packagesRoot: this.packages, graphsRoot: this.graphs, applicationsRoot: this.apps })
         return this.server
     }
 
     /** A cold server over the SAME volumes: simulates the per-tenant host after idle teardown or a restart — no live instance held, but the persisted record and immutably-stored packages are intact. */
     public ColdServer(purpose: TenantPurpose = TenantPurpose.Runtime): PragmaticServer
     {
-        const server = new PragmaticServer({ purpose, packagesRoot: this.packages, graphsRoot: this.graphs })
+        const server = new PragmaticServer({ purpose, packagesRoot: this.packages, graphsRoot: this.graphs, applicationsRoot: this.apps })
         this.coldServers.push(server)
         return server
     }
@@ -65,6 +67,7 @@ class RuntimeGraphFixture
         }
         rmSync(this.packages, { recursive: true, force: true })
         rmSync(this.graphs, { recursive: true, force: true })
+        rmSync(this.apps, { recursive: true, force: true })
     }
 }
 

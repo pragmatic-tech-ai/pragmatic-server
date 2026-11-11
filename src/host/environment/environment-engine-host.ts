@@ -13,7 +13,7 @@ import { ConnectorSetKey } from '../engine/connector-set-key.js'
 import { EngineHostChanged } from '../engine/engine-host-changed.js'
 import type { IEngineSnapshot, IGraphEngineHost } from '../engine/graph-engine-host.js'
 import { LazyExternalConnector } from '../engine/lazy-external-connector.js'
-import type { DeliveryChange, EnvironmentDeliveries } from './environment-deliveries.js'
+import type { DeliveryChange, EnvironmentDeliveries, IDeliveryGate } from './environment-deliveries.js'
 
 /**
  * What the environment engine runs, in one read: the engine snapshot (`Description`, `Connectors` and `Identity` from
@@ -186,7 +186,7 @@ class OpenedEnvironment implements IDisposable
  * rejects before `persist` runs, nothing persisted), runs `persist` (the app live pointer or the promote record), then
  * redelivers; a redelivery failure there rejects with EnvironmentUpgradeFailedError (the delivery stays persisted).
  */
-export class EnvironmentEngineHost implements IGraphEngineHost, IDisposable
+export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, IDisposable
 {
     /** The store directory under the tenant's graphs root (Q7). */
     public static readonly StoreDir = 'environment-engine'

@@ -15,7 +15,10 @@ import { EnvironmentEngineHost, EnvironmentUpgradeFailedError } from '../environ
 import type { IEnvironmentDiagnostics } from '../environment-engine-host.js'
 import { EnvironmentFixture } from './environment-fixture.js'
 
-/** Records every diagnostic; `OnRetry` runs on each locked-open retry, `Reverted` resolves on the first RevertFailed. */
+/**
+ * Records every diagnostic; `OnRetry` runs on each locked-open retry (`Released` is its latest result, which a
+ * ReleaseAwaitingHost awaits before the next attempt), `Reverted` resolves on the first RevertFailed.
+ */
 class RecordingDiagnostics implements IEnvironmentDiagnostics
 {
     public readonly Upgrades: unknown[] = []
@@ -23,6 +26,7 @@ class RecordingDiagnostics implements IEnvironmentDiagnostics
     public readonly Reverts: ConnectorError[] = []
     public readonly Retries: number[] = []
     public OnRetry: () => Promise<void> | void = () => undefined
+    public Released: Promise<void> = Promise.resolve()
     public readonly Reverted: Promise<void>
     private reverted: () => void = () => undefined
 
@@ -50,7 +54,7 @@ class RecordingDiagnostics implements IEnvironmentDiagnostics
     public OpenRetried(_error: unknown, attempt: number): void
     {
         this.Retries.push(attempt)
-        void this.OnRetry()
+        this.Released = Promise.resolve(this.OnRetry())
     }
 
     public DrainUnsettled(): void
@@ -69,6 +73,21 @@ class FailingOpenHost extends EnvironmentEngineHost
         if (!this.FailNextOpen) return super.OpenEngine(options)
         this.FailNextOpen = false
         return Promise.reject(new Error(FailingOpenHost.FailureMessage))
+    }
+}
+
+/** A host whose every engine open first waits for the diagnostics' `Released` (the previous holder's store release). */
+class ReleaseAwaitingHost extends EnvironmentEngineHost
+{
+    public constructor(private readonly recording: RecordingDiagnostics, fx: EnvironmentFixture)
+    {
+        super(fx.Deliveries(), new NodeFsStorage(fx.PackagesDir), fx.Services(), { Kind: StorageKind.Lmdb, Path: fx.StorePath }, recording, { OpenBackoffMs: 1 })
+    }
+
+    protected override async OpenEngine(options: IGraphEngineOptions): Promise<GraphEngine>
+    {
+        await this.recording.Released
+        return super.OpenEngine(options)
     }
 }
 
@@ -188,8 +207,6 @@ class HostFx
     public static readonly LateKey = '9'
     public static readonly NameMember = 'name'
     public static readonly LateName = 'late'
-    /** Generous: the holder's store must be released before the next attempt, also on a slow machine. */
-    public static readonly ReleaseBackoffMs = 1000
     public static readonly Account = 'crm.Account'
     public static readonly Note = 'notes.Note'
     public static readonly Customer = 'ext.Customer'
@@ -452,7 +469,7 @@ describe('environment engine host', () =>
             // released after the first attempt: the retry opens
             const released = new RecordingDiagnostics()
             released.OnRetry = () => holder.dispose()
-            const next = fx.Host(released, { OpenBackoffMs: HostFx.ReleaseBackoffMs })
+            const next = fx.Track(new ReleaseAwaitingHost(released, fx))
             await next.Engine()
             assert.ok(released.Retries.length >= 1)
             // held throughout: Locked after OpenAttempts

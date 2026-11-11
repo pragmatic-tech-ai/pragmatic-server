@@ -15,6 +15,15 @@ export type DeliveryChange = {
 }
 
 /**
+ * Where a deploy or promote hands its change (ruling S4): validates the prospective delivery set, runs `persist` (the
+ * app live pointer or the promote record) only when it composes, then redelivers. Implemented by EnvironmentEngineHost.
+ */
+export interface IDeliveryGate
+{
+    Deliver<T>(change: DeliveryChange, persist: () => Promise<T>): Promise<T>
+}
+
+/**
  * The package sets a runtime environment holds (ruling S3): one Deploy delivery per app with a `live` pointer (name =
  * the app name, packages = that version's `application.json` packages) plus, when the promote record exists, one
  * Promote delivery (name = the record's `name`, packages = its `packages`). Sorted Deploy before Promote, then by name.

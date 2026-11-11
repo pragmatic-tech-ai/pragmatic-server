@@ -56,6 +56,7 @@ import { AssignService } from './host/sharing/assign-service.js'
 import { FilteredGraphQuery } from './host/cypher/filtered-graph-query.js'
 import { InProcessWriteLock, type IWriteLock } from './host/cypher/write-lock.js'
 import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
+import { DeliveryChannel, EnvironmentCatalogError } from '@pragmatic-tech-ai/todl/engine'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { CypherExecuteResultDto, CypherAppDeployParamsDto, AppDeployResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -88,7 +89,8 @@ import { DevModelView, LoggerDevModelViewDiagnostics } from './host/engine/dev-m
 import { EnvironmentGraph, EnvironmentGraphOverlay, NoEnvironmentGraphError } from './host/graphs/environment-graph.js'
 import { PromoteRecordStore } from './host/environment/promote-record-store.js'
 import { EnvironmentDeliveries } from './host/environment/environment-deliveries.js'
-import { EnvironmentEngineHost, LoggerEnvironmentDiagnostics } from './host/environment/environment-engine-host.js'
+import { EnvironmentEngineHost, EnvironmentUpgradeFailedError, LoggerEnvironmentDiagnostics } from './host/environment/environment-engine-host.js'
+import { InvalidParamsPrefix } from './host/invalid-params-prefix.js'
 import type { IEnvironmentGraphHost } from './host/graphs/environment-graph.js'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
@@ -442,17 +444,14 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.platform.CreateStorage(this.options.graphsRoot ?? PragmaticServer.DefaultGraphsDir)
     }
 
-    /** Evicts the cached app graph for `name@version` so the next query rebuilds it from storage. */
-    public InvalidateApp(nameAtVersion: string): void
-    {
-        this.appGraphs.delete(nameAtVersion)
-    }
-
-    /** Ingests a deployed application onto this runtime tenant; the caller has already authorized Administer on the tenant. */
+    /**
+     * Ingests a deployed application onto this runtime tenant through the environment engine's delivery gate (ruling
+     * S4); the caller has already authorized Administer on the tenant.
+     */
     public async DeployApplication(params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>
     {
         this.AssertRuntimePurpose()
-        this.appIngest ??= new AppIngestService(this.PackagesStorage(), this.AppsStorage(), this, StructuredLogger.ToStdout())
+        this.appIngest ??= new AppIngestService(this.PackagesStorage(), this.AppsStorage(), this.EnvironmentEngine(), StructuredLogger.ToStdout())
         return this.appIngest.Ingest(params)
     }
 
@@ -465,20 +464,40 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * Ingests the promoted packages immutably, builds the ONE live environment-graph instance (replacing any prior),
-     * persists the loaded-manifest record, and returns it. Runtime tenants only.
+     * Promotes a package set (ruling S4): stores the packages immutably, then through the environment engine's delivery
+     * gate composes every live app plus this set (an EnvironmentCatalogError is InvalidParams with its message, and the
+     * promote record is left as it was), persists the promote record (it replaces the previous set) and upgrades the
+     * environment engine (a failure there is InternalError; the record stays and the engine retries on next use).
+     * Returns the record. Runtime tenants only.
      */
     public async LoadEnvironmentGraph(params: GraphLoadParamsDto): Promise<GraphLoadedDto>
     {
         this.AssertRuntimePurpose()
         await new GraphPackageIngest(this.PackagesStorage()).Store(params.packages)
-        const refs = params.packages.map(p => ({ id: p.id, version: p.version }))
-        const graph = await EnvironmentGraph.Build(this.PackagesStorage(), params.graphName, refs)
-        const record = graph.Record()
-        // Persist first: a Save failure leaves the prior live instance and the persisted record both intact and consistent.
-        await this.PromoteRecords().Save(record)
-        this.environmentGraph = graph
-        return record
+        const record: GraphLoadedDto = { name: params.graphName, packages: params.packages.map(p => ({ id: p.id, version: p.version })), promotedAt: new Date().toISOString() }
+        const change = { Channel: DeliveryChannel.Promote, Name: record.name, Packages: record.packages.map(ref => ({ model: ref.id, version: ref.version })) }
+        try
+        {
+            return await this.EnvironmentEngine().Deliver(change, async () =>
+            {
+                await this.PromoteRecords().Save(record)
+                // the legacy read model (until Task 8) rebuilds from the new record on next use
+                this.environmentGraph = undefined
+                return record
+            })
+        }
+        catch (error)
+        {
+            if (error instanceof EnvironmentCatalogError)
+            {
+                throw new ResponseError(ErrorCodes.InvalidParams, InvalidParamsPrefix.Text + error.message)
+            }
+            if (error instanceof EnvironmentUpgradeFailedError)
+            {
+                throw new ResponseError(ErrorCodes.InternalError, error.message)
+            }
+            throw error
+        }
     }
 
     /** The loaded environment graph's query; rehydrates on demand from the persisted record when the live instance is absent (idle teardown / restart), and throws only when nothing was ever promoted. RBAC is enforced at the policy gate, so no context is taken. */
@@ -502,13 +521,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.environmentGraph
     }
 
-    /** The loaded-manifest record: the live instance's record if present, else the persisted one (survives a restart), else null. */
+    /** The promote record (`graphs/loaded-graph.json`, ruling S3): survives a restart; null when nothing was ever promoted. */
     public async LoadedGraph(): Promise<GraphLoadedDto | null>
     {
-        if (this.environmentGraph !== undefined)
-        {
-            return this.environmentGraph.Record()
-        }
         return this.PromoteRecords().Read()
     }
 
