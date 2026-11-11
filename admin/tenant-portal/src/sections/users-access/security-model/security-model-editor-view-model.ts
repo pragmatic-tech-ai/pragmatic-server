@@ -1,6 +1,6 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { TenantApiError } from '../../../tenant-api-client.js'
-import type { TeamMemberDto } from '../../../tenant-types.js'
+import { SecurityRoleKind, type SecurityRoleDto, type TeamMemberDto } from '../../../tenant-types.js'
 import { AdminCapability } from '../../../shell/admin-capability.js'
 import { PendingWork, type IHoldsPendingWork } from '../../../shell/holds-pending-work.js'
 import type { TenantSessionService } from '../../../shell/tenant-session-service.js'
@@ -9,9 +9,10 @@ import type { UsersAccessSectionService } from '../users-access-section-service.
 import { AssignmentEditorViewModel, AssignmentSide } from './assignment-editor-view-model.js'
 import { SecurityModelDraft } from './security-model-draft.js'
 import { SecurityModelPart, TeamInputField, type ISecurityModelEditHost } from './security-model-edit-host.js'
-import { LevelCycle } from './security-model-enums.js'
+import { BaseRole, LevelCycle } from './security-model-enums.js'
 import { BusinessUnitRowViewModel, NoneChoice, TeamRowViewModel, UnitChoices, UnitOptionViewModel, UserPlacementRowViewModel } from './security-model-org-rows.js'
 import { FieldGrantRowViewModel, LegendEntryViewModel, PrivilegeRowViewModel, ProfileItemViewModel, RoleItemViewModel } from './security-model-role-rows.js'
+import { SecurityModelText } from './security-model-text.js'
 import { TabSelection } from './tab-selection.js'
 
 // The editor's two modes.
@@ -25,7 +26,6 @@ export enum SecurityModelMode
 export enum RoleTab
 {
     Privileges,
-    Fields,
     People,
 }
 
@@ -62,7 +62,6 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly RolesLabel = 'Roles'
     private static readonly OrganizationLabel = 'Organization'
     private static readonly PrivilegesLabel = 'What they can do'
-    private static readonly FieldsLabel = 'Fields'
     private static readonly PeopleLabel = 'People'
     private static readonly BusinessUnitsLabel = 'Business units'
     private static readonly TeamsLabel = 'Teams'
@@ -79,7 +78,8 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly IsOrganizationModeProperty = 'IsOrganizationMode'
     private static readonly SelectedRoleTabProperty = 'SelectedRoleTab'
     private static readonly IsPrivilegesTabProperty = 'IsPrivilegesTab'
-    private static readonly IsFieldsTabProperty = 'IsFieldsTab'
+    private static readonly IsSystemAdministratorProperty = 'IsSystemAdministrator'
+    private static readonly ShowsMatrixProperty = 'ShowsMatrix'
     private static readonly IsPeopleTabProperty = 'IsPeopleTab'
     private static readonly SelectedOrgTabProperty = 'SelectedOrgTab'
     private static readonly IsBusinessUnitsTabProperty = 'IsBusinessUnitsTab'
@@ -128,7 +128,6 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     ])
     private readonly roleTab = new TabSelection<RoleTab>([
         [RoleTab.Privileges, SecurityModelEditorViewModel.PrivilegesLabel],
-        [RoleTab.Fields, SecurityModelEditorViewModel.FieldsLabel],
         [RoleTab.People, SecurityModelEditorViewModel.PeopleLabel],
     ])
     private readonly orgTab = new TabSelection<OrgTab>([
@@ -287,18 +286,13 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         if (this.roleTab.Select(label))
         {
             const P = SecurityModelEditorViewModel
-            this.Raise(P.SelectedRoleTabProperty, P.IsPrivilegesTabProperty, P.IsFieldsTabProperty, P.IsPeopleTabProperty)
+            this.Raise(P.SelectedRoleTabProperty, P.IsPrivilegesTabProperty, P.IsPeopleTabProperty)
         }
     }
 
     public get IsPrivilegesTab(): boolean
     {
         return this.roleTab.Is(RoleTab.Privileges)
-    }
-
-    public get IsFieldsTab(): boolean
-    {
-        return this.roleTab.Is(RoleTab.Fields)
     }
 
     public get IsPeopleTab(): boolean
@@ -394,6 +388,24 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     public get SelectedRoleName(): string
     {
         return this.SelectedRole?.Name ?? SecurityModelEditorViewModel.Empty
+    }
+
+    // Whether the selected role is SystemAdministrator: the matrix is replaced by
+    // SystemAdministratorText (the role cannot be overridden).
+    public get IsSystemAdministrator(): boolean
+    {
+        return this.selectedRoleId === BaseRole.SystemAdministrator
+    }
+
+    // Whether the matrix is shown: a role other than SystemAdministrator is selected.
+    public get ShowsMatrix(): boolean
+    {
+        return this.HasSelectedRole && !this.IsSystemAdministrator
+    }
+
+    public get SystemAdministratorText(): string
+    {
+        return SecurityModelText.SystemAdministratorText
     }
 
     // The privilege matrix: one row per catalog concept for the selected role.
@@ -843,7 +855,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         this.teamMemberErrors.clear()
         this.teamInputs.clear()
         this.savedTeamMembers = new Map((draft?.ToDto().teams ?? []).map(t => [t.id, t.manualMembers]))
-        const roles = draft?.Catalog.roles ?? []
+        const roles = SecurityModelEditorViewModel.OrderedRoles(draft?.Catalog.roles ?? [])
         const profiles = draft?.Catalog.profiles ?? []
         this.selectedRoleId = roles.some(r => r.name === this.selectedRoleId) ? this.selectedRoleId : roles[0]?.name
         this.selectedProfileId = profiles.some(p => p.name === this.selectedProfileId) ? this.selectedProfileId : profiles[0]?.name
@@ -856,7 +868,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         this.RebuildPrivileges()
         this.RebuildPart(SecurityModelPart.RoleAssignment)
         const P = SecurityModelEditorViewModel
-        this.Raise(P.HasSelectedRoleProperty, P.HasNoSelectedRoleProperty, P.SelectedRoleNameProperty)
+        this.Raise(P.HasSelectedRoleProperty, P.HasNoSelectedRoleProperty, P.SelectedRoleNameProperty, P.IsSystemAdministratorProperty, P.ShowsMatrixProperty)
     }
 
     private RebuildProfileScope(): void
@@ -867,10 +879,18 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         this.Raise(P.HasSelectedProfileProperty, P.HasNoSelectedProfileProperty)
     }
 
+    // Base roles first in BaseRole order, then package roles by name.
+    private static OrderedRoles(roles: readonly SecurityRoleDto[]): SecurityRoleDto[]
+    {
+        const base = Object.values(BaseRole) as string[]
+        const rank = (r: SecurityRoleDto): number => r.kind === SecurityRoleKind.Base && base.includes(r.name) ? base.indexOf(r.name) : base.length
+        return [...roles].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name))
+    }
+
     private RebuildRoles(): void
     {
         const draft = this.draft
-        const roles = draft?.Catalog.roles ?? []
+        const roles = SecurityModelEditorViewModel.OrderedRoles(draft?.Catalog.roles ?? [])
         const live = new Set<string>(roles.map(r => r.name))
         for (const id of [...this.roleItems.keys()])
         {
@@ -893,7 +913,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         }
         const P = SecurityModelEditorViewModel
         this.Raise(P.RolesProperty, P.HasRolesProperty, P.HasNoRolesProperty, P.SelectedRoleProperty,
-            P.HasSelectedRoleProperty, P.HasNoSelectedRoleProperty, P.SelectedRoleNameProperty)
+            P.HasSelectedRoleProperty, P.HasNoSelectedRoleProperty, P.SelectedRoleNameProperty, P.IsSystemAdministratorProperty, P.ShowsMatrixProperty)
     }
 
     private RebuildPrivileges(): void

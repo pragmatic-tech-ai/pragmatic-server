@@ -193,6 +193,84 @@ describe('SecurityModelEditorViewModel', () =>
         assert.deepEqual(editor.Draft?.ToDto().roleAssignments, [{ role: 'projects.ProjectManager', principalIds: ['alice'], teamIds: [] }])
     })
 
+    it('system administrator is not editable', async () =>
+    {
+        const editor = await Fixture.Editor()
+        assert.equal(editor.SelectedRole?.Id, 'SystemAdministrator')
+        assert.equal(editor.IsSystemAdministrator, true)
+        assert.equal(editor.ShowsMatrix, false)
+        assert.equal(editor.SystemAdministratorText, 'Full access to every record and field in this environment. Not editable.')
+        const cell = editor.PrivilegeRows.ToArray()[1].Read
+        assert.equal(cell.CycleCommand.CanExecute(), false)
+        assert.equal(cell.ResetCommand.CanExecute(), false)
+        cell.CycleCommand.Execute()
+        cell.Cycle()
+        cell.Reset()
+        assert.equal(editor.IsDirty, false)
+        assert.deepEqual(editor.Draft?.ToDto().roleOverrides.filter(r => r.role === 'SystemAdministrator'), [])
+        Fixture.Select(editor, 'BasicUser')
+        assert.equal(editor.IsSystemAdministrator, false)
+        assert.equal(editor.ShowsMatrix, true)
+    })
+
+    it('edits are refused without the users-and-access capability', async () =>
+    {
+        const editor = await Fixture.Editor(Fixture.Api(), { access: false })
+        Fixture.Select(editor, 'BasicUser')
+        const cell = editor.PrivilegeRows.ToArray()[1].Read
+        assert.equal(cell.IsOverridden, true)
+        assert.equal(cell.CycleCommand.CanExecute(), false)
+        assert.equal(cell.ResetCommand.CanExecute(), false)
+        cell.Cycle()
+        cell.Reset()
+        assert.equal(cell.Level, AccessLevel.User)
+        assert.equal(editor.IsDirty, false)
+    })
+
+    it('cross-package override is allowed', async () =>
+    {
+        const editor = await Fixture.Editor()
+        Fixture.Select(editor, 'projects.ProjectManager')
+        const cell = editor.PrivilegeRows.ToArray()[1].Read
+        assert.equal(editor.PrivilegeRows.ToArray()[1].Concept, 'hr.Employee')
+        assert.equal(cell.Level, AccessLevel.None)
+        cell.Cycle()
+        assert.equal(cell.Level, AccessLevel.User)
+        assert.equal(cell.IsOverridden, true)
+        assert.equal(cell.DefaultText, 'Default: None')
+        assert.deepEqual(editor.Draft?.ToDto().roleOverrides.filter(r => r.role === 'projects.ProjectManager'),
+            [{ role: 'projects.ProjectManager', concept: 'hr.Employee', action: 'read', level: 'user' }])
+    })
+
+    it('organisation-owned concept cycles none and organization only', async () =>
+    {
+        const editor = await Fixture.Editor()
+        Fixture.Select(editor, 'BasicUser')
+        const cell = editor.PrivilegeRows.ToArray()[0].Read
+        assert.equal(editor.PrivilegeRows.ToArray()[0].Concept, 'hr.Department')
+        const seen: AccessLevel[] = []
+        for (let i = 0; i < 3; i++)
+        {
+            cell.Cycle()
+            seen.push(cell.Level)
+        }
+        assert.deepEqual(seen, [AccessLevel.Organization, AccessLevel.None, AccessLevel.Organization])
+    })
+
+    it('cycling to the default clears the override', async () =>
+    {
+        const editor = await Fixture.Editor()
+        Fixture.Select(editor, 'BasicUser')
+        const cell = editor.PrivilegeRows.ToArray()[1].Read
+        assert.equal(cell.IsOverridden, true)
+        assert.equal(cell.ResetCommand.CanExecute(), true)
+        cell.Cycle()
+        assert.equal(cell.Level, AccessLevel.BusinessUnit)
+        assert.equal(cell.IsOverridden, false)
+        assert.equal(cell.ResetCommand.CanExecute(), false)
+        assert.deepEqual(editor.Draft?.ToDto().roleOverrides.filter(r => r.role === 'BasicUser'), [])
+    })
+
     it('assignment editors add and remove people and teams for the selected role and profile', async () =>
     {
         const editor = await Fixture.Editor()
@@ -280,6 +358,7 @@ describe('SecurityModelEditorViewModel', () =>
         const editor = await Fixture.Editor(api)
         assert.equal(PendingWork.IsHolder(editor), true)
         assert.equal(PendingWork.IsHeldBy(editor), false)
+        Fixture.Select(editor, 'BasicUser')
         editor.PrivilegeRows.ToArray()[0].Create.Cycle()
         assert.equal(PendingWork.IsHeldBy(editor), true)
         await editor.UseEnvironment('beta')
@@ -294,6 +373,7 @@ describe('SecurityModelEditorViewModel', () =>
     {
         const api = Fixture.Api(SecurityFixtures.Model(), new GatedSaveApi()) as GatedSaveApi
         const editor = await Fixture.Editor(api)
+        Fixture.Select(editor, 'Reader')
         const cell = editor.PrivilegeRows.ToArray()[2].Create
         cell.Cycle()
         api.Hold()
@@ -309,7 +389,7 @@ describe('SecurityModelEditorViewModel', () =>
         assert.equal(cell.Level, AccessLevel.User)
         assert.equal(editor.BusinessUnitRows.Count, 2)
         assert.equal(editor.BusinessUnitRows.ToArray()[0].Name, 'Contoso')
-        assert.equal(editor.SelectedRole?.Id, 'SystemAdministrator')
+        assert.equal(editor.SelectedRole?.Id, 'Reader')
         api.Release()
         await Tick.Settle()
         assert.equal(editor.IsBusy, false)
@@ -324,9 +404,7 @@ describe('SecurityModelEditorViewModel', () =>
         assert.equal(editor.CanEdit, false)
         assert.match(editor.DeniedReason, /Manage users & access/)
         assert.equal(editor.AddBusinessUnitCommand.CanExecute(), false)
-        assert.equal(editor.PrivilegeRows.ToArray()[0].Create.CycleCommand.CanExecute(), false)
         assert.equal(editor.BusinessUnitRows.ToArray()[0].RemoveCommand.CanExecute(), false)
-        editor.PrivilegeRows.ToArray()[0].Create.Cycle()
         editor.NewBusinessUnitName = 'X'
         editor.AddBusinessUnitCommand.Execute()
         editor.BusinessUnitRows.ToArray()[0].Name = 'Renamed'
@@ -352,6 +430,7 @@ describe('SecurityModelEditorViewModel', () =>
 
         const saveApi = Fixture.Api()
         const editor = await Fixture.Editor(saveApi)
+        Fixture.Select(editor, 'BasicUser')
         editor.PrivilegeRows.ToArray()[0].Create.Cycle()
         saveApi.FailOn.set('SetSecurityModel', new TenantApiError(403, 'forbidden'))
         editor.SaveCommand.Execute()
@@ -364,6 +443,7 @@ describe('SecurityModelEditorViewModel', () =>
     {
         const api = Fixture.Api()
         const editor = await Fixture.Editor(api)
+        Fixture.Select(editor, 'BasicUser')
         editor.PrivilegeRows.ToArray()[0].Create.Cycle()
         api.FailOn.set('SetSecurityModel', new TenantApiError(409, 'conflict'))
         editor.SaveCommand.Execute()

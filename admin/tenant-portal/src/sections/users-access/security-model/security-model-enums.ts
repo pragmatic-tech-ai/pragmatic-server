@@ -11,6 +11,14 @@ export enum PrivilegeAction
     Invoke = 'invoke'
 }
 
+// The platform's base roles, in display order (before the packages' roles).
+export enum BaseRole
+{
+    SystemAdministrator = 'SystemAdministrator',
+    BasicUser = 'BasicUser',
+    Reader = 'Reader'
+}
+
 export enum AccessLevel
 {
     None = 'none',

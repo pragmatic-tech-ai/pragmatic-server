@@ -39,6 +39,8 @@ export class SecurityModelText
     private static readonly BusinessUnitAndChildrenScope = 'business unit and children'
     private static readonly OrganizationScope = 'organization'
     private static readonly LegendSeparator = ' = '
+    public static readonly DefaultPrefix = 'Default: '
+    public static readonly SystemAdministratorText = 'Full access to every record and field in this environment. Not editable.'
     private static readonly SyncedText = 'From identity provider'
     private static readonly ManualText = 'Added here'
     private static readonly UnsavedManualText = 'Added here (not saved)'

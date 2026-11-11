@@ -2,7 +2,7 @@ import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import type { SecurityModelDraft } from './security-model-draft.js'
 import type { ISecurityModelEditHost } from './security-model-edit-host.js'
-import { AccessLevel, Actions, FieldPermission, PrivilegeAction } from './security-model-enums.js'
+import { AccessLevel, Actions, BaseRole, FieldPermission, PrivilegeAction } from './security-model-enums.js'
 import { SecurityModelText } from './security-model-text.js'
 
 // One catalog role in the role list: its name and how many people hold it
@@ -70,15 +70,19 @@ export class ProfileItemViewModel extends Observable
 }
 
 // One cell of the privilege matrix: the selected role's effective level (its
-// override, else the catalog default) for one concept and action. Its command
-// cycles through the levels the concept allows; landing on the default clears
-// the override.
+// override, else the package default) for one concept and action, the default
+// it overrides and whether it is overridden. Its command cycles through the
+// levels the concept allows (landing on the default clears the override);
+// Reset drops the override. SystemAdministrator's cells are locked.
 export class PrivilegeCellViewModel extends Observable
 {
     private static readonly GlyphProperty = 'Glyph'
     private static readonly LevelNameProperty = 'LevelName'
+    private static readonly DefaultTextProperty = 'DefaultText'
+    private static readonly IsOverriddenProperty = 'IsOverridden'
 
     private readonly cycleCommand: RelayCommand
+    private readonly resetCommand: RelayCommand
 
     public constructor(
         private readonly host: ISecurityModelEditHost,
@@ -87,7 +91,14 @@ export class PrivilegeCellViewModel extends Observable
         public readonly Action: PrivilegeAction)
     {
         super()
-        this.cycleCommand = new RelayCommand(() => this.Cycle(), () => this.host.CanEdit)
+        this.cycleCommand = new RelayCommand(() => this.Cycle(), () => this.IsEditable)
+        this.resetCommand = new RelayCommand(() => this.Reset(), () => this.IsEditable && this.IsOverridden)
+    }
+
+    // Whether this cell may be edited: the operator may edit and the role is not SystemAdministrator.
+    public get IsEditable(): boolean
+    {
+        return this.host.CanEdit && this.row.Role !== BaseRole.SystemAdministrator
     }
 
     public get Level(): AccessLevel
@@ -105,23 +116,60 @@ export class PrivilegeCellViewModel extends Observable
         return SecurityModelText.LevelName(this.Level)
     }
 
+    public get DefaultText(): string
+    {
+        return SecurityModelText.DefaultPrefix + SecurityModelText.LevelName(this.draft.Overrides.DefaultLevel(this.row.Role, this.row.Concept, this.Action))
+    }
+
+    public get IsOverridden(): boolean
+    {
+        return this.draft.Overrides.OverrideLevel(this.row.Role, this.row.Concept, this.Action) !== undefined
+    }
+
     public get CycleCommand(): RelayCommand
     {
         return this.cycleCommand
     }
 
-    // Moves to the next level; refused while editing is not allowed.
+    public get ResetCommand(): RelayCommand
+    {
+        return this.resetCommand
+    }
+
+    // Moves to the next allowed level; refused while the cell is not editable.
     public Cycle(): void
     {
-        const before = [this.Glyph, this.LevelName] as const
+        if (!this.IsEditable)
+        {
+            return
+        }
         const levels = this.draft.Overrides.AllowedLevels(this.row.Concept)
         const next = levels[(levels.indexOf(this.Level) + 1) % levels.length]
-        if (!this.host.Apply(d => { d.Overrides.SetLevel(this.row.Role, this.row.Concept, this.Action, next) }))
+        this.Edit(d => { d.Overrides.SetLevel(this.row.Role, this.row.Concept, this.Action, next) })
+    }
+
+    // Drops the override, back to the package default; refused while not editable.
+    public Reset(): void
+    {
+        if (!this.IsEditable)
+        {
+            return
+        }
+        this.Edit(d => { d.Overrides.Reset(this.row.Role, this.row.Concept, this.Action) })
+    }
+
+    private Edit(change: (draft: SecurityModelDraft) => void): void
+    {
+        const before = [this.Glyph, this.LevelName, this.DefaultText, this.IsOverridden] as const
+        if (!this.host.Apply(change))
         {
             return
         }
         this.RaisePropertyChanged(PrivilegeCellViewModel.GlyphProperty, before[0], this.Glyph)
         this.RaisePropertyChanged(PrivilegeCellViewModel.LevelNameProperty, before[1], this.LevelName)
+        this.RaisePropertyChanged(PrivilegeCellViewModel.DefaultTextProperty, before[2], this.DefaultText)
+        this.RaisePropertyChanged(PrivilegeCellViewModel.IsOverriddenProperty, before[3], this.IsOverridden)
+        this.resetCommand.RaiseCanExecuteChanged()
         this.row.LevelsChanged()
     }
 }
