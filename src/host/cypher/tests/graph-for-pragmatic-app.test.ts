@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import {
     Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink, Cypher,
-    type PackageDocument, type CompiledPackage,
+    type PackageDocument, type CompiledPackage, PackageSecurity,
 } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
@@ -47,7 +47,7 @@ class GraphForAppFixture
         const doc = toJSON(GraphForAppFixture.Repo()) as PackageDocument
         const pkg: CompiledPackage = {
             id: GraphForAppFixture.Id, version: GraphForAppFixture.Version, document: doc, fullDocument: doc,
-            sources: [{ uri: GraphForAppFixture.Id + GraphForAppFixture.SourceSuffix, text: '' }], classes: [],
+            sources: [{ uri: GraphForAppFixture.Id + GraphForAppFixture.SourceSuffix, text: '' }], classes: [], Security: PackageSecurity.Empty,
         }
         await new BlobPackageStore(new StoragePackageSink(new NodeFsStorage(this.packages))).persist(pkg)
         mkdirSync(join(this.apps, GraphForAppFixture.AppName))

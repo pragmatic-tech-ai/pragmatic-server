@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import {
     Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink, Cypher,
-    type PackageDocument, type CompiledPackage,
+    type PackageDocument, type CompiledPackage, PackageSecurity,
 } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
@@ -69,7 +69,7 @@ class RecordSharingFixture
         const doc = toJSON(RecordSharingFixture.Repo()) as PackageDocument
         const pkg: CompiledPackage = {
             id: RecordSharingFixture.Id, version: RecordSharingFixture.Version, document: doc, fullDocument: doc,
-            sources: [{ uri: RecordSharingFixture.Id + RecordSharingFixture.SourceSuffix, text: '' }], classes: [],
+            sources: [{ uri: RecordSharingFixture.Id + RecordSharingFixture.SourceSuffix, text: '' }], classes: [], Security: PackageSecurity.Empty,
         }
         await new BlobPackageStore(new StoragePackageSink(new NodeFsStorage(this.packages))).persist(pkg)
         mkdirSync(join(this.apps, RecordSharingFixture.AppName))

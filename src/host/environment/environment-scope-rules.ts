@@ -2,7 +2,7 @@ import { AccessDefault, AccessScope, Not, OwnerIs, Seeded } from '@pragmatic-tec
 import { FalsePredicate } from '@pragmatic-tech-ai/graph'
 import type { CellValue, Cypher } from '@pragmatic-tech-ai/graph'
 import { EnvironmentNodePlacement, SystemNames, TodlNames } from '@pragmatic-tech-ai/todl/engine'
-import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
+import type { IEnvironmentCatalog, IPrincipalFacts } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
 import { NoPlacementDefaults } from '../engine/access-scope-source.js'
@@ -47,6 +47,8 @@ class EnvironmentPreparedRules implements IPreparedRules
 {
     private static readonly WriteRules: readonly WriteRule[] = [WriteRule.Create, WriteRule.Update, WriteRule.Delete]
     private static readonly SeedRules: readonly WriteRule[] = [WriteRule.Update, WriteRule.Delete]
+    private static readonly NoOwnedConcepts: ReadonlySet<string> = new Set<string>()
+    private static readonly NoPrincipal: IPrincipalFacts = { Id: '', HomeBusinessUnitId: '' }
 
     /** The evaluator `Records` resolved for a context, reused by its `Finish` (AccessScopeSource calls both in turn). */
     private readonly evaluators = new WeakMap<AccessContext, AccessDepthEvaluator>()
@@ -101,8 +103,11 @@ class EnvironmentPreparedRules implements IPreparedRules
 
     public Placement(defaults: IPlacementDefaults, _modelId: string | undefined): Cypher.INodePlacement
     {
-        // ruling S6: the model a write is confined to does not decide where a create goes
-        return new EnvironmentPlacement(new EnvironmentNodePlacement(this.catalog.Identity, this.catalog.HomeModels), defaults)
+        // ruling S6: the model a write is confined to does not decide where a create goes; owned-concept placement (C3,
+        // TODL security S1) is not used yet: no concept is placed as owned, so the principal facts are never read and
+        // the owner defaults stay the depth create defaults
+        const placement = new EnvironmentNodePlacement(this.catalog.Identity, this.catalog.HomeModels, EnvironmentPreparedRules.NoOwnedConcepts, EnvironmentPreparedRules.NoPrincipal)
+        return new EnvironmentPlacement(placement, defaults)
     }
 
     /**

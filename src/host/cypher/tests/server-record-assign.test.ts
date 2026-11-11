@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
-import { Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink, DataSourceKind, WriteOperationKind, WriteConcurrency, WriteAtomicity } from '@pragmatic-tech-ai/todl'
+import { Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink, DataSourceKind, WriteOperationKind, WriteConcurrency, WriteAtomicity, PackageSecurity } from '@pragmatic-tech-ai/todl'
 import type { PackageDocument, CompiledPackage, IDataSourceAdapter, ExternalFieldValue } from '@pragmatic-tech-ai/todl'
 import type { ISecurityModelConfig, AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { PrivilegeAction, OwnershipSourceKind } from '@pragmatic-tech-ai/todl-identity'
@@ -73,7 +73,7 @@ class RecordAssignFixture
         const doc = toJSON(RecordAssignFixture.Repo()) as PackageDocument
         const pkg: CompiledPackage = {
             id: RecordAssignFixture.Id, version: RecordAssignFixture.Version, document: doc, fullDocument: doc,
-            sources: [{ uri: RecordAssignFixture.Id + RecordAssignFixture.SourceSuffix, text: '' }], classes: [],
+            sources: [{ uri: RecordAssignFixture.Id + RecordAssignFixture.SourceSuffix, text: '' }], classes: [], Security: PackageSecurity.Empty,
         }
         await new BlobPackageStore(new StoragePackageSink(new NodeFsStorage(this.packages))).persist(pkg)
         mkdirSync(join(this.apps, RecordAssignFixture.AppName))

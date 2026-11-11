@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import {
     Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink, StoragePackageSource,
-    type PackageDocument, type CompiledPackage, type IInstanceFilter, type IInstanceView,
+    type PackageDocument, type CompiledPackage, type IInstanceFilter, type IInstanceView, PackageSecurity,
 } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import { RuntimeAppGraph } from '../runtime-app-graph.js'
@@ -55,7 +55,7 @@ class Fixture
         const doc = toJSON(Fixture.Repo()) as PackageDocument
         const pkg: CompiledPackage = {
             id: Fixture.Id, version: Fixture.Version, document: doc, fullDocument: doc,
-            sources: [{ uri: Fixture.Id + Fixture.SourceSuffix, text: '' }], classes: [],
+            sources: [{ uri: Fixture.Id + Fixture.SourceSuffix, text: '' }], classes: [], Security: PackageSecurity.Empty,
         }
         await new BlobPackageStore(new StoragePackageSink(new NodeFsStorage(this.Dir))).persist(pkg)
         return await RuntimeAppGraph.BuildQuery(

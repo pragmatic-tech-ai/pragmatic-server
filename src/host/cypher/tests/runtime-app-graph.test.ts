@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import {
     Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink, StoragePackageSource, Cypher,
-    type PackageDocument, type CompiledPackage,
+    type PackageDocument, type CompiledPackage, PackageSecurity,
 } from '@pragmatic-tech-ai/todl'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
@@ -38,7 +38,7 @@ class PublishedFixture
             document: doc,
             fullDocument: doc,
             sources: [{ uri: PublishedFixture.Id + PublishedFixture.SourceSuffix, text: '' }],
-            classes: [],
+            classes: [], Security: PackageSecurity.Empty,
         }
         await new BlobPackageStore(new StoragePackageSink(new NodeFsStorage(this.Dir))).persist(pkg)
     }
