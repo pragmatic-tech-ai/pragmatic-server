@@ -65,7 +65,6 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly PeopleLabel = 'People'
     private static readonly BusinessUnitsLabel = 'Business units'
     private static readonly TeamsLabel = 'Teams'
-    private static readonly OrgPeopleLabel = 'People'
     private static readonly NoneChoice = '(none)'
     private static readonly UnsavedText = 'Unsaved changes'
     private static readonly NoChangesText = 'No unsaved changes'
@@ -132,7 +131,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     ])
     private readonly orgTab = new TabSelection<OrgTab>([
         [OrgTab.BusinessUnits, SecurityModelEditorViewModel.BusinessUnitsLabel],
-        [OrgTab.People, SecurityModelEditorViewModel.OrgPeopleLabel],
+        [OrgTab.People, SecurityModelEditorViewModel.PeopleLabel],
         [OrgTab.Teams, SecurityModelEditorViewModel.TeamsLabel],
     ])
 
@@ -721,12 +720,13 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         }
     }
 
-    // A new placement starts in the root unit; the row's picker moves it.
+    // A new placement starts in the root unit. An already-placed id is ignored:
+    // the row's picker is the only way to move someone.
     private PlaceUser(): void
     {
         const id = this.Input(NewInput.User).trim()
         const root = this.draft?.Org.RootBusinessUnitId
-        if (id.length > 0 && root !== undefined && this.Apply(d => { d.Org.PlaceUser(id, root) }))
+        if (id.length > 0 && root !== undefined && !this.draft?.Org.Users.some(u => u.principalId === id) && this.Apply(d => { d.Org.PlaceUser(id, root) }))
         {
             this.SetInput(NewInput.User, SecurityModelEditorViewModel.Empty)
             this.Rebuild()
