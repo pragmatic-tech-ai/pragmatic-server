@@ -4,12 +4,7 @@ import type { SecurityChangesDto } from '../../../tenant-types.js'
 import type { TenantSessionService } from '../../../shell/tenant-session-service.js'
 import { FieldAccess } from './security-overrides.js'
 import { SecurityModelText } from './security-model-text.js'
-
-// The environment the change log is read for.
-export interface ISecurityChangesHost
-{
-    readonly Environment: string | undefined
-}
+import type { ISelectedEnvironment } from './security-model-edit-host.js'
 
 // One line of a change-log entry; a row the entry's list binds to.
 export class SecurityChangeLineViewModel extends Observable
@@ -73,7 +68,7 @@ export class SecurityChangesViewModel extends Observable
     // Whether a log has been shown since the last Invalidate: "no changes" is only true once one loaded.
     private loaded = false
 
-    public constructor(private readonly session: TenantSessionService, private readonly host: ISecurityChangesHost)
+    public constructor(private readonly session: TenantSessionService, private readonly host: ISelectedEnvironment)
     {
         super()
     }

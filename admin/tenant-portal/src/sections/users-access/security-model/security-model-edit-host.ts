@@ -1,4 +1,3 @@
-import type { TeamMemberDto } from '../../../tenant-types.js'
 import type { SecurityModelDraft } from './security-model-draft.js'
 
 // One rebuildable part of the editor: a row collection (or the derived
@@ -36,27 +35,13 @@ export interface ISecurityModelEditHost
 
     // Re-derives the business-unit tree (depths and parent choices) in place.
     RefreshUnitTree(): void
+}
 
-    // The server's member rows for a saved team, once loaded (undefined before).
-    ServerTeamMembers(teamId: string): readonly TeamMemberDto[] | undefined
-
-    // Whether the team exists in the saved setting (a team added in this draft has no server rows).
-    IsSavedTeam(teamId: string): boolean
-
-    // The team's manual members as last saved: the baseline for "not saved" marks.
-    SavedManualMembers(teamId: string): readonly string[]
-
-    // The last members-load failure text for the team ('' when none).
-    TeamMembersError(teamId: string): string
-
-    // Loads the server's member rows for a team into the editor's state and
-    // rebuilds the team rows; a failure is recorded as the team's error text.
-    // Never rejects; a result that lands after the draft changed is discarded.
-    LoadTeamMembers(teamId: string): Promise<void>
-
-    // The text typed into one of a team's "add" boxes, kept across rebuilds.
-    TeamInput(teamId: string, field: TeamInputField): string
-    SetTeamInput(teamId: string, field: TeamInputField, value: string): void
+// The environment the editor (and what it reads from the server: the change
+// log, team members) is scoped to; undefined while none is selected.
+export interface ISelectedEnvironment
+{
+    readonly Environment: string | undefined
 }
 
 // The typed-in boxes on a team row.

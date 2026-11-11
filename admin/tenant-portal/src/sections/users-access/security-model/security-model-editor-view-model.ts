@@ -1,6 +1,6 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { TenantApiError } from '../../../tenant-api-client.js'
-import { SecurityRoleKind, type SecurityProfileDto, type SecurityRoleDto, type TeamMemberDto } from '../../../tenant-types.js'
+import { SecurityRoleKind, type SecurityProfileDto, type SecurityRoleDto } from '../../../tenant-types.js'
 import { AdminCapability } from '../../../shell/admin-capability.js'
 import { PendingWork, type IHoldsPendingWork } from '../../../shell/holds-pending-work.js'
 import type { TenantSessionService } from '../../../shell/tenant-session-service.js'
@@ -9,12 +9,14 @@ import type { UsersAccessSectionService } from '../users-access-section-service.
 import { AssignmentEditorViewModel, AssignmentSide } from './assignment-editor-view-model.js'
 import { SecurityChangesViewModel } from './security-changes-view-model.js'
 import { SecurityModelDraft } from './security-model-draft.js'
-import { SecurityModelPart, TeamInputField, type ISecurityModelEditHost } from './security-model-edit-host.js'
+import { SecurityModelPart, type ISecurityModelEditHost } from './security-model-edit-host.js'
 import { BaseRole, LevelCycle } from './security-model-enums.js'
-import { BusinessUnitRowViewModel, NoneChoice, TeamRowViewModel, UnitChoices, UnitOptionViewModel, UserPlacementRowViewModel } from './security-model-org-rows.js'
+import { BusinessUnitRowViewModel, TeamRowViewModel, UserPlacementRowViewModel } from './security-model-org-rows.js'
 import { FieldGrantRowViewModel, LegendEntryViewModel, PrivilegeRowViewModel, ProfileItemViewModel, RoleItemViewModel } from './security-model-role-rows.js'
 import { SecurityModelText } from './security-model-text.js'
 import { TabSelection } from './tab-selection.js'
+import { TeamMembersState } from './team-members-state.js'
+import { UnitTree } from './unit-tree.js'
 
 // The editor's modes.
 export enum SecurityModelMode
@@ -78,13 +80,9 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly PeopleLabel = 'People'
     private static readonly BusinessUnitsLabel = 'Business units'
     private static readonly TeamsLabel = 'Teams'
-    private static readonly NoneChoice = '(none)'
     private static readonly UnsavedText = 'Unsaved changes'
     private static readonly NoChangesText = 'No unsaved changes'
-    private static readonly IdOpen = ' ('
-    private static readonly IdClose = ')'
     private static readonly Empty = ''
-    private static readonly MaxDepth = 64
 
     private static readonly SelectedModeProperty = 'SelectedMode'
     private static readonly IsRolesModeProperty = 'IsRolesMode'
@@ -124,7 +122,6 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private static readonly UserRowsProperty = 'UserRows'
     private static readonly HasNoUsersProperty = 'HasNoUsers'
     private static readonly TeamRowsProperty = 'TeamRows'
-    private static readonly TeamInputKeySeparator = '|'
     private static readonly HasNoTeamsProperty = 'HasNoTeams'
     private static readonly IsDirtyProperty = 'IsDirty'
     private static readonly HasPendingWorkProperty = 'HasPendingWork'
@@ -173,13 +170,9 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private readonly inputs = new Map<NewInput, string>()
     private readonly roleItems = new Map<string, RoleItemViewModel>()
     private readonly profileItems = new Map<string, ProfileItemViewModel>()
-    private readonly unitOptions = new Map<string, UnitOptionViewModel>()
-    // The server's member rows per saved team, loaded on demand; dropped with the draft.
-    private readonly teamMembers = new Map<string, readonly TeamMemberDto[]>()
-    private readonly teamMemberErrors = new Map<string, string>()
-    private readonly teamInputs = new Map<string, string>()
-    private savedTeamMembers = new Map<string, readonly string[]>()
-    private readonly noneUnit = new UnitOptionViewModel(undefined, SecurityModelEditorViewModel.NoneChoice)
+    private readonly unitTree = new UnitTree()
+    // The server's member rows per saved team and the team rows' typed input; reset with the draft.
+    private readonly teamMembers: TeamMembersState
     private roles = new ObservableCollection<RoleItemViewModel>()
     private privilegeRows = new ObservableCollection<PrivilegeRowViewModel>()
     private profiles = new ObservableCollection<ProfileItemViewModel>()
@@ -203,6 +196,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         this.roleAssignment = new AssignmentEditorViewModel(this, AssignmentSide.Role)
         this.profileAssignment = new AssignmentEditorViewModel(this, AssignmentSide.Profile)
         this.securityChanges = new SecurityChangesViewModel(session, this)
+        this.teamMembers = new TeamMembersState(session, this)
         for (const level of LevelCycle)
         {
             this.legend.Add(new LegendEntryViewModel(level))
@@ -660,7 +654,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
 
     public Rebuild(except?: SecurityModelPart): void
     {
-        this.SyncUnitOptions()
+        this.unitTree.SyncOptions(this.draft?.Org.BusinessUnits ?? [])
         for (const part of SecurityModelEditorViewModel.Parts)
         {
             if (part !== except)
@@ -712,75 +706,6 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     public RefreshUnitTree(): void
     {
         this.SyncUnitTree(false)
-    }
-
-    public ServerTeamMembers(teamId: string): readonly TeamMemberDto[] | undefined
-    {
-        return this.teamMembers.get(teamId)
-    }
-
-    public IsSavedTeam(teamId: string): boolean
-    {
-        return this.savedTeamMembers.has(teamId)
-    }
-
-    public SavedManualMembers(teamId: string): readonly string[]
-    {
-        return this.savedTeamMembers.get(teamId) ?? []
-    }
-
-    public TeamMembersError(teamId: string): string
-    {
-        return this.teamMemberErrors.get(teamId) ?? SecurityModelEditorViewModel.Empty
-    }
-
-    public async LoadTeamMembers(teamId: string): Promise<void>
-    {
-        const environment = this.Environment
-        const draft = this.draft
-        if (environment === undefined || draft === undefined || !this.IsSavedTeam(teamId))
-        {
-            return
-        }
-        let rows: TeamMemberDto[] | undefined
-        let failure = SecurityModelEditorViewModel.Empty
-        try
-        {
-            rows = await this.Session.Client.ListTeamMembers(environment, teamId)
-        }
-        catch (e)
-        {
-            failure = e instanceof Error ? e.message : String(e)
-        }
-        if (this.draft !== draft || this.Environment !== environment)
-        {
-            return
-        }
-        if (rows === undefined)
-        {
-            this.teamMemberErrors.set(teamId, failure)
-        }
-        else
-        {
-            this.teamMemberErrors.delete(teamId)
-            this.teamMembers.set(teamId, rows)
-        }
-        this.RebuildPart(SecurityModelPart.Teams)
-    }
-
-    public TeamInput(teamId: string, field: TeamInputField): string
-    {
-        return this.teamInputs.get(SecurityModelEditorViewModel.TeamInputKey(teamId, field)) ?? SecurityModelEditorViewModel.Empty
-    }
-
-    public SetTeamInput(teamId: string, field: TeamInputField, value: string): void
-    {
-        this.teamInputs.set(SecurityModelEditorViewModel.TeamInputKey(teamId, field), value)
-    }
-
-    private static TeamInputKey(teamId: string, field: TeamInputField): string
-    {
-        return `${field}${SecurityModelEditorViewModel.TeamInputKeySeparator}${teamId}`
     }
 
     // ---- Loading and saving --------------------------------------------
@@ -950,10 +875,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private SetDraft(draft: SecurityModelDraft | undefined): void
     {
         this.draft = draft
-        this.teamMembers.clear()
-        this.teamMemberErrors.clear()
-        this.teamInputs.clear()
-        this.savedTeamMembers = new Map((draft?.ToDto().teams ?? []).map(t => [t.id, t.manualMembers]))
+        this.teamMembers.Reset(draft?.ToDto())
         const roles = SecurityModelEditorViewModel.OrderedRoles(draft?.Catalog.roles ?? [])
         const profiles = SecurityModelEditorViewModel.OrderedProfiles(draft?.Catalog.profiles ?? [])
         this.selectedRoleId = roles.some(r => r.name === this.selectedRoleId) ? this.selectedRoleId : roles[0]?.name
@@ -1104,7 +1026,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
 
     private RebuildUsers(): void
     {
-        const choices = new UnitChoices(this.noneUnit, this.unitOptions, (this.draft?.Org.BusinessUnits ?? []).map(u => u.id), NoneChoice.Omitted)
+        const choices = this.unitTree.Choices((this.draft?.Org.BusinessUnits ?? []).map(u => u.id))
         this.userRows = new ObservableCollection<UserPlacementRowViewModel>()
         for (const placement of this.draft?.Org.Users ?? [])
         {
@@ -1115,107 +1037,19 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
 
     private RebuildTeams(): void
     {
-        const choices = new UnitChoices(this.noneUnit, this.unitOptions, (this.draft?.Org.BusinessUnits ?? []).map(u => u.id), NoneChoice.Omitted)
+        const choices = this.unitTree.Choices((this.draft?.Org.BusinessUnits ?? []).map(u => u.id))
         this.teamRows = new ObservableCollection<TeamRowViewModel>()
         for (const team of this.draft?.Org.Teams ?? [])
         {
-            this.teamRows.Add(new TeamRowViewModel(this, team, choices))
+            this.teamRows.Add(new TeamRowViewModel(this, team, choices, this.teamMembers))
         }
         this.Raise(SecurityModelEditorViewModel.TeamRowsProperty, SecurityModelEditorViewModel.HasNoTeamsProperty)
     }
 
-    // Keeps one choice object per unit (labels follow renames; a duplicate
-    // name gets its id appended so the choices stay distinct).
-    private SyncUnitOptions(): void
-    {
-        const units = this.draft?.Org.BusinessUnits ?? []
-        const counts = new Map<string, number>()
-        for (const unit of units)
-        {
-            counts.set(unit.name, (counts.get(unit.name) ?? 0) + 1)
-        }
-        const live = new Set<string>(units.map(u => u.id))
-        for (const id of [...this.unitOptions.keys()])
-        {
-            if (!live.has(id))
-            {
-                this.unitOptions.delete(id)
-            }
-        }
-        for (const unit of units)
-        {
-            const P = SecurityModelEditorViewModel
-            const label = (counts.get(unit.name) ?? 0) > 1 ? unit.name + P.IdOpen + unit.id + P.IdClose : unit.name
-            const option = this.unitOptions.get(unit.id)
-            if (option === undefined)
-            {
-                this.unitOptions.set(unit.id, new UnitOptionViewModel(unit.id, label))
-            }
-            else
-            {
-                option.SetLabel(label)
-            }
-        }
-    }
-
-    // Each unit's depth and parent choices: the root's offers only "(none)";
-    // any other unit's offers every unit but itself and its descendants (no
-    // "(none)", so the tree stays single-rooted and the picker never offers a
-    // cycle).
+    // Re-derives each unit row's depth and parent choices (UnitTree).
     private SyncUnitTree(relabel: boolean): void
     {
-        const rows = this.businessUnitRows.ToArray()
-        const parents = new Map<string, string | undefined>(rows.map(r => [r.Id, r.Parent]))
-        const children = new Map<string, string[]>()
-        for (const row of rows)
-        {
-            if (row.Parent !== undefined)
-            {
-                children.set(row.Parent, [...(children.get(row.Parent) ?? []), row.Id])
-            }
-        }
-        for (const row of rows)
-        {
-            const depth = SecurityModelEditorViewModel.DepthOf(row.Id, parents)
-            if (row.IsRoot)
-            {
-                row.SetTree(depth, new UnitChoices(this.noneUnit, this.unitOptions, [], NoneChoice.Offered), relabel)
-                continue
-            }
-            const excluded = SecurityModelEditorViewModel.DescendantsOf(row.Id, children)
-            excluded.add(row.Id)
-            const ids = rows.map(r => r.Id).filter(id => !excluded.has(id))
-            row.SetTree(depth, new UnitChoices(this.noneUnit, this.unitOptions, ids, NoneChoice.Omitted), relabel)
-        }
-    }
-
-    private static DescendantsOf(id: string, children: ReadonlyMap<string, readonly string[]>): Set<string>
-    {
-        const found = new Set<string>()
-        const pending = [...(children.get(id) ?? [])]
-        while (pending.length > 0)
-        {
-            const next = pending.pop() as string
-            if (!found.has(next))
-            {
-                found.add(next)
-                pending.push(...(children.get(next) ?? []))
-            }
-        }
-        return found
-    }
-
-    // Depth along the parent chain (bounded, so a bad cycle cannot loop).
-    private static DepthOf(id: string, parents: ReadonlyMap<string, string | undefined>): number
-    {
-        let depth = 0
-        let parent = parents.get(id)
-        while (parent !== undefined && parents.has(parent) && depth < SecurityModelEditorViewModel.MaxDepth)
-        {
-            depth++
-            parent = parents.get(parent)
-        }
-        return depth
+        this.unitTree.SyncTree(this.businessUnitRows.ToArray(), relabel)
     }
 
     // ---- Plumbing ------------------------------------------------------

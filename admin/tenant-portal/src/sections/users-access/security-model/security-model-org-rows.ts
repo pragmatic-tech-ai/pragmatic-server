@@ -5,6 +5,7 @@ import type { SecurityModelDraft } from './security-model-draft.js'
 import type { SecurityModelOrg } from './security-model-org.js'
 import { SecurityModelText } from './security-model-text.js'
 import { SecurityModelPart, TeamInputField, type ISecurityModelEditHost } from './security-model-edit-host.js'
+import type { TeamMembersState } from './team-members-state.js'
 
 // One business-unit choice in a ComboBox: a unit, or "(none)" (Id
 // undefined). Kept per unit id across rebuilds, so a ComboBox holding it
@@ -377,7 +378,7 @@ export class TeamRowViewModel extends OrgRowViewModel
     private readonly loadMembersCommand: RelayCommand
     private readonly members: ObservableCollection<TeamMemberRowViewModel>
 
-    public constructor(host: ISecurityModelEditHost, private readonly team: TeamDto, private readonly choices: UnitChoices)
+    public constructor(host: ISecurityModelEditHost, private readonly team: TeamDto, private readonly choices: UnitChoices, private readonly state: TeamMembersState)
     {
         super(host)
         for (const group of team.idpGroups)
@@ -387,7 +388,7 @@ export class TeamRowViewModel extends OrgRowViewModel
         this.addIdpGroupCommand = new RelayCommand(() => this.AddIdpGroup(), () => this.host.CanEdit)
         this.addManualMemberCommand = new RelayCommand(() => this.AddManualMember(), () => this.host.CanEdit)
         // A team added in this draft has no server rows to read.
-        this.loadMembersCommand = new RelayCommand(() => { void this.LoadMembers() }, () => this.host.IsSavedTeam(this.team.id))
+        this.loadMembersCommand = new RelayCommand(() => { void this.LoadMembers() }, () => this.state.IsSavedTeam(this.team.id))
         this.members = this.BuildMembers()
     }
 
@@ -438,7 +439,7 @@ export class TeamRowViewModel extends OrgRowViewModel
 
     public get NewIdpGroup(): string
     {
-        return this.host.TeamInput(this.team.id, TeamInputField.IdpGroup)
+        return this.state.TeamInput(this.team.id, TeamInputField.IdpGroup)
     }
 
     public set NewIdpGroup(value: string)
@@ -466,18 +467,18 @@ export class TeamRowViewModel extends OrgRowViewModel
     // Whether the server's rows (synced members) have been read for this team.
     public get AreMembersLoaded(): boolean
     {
-        return this.host.ServerTeamMembers(this.team.id) !== undefined
+        return this.state.ServerTeamMembers(this.team.id) !== undefined
     }
 
     // Shown while a saved team's synced members have not been read yet.
     public get ShowMembersHint(): boolean
     {
-        return this.host.IsSavedTeam(this.team.id) && !this.AreMembersLoaded
+        return this.state.IsSavedTeam(this.team.id) && !this.AreMembersLoaded
     }
 
     public get MembersErrorText(): string
     {
-        return this.host.TeamMembersError(this.team.id)
+        return this.state.TeamMembersError(this.team.id)
     }
 
     public get HasMembersError(): boolean
@@ -487,7 +488,7 @@ export class TeamRowViewModel extends OrgRowViewModel
 
     public get NewManualMember(): string
     {
-        return this.host.TeamInput(this.team.id, TeamInputField.Member)
+        return this.state.TeamInput(this.team.id, TeamInputField.Member)
     }
 
     public set NewManualMember(value: string)
@@ -500,13 +501,13 @@ export class TeamRowViewModel extends OrgRowViewModel
         return this.addManualMemberCommand
     }
 
-    // Reads the server's member rows. The editor owns the result and the
-    // failure text and rebuilds the team rows; the draft is never touched.
+    // Reads the server's member rows into the team-members state (the result
+    // or the failure text) and rebuilds the team rows; the draft is never touched.
     public async LoadMembers(): Promise<void>
     {
-        if (this.host.IsSavedTeam(this.team.id))
+        if (await this.state.LoadTeamMembers(this.team.id))
         {
-            await this.host.LoadTeamMembers(this.team.id)
+            this.host.RebuildPart(SecurityModelPart.Teams)
         }
     }
 
@@ -537,9 +538,9 @@ export class TeamRowViewModel extends OrgRowViewModel
 
     private SetInput(field: TeamInputField, value: unknown, property: string): void
     {
-        const old = this.host.TeamInput(this.team.id, field)
-        this.host.SetTeamInput(this.team.id, field, typeof value === 'string' ? value : TeamRowViewModel.NoText)
-        this.RaisePropertyChanged(property, old, this.host.TeamInput(this.team.id, field))
+        const old = this.state.TeamInput(this.team.id, field)
+        this.state.SetTeamInput(this.team.id, field, typeof value === 'string' ? value : TeamRowViewModel.NoText)
+        this.RaisePropertyChanged(property, old, this.state.TeamInput(this.team.id, field))
     }
 
     // Synced rows come from the server (once read); manual rows are the
@@ -547,8 +548,8 @@ export class TeamRowViewModel extends OrgRowViewModel
     private BuildMembers(): ObservableCollection<TeamMemberRowViewModel>
     {
         const rows = new ObservableCollection<TeamMemberRowViewModel>()
-        const saved = this.host.SavedManualMembers(this.team.id)
-        for (const row of this.host.ServerTeamMembers(this.team.id) ?? [])
+        const saved = this.state.SavedManualMembers(this.team.id)
+        for (const row of this.state.ServerTeamMembers(this.team.id) ?? [])
         {
             if (row.origin === TeamMemberOrigin.Synced)
             {
