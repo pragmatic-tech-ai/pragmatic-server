@@ -1,5 +1,5 @@
 import { ConnectorResidency } from '@pragmatic-tech-ai/graph'
-import type { IConnectorCapabilities, IConnectorTransaction, IExternalConnector, IFetchPage, IFetchRequest } from '@pragmatic-tech-ai/graph'
+import type { ConnectorContext, IConnectorCapabilities, IConnectorTransaction, IExternalConnector, IFetchPage, IFetchRequest } from '@pragmatic-tech-ai/graph'
 import { DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
 import type { ExternalRecord, IDataSourceAdapter, PageQuery, PageSlice, QueryRequest, WriteBatch, WriteResult } from '@pragmatic-tech-ai/todl'
 import { DataSourceConnector } from '@pragmatic-tech-ai/todl/engine'
@@ -68,9 +68,9 @@ export class LazyExternalConnector implements IExternalConnector
         return (await this.Connector()).Fetch(request)
     }
 
-    public async Begin(): Promise<IConnectorTransaction>
+    public async Begin(context: ConnectorContext): Promise<IConnectorTransaction>
     {
-        return (await this.Connector()).Begin()
+        return (await this.Connector()).Begin(context)
     }
 
     /**

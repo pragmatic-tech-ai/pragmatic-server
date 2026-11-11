@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessScope, CommitKind, ConnectorChangeSet, Cypher, GraphError, GraphErrorCode, WriteOp } from '@pragmatic-tech-ai/graph'
+import { AccessScope, CommitKind, ConnectorChangeSet, ConnectorContext, Cypher, GraphError, GraphErrorCode, WriteOp } from '@pragmatic-tech-ai/graph'
 import type { BatchOp, GraphEngine, ICommitApplied, IConnectorTransaction, IGraphConnector } from '@pragmatic-tech-ai/graph'
 import { Disposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
@@ -117,7 +117,7 @@ class CommitFx
     /** A committed transaction given one SetProperty of `publicId`. */
     public static async Committed(tracker: EngineWriteTracker, publicId: string = CommitFx.Node): Promise<IConnectorTransaction>
     {
-        const transaction = await tracker.Track(new InertConnector()).Begin()
+        const transaction = await tracker.Track(new InertConnector()).Begin(ConnectorContext.Anonymous)
         await transaction.Apply(CommitFx.Changes(CommitFx.Set(publicId)))
         await transaction.Commit()
         return transaction
