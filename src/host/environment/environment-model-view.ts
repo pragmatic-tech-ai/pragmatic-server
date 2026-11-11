@@ -1,7 +1,7 @@
 import { AccessScope, Cypher } from '@pragmatic-tech-ai/graph'
 import type { GraphEngine, GraphReader } from '@pragmatic-tech-ai/graph'
 import { EdgeKind, Tier } from '@pragmatic-tech-ai/todl'
-import { TodlNames } from '@pragmatic-tech-ai/todl/engine'
+import { SystemNames, TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import { CursorStaleError, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ModelEdgeDto, ModelMemberDto, ModelViewPageDto, ResolvedResourceDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
@@ -80,12 +80,14 @@ class EnvironmentModelMember
  *   InvalidRequest "unknown solution member" (checked before the page size, as dev); a non-positive page size is
  *   InvalidParams. Items = the nodes ``MATCH (n:`todl.Element`) RETURN n`` returns under the caller's scope AND the
  *   owner-only model filter (`ModelScopes.ForOwner`, ruling R53: the package's own nodes, so another package's taxonomy
- *   terms are not listed), keyset-paged ({@link CypherKeysetPage}, S11), each mapped by {@link EnvironmentModelMember};
+ *   terms are not listed; R58: plus the caller's share grants, so shared records stay visible), except the
+ *   `todl.system.ShareGrant` nodes (not package members; the engine parser has no label predicate, so they are left out
+ *   of the mapped rows by exact concept; a page may then hold fewer items than its size), keyset-paged ({@link CypherKeysetPage}, S11), each mapped by {@link EnvironmentModelMember};
  *   `provenanceOf` is `{}`. Cursor fingerprint: `modelView`, the member id, the engine schema version and the scope
  *   digest (a commit between pages neither repeats nor skips a member; an upgrade or another principal stales the
  *   cursor). A page that saw the engine upgrade is read again (`MaxAttempts`); one that never settles is CursorStale for
- *   a continuation, else EngineCypherQueryError Unsettled. The scope alone decides what is visible; nothing is filtered
- *   or masked here.
+ *   a continuation, else EngineCypherQueryError Unsettled. The scope alone decides what is visible; nothing is masked
+ *   here, and the grant exclusion is structural, never an access decision.
  * - `Hidden`: the engine holds `nodeId` (a System read) and the caller's scope does not show it.
  * - `Resources`: always `[]` (the runtime holds no source resources).
  */
@@ -136,7 +138,8 @@ export class EnvironmentModelView implements IGraphModelView
                 throw EngineCypherQuery.WireError(error)
             }
             if (engine.SchemaVersion !== before && !last) continue
-            const items = result.Rows.map(row => EnvironmentModelMember.Of((row[0] as Cypher.NodeValue).Node))
+            // R58: the owner filter admits the caller's share grants (so widening works); they are not package members
+            const items = result.Rows.map(row => (row[0] as Cypher.NodeValue).Node).filter(node => node.Concept !== SystemNames.ShareGrant).map(node => EnvironmentModelMember.Of(node))
             const nextCursor = keyset.NextCursor(result)
             return nextCursor === undefined ? { items, provenanceOf: {} } : { items, provenanceOf: {}, nextCursor }
         }

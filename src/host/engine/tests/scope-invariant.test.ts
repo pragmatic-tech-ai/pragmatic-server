@@ -9,6 +9,7 @@ import { AppWriteStatus, CypherCells, InMemoryMessageSocket, PragmaticClient } f
 import type { CypherCellDto, CypherNodeCellDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
+import { SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import { AccessLevel, OwnershipSourceKind, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext, IPrivilegeConfig, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import type { FieldSecurityEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
@@ -25,7 +26,7 @@ import type { IExpectedVisibility } from './scope-invariant-assertions.js'
  * secured-field profile); every dev read endpoint, and cypher/execute RETURN after writes, is asked over the wire.
  * Every instance id an answer holds must be in the set the ENGINE shows that principal (GraphReader.ScanNodes under
  * AccessScopeSource.ScopeFor(ctx).Scope, intersected for a model-scoped read with an independently built
- * Or(ConceptIs todl.Term, OwnerIs model) scope), every attribute readable under the tenant's FieldSecurityEvaluator.
+ * Or(ConceptIs todl.Term, ConceptIs todl.system.ShareGrant, OwnerIs model) scope, R58), every attribute readable under the tenant's FieldSecurityEvaluator.
  * The expected sets are computed from the engine and the identity evaluator directly, never through endpoint code.
  */
 
@@ -169,7 +170,7 @@ class InvariantFx
  * What one principal may see, computed from the engine and the identity evaluator alone:
  * - `Cypher`: the ids `ScanNodes(todl.Element)` yields under the principal's scope (tenant-wide reads, and every
  *   cypher/execute read, which stays tenant-wide);
- * - `ModelOf(id)`: `Cypher` intersected with the ids a scan under `Or(ConceptIs todl.Term, OwnerIs id)` alone yields
+ * - `ModelOf(id)`: `Cypher` intersected with the ids a scan under `Or(ConceptIs todl.Term, ConceptIs ShareGrant, OwnerIs id)` alone yields
  *   (deny-wins conjunction, built here without endpoint code);
  * - `ModelView`: `Cypher` without the term and the class node, plus each of them the engine admits as a hypothetical
  *   node of its represented concept (`GraphReader.Admits` on its fixture values): model/view judges them that way;
@@ -249,7 +250,8 @@ class ExpectedVisibility implements IExpectedVisibility
 
     private static ModelScope(model: string): EngineScope
     {
-        const owned = new Or([new ConceptIs(InvariantFx.Term), new OwnerIs(new Set([model]))])
+        // R58: the caller's share grants pass the model filter too (none exist on this dev tenant)
+        const owned = new Or([new ConceptIs(InvariantFx.Term), new ConceptIs(SystemNames.ShareGrant), new OwnerIs(new Set([model]))])
         return AccessScope.Build({ Default: AccessDefault.Allow, Rows: new Map([[InvariantFx.Root, owned]]) })
     }
 

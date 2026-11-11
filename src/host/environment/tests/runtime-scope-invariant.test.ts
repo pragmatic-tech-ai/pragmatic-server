@@ -1,8 +1,8 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessDefault, AccessScope, OwnerIs } from '@pragmatic-tech-ai/graph'
+import { AccessDefault, AccessScope, ConceptIs, Or, OwnerIs } from '@pragmatic-tech-ai/graph'
 import type { AccessScope as EngineScope, GraphEngine } from '@pragmatic-tech-ai/graph'
-import { ShareRight } from '@pragmatic-tech-ai/todl/engine'
+import { ShareRight, SystemNames, TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import { AppWriteStatus, CypherCells, ShareStatus, ShareSubjectKind } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherCellDto, CypherNodeCellDto, EntityDto, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessLevel, OwnershipSourceKind, Principal, PrincipalKind, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
@@ -21,7 +21,8 @@ import type { SeedRow } from './environment-fixture.js'
  * principals: one the security model does not know, a BusinessUnit-level reader, an Organization-level reader holding
  * the secured-field profile. Every runtime read endpoint is asked over the wire; every id an answer holds must be in
  * the set the ENGINE shows that principal (GraphReader.ScanNodes(todl.Element) under
- * EnvironmentScopes.ScopeFor(ctx).Scope, intersected for a model-scoped read with an independently built OwnerIs scan)
+ * EnvironmentScopes.ScopeFor(ctx).Scope, intersected for a model-scoped read with an independently built model-filter
+ * scan: OwnerIs plus the terms and the caller's share grants, R58)
  * plus the external binding's rows, which every principal sees (amendment A7: connector data is outside platform
  * security); every member must be readable under the identity FieldSecurityEvaluator for the node's concept.
  */
@@ -171,8 +172,9 @@ class RuntimeFx
 /**
  * What one principal may see, computed from the engine, the external identity and the identity evaluator alone:
  * - `Cypher`: the ids `ScanNodes(todl.Element)` yields under the principal's scope, plus every external row (A7);
- * - `ModelOf(id)`: the engine part of `Cypher` intersected with the ids a scan under `OwnerIs id` alone yields (built
- *   here without endpoint code), plus the external rows when `id` is the binding model;
+ * - `ModelOf(id)`: the engine part of `Cypher` intersected with the ids a scan under the model filter alone yields
+ *   (`Or(ConceptIs todl.Term, ConceptIs todl.system.ShareGrant, OwnerIs id)`, rulings S12 and R58, built here without
+ *   endpoint code), plus the external rows when `id` is the binding model;
  * - `ConceptOf`: every node the engine holds (unscoped) and every external row, with its concept.
  */
 class RuntimeVisibility implements IExpectedVisibility
@@ -198,7 +200,7 @@ class RuntimeVisibility implements IExpectedVisibility
         const perModel = new Map<string, ReadonlySet<string>>()
         for (const model of RuntimeFx.Models)
         {
-            const owned = await RuntimeVisibility.Scan(engine, AccessScope.Build({ Default: AccessDefault.Allow, Rows: new Map([[RuntimeFx.Root, new OwnerIs(new Set([model]))]]) }))
+            const owned = await RuntimeVisibility.Scan(engine, AccessScope.Build({ Default: AccessDefault.Allow, Rows: new Map([[RuntimeFx.Root, RuntimeVisibility.ModelFilter(model)]]) }))
             perModel.set(model, new Set([...[...stored].filter(id => owned.has(id)), ...(model === RuntimeFx.Ext.id ? external : [])]))
         }
         const concepts = await RuntimeVisibility.Concepts(engine)
@@ -223,6 +225,16 @@ class RuntimeVisibility implements IExpectedVisibility
     public CanRead(concept: string, field: string): boolean
     {
         return this.fields.CanReadField(this.context.Principal, concept, field)
+    }
+
+    /**
+     * The model filter as the spec defines it (S12, R58), built here without endpoint code: the model's own nodes, every
+     * taxonomy term and the share grants (the caller's scope alone governs those). model/view's owner-only filter (R53)
+     * differs only by the terms, which this fixture has none of.
+     */
+    private static ModelFilter(model: string): Or
+    {
+        return new Or([new ConceptIs(TodlNames.Term), new ConceptIs(SystemNames.ShareGrant), new OwnerIs(new Set([model]))])
     }
 
     private static async Scan(engine: GraphEngine, scope: EngineScope): Promise<Set<string>>
@@ -274,6 +286,10 @@ class RuntimeSweep
     public readonly Seen = new Coverage()
     /** The tenant-wide `MATCH (n) RETURN n` nodes. */
     public readonly AllNodes: CypherNodeCellDto[] = []
+    /** The `MATCH (n) RETURN n` node ids per model id. */
+    public readonly ModelNodes = new Map<string, string[]>()
+    /** The model/view members per model id, as `[id, kind]`. */
+    public readonly ViewMembers = new Map<string, (readonly [string, string | null])[]>()
     /** The ids the connector reads returned, per concept (both connector endpoints together). */
     public readonly ConnectorIds = new Map<string, Set<string>>()
 
@@ -318,6 +334,7 @@ class RuntimeSweep
                 for await (const page of this.client.QueryAll(query, undefined, RuntimeFx.PageSize, model)) rows.push(...page.items)
                 this.Check(rows, query, expected.CypherFor(model), expected, where)
                 if (query === RuntimeFx.AllNodes && model === undefined) this.AllNodes.push(...rows.map(row => CypherCells.AsNode(row[0])!))
+                if (query === RuntimeFx.AllNodes && model !== undefined) this.ModelNodes.set(model, rows.map(row => CypherCells.AsNode(row[0])!.id))
             }
         }
     }
@@ -375,12 +392,15 @@ class RuntimeSweep
         for (const model of RuntimeFx.Models)
         {
             const where = InvariantText.At(InvariantText.ModelView, model)
+            const members: (readonly [string, string | null])[] = []
+            this.ViewMembers.set(model, members)
             let cursor: string | undefined
             do
             {
                 const page = await this.client.ModelView(model, { cursor, pageSize: RuntimeFx.PageSize })
                 for (const member of page.items)
                 {
+                    members.push([member.id, member.kind])
                     if (Invariant.ModelMember(member, expected.CypherFor(model), expected, where)) this.Seen.Members += 1
                 }
                 cursor = page.nextCursor
@@ -440,9 +460,16 @@ describe('scope invariant: no runtime endpoint returns a row or member outside i
             assert.deepEqual(fixtureIn(orgSees.CypherFor(RuntimeFx.Notes.id)), [RuntimeFx.N1, RuntimeFx.N2])
             // the connector endpoints return exactly the governed rows each principal sees, and (A7) every binding row to everyone
             assert.deepEqual(none.ConnectorRead(RuntimeFx.Account), [])
-            // a1 yes, a3 never; the shared a2 is in BU's crm set but a model-scoped read does not return it yet: the model
-            // filter hides the caller's grant (owner todl.system), and a Related target is judged under the same scope (R66)
-            assert.ok(bu.ConnectorRead(RuntimeFx.Account).includes(RuntimeFx.A1) && !bu.ConnectorRead(RuntimeFx.Account).includes(RuntimeFx.A3))
+            // R58: the share widens under a model filter too (the caller's grant passes it), so BU's crm reads hold a2
+            assert.deepEqual(bu.ConnectorRead(RuntimeFx.Account), [RuntimeFx.A1, RuntimeFx.A2])
+            assert.deepEqual(fixtureIn(new Set(bu.ModelNodes.get(RuntimeFx.Crm.id))), [RuntimeFx.A1, RuntimeFx.A2])
+            // model/view lists the shared record and no grant node (grants are not package members)
+            const buView = bu.ViewMembers.get(RuntimeFx.Crm.id)!
+            assert.deepEqual(fixtureIn(new Set(buView.map(([id]) => id))), [RuntimeFx.A1, RuntimeFx.A2])
+            for (const sweep of [none, bu, org])
+            {
+                for (const members of sweep.ViewMembers.values()) assert.ok(members.every(([, kind]) => kind !== SystemNames.ShareGrant), JSON.stringify(members))
+            }
             assert.deepEqual(org.ConnectorRead(RuntimeFx.Account), [RuntimeFx.A1, RuntimeFx.A2, RuntimeFx.A3])
             assert.deepEqual(none.ConnectorRead(RuntimeFx.Note), [])
             assert.deepEqual(bu.ConnectorRead(RuntimeFx.Note), [RuntimeFx.N1])
