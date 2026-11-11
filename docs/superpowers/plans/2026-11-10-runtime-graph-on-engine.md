@@ -63,6 +63,51 @@ This plan was written from M2.2's plan text; it is refreshed against the as-buil
 - **Q9:** `cypher/execute` enabled on runtime tenants, gated by `writeTenant` and the engine scope (default S13 confirmed).
 - **Q5, Q7, Q8, Q10:** defaults stand.
 
+## Amendment 2026-11-11 — platform security (security S4 Task 1)
+
+Binding: `docs/superpowers/specs/2026-11-11-platform-security-architecture-design.md` §5, §6, §8 and
+`docs/superpowers/plans/2026-11-11-platform-security-program.md` C6. Where this section and the text above
+disagree, this section wins.
+
+- **A1 Tier 2 is gone.** No `access-policy.json`, no model policy declarations, no `PolicyScopeCompiler` on
+  either purpose (security S4 Task 2 removed them from `master`; this plan starts from that commit). The Q2
+  answer ("both apps' policies apply, deny wins") and Q8 are void; the spec §11.1 "ungoverned app-private
+  concepts are policy-only" bypass no longer applies. Review Focus 5's second clause reads "a security-setting
+  edit between pages stales the cursor".
+- **A2 Task 2.** `IPreparedRules` becomes `{ Records(context: AccessContext): Promise<{ Scope: AccessScope;
+  Diagnostics: readonly string[] }>; Finish(scope, context): Promise<AccessScope>; Placement(defaults:
+  IPlacementDefaults, modelId: string | undefined): Cypher.INodePlacement; readonly Digest: string }`.
+  `AccessScopeSource(host, rules, diagnostics?)` no longer composes policy and depth itself: `Records` is the
+  scope's record/field part, `Finish` follows; identity state moves into the rules. `DevScopeRules.Records` =
+  M1's `DepthScopeCompiler.Compile(...)` alone. `DepthScopeCompiler` gains `Skip` only — no `Bypass`. Drop the
+  test `bypassed concept has no depth entries`; add `rules records are the scope record part`.
+- **A3 S5 rewritten.** `Final = Finish(Records)`. Runtime `Records`, interim until security S4 Task 9 replaces
+  it with `Tier1ScopeCompiler` (C6): `DepthScopeCompiler.Compile(evaluator, principal, description, hasModel,
+  { Skip: concept => the concept, or an ancestor, has an external binding in catalog.Identity })` — connector
+  concepts get no Rows/Writes entries and fall to Default Allow (spec §6: connectors are outside the model).
+  `Finish` (a)–(d) unchanged, except (a) widens engine-stored concepts only. `Digest` drops `PolicyDigest`.
+- **A4 S8/S9.** Share, unshare, list and assign on an external record answer `invalid`
+  `ExternalRecordReason = 'external records are outside platform security'`. The [O1]-tagged tests `shared
+  external record` and `assign an external record` become `external record cannot be shared` / `external record
+  cannot be assigned`; O1 remains for S10 and S14 only.
+- **A5 Task 7 tests.** Remove: `governed concept gets policy and depth`, `ungoverned app-private concept is
+  policy only`, `ungoverned concept delivered twice is not bypassed`, `promote-only ungoverned concept is
+  denied`, `two apps' rules on one concept both apply`, `malformed policy fails its own concepts closed`,
+  `unparseable rules are fatal for the app`, `policy on an unknown concept is ignored`, `numeric policy values
+  are typed`, `policy edit stales the cursor`. Add: `governed concept gets depth` (User-level rule → own rows
+  only); `external concept is outside the scope` (a principal holding nothing on the bound concept reads and
+  writes its rows; no Rows/Writes key for it); `policy files are not read` (an `access-policy.json` in the app
+  directory changes nothing); `security-model edit stales the cursor`. Consumes drops `FromRules`,
+  `AccessPolicySetting`, `GovernedConceptsFor`, `IPolicyRuleSource`. `EnvironmentFixture` writes no policy files.
+- **A6 Task 11.** `connector/*` reads and writes of connector-bound concepts are not gated by `Records` (A3);
+  engine-stored concepts keep the caller scope.
+- **A7 Task 14.** The runtime scope-invariant fixture uses depth-governed engine concepts plus one external
+  binding whose rows every principal sees. Security S4 Task 9 rebases it on tier 1.
+- **A8 Task 16.** Drop "whole-app fail-closed on any MalformedPolicy (R117)"; record A1–A7.
+- **A9 Order.** This plan executes after security S4 Task 2 is on `master`; security S4 Task 9 follows this
+  plan's merge and replaces `DepthScopeCompiler`, `TenantReadAuthorization` and the depth-based share/assign
+  checks.
+
 ## Design rulings (record each in the implementing task's commit message and in ARCHITECTURE.md; the plan's id is the reference, e.g. "ruling S5")
 
 - **S1 One code path.** Endpoint logic that only needs "an engine, its snapshot, a caller scope" is one class for both purposes: `EngineCypherQuery`, `EngineConnectorService`, `AccessScopeSource`, `EngineWriteFailure`, `CypherKeysetPage`, `ScopeReach`. What legitimately differs is host-shaped and stays per host: the dev `cypher/execute` (write lease, write fence, settle waits for `.todl` file writes) versus `EnvironmentCypherExecute` (no lease: the tenant-ownership lease already makes the engine single-owner, and the engine's OCC serializes); `model/view` structure (dev: the language service incl. unsaved buffers; runtime: the engine catalog). Both execute paths share placement, scope confinement and failure mapping.
