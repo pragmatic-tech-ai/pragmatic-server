@@ -159,9 +159,20 @@ export class EnvironmentFixture
      */
     public Host(diagnostics?: IEnvironmentDiagnostics, timing?: IEnvironmentHostTiming, packages: IStorage = new NodeFsStorage(this.PackagesDir), kind: StorageKind = StorageKind.Lmdb): EnvironmentEngineHost
     {
+        return this.Track(new EnvironmentEngineHost(this.Deliveries(), packages, this.Services(), { Kind: kind, Path: this.StorePath }, diagnostics, timing))
+    }
+
+    /** Services resolving an adapter catalog that serves `Source` (what `Host` gives its host). */
+    public Services(): ServiceProvider
+    {
         const services = new ServiceProvider()
         services.registerInstance(DataSourceAdapterCatalog.ServiceKey, new DataSourceAdapterCatalog().Register(this.Source))
-        const host = new EnvironmentEngineHost(this.Deliveries(), packages, services, { Kind: kind, Path: this.StorePath }, diagnostics, timing)
+        return services
+    }
+
+    /** Disposes `host` with the fixture (for a host a test builds itself). */
+    public Track<T extends EnvironmentEngineHost>(host: T): T
+    {
         this.hosts.push(host)
         return host
     }

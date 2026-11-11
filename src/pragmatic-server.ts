@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { StorageKind } from '@pragmatic-tech-ai/graph'
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
@@ -88,7 +89,6 @@ import { EnvironmentGraph, EnvironmentGraphOverlay, NoEnvironmentGraphError } fr
 import { PromoteRecordStore } from './host/environment/promote-record-store.js'
 import { EnvironmentDeliveries } from './host/environment/environment-deliveries.js'
 import { EnvironmentEngineHost, LoggerEnvironmentDiagnostics } from './host/environment/environment-engine-host.js'
-import { StorageKind } from '@pragmatic-tech-ai/graph'
 import type { IEnvironmentGraphHost } from './host/graphs/environment-graph.js'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 

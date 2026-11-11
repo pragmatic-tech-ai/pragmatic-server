@@ -1,5 +1,5 @@
 import { ConnectorPhase, GraphEngine, GraphError, GraphErrorCode } from '@pragmatic-tech-ai/graph'
-import type { ConnectorError, ISchemaDescription, ISignal, ISubscription, StorageKind } from '@pragmatic-tech-ai/graph'
+import type { ConnectorError, IGraphEngineOptions, ISchemaDescription, ISignal, ISubscription, StorageKind } from '@pragmatic-tech-ai/graph'
 import { StoragePackageSource } from '@pragmatic-tech-ai/todl'
 import { EngineCellMapper, EnvironmentCatalogComposer, SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import type { IEnvironmentCatalog, IPackageDelivery } from '@pragmatic-tech-ai/todl/engine'
@@ -7,6 +7,8 @@ import type { IDisposable, IServiceProvider, IStorage } from '@pragmatic-tech-ai
 import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
 import { AsyncMutex } from '../cypher/async-mutex.js'
+import { BoundedWait, TimeoutUpgradeTimer } from '../engine/bounded-wait.js'
+import type { IUpgradeTimer } from '../engine/bounded-wait.js'
 import { ConnectorSetKey } from '../engine/connector-set-key.js'
 import { EngineHostChanged } from '../engine/engine-host-changed.js'
 import type { IEngineSnapshot, IGraphEngineHost } from '../engine/graph-engine-host.js'
@@ -37,6 +39,8 @@ export interface IEnvironmentDiagnostics
     RevertFailed(error: ConnectorError): void
     /** The store was locked at open (the previous lease holder may still be closing); attempt `attempt` is retried. */
     OpenRetried(error: unknown, attempt: number): void
+    /** Teardown stopped waiting for the running open or delivery (a hung persist) and disposed the engine anyway. */
+    DrainUnsettled(): void
 }
 
 /** Reports each event as one line on the server logger: error names, connector and phase only (messages can carry paths). */
@@ -46,6 +50,7 @@ export class LoggerEnvironmentDiagnostics implements IEnvironmentDiagnostics
     private static readonly HandlerLine = 'environment graph engine upgraded, but a Changed subscriber failed: '
     private static readonly RevertLine = 'environment graph connector compensation failed after the write was answered: '
     private static readonly RetryLine = 'environment graph store is locked; retrying the open: '
+    private static readonly DrainLine = 'environment graph engine teardown stopped waiting for a hung delivery'
     private static readonly ConnectorField = 'connector'
     private static readonly PhaseField = 'phase'
     private static readonly AttemptField = 'attempt'
@@ -76,6 +81,11 @@ export class LoggerEnvironmentDiagnostics implements IEnvironmentDiagnostics
     public OpenRetried(error: unknown, attempt: number): void
     {
         this.logger.Warn(LoggerEnvironmentDiagnostics.RetryLine + LoggerEnvironmentDiagnostics.NameOf(error), { [LoggerEnvironmentDiagnostics.AttemptField]: attempt })
+    }
+
+    public DrainUnsettled(): void
+    {
+        this.logger.Error(LoggerEnvironmentDiagnostics.DrainLine)
     }
 
     private static NameOf(error: unknown): string
@@ -112,6 +122,8 @@ export interface IEnvironmentHostTiming
 {
     readonly PrepareTimeoutMs?: number
     readonly OpenBackoffMs?: number
+    /** Bounds teardown's wait for the running section (default `EnvironmentEngineHost.MaxDrainMs`). */
+    readonly MaxDrainMs?: number
 }
 
 /**
@@ -135,10 +147,17 @@ class OpenedEnvironment implements IDisposable
         for (const connector of this.connectors) connector.Reset()
     }
 
+    /** The engine first, so a late compensation failure raised while it drains is still reported. */
     public async dispose(): Promise<void>
     {
-        this.reverts.dispose()
-        await this.Engine.dispose()
+        try
+        {
+            await this.Engine.dispose()
+        }
+        finally
+        {
+            this.reverts.dispose()
+        }
     }
 }
 
@@ -174,6 +193,8 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDisposable
     public static readonly PrepareTimeoutMs = 30000
     public static readonly OpenAttempts = 3
     public static readonly OpenBackoffMs = 500
+    /** How long teardown waits for the running open or delivery before it disposes the engine anyway. */
+    public static readonly MaxDrainMs = 2 * EnvironmentEngineHost.PrepareTimeoutMs
     private static readonly DisposedMessage = 'The environment engine host has been disposed'
 
     public readonly Changed: ISignal<void>
@@ -182,6 +203,8 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDisposable
     private readonly mutex = new AsyncMutex()
     private opened: OpenedEnvironment | undefined
     private stale = false
+    /** True once an engine was launched: a later first-open branch replaces one, so it raises Changed. */
+    private launched = false
     private disposing: Promise<void> | undefined
 
     public constructor(
@@ -192,6 +215,8 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDisposable
         private readonly storage: IEnvironmentEngineStorage,
         private readonly diagnostics: IEnvironmentDiagnostics = new LoggerEnvironmentDiagnostics(),
         private readonly timing: IEnvironmentHostTiming = {},
+        /** The timer seam bounding teardown's drain wait. */
+        private readonly timer: IUpgradeTimer = new TimeoutUpgradeTimer(),
     )
     {
         this.Changed = this.changed
@@ -223,6 +248,12 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDisposable
         {
             await this.Compose(await this.deliveries.With(change))
             const result = await persist()
+            if (this.disposing !== undefined)
+            {
+                // the lease went while persisting: the delivery is on disk, the next lease holder opens over it
+                this.stale = true
+                return result
+            }
             try
             {
                 await this.Apply()
@@ -250,10 +281,13 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDisposable
         this.opened?.ResetConnectors()
     }
 
-    /** Waits for the running open or delivery, then disposes the engine (closing its store). Idempotent. */
+    /**
+     * Waits (at most `MaxDrainMs`) for the running open or delivery, then disposes the engine, closing its store. A
+     * section still running afterwards opens nothing: every launch re-checks `disposing`. Idempotent.
+     */
     public dispose(): Promise<void>
     {
-        this.disposing ??= this.mutex.Run(() => this.Teardown())
+        this.disposing ??= this.Teardown()
         return this.disposing
     }
 
@@ -266,9 +300,12 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDisposable
         {
             if (this.opened === undefined)
             {
+                // a first open, or the recovery from a failed reopen: that one replaces a disposed engine (Changed)
+                const replacing = this.launched
                 const deliveries = await this.deliveries.Current()
                 this.opened = await this.Launch(EnvironmentEngineHost.SnapshotOf(await this.Compose(deliveries), deliveries))
                 this.stale = false
+                if (replacing) this.RaiseChanged()
             }
             else if (this.stale)
             {
@@ -292,10 +329,10 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDisposable
     private async Apply(): Promise<void>
     {
         const opened = this.opened
-        if (opened === undefined)
+        if (opened === undefined || this.disposing !== undefined)
         {
-            // nothing open: the first use opens over the current deliveries
-            this.stale = false
+            // nothing open: the first use opens over the current deliveries; disposing: the next lease holder does
+            this.stale = opened !== undefined
             return
         }
         let applied = false
@@ -326,7 +363,8 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDisposable
         {
             // a failed reopen leaves nothing open: the next use opens afresh rather than redelivering
             this.stale = this.opened !== undefined
-            this.diagnostics.UpgradeFailed(error)
+            // a launch refused because teardown began is no upgrade failure
+            if (this.disposing === undefined) this.diagnostics.UpgradeFailed(error)
             throw error
         }
         if (applied) this.RaiseChanged()
@@ -337,7 +375,15 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDisposable
     {
         const catalog = snapshot.Catalog
         const connectors = catalog.Connectors.map(plan => new LazyExternalConnector(plan, () => this.services, catalog.Identity))
+        if (this.disposing !== undefined) throw new Error(EnvironmentEngineHost.DisposedMessage)
         const engine = await this.OpenRetrying(snapshot.Description, connectors)
+        if (this.disposing !== undefined)
+        {
+            // teardown began while the store opened: it never sees this engine, so it is closed here
+            await engine.dispose()
+            throw new Error(EnvironmentEngineHost.DisposedMessage)
+        }
+        this.launched = true
         const reverts = engine.ConnectorRevertFailed.Subscribe(error => this.diagnostics.RevertFailed(error))
         return new OpenedEnvironment(engine, snapshot, EnvironmentEngineHost.KeyOf(snapshot), connectors, reverts)
     }
@@ -349,7 +395,7 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDisposable
         {
             try
             {
-                return await GraphEngine.Open({
+                return await this.OpenEngine({
                     Description: description,
                     Storage: { Kind: this.storage.Kind, Path: this.storage.Path },
                     Connectors: connectors,
@@ -364,6 +410,12 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDisposable
                 backoff *= 2
             }
         }
+    }
+
+    /** Opens one engine (`GraphEngine.Open`); a seam a test overrides to fail an open. */
+    protected OpenEngine(options: IGraphEngineOptions): Promise<GraphEngine>
+    {
+        return GraphEngine.Open(options)
     }
 
     private Compose(deliveries: readonly IPackageDelivery[]): Promise<IEnvironmentCatalog>
@@ -385,6 +437,12 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDisposable
 
     private async Teardown(): Promise<void>
     {
+        // the running section (and any queued before dispose) finishes first; every later one refuses
+        const drained = this.mutex.Run(() => Promise.resolve())
+        if (!(await BoundedWait.Within(drained, this.timing.MaxDrainMs ?? EnvironmentEngineHost.MaxDrainMs, this.timer)))
+        {
+            this.diagnostics.DrainUnsettled()
+        }
         const opened = this.opened
         this.opened = undefined
         await opened?.dispose()

@@ -2,10 +2,12 @@ import { CommitKind, GraphEngine, StorageKind, WriteOp } from '@pragmatic-tech-a
 import type { BatchOp, ConnectorChangeSet, ICommitApplied, IConnectorTransaction, IGraphConnector, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { EnvironmentCatalogError, TodlFileConnector } from '@pragmatic-tech-ai/todl/engine'
-import { Disposable, ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
+import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable, IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
+import { BoundedWait, TimeoutUpgradeTimer } from './bounded-wait.js'
+import type { IUpgradeTimer } from './bounded-wait.js'
 import { ConnectorSetKey } from './connector-set-key.js'
 import { EngineHostChanged } from './engine-host-changed.js'
 import type { IDevLanguageService } from './dev-language-service.js'
@@ -55,44 +57,6 @@ export interface IGraphChangedSource
 export interface IDevEngineLanguageService extends IDevLanguageService
 {
     readonly GraphChanged: IGraphChangedSource
-}
-
-/** Runs `work` once after `delayMs` unless the returned handle is disposed first (the upgrade debounce). */
-export interface IUpgradeTimer
-{
-    Start(delayMs: number, work: () => void): IDisposable
-}
-
-/**
- * A wait bounded by a timer seam: resolves true when `work` settles first, false when `ms` elapses first. A rejection of
- * `work` counts as settled (the caller only waits for it to stop).
- */
-export class BoundedWait
-{
-    public static Within(work: Promise<unknown>, ms: number, timer: IUpgradeTimer): Promise<boolean>
-    {
-        return new Promise<boolean>(resolve =>
-        {
-            const handle = timer.Start(ms, () => resolve(false))
-            const done = (): void =>
-            {
-                handle.dispose()
-                resolve(true)
-            }
-            work.then(done, done)
-        })
-    }
-}
-
-export class TimeoutUpgradeTimer implements IUpgradeTimer
-{
-    public Start(delayMs: number, work: () => void): IDisposable
-    {
-        const handle = setTimeout(work, delayMs)
-        // a pending recompile never keeps the process alive on its own
-        handle.unref?.()
-        return new Disposable(() => clearTimeout(handle))
-    }
 }
 
 /** Where an upgrade that did not apply is reported (it is never fatal: the engine keeps its previous version). */
