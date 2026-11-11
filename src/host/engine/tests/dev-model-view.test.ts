@@ -382,8 +382,9 @@ class ModelFixture
     public static readonly Eu = 'shop.custEu'
     public static readonly Us = 'shop.custUs'
     public static readonly Unknown = 'shop.doesNotExist'
-    public static readonly EuFile = 'a.todl'
-    public static readonly UsFile = 'b.todl'
+    /** The provenance value (source of origin) the structure reports for each customer. */
+    public static readonly EuProvenance = 'a.todl'
+    public static readonly UsProvenance = 'b.todl'
 
     /** eu-only visibility for the reader, by access depth on the region field. */
     public static EuOnly(): ISecurityModelConfig
@@ -644,9 +645,9 @@ test('a hidden instance id does not leak through provenanceOf', async () =>
 {
     await DevWorld.With(ModelFixture.Todl, ModelFixture.EuOnly(), async world =>
     {
-        const provenance = new Map([[ModelFixture.Eu, ModelFixture.EuFile], [ModelFixture.Us, ModelFixture.UsFile]])
+        const provenance = new Map([[ModelFixture.Eu, ModelFixture.EuProvenance], [ModelFixture.Us, ModelFixture.UsProvenance]])
         const projection = await DevWorld.Page(world.View(new FixedStructure(ModelFixture.Build(), provenance)), DevWorld.Reader(), world.MemberId, ViewFx.All)
-        assert.equal(projection.provenanceOf[ModelFixture.Eu], ModelFixture.EuFile)
+        assert.equal(projection.provenanceOf[ModelFixture.Eu], ModelFixture.EuProvenance)
         assert.equal(ModelFixture.Us in projection.provenanceOf, false)
     })
 })
