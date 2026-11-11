@@ -22,7 +22,7 @@ import { ServerConnectionHandler } from '../../server-connection-handler.js'
  * security model does not know, a BusinessUnit-level reader/writer, an Organization-level reader/writer holding the
  * secured-field profile); every dev read endpoint, and cypher/execute RETURN after writes, is asked over the wire.
  * Every instance id an answer holds must be in the set the ENGINE shows that principal (GraphReader.ScanNodes under
- * DevAccessScopeSource.ScopeFor(ctx).Scope, intersected for a model-scoped read with an independently built
+ * AccessScopeSource.ScopeFor(ctx).Scope, intersected for a model-scoped read with an independently built
  * Or(ConceptIs todl.Term, OwnerIs model) scope), every attribute readable under the tenant's FieldSecurityEvaluator.
  * The expected sets are computed from the engine and the identity evaluator directly, never through endpoint code.
  */

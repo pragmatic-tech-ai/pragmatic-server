@@ -10,7 +10,8 @@ import { ConnectorHydrateWriter } from './connector-hydrate-writer.js'
 import type { IHydrateAuthorization } from './connector-hydrate-writer.js'
 import type { IWriteTargetSource } from './write-target-source.js'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { ConnectorReadAuthorizations, ConnectorPrincipalDigest } from './connector-read-authorization.js'
+import { ConnectorReadAuthorizations } from './connector-read-authorization.js'
+import { ConnectorPrincipalDigest } from './engine/principal-digest.js'
 import type { IConnectorReadAuthorization } from './connector-read-authorization.js'
 
 /** Per-connection façade over the 6A ConnectorRuntime: lazily holds one runtime (rebuilt on Invalidate, i.e.

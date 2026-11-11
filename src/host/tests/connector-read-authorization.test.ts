@@ -4,7 +4,8 @@ import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Rol
 import { AllowAllInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { TenantReadAuthorization } from '../cypher/read-filter-source.js'
 import { AllowAllFieldReadMask } from '../cypher/field-masked-graph-query.js'
-import { ConnectorReadAuthorizations, ConnectorPrincipalDigest } from '../connector-read-authorization.js'
+import { ConnectorReadAuthorizations } from '../connector-read-authorization.js'
+import { ConnectorPrincipalDigest } from '../engine/principal-digest.js'
 
 class Fx
 {

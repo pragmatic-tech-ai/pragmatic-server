@@ -14,7 +14,7 @@ import { PagingLimits } from '../../../config/paging-limits.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { PpSecurityHarness } from '../../cypher/tests/pp-security-harness.js'
 import { CypherParamConverter } from '../../cypher/cypher-param-converter.js'
-import type { IDevCypherRequest } from '../dev-cypher-query.js'
+import type { IDevCypherRequest } from '../engine-cypher-query.js'
 
 /** What one dev query asks beyond its text. */
 interface IQueryOptions

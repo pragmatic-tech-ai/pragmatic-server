@@ -19,7 +19,7 @@ import { PpSecurityHarness } from '../../cypher/tests/pp-security-harness.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
 import { DevModelView } from '../dev-model-view.js'
 import type { IDevModelStructure, IDevModelView, IDevModelViewDiagnostics } from '../dev-model-view.js'
-import type { IDevScope, IDevScopeSource } from '../dev-access-scope-source.js'
+import type { IGraphScope, IGraphScopeSource } from '../access-scope-source.js'
 import type { IDevGraphEngine } from '../dev-graph-engine-host.js'
 
 /**
@@ -78,15 +78,15 @@ class CountingDropped implements ISignal<void>
 }
 
 /** A scope source that delegates to the server's and counts the subscriptions to its Dropped. */
-class CountingScopeSource implements IDevScopeSource
+class CountingScopeSource implements IGraphScopeSource
 {
     public readonly Dropped = new CountingDropped()
 
-    public constructor(private readonly inner: () => Promise<IDevScopeSource>)
+    public constructor(private readonly inner: () => Promise<IGraphScopeSource>)
     {
     }
 
-    public async ScopeFor(context: AccessContext): Promise<IDevScope>
+    public async ScopeFor(context: AccessContext): Promise<IGraphScope>
     {
         return (await this.inner()).ScopeFor(context)
     }
@@ -266,7 +266,7 @@ class DevWorld
     }
 
     /** A DevModelView on this server's engine and scopes whose structure is `structure` (the unit ports). */
-    public View(structure: IDevModelStructure, diagnostics?: IDevModelViewDiagnostics, scopes: () => Promise<IDevScopeSource> = () => this.Server.DevScopes()): DevModelView
+    public View(structure: IDevModelStructure, diagnostics?: IDevModelViewDiagnostics, scopes: () => Promise<IGraphScopeSource> = () => this.Server.DevScopes()): DevModelView
     {
         const view = new DevModelView(this.Server.DevEngine(), scopes, async () => this.manager.ActiveSolution, async () => structure, diagnostics)
         this.views.push(view)
@@ -1050,7 +1050,7 @@ test('switching to a rebuilt scope source drops the subscription to the previous
     {
         const first = new CountingScopeSource(() => world.Server.DevScopes())
         const second = new CountingScopeSource(() => world.Server.DevScopes())
-        let current: IDevScopeSource = first
+        let current: IGraphScopeSource = first
         const view = world.View(new FixedStructure(ModelFixture.Build()), undefined, async () => current)
         await DevWorld.Page(view, DevWorld.Reader(), world.MemberId, ViewFx.All)
         await DevWorld.Page(view, DevWorld.Reader(), world.MemberId, ViewFx.All)

@@ -1,14 +1,19 @@
 import { afterEach, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessError, AccessErrorCode, AccessScope, Cypher, GraphError, GraphErrorCode } from '@pragmatic-tech-ai/graph'
+import { AccessDefault, AccessError, AccessErrorCode, AccessScope, Cypher, FalsePredicate, GraphError, GraphErrorCode, IdIn } from '@pragmatic-tech-ai/graph'
 import type { GraphEngine, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
+import { TodlNames, TodlNodePlacement } from '@pragmatic-tech-ai/todl/engine'
+import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { AccessLevel, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { TenantReadAuthorization } from '../../cypher/read-filter-source.js'
-import { DevAccessScopeSource } from '../dev-access-scope-source.js'
-import type { IDevScopeDiagnostics } from '../dev-access-scope-source.js'
+import { AccessScopeConjunction } from '../access-scope-conjunction.js'
+import { AccessScopeSource, NoPlacementDefaults } from '../access-scope-source.js'
+import type { IPreparedRules, IScopeDiagnostics, IScopeRecords, IScopeRules, ScopeSchema } from '../access-scope-source.js'
+import type { IPlacementDefaults } from '../depth-scope-compiler.js'
+import { DevScopeRules } from '../dev-scope-rules.js'
 import { DevGraphEngineHost } from '../dev-graph-engine-host.js'
 import type { IDevEngineDiagnostics, IDevGraphEngine } from '../dev-graph-engine-host.js'
 import type { IWriteFence } from '../server-model-workspace.js'
@@ -35,7 +40,7 @@ class SilentDiagnostics implements IDevEngineDiagnostics
     }
 }
 
-class RecordingScopeDiagnostics implements IDevScopeDiagnostics
+class RecordingScopeDiagnostics implements IScopeDiagnostics
 {
     public readonly Messages: string[] = []
 
@@ -111,6 +116,8 @@ class SourceFx
     public static readonly SetOwner = "MATCH (w:acme.Widget {code: 'w1'}) SET w.owner = 'p1'"
     public static readonly CreateOwned = "CREATE (w:acme.Widget {code: 'w7', owner: 'p1'}) RETURN w.code AS c"
     public static readonly SetSecret = "MATCH (w:acme.Widget {code: 'w1'}) SET w.secret = 'x'"
+    public static readonly FirstWidget = "MATCH (w:acme.Widget {code: 'w1'}) RETURN w"
+    public static readonly FirstGadget = "MATCH (g:acme.Gadget {code: 'g1'}) RETURN g"
     public static readonly AllNodes = 'MATCH (n) RETURN n.code AS c'
     public static readonly Terms = 'MATCH (t:todl.Term) RETURN t.taxonomy AS c'
     public static readonly CreateOrg = DevScopeFx.Privilege(PrivilegeAction.Create, AccessLevel.Organization)
@@ -149,9 +156,80 @@ class SourceFx
         return result.Rows.map(row => (row[0] instanceof Cypher.ScalarValue ? row[0].Value : null))
     }
 
+    /** The public id of the one node `query` returns under the System scope. */
+    public static async IdOf(engine: GraphEngine, query: string): Promise<string>
+    {
+        return ((await new Cypher.CypherEngine(engine).Execute(AccessScope.System, query)).Rows[0]![0] as Cypher.NodeValue).Id
+    }
+
     public static Denied(error: unknown): boolean
     {
         return error instanceof Cypher.CypherWriteError && error.WriteCode === Cypher.CypherWriteErrorCode.Denied
+    }
+}
+
+/** Scope rules the test drives: the record part it hands out, a Finish confining to `Only`, a digest and a Changed it raises. */
+class FakeRules implements IScopeRules
+{
+    public static readonly First = 'rules-1'
+    public static readonly Second = 'rules-2'
+
+    public readonly Changed: ISignal<void>
+    public Digest = FakeRules.First
+    public Record = AccessScope.Build({ Default: AccessDefault.Allow })
+    public Only: ReadonlySet<string> | undefined
+    public Finished: AccessScope | undefined
+    public Compiles = 0
+    public Disposed = false
+    private readonly signal = new Signal<void>()
+
+    public constructor()
+    {
+        this.Changed = { Subscribe: (handler: (value: void) => void): ISubscription => this.signal.subscribe(handler) }
+    }
+
+    public Prepare(schema: ScopeSchema): Promise<IPreparedRules>
+    {
+        return Promise.resolve(new FakePrepared(this, schema))
+    }
+
+    public Raise(): void
+    {
+        this.signal.emit(undefined)
+    }
+
+    public dispose(): void
+    {
+        this.Disposed = true
+    }
+}
+
+class FakePrepared implements IPreparedRules
+{
+    public readonly Digest: string
+
+    public constructor(private readonly rules: FakeRules, private readonly schema: ScopeSchema)
+    {
+        this.Digest = rules.Digest
+    }
+
+    public Records(): Promise<IScopeRecords>
+    {
+        this.rules.Compiles += 1
+        return Promise.resolve({ Scope: this.rules.Record, Diagnostics: [], Defaults: NoPlacementDefaults.Instance })
+    }
+
+    public Finish(scope: AccessScope, _context: AccessContext): Promise<AccessScope>
+    {
+        this.rules.Finished = scope
+        if (this.rules.Only === undefined) return Promise.resolve(scope)
+        const only = AccessScope.Build({ Default: AccessDefault.Allow, Rows: new Map([[TodlNames.Element, new IdIn(this.rules.Only)]]) })
+        return Promise.resolve(AccessScopeConjunction.And(scope, only, this.schema.Catalog))
+    }
+
+    public Placement(_defaults: IPlacementDefaults, modelId: string | undefined): Cypher.INodePlacement
+    {
+        return new TodlNodePlacement(modelId!, modelId!)
     }
 }
 
@@ -161,10 +239,10 @@ class ScopeFx
     private static readonly Open: (() => Promise<void>)[] = []
 
     public readonly Source: SourceFx
-    public readonly Scopes: DevAccessScopeSource
+    public readonly Scopes: AccessScopeSource
     public readonly Diagnostics: RecordingScopeDiagnostics
 
-    private constructor(source: SourceFx, scopes: DevAccessScopeSource, diagnostics: RecordingScopeDiagnostics)
+    private constructor(source: SourceFx, scopes: AccessScopeSource, diagnostics: RecordingScopeDiagnostics)
     {
         this.Source = source
         this.Scopes = scopes
@@ -176,16 +254,26 @@ class ScopeFx
         const { Auth, Store } = await DevScopeFx.Authorization(model)
         const source = new SourceFx()
         const diagnostics = new RecordingScopeDiagnostics()
-        const fx = new ScopeFx(source, new DevAccessScopeSource(source.Host, Auth, true, undefined, diagnostics), diagnostics)
+        const fx = new ScopeFx(source, new AccessScopeSource(source.Host, new DevScopeRules(source.Host, Auth, true), diagnostics), diagnostics)
         ScopeFx.Track(fx)
         return { Fx: fx, Auth, Store }
+    }
+
+    /** A scope source under the test's own rules. */
+    public static WithRules(rules: FakeRules): ScopeFx
+    {
+        const source = new SourceFx()
+        const diagnostics = new RecordingScopeDiagnostics()
+        const fx = new ScopeFx(source, new AccessScopeSource(source.Host, rules, diagnostics), diagnostics)
+        ScopeFx.Track(fx)
+        return fx
     }
 
     public static Anonymous(): ScopeFx
     {
         const source = new SourceFx()
         const diagnostics = new RecordingScopeDiagnostics()
-        const fx = new ScopeFx(source, new DevAccessScopeSource(source.Host, undefined, false, undefined, diagnostics), diagnostics)
+        const fx = new ScopeFx(source, new AccessScopeSource(source.Host, new DevScopeRules(source.Host, undefined, false), diagnostics), diagnostics)
         ScopeFx.Track(fx)
         return fx
     }
@@ -222,7 +310,7 @@ class ScopeFx
     }
 }
 
-describe('DevAccessScopeSource', () =>
+describe('AccessScopeSource', () =>
 {
     afterEach(() => ScopeFx.DisposeAll())
 
@@ -230,13 +318,13 @@ describe('DevAccessScopeSource', () =>
     {
         const fx = ScopeFx.Anonymous()
         const first = await fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))
-        for (let n = 0; n < DevAccessScopeSource.MaxScopes + 5; n++)
+        for (let n = 0; n < AccessScopeSource.MaxScopes + 5; n++)
         {
             await fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1 + String(n)))
             // touching p1 keeps it the most recently used
             assert.equal((await fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))).Scope, first.Scope)
         }
-        assert.equal(fx.Scopes.CachedScopes, DevAccessScopeSource.MaxScopes)
+        assert.equal(fx.Scopes.CachedScopes, AccessScopeSource.MaxScopes)
         assert.equal((await fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))).Scope, first.Scope, 'the most recently used scope survives')
     })
 
@@ -385,5 +473,55 @@ describe('DevAccessScopeSource', () =>
         assert.match(place.PublicId, /^acme\./)
         assert.equal(place.Owner, SourceFx.Model)
         assert.equal(place.Defaults, undefined)
+    })
+
+    test('rules records are the scope record part', async () =>
+    {
+        const rules = new FakeRules()
+        const fx = ScopeFx.WithRules(rules)
+        const scope = await fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))
+        assert.equal(scope.Scope, rules.Record, 'no depth is composed on top of the records')
+        assert.deepEqual(await fx.Column(DevScopeFx.P1, SourceFx.Widgets), ['w1', 'w2', 'w3', 'z1'])
+    })
+
+    test('rules finish is applied last', async () =>
+    {
+        const rules = new FakeRules()
+        const fx = ScopeFx.WithRules(rules)
+        // the record part denies every Gadget; Finish then confines to w1 and g1, on top of it
+        rules.Record = AccessScope.Build({ Default: AccessDefault.Allow, Rows: new Map([[DevScopeFx.Gadget, FalsePredicate.Instance]]) })
+        rules.Only = new Set([await SourceFx.IdOf(await fx.Engine(), SourceFx.FirstWidget), await SourceFx.IdOf(await fx.Engine(), SourceFx.FirstGadget)])
+        assert.deepEqual(await fx.Column(DevScopeFx.P1, SourceFx.Widgets), ['w1'], 'Finish narrows the records')
+        assert.deepEqual(await fx.Column(DevScopeFx.P1, SourceFx.Gadgets), [], 'Finish cannot widen what the records deny')
+        assert.equal(rules.Finished, rules.Record, 'Finish is given the record part')
+    })
+
+    test('rules digest keys the cache', async () =>
+    {
+        const rules = new FakeRules()
+        const fx = ScopeFx.WithRules(rules)
+        const first = await fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))
+        await fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))
+        assert.equal(rules.Compiles, 1)
+        rules.Digest = FakeRules.Second
+        const second = await fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))
+        assert.equal(rules.Compiles, 2)
+        assert.notEqual(second.Digest, first.Digest)
+        assert.ok(second.Digest.includes(FakeRules.Second))
+    })
+
+    test('rules Changed drops the cache', async () =>
+    {
+        const rules = new FakeRules()
+        const fx = ScopeFx.WithRules(rules)
+        let dropped = 0
+        const subscription = fx.Scopes.Dropped.Subscribe(() => { dropped += 1 })
+        await fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))
+        rules.Raise()
+        assert.equal(dropped, 1)
+        assert.equal(fx.Scopes.CachedScopes, 0)
+        await fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))
+        assert.equal(rules.Compiles, 2)
+        subscription.dispose()
     })
 })

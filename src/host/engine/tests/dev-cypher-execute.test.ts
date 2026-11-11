@@ -21,7 +21,8 @@ import type { IFieldReadMaskSource } from '../../cypher/read-filter-source.js'
 import { PpSecurityHarness } from '../../cypher/tests/pp-security-harness.js'
 import { WriteLockBusyError } from '../../cypher/write-lock.js'
 import type { IWriteLease, IWriteLock } from '../../cypher/write-lock.js'
-import { DevAccessScopeSource } from '../dev-access-scope-source.js'
+import { AccessScopeSource } from '../access-scope-source.js'
+import { DevScopeRules } from '../dev-scope-rules.js'
 import { DevCypherExecute } from '../dev-cypher-execute.js'
 import type { IDevExecuteDiagnostics } from '../dev-cypher-execute.js'
 import { DevGraphEngineHost } from '../dev-graph-engine-host.js'
@@ -836,7 +837,7 @@ class ExecFx
     public readonly Host: DevGraphEngineHost
     public Execute!: DevCypherExecute
     public Scripted: ScriptedHost | undefined
-    private scopes: DevAccessScopeSource | undefined
+    private scopes: AccessScopeSource | undefined
 
     private constructor(files: Readonly<Record<string, string>>, prepareTimeoutMs: number | undefined)
     {
@@ -851,7 +852,7 @@ class ExecFx
     {
         const fx = new ExecFx(options.files ?? { [ExecFx.ModelFile]: ExecFx.Shop }, options.prepareTimeoutMs)
         const auth = options.model === undefined ? undefined : (await DevScopeFx.Authorization(options.model)).Auth
-        fx.scopes = new DevAccessScopeSource(fx.Host, auth, options.model !== undefined, () => Promise.resolve(ExecFx.SolutionName), { ScopeDiagnostics: () => undefined })
+        fx.scopes = new AccessScopeSource(fx.Host, new DevScopeRules(fx.Host, auth, options.model !== undefined, () => Promise.resolve(ExecFx.SolutionName)), { ScopeDiagnostics: () => undefined })
         const scopes = fx.scopes
         fx.Scripted = options.host === undefined ? undefined : new ScriptedHost(fx.Host, options.host)
         fx.Execute = new DevCypherExecute(fx.Scripted ?? fx.Host, () => Promise.resolve(scopes), () => Promise.resolve(fx.Lang.GraphRevision), options.lock, fx.ExecuteDiagnostics, options.settleTimer)

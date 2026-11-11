@@ -9,9 +9,9 @@ import { CypherResultMapper } from '../cypher/cypher-result-mapper.js'
 import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
 import { PageFingerprint, PageRequest } from '../paging/page-request.js'
 import { AccessScopeConjunction } from './access-scope-conjunction.js'
-import type { IDevScope, IDevScopeSource } from './dev-access-scope-source.js'
-import type { IDevGraphEngine } from './dev-graph-engine-host.js'
+import type { IGraphScope, IGraphScopeSource } from './access-scope-source.js'
 import { EngineSchemaCatalog } from './engine-schema-catalog.js'
+import type { IGraphEngineHost } from './graph-engine-host.js'
 
 /** The page a dev query asks for: the wire paging params, the connection's paging limits and the row cap. */
 export interface IDevCypherPage
@@ -35,31 +35,31 @@ export interface IDevCypherRequest
     readonly MaxVarLength: number
 }
 
-/** The dev `cypher/query` and `cypher/models` endpoints' engine side. */
-export interface IDevCypherQuery
+/** The `cypher/query` and `cypher/models` endpoints' engine side, for any engine host (ruling S1). */
+export interface IGraphCypherQuery
 {
     Run(context: AccessContext, request: IDevCypherRequest): Promise<CypherQueryPageDto>
     /** The model ids `cypher/query` accepts as `modelId`, sorted. */
     Models(): Promise<readonly string[]>
 }
 
-export enum DevCypherQueryErrorCode
+export enum EngineCypherQueryErrorCode
 {
     /** The engine kept upgrading or committing on every attempt; a later request runs on the settled engine. */
     Unsettled = 1,
 }
 
-export class DevCypherQueryError extends Error
+export class EngineCypherQueryError extends Error
 {
-    private static readonly ErrorName = 'DevCypherQueryError'
-    private static readonly Messages: Readonly<Record<DevCypherQueryErrorCode, string>> = {
-        [DevCypherQueryErrorCode.Unsettled]: 'the dev graph engine kept changing while the query ran',
+    private static readonly ErrorName = 'EngineCypherQueryError'
+    private static readonly Messages: Readonly<Record<EngineCypherQueryErrorCode, string>> = {
+        [EngineCypherQueryErrorCode.Unsettled]: 'the graph engine kept changing while the query ran',
     }
 
-    public constructor(public readonly Code: DevCypherQueryErrorCode)
+    public constructor(public readonly Code: EngineCypherQueryErrorCode)
     {
-        super(DevCypherQueryError.Messages[Code])
-        this.name = DevCypherQueryError.ErrorName
+        super(EngineCypherQueryError.Messages[Code])
+        this.name = EngineCypherQueryError.ErrorName
     }
 }
 
@@ -105,10 +105,10 @@ class Attempt
 }
 
 /**
- * Runs the dev tenant's read-only Cypher on its embedded graph engine, under the caller's {@link IDevScope}: the scope
+ * Runs read-only Cypher on a host's graph engine (IGraphEngineHost), under the caller's {@link IGraphScope}: the scope
  * alone decides what the query sees (rows, hidden members); this class never filters or masks a result itself.
  *
- * - `ModelId` must be one of {@link DevCypherQuery.Models} (else InvalidParams "model not found", the same error for
+ * - `ModelId` must be one of {@link EngineCypherQuery.Models} (else InvalidParams "model not found", the same error for
  *   every unknown id). It ANDs `Or(ConceptIs todl.Term, OwnerIs(modelId))` into the `todl.Element` rows entry of the
  *   caller's scope (AccessScopeConjunction, deny-wins): the model filter reaches every concept but the taxonomy terms
  *   (owned by the solution package), which the caller's own scope alone governs, so term refs survive.
@@ -116,11 +116,11 @@ class Attempt
  *   the same scope telling it which relationship-held fields are hidden; then to the wire page (CypherResultMapper).
  * - Cursor fingerprint: `cypher`, the text, the canonical parameters, the engine schema version and commit, the scope
  *   digest, and for a model-scoped query `model` and the model id. A query that saw the engine move (an upgrade or a
- *   commit while it ran) is run again, up to {@link DevCypherQuery.MaxAttempts} times; a continuation page that never
- *   settles is CursorStale, a first page DevCypherQueryError Unsettled.
- * - Engine Syntax / Semantic / IntegerOverflow errors are InvalidParams; a timeout is {@link DevCypherQuery.TimeoutCode}.
+ *   commit while it ran) is run again, up to {@link EngineCypherQuery.MaxAttempts} times; a continuation page that never
+ *   settles is CursorStale, a first page EngineCypherQueryError Unsettled.
+ * - Engine Syntax / Semantic / IntegerOverflow errors are InvalidParams; a timeout is {@link EngineCypherQuery.TimeoutCode}.
  */
-export class DevCypherQuery implements IDevCypherQuery
+export class EngineCypherQuery implements IGraphCypherQuery
 {
     public static readonly TimeoutCode = -32030
     public static readonly TimeoutMessage = 'cypher query timed out'
@@ -132,7 +132,7 @@ export class DevCypherQuery implements IDevCypherQuery
     private catalog: { readonly Description: ISchemaDescription; readonly Catalog: EngineSchemaCatalog } | undefined
     private readonly modelScopes = new WeakMap<AccessScope, Map<string, AccessScope>>()
 
-    public constructor(private readonly host: IDevGraphEngine, private readonly scopes: () => Promise<IDevScopeSource>)
+    public constructor(private readonly host: IGraphEngineHost, private readonly scopes: () => Promise<IGraphScopeSource>)
     {
     }
 
@@ -143,13 +143,13 @@ export class DevCypherQuery implements IDevCypherQuery
 
     public async Run(context: AccessContext, request: IDevCypherRequest): Promise<CypherQueryPageDto>
     {
-        for (let attempt = 1; attempt <= DevCypherQuery.MaxAttempts; attempt++)
+        for (let attempt = 1; attempt <= EngineCypherQuery.MaxAttempts; attempt++)
         {
-            const outcome = await this.Attempt(context, request, attempt === DevCypherQuery.MaxAttempts)
+            const outcome = await this.Attempt(context, request, attempt === EngineCypherQuery.MaxAttempts)
             if (outcome.Page !== undefined) return outcome.Page
         }
-        if (DevCypherQuery.Continues(request.Page.Params)) throw new ResponseError(CursorStaleError.Code, CursorStaleError.Message)
-        throw new DevCypherQueryError(DevCypherQueryErrorCode.Unsettled)
+        if (EngineCypherQuery.Continues(request.Page.Params)) throw new ResponseError(CursorStaleError.Code, CursorStaleError.Message)
+        throw new EngineCypherQueryError(EngineCypherQueryErrorCode.Unsettled)
     }
 
     private async Attempt(context: AccessContext, request: IDevCypherRequest, last: boolean): Promise<Attempt>
@@ -160,16 +160,16 @@ export class DevCypherQuery implements IDevCypherQuery
         if (snapshot.Description.Version !== before.Version)
         {
             // an upgrade is being applied: its snapshot is installed once the engine has upgraded
-            await DevCypherQuery.Yield()
+            await EngineCypherQuery.Yield()
             return Attempt.Moved
         }
         if (request.ModelId !== undefined && !snapshot.Models.includes(request.ModelId))
         {
-            throw new ResponseError(ErrorCodes.InvalidParams, DevCypherQuery.ModelNotFoundMessage)
+            throw new ResponseError(ErrorCodes.InvalidParams, EngineCypherQuery.ModelNotFoundMessage)
         }
-        const devScope = await (await this.scopes()).ScopeFor(context)
-        const scope = request.ModelId === undefined ? devScope.Scope : this.ModelScope(devScope.Scope, request.ModelId, snapshot.Description)
-        const page = PageRequest.Resolve(request.Page.Params, DevCypherQuery.Fingerprint(request, before, devScope), request.Page.Limits, request.Page.RowCap)
+        const graphScope = await (await this.scopes()).ScopeFor(context)
+        const scope = request.ModelId === undefined ? graphScope.Scope : this.ModelScope(graphScope.Scope, request.ModelId, snapshot.Description)
+        const page = PageRequest.Resolve(request.Page.Params, EngineCypherQuery.Fingerprint(request, before, graphScope), request.Page.Limits, request.Page.RowCap)
         let mapped: CypherQueryPageDto
         let reader: GraphReader | undefined
         try
@@ -183,18 +183,18 @@ export class DevCypherQuery implements IDevCypherQuery
         catch (error)
         {
             // a scope or plan made for a schema the engine left while the query ran: run it again on the new one
-            if (!last && !(await DevCypherQuery.Settled(engine, before))) return Attempt.Moved
-            throw DevCypherQuery.WireError(error)
+            if (!last && !(await EngineCypherQuery.Settled(engine, before))) return Attempt.Moved
+            throw EngineCypherQuery.WireError(error)
         }
         finally
         {
             reader?.dispose()
         }
-        if (!(await DevCypherQuery.Settled(engine, before)))
+        if (!(await EngineCypherQuery.Settled(engine, before)))
         {
             if (!last) return Attempt.Moved
             // never settled: a continuation cannot be served from a state its cursor was not minted for
-            if (DevCypherQuery.Continues(request.Page.Params)) throw new ResponseError(CursorStaleError.Code, CursorStaleError.Message)
+            if (EngineCypherQuery.Continues(request.Page.Params)) throw new ResponseError(CursorStaleError.Code, CursorStaleError.Message)
         }
         return Attempt.Done(mapped)
     }
@@ -227,10 +227,10 @@ export class DevCypherQuery implements IDevCypherQuery
         return this.catalog.Catalog
     }
 
-    private static Fingerprint(request: IDevCypherRequest, state: EngineState, scope: IDevScope): string
+    private static Fingerprint(request: IDevCypherRequest, state: EngineState, scope: IGraphScope): string
     {
-        const parts = [DevCypherQuery.FingerprintTag, request.Source, request.CanonicalParameters, state.Version, String(state.Commit), scope.Digest]
-        if (request.ModelId !== undefined) parts.push(DevCypherQuery.ModelScopeTag, request.ModelId)
+        const parts = [EngineCypherQuery.FingerprintTag, request.Source, request.CanonicalParameters, state.Version, String(state.Commit), scope.Digest]
+        if (request.ModelId !== undefined) parts.push(EngineCypherQuery.ModelScopeTag, request.ModelId)
         return PageFingerprint.Of(...parts)
     }
 
@@ -256,7 +256,7 @@ export class DevCypherQuery implements IDevCypherQuery
             case Cypher.CypherErrorCode.IntegerOverflow:
                 return new ResponseError(ErrorCodes.InvalidParams, `${InvalidParamsPrefix.Text}${error.message}`)
             case Cypher.CypherErrorCode.Timeout:
-                return new ResponseError(DevCypherQuery.TimeoutCode, DevCypherQuery.TimeoutMessage)
+                return new ResponseError(EngineCypherQuery.TimeoutCode, EngineCypherQuery.TimeoutMessage)
             default:
                 return error
         }

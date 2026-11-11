@@ -37,7 +37,18 @@ export interface IPlacementDefaults
     Defaults(concept: string): ReadonlyMap<string, CellValue>
 }
 
-/** The access-depth axis of one principal's dev scope: its rows, writes and hidden fields, and the create defaults. */
+/** How one compile is narrowed. */
+export interface IDepthCompileOptions
+{
+    /**
+     * Concepts outside the depth axis (ruling R6: connector-bound concepts are outside platform security): a skipped
+     * concept gets an explicit allow, Rows True and Create / Update / Delete True keyed on it (ruling R12: the depth
+     * Default is Deny, so mere absence would fail closed), and no HiddenExact, ReadOnlyExact or create-default entry.
+     */
+    readonly Skip?: (concept: string) => boolean
+}
+
+/** The access-depth axis of one principal's scope: its rows, writes and hidden fields, and the create defaults. */
 export class DepthScope implements IPlacementDefaults
 {
     private static readonly NoDefaults: ReadonlyMap<string, CellValue> = new Map()
@@ -119,6 +130,8 @@ export class DepthScopeCompiler
     private static readonly UnknownDefaultMessage = 'create default "{0}" is not a property of "{1}"; it is not placed'
     private static readonly Placeholder = /\{(\d)\}/g
     private static readonly NoArgument = ''
+    private static readonly SkipNone = (): boolean => false
+    private static readonly AllowWrites: IWriteRules = { Create: TruePredicate.Instance, Update: TruePredicate.Instance, Delete: TruePredicate.Instance }
     private static readonly Operations: readonly (readonly [WriteRule, PrivilegeAction])[] = [
         [WriteRule.Create, PrivilegeAction.Create],
         [WriteRule.Update, PrivilegeAction.Update],
@@ -132,7 +145,12 @@ export class DepthScopeCompiler
     private readonly reachAndBelow: ReadonlySet<string>
     private readonly units: readonly string[]
 
-    private constructor(private readonly evaluator: AccessDepthEvaluator, private readonly principal: Principal, description: ISchemaDescription, private readonly hasSecurityModel: boolean)
+    private constructor(
+        private readonly evaluator: AccessDepthEvaluator,
+        private readonly principal: Principal,
+        description: ISchemaDescription,
+        private readonly hasSecurityModel: boolean,
+        private readonly options: IDepthCompileOptions)
     {
         this.catalog = new EngineSchemaCatalog(description)
         const membership = evaluator.MembershipOf(principal)
@@ -148,10 +166,13 @@ export class DepthScopeCompiler
         this.units = [hierarchy.RootId(), ...hierarchy.DescendantsOf(hierarchy.RootId())]
     }
 
-    /** `hasSecurityModel`: false for a tenant with no security model (a DenyAll evaluator), which reads no terms either. */
-    public static Compile(evaluator: AccessDepthEvaluator, principal: Principal, description: ISchemaDescription, hasSecurityModel: boolean): DepthScope
+    /**
+     * `hasSecurityModel`: false for a tenant with no security model (a DenyAll evaluator), which reads no terms either.
+     * `options.Skip` puts concepts outside the axis: allowed, never secured (IDepthCompileOptions).
+     */
+    public static Compile(evaluator: AccessDepthEvaluator, principal: Principal, description: ISchemaDescription, hasSecurityModel: boolean, options: IDepthCompileOptions = {}): DepthScope
     {
-        return new DepthScopeCompiler(evaluator, principal, description, hasSecurityModel).Run()
+        return new DepthScopeCompiler(evaluator, principal, description, hasSecurityModel, options).Run()
     }
 
     private Run(): DepthScope
@@ -160,9 +181,16 @@ export class DepthScopeCompiler
         {
             if (!this.catalog.IsConcept(concept)) this.Report(DepthDiagnosticCode.UnknownConcept, concept, DepthScopeCompiler.UnknownConceptMessage, concept)
         }
-        const concepts = this.catalog.Concepts().filter(concept => concept !== TodlNames.Element && concept !== TodlNames.Term)
+        const skip = this.options.Skip ?? DepthScopeCompiler.SkipNone
+        const described = this.catalog.Concepts().filter(concept => concept !== TodlNames.Element && concept !== TodlNames.Term)
+        const concepts = described.filter(concept => !skip(concept))
         const rows = new Map<string, Predicate>()
         const writes = new Map<string, IWriteRules>()
+        for (const concept of described.filter(skip))
+        {
+            rows.set(concept, TruePredicate.Instance)
+            writes.set(concept, DepthScopeCompiler.AllowWrites)
+        }
         for (const concept of concepts)
         {
             rows.set(concept, this.Guarded(concept, PrivilegeAction.Read))

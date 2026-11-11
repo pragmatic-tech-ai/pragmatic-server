@@ -14,8 +14,8 @@ import { InProcessWriteLock, WriteLockBusyError } from '../cypher/write-lock.js'
 import type { IWriteLease, IWriteLock } from '../cypher/write-lock.js'
 import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
 import { AccessScopeConjunction } from './access-scope-conjunction.js'
-import type { IDevScopeSource } from './dev-access-scope-source.js'
-import { DevCypherQuery, DevCypherQueryError, DevCypherQueryErrorCode } from './dev-cypher-query.js'
+import type { IGraphScopeSource } from './access-scope-source.js'
+import { EngineCypherQuery, EngineCypherQueryError, EngineCypherQueryErrorCode } from './engine-cypher-query.js'
 import { BoundedWait, DevGraphEngineHost, TimeoutUpgradeTimer } from './dev-graph-engine-host.js'
 import type { IDevGraphEngine, IUpgradeTimer } from './dev-graph-engine-host.js'
 import type { DevSnapshot } from './dev-snapshot-source.js'
@@ -209,7 +209,7 @@ class Attempt
 /**
  * Runs the dev tenant's Cypher writes on its embedded graph engine, under the caller's dev scope: the scope alone
  * decides what the write may see and do (the engine's WriteGate judges every op at commit); this class never filters,
- * masks or authorizes by itself. A CREATE is placed in `modelId` by `IDevScope.Placement(modelId)` (TodlNodePlacement
+ * masks or authorizes by itself. A CREATE is placed in `modelId` by `IGraphScope.Placement(modelId)` (TodlNodePlacement
  * + the security model's create defaults) and every write is confined to `modelId` ({@link ModelWriteScopes}, an
  * engine scope conjunct); reads stay tenant-wide. The engine's `.todl` file connector writes the model's saved sources
  * (ServerModelWorkspace), and the host upgrades to them.
@@ -237,7 +237,7 @@ class Attempt
  * - One `timeoutMs` deadline covers both attempts.
  * - RETURN rows: `DevSnapshot.CellMapper.MapResult` with a reader under the same scope (hidden members), then
  *   CypherResultMapper. Engine Syntax / Semantic / IntegerOverflow errors are InvalidParams, a timeout -32030
- *   (DevCypherQuery.WireError).
+ *   (EngineCypherQuery.WireError).
  */
 export class DevCypherExecute implements IDevCypherExecute
 {
@@ -276,7 +276,7 @@ export class DevCypherExecute implements IDevCypherExecute
 
     public constructor(
         private readonly host: IDevGraphEngine,
-        private readonly scopes: () => Promise<IDevScopeSource>,
+        private readonly scopes: () => Promise<IGraphScopeSource>,
         private readonly revision: () => Promise<number>,
         private readonly lock: IWriteLock = new InProcessWriteLock(),
         private readonly diagnostics: IDevExecuteDiagnostics = new LoggerDevExecuteDiagnostics(),
@@ -384,7 +384,7 @@ export class DevCypherExecute implements IDevCypherExecute
         catch (error)
         {
             const kind = DevWriteFailure.KindOf(error)
-            if (kind === undefined) throw DevCypherQuery.WireError(error)
+            if (kind === undefined) throw EngineCypherQuery.WireError(error)
             if (kind === DevWriteFailureKind.EngineConflict && !last) return Attempt.Conflicted
             // a draft session refuses (Stale) once the fence it checks before its first write no longer holds
             if (kind === DevWriteFailureKind.SourcesChanged && fence.Lost) return Attempt.Done(await this.LeaseLost())
@@ -432,7 +432,7 @@ export class DevCypherExecute implements IDevCypherExecute
             // an upgrade is being applied: its snapshot is installed once the engine has upgraded
             await DevCypherExecute.Yield()
         }
-        throw new DevCypherQueryError(DevCypherQueryErrorCode.Unsettled)
+        throw new EngineCypherQueryError(EngineCypherQueryErrorCode.Unsettled)
     }
 
     /** The RETURN rows in TODL's wire shape, a reader under the write's scope telling the mapper what it hides. */

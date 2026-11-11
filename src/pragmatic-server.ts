@@ -80,8 +80,9 @@ import { DevGraphService, type IDevGraphService } from './host/graphs/dev-graph-
 import { DevGraphEngineHost, LoggerDevEngineDiagnostics } from './host/engine/dev-graph-engine-host.js'
 import { LoggerDevWriteDiagnostics } from './host/engine/server-model-workspace.js'
 import type { IDevGraphEngine } from './host/engine/dev-graph-engine-host.js'
-import { DevAccessScopeSource, LoggerDevScopeDiagnostics } from './host/engine/dev-access-scope-source.js'
-import { DevCypherQuery } from './host/engine/dev-cypher-query.js'
+import { AccessScopeSource, LoggerScopeDiagnostics } from './host/engine/access-scope-source.js'
+import { DevScopeRules } from './host/engine/dev-scope-rules.js'
+import { EngineCypherQuery } from './host/engine/engine-cypher-query.js'
 import { DevModelView, LoggerDevModelViewDiagnostics } from './host/engine/dev-model-view.js'
 import { EnvironmentGraph, EnvironmentGraphOverlay, LoadedGraphStore, NoEnvironmentGraphError } from './host/graphs/environment-graph.js'
 import type { IEnvironmentGraphHost } from './host/graphs/environment-graph.js'
@@ -187,8 +188,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private appIngest: AppIngestService | undefined
     private devGraphService: IDevGraphService | undefined
     private devEngine: DevGraphEngineHost | undefined
-    private devScopes: Promise<DevAccessScopeSource> | undefined
-    private devCypher: DevCypherQuery | undefined
+    private devScopes: Promise<AccessScopeSource> | undefined
+    private devCypher: EngineCypherQuery | undefined
     private devModelView: DevModelView | undefined
     private environmentGraph: EnvironmentGraph | undefined
     private loadedGraphStore: LoadedGraphStore | undefined
@@ -841,11 +842,11 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * The dev tenant's access scopes over {@link PragmaticServer.DevEngine}: the TODL policies AND, with identity, the
-     * tenant security model (DevAccessScopeSource), diagnostics on the configured logger. Built on first use, disposed
+     * The dev tenant's access scopes over {@link PragmaticServer.DevEngine}: with identity, the tenant security model
+     * (AccessScopeSource under DevScopeRules), diagnostics on the configured logger. Built on first use, disposed
      * with the server.
      */
-    public DevScopes(): Promise<DevAccessScopeSource>
+    public DevScopes(): Promise<AccessScopeSource>
     {
         if (this.disposing !== undefined)
         {
@@ -868,9 +869,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /** The dev `cypher/query` and `cypher/models` on the engine, under each caller's dev scope. */
-    public DevCypher(): DevCypherQuery
+    public DevCypher(): EngineCypherQuery
     {
-        this.devCypher ??= new DevCypherQuery(this.DevEngine(), () => this.DevScopes())
+        this.devCypher ??= new EngineCypherQuery(this.DevEngine(), () => this.DevScopes())
         return this.devCypher
     }
 
@@ -884,11 +885,11 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.devModelView
     }
 
-    private async BuildDevScopes(): Promise<DevAccessScopeSource>
+    private async BuildDevScopes(): Promise<AccessScopeSource>
     {
         const engine = this.DevEngine()
         const authorization = this.identity === undefined ? undefined : await this.ReadAuthorization()
-        return new DevAccessScopeSource(engine, authorization, this.identity !== undefined, () => this.ActiveSolutionName(), new LoggerDevScopeDiagnostics(this.options.logger ?? new NullLogger()))
+        return new AccessScopeSource(engine, new DevScopeRules(engine, authorization, this.identity !== undefined, () => this.ActiveSolutionName()), new LoggerScopeDiagnostics(this.options.logger ?? new NullLogger()))
     }
 
     private async ActiveSolutionName(): Promise<string | undefined>

@@ -13,7 +13,7 @@ import type { IMemberReadGate } from '../model-member-builder.js'
 import { ModelProjection } from '../model-projection.js'
 import type { IModelNodeGate } from '../model-projection.js'
 import { PageFingerprint, PageRequest } from '../paging/page-request.js'
-import type { IDevScope, IDevScopeSource } from './dev-access-scope-source.js'
+import type { IGraphScope, IGraphScopeSource } from './access-scope-source.js'
 import type { IDevGraphEngine } from './dev-graph-engine-host.js'
 
 /** One member of the active solution as model/view finds it: the wire member id (`Ref.path`) and its storage. */
@@ -256,7 +256,7 @@ class EngineModelGate implements IModelNodeGate, IMemberReadGate
 /** The engine state one read ran at, with the gate built from it. */
 class EngineRead
 {
-    public constructor(public readonly Version: string, public readonly Commit: bigint, public readonly Scope: IDevScope, public readonly Gate: EngineModelGate)
+    public constructor(public readonly Version: string, public readonly Commit: bigint, public readonly Scope: IGraphScope, public readonly Gate: EngineModelGate)
     {
     }
 }
@@ -264,7 +264,7 @@ class EngineRead
 /**
  * The dev tenant's `model/view` and `model/resources` visibility (PragmaticServer.DevModelView()). STRUCTURE comes from
  * the language service as before (nodes, attrs, edges, provenance, unsaved buffers included); instance VISIBILITY and
- * attribute MASKING come from the caller's engine scope (DevAccessScopeSource: TODL policies AND, with identity, access
+ * attribute MASKING come from the caller's engine scope (AccessScopeSource under DevScopeRules: with identity, access
  * depth and field security), read off the saved engine snapshot. The endpoint decides nothing beyond mapping the
  * engine's answer onto the structure (EngineModelGate); paging, edges and provenance are ModelProjection's, shared with
  * the runtime path.
@@ -287,12 +287,12 @@ export class DevModelView implements IDevModelView, IDisposable
     private readonly cache = new VisibleInstanceCache()
     private readonly subscriptions: ISubscription[] = []
     /** The scope source whose `Dropped` the cache follows (subscribed on first use: the source is built lazily). */
-    private followed: IDevScopeSource | undefined
+    private followed: IGraphScopeSource | undefined
     private followedSubscription: ISubscription | undefined
 
     public constructor(
         private readonly host: IDevGraphEngine,
-        private readonly scopes: () => Promise<IDevScopeSource>,
+        private readonly scopes: () => Promise<IGraphScopeSource>,
         private readonly solution: () => Promise<IDevModelSolution | undefined>,
         private readonly structure: () => Promise<IDevModelStructure>,
         private readonly diagnostics: IDevModelViewDiagnostics = new LoggerDevModelViewDiagnostics())
@@ -402,7 +402,7 @@ export class DevModelView implements IDevModelView, IDisposable
     }
 
     /** Subscribes the cache to `source.Dropped` once per source; switching to a rebuilt source drops the previous subscription. */
-    private Follow(source: IDevScopeSource): IDevScopeSource
+    private Follow(source: IGraphScopeSource): IGraphScopeSource
     {
         if (this.followed !== source)
         {

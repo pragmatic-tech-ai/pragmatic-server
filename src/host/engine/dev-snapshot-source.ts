@@ -1,9 +1,10 @@
 import type { Diagnostic, Repository, TodlDocument } from '@pragmatic-tech-ai/todl'
 import { EngineCellMapper, SavedModelCompiler, SnapshotDescriber, TodlNames } from '@pragmatic-tech-ai/todl/engine'
-import type { ISavedModel, ISnapshotDescription } from '@pragmatic-tech-ai/todl/engine'
+import type { IExternalConnectorPlan, ISavedModel, ISnapshotDescription } from '@pragmatic-tech-ai/todl/engine'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDevLanguageService } from './dev-language-service.js'
 import type { IDevSolution } from './dev-solution.js'
+import type { IEngineSnapshot } from './graph-engine-host.js'
 import { SavedMember, SavedMemberReader } from './saved-member-reader.js'
 
 /**
@@ -11,8 +12,9 @@ import { SavedMember, SavedMemberReader } from './saved-member-reader.js'
  * (an error means the saved sources do not compile, for example a commit only half on disk), the mapper that
  * renders the engine's Cypher cells in TODL's wire shape against the same compiled metadata, and `Models`: the model
  * ids the compile accepted (one package each, with or without instances), sorted, without the solution package.
+ * `Connectors` is empty and `Identity` undefined: the dev host binds no external connector yet.
  */
-export type DevSnapshot = ISnapshotDescription & { Repository: Repository; CompileDiagnostics: readonly Diagnostic[]; CellMapper: EngineCellMapper; Models: readonly string[] }
+export type DevSnapshot = ISnapshotDescription & IEngineSnapshot & { Repository: Repository; CompileDiagnostics: readonly Diagnostic[] }
 
 /** What a snapshot was compiled from: the solution (identity and name) and each member's storage, source hash and
  *  bases fingerprint (content, not identity). Equal keys compile to the same snapshot. */
@@ -46,6 +48,7 @@ export class DevSnapshotSource
 {
     /** The solution package name when no solution is open (no models, so nothing it owns). */
     private static readonly NoSolutionName = 'no-solution'
+    private static readonly NoConnectors: readonly IExternalConnectorPlan[] = []
 
     private readonly reader: SavedMemberReader
     private last: SnapshotKey | undefined
@@ -99,7 +102,7 @@ export class DevSnapshotSource
     {
         const saved = SavedModelCompiler.Compile(models, bases, solutionName)
         const described = SnapshotDescriber.Describe(saved.Snapshot, { DefaultConnector: TodlNames.FileConnector })
-        return { ...described, Repository: saved.Repository, CompileDiagnostics: saved.Diagnostics, CellMapper: new EngineCellMapper(saved.Snapshot), Models: DevSnapshotSource.ModelsOf(saved.Snapshot.manifests, solutionName) }
+        return { ...described, Repository: saved.Repository, CompileDiagnostics: saved.Diagnostics, CellMapper: new EngineCellMapper(saved.Snapshot), Models: DevSnapshotSource.ModelsOf(saved.Snapshot.manifests, solutionName), Connectors: DevSnapshotSource.NoConnectors, Identity: undefined }
     }
 
     /** The compiled packages' model ids (SavedModelCompiler binds one per accepted model id), without the solution's. */

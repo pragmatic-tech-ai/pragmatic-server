@@ -11,6 +11,7 @@ import type { IDevLanguageService } from './dev-language-service.js'
 import type { IDevSolution } from './dev-solution.js'
 import { DevSnapshotSource } from './dev-snapshot-source.js'
 import type { DevSnapshot } from './dev-snapshot-source.js'
+import type { IGraphEngineHost } from './graph-engine-host.js'
 import { SavedMemberReader } from './saved-member-reader.js'
 import { LoggerDevWriteDiagnostics, ServerModelWorkspace, WriteFenceSlot } from './server-model-workspace.js'
 import type { IDevWriteDiagnostics, IWriteFence } from './server-model-workspace.js'
@@ -21,10 +22,8 @@ import type { IDevWriteDiagnostics, IWriteFence } from './server-model-workspace
  * currently runs, and `Snapshot` is that whole snapshot in one read (its `Description.Version` equals the engine's
  * `SchemaVersion` except while an upgrade is being applied).
  */
-export interface IDevGraphEngine
+export interface IDevGraphEngine extends IGraphEngineHost
 {
-    Engine(): Promise<GraphEngine>
-    Description(): Promise<ISchemaDescription>
     Snapshot(): Promise<DevSnapshot>
     /**
      * Resolves once every upgrade already asked for has finished: a pending debounce is cut short (its pass runs now)
@@ -42,7 +41,6 @@ export interface IDevGraphEngine
      * each draft session checks it before its first file write and refuses the write (Stale) once it no longer holds.
      */
     InstallWriteFence(fence: IWriteFence): IDisposable
-    readonly Changed: ISignal<void>
 }
 
 /** The language-service change the host follows: any reload of the solution graph (TODL's `GraphChanged`). */
