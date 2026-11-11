@@ -1,3 +1,4 @@
+import type { TeamMemberDto } from '../../../tenant-types.js'
 import type { SecurityModelDraft } from './security-model-draft.js'
 
 // One rebuildable part of the editor: a row collection (or the derived
@@ -35,4 +36,10 @@ export interface ISecurityModelEditHost
 
     // Re-derives the business-unit tree (depths and parent choices) in place.
     RefreshUnitTree(): void
+
+    // The server's member rows for a saved team, once loaded (undefined before).
+    ServerTeamMembers(teamId: string): readonly TeamMemberDto[] | undefined
+
+    // Loads (and remembers) the server's member rows for a team; rejects on failure.
+    LoadTeamMembers(teamId: string): Promise<TeamMemberDto[]>
 }

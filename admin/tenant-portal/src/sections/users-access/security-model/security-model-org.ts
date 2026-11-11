@@ -183,6 +183,28 @@ export class SecurityModelOrg
         this.dirty = true
     }
 
+    // IdP group links and manual members are independent lists: removing one
+    // never touches the other (a principal can be a member by both routes).
+    public AddIdpGroup(teamId: string, group: string): void
+    {
+        this.AddTo(teamId, group, t => t.idpGroups)
+    }
+
+    public RemoveIdpGroup(teamId: string, group: string): void
+    {
+        this.RemoveFromTeam(teamId, group, t => t.idpGroups)
+    }
+
+    public AddManualMember(teamId: string, principalId: string): void
+    {
+        this.AddTo(teamId, principalId, t => t.manualMembers)
+    }
+
+    public RemoveManualMember(teamId: string, principalId: string): void
+    {
+        this.RemoveFromTeam(teamId, principalId, t => t.manualMembers)
+    }
+
     public RemoveTeam(id: string): void
     {
         const teams = this.model.teams
@@ -196,6 +218,32 @@ export class SecurityModelOrg
         {
             SecurityModelOrg.Without(assignment.teamIds, id)
         }
+        this.dirty = true
+    }
+
+    // Appends a trimmed, non-blank, not-yet-listed value to one of a team's lists.
+    private AddTo(teamId: string, value: string, list: (team: TeamDto) => string[]): void
+    {
+        const team = this.model.teams.find(t => t.id === teamId)
+        const item = value.trim()
+        if (team === undefined || item.length === 0 || list(team).includes(item))
+        {
+            return
+        }
+        list(team).push(item)
+        this.dirty = true
+    }
+
+    private RemoveFromTeam(teamId: string, value: string, list: (team: TeamDto) => string[]): void
+    {
+        const team = this.model.teams.find(t => t.id === teamId)
+        const items = team === undefined ? undefined : list(team)
+        const i = items === undefined ? -1 : items.indexOf(value)
+        if (items === undefined || i < 0)
+        {
+            return
+        }
+        items.splice(i, 1)
         this.dirty = true
     }
 

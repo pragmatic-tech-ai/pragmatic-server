@@ -1,5 +1,6 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { TenantApiError } from '../../../tenant-api-client.js'
+import type { TeamMemberDto } from '../../../tenant-types.js'
 import { AdminCapability } from '../../../shell/admin-capability.js'
 import { PendingWork, type IHoldsPendingWork } from '../../../shell/holds-pending-work.js'
 import type { TenantSessionService } from '../../../shell/tenant-session-service.js'
@@ -147,6 +148,8 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private readonly roleItems = new Map<string, RoleItemViewModel>()
     private readonly profileItems = new Map<string, ProfileItemViewModel>()
     private readonly unitOptions = new Map<string, UnitOptionViewModel>()
+    // The server's member rows per saved team, loaded on demand; dropped with the draft.
+    private readonly teamMembers = new Map<string, readonly TeamMemberDto[]>()
     private readonly noneUnit = new UnitOptionViewModel(undefined, SecurityModelEditorViewModel.NoneChoice)
     private roles = new ObservableCollection<RoleItemViewModel>()
     private privilegeRows = new ObservableCollection<PrivilegeRowViewModel>()
@@ -606,6 +609,26 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         this.SyncUnitTree(false)
     }
 
+    public ServerTeamMembers(teamId: string): readonly TeamMemberDto[] | undefined
+    {
+        return this.teamMembers.get(teamId)
+    }
+
+    public async LoadTeamMembers(teamId: string): Promise<TeamMemberDto[]>
+    {
+        const environment = this.Environment
+        if (environment === undefined)
+        {
+            return []
+        }
+        const rows = await this.Session.Client.ListTeamMembers(environment, teamId)
+        if (this.Environment === environment)
+        {
+            this.teamMembers.set(teamId, rows)
+        }
+        return rows
+    }
+
     // ---- Loading and saving --------------------------------------------
 
     protected override OnEnvironmentChanged(): void
@@ -726,11 +749,24 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     {
         const id = this.Input(NewInput.User).trim()
         const root = this.draft?.Org.RootBusinessUnitId
-        if (id.length > 0 && root !== undefined && !this.draft?.Org.Users.some(u => u.principalId === id) && this.Apply(d => { d.Org.PlaceUser(id, root) }))
+        if (id.length === 0 || root === undefined)
+        {
+            return
+        }
+        if (this.IsPlaced(id))
+        {
+            this.SetInput(NewInput.User, SecurityModelEditorViewModel.Empty)
+        }
+        else if (this.Apply(d => { d.Org.PlaceUser(id, root) }))
         {
             this.SetInput(NewInput.User, SecurityModelEditorViewModel.Empty)
             this.Rebuild()
         }
+    }
+
+    private IsPlaced(id: string): boolean
+    {
+        return this.draft?.Org.Users.some(u => u.principalId === id) ?? false
     }
 
     private AddTeam(): void
@@ -750,6 +786,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
     private SetDraft(draft: SecurityModelDraft | undefined): void
     {
         this.draft = draft
+        this.teamMembers.clear()
         const roles = draft?.Catalog.roles ?? []
         const profiles = draft?.Catalog.profiles ?? []
         this.selectedRoleId = roles.some(r => r.name === this.selectedRoleId) ? this.selectedRoleId : roles[0]?.name

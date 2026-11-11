@@ -1,3 +1,4 @@
+import { TeamMemberOrigin } from '../../../tenant-types.js'
 import { AccessLevel, Actions, PrivilegeAction } from './security-model-enums.js'
 
 // The words the security-model editor shows for levels and actions: each
@@ -38,6 +39,9 @@ export class SecurityModelText
     private static readonly BusinessUnitAndChildrenScope = 'business unit and children'
     private static readonly OrganizationScope = 'organization'
     private static readonly LegendSeparator = ' = '
+    private static readonly SyncedText = 'From identity provider'
+    private static readonly ManualText = 'Added here'
+    private static readonly UnsavedManualText = 'Added here (not saved)'
 
     private static readonly Symbols: ReadonlyMap<AccessLevel, string> = new Map<AccessLevel, string>([
         [AccessLevel.None, SecurityModelText.NoneSymbol],
@@ -108,6 +112,17 @@ export class SecurityModelText
             return SecurityModelText.NoAccessSentence
         }
         return SecurityModelText.SentenceStart + SecurityModelText.JoinParts(parts) + SecurityModelText.SentenceEnd
+    }
+
+    // Where a team member comes from: the identity provider, or added in this editor
+    // (saved or not yet).
+    public static MemberOrigin(origin: TeamMemberOrigin, unsaved: boolean): string
+    {
+        if (origin === TeamMemberOrigin.Synced)
+        {
+            return SecurityModelText.SyncedText
+        }
+        return unsaved ? SecurityModelText.UnsavedManualText : SecurityModelText.ManualText
     }
 
     private static JoinParts(parts: readonly string[]): string

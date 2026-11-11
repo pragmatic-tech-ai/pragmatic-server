@@ -25,6 +25,8 @@ import LegendEntryViewModel from "./security-model-role-rows.js"
 import FieldGrantRowViewModel from "./security-model-role-rows.js"
 import BusinessUnitRowViewModel from "./security-model-org-rows.js"
 import TeamRowViewModel from "./security-model-org-rows.js"
+import IdpGroupRowViewModel from "./security-model-org-rows.js"
+import TeamMemberRowViewModel from "./security-model-org-rows.js"
 import UserPlacementRowViewModel from "./security-model-org-rows.js"
 
 resources SecurityModelResources {
@@ -453,18 +455,86 @@ resources SecurityModelResources {
         }
     }
 
-    DataTemplate x:key="SecurityModelTeamTemplate" [ DataType = TeamRowViewModel ] {
-        Grid [ Style = @TenantTableColumns ] {
+    DataTemplate x:key="SecurityModelIdpGroupTemplate" [ DataType = IdpGroupRowViewModel ] {
+        Grid [ Margin = (0,2,0,2) ] {
+            ColumnDefinitions {
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Auto ]
+            }
+            TextBlock [ Grid.Column = 0, Text = $Group, Foreground = @Fg0, VerticalAlignment = Center ]
+            Button [ Grid.Column = 1, Variant = Ghost, Command = $RemoveCommand ] {
+                TextBlock [ Text = "Remove" ]
+            }
+        }
+    }
+
+    DataTemplate x:key="SecurityModelTeamMemberTemplate" [ DataType = TeamMemberRowViewModel ] {
+        Grid [ Margin = (0,2,0,2) ] {
             ColumnDefinitions {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Auto ]
             }
-            TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $Name, Placeholder = "Team name", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
-            ComboBox [ Grid.Column = 1, ItemsSource = $UnitOptions, SelectedItem = $SelectedUnit, IsEnabled = $CanEdit,
-                       HorizontalAlignment = Stretch, Margin = (0,0,8,0) ]
+            TextBlock [ Grid.Column = 0, Text = $PrincipalId, Foreground = @Fg0, VerticalAlignment = Center ]
+            TextBlock [ Grid.Column = 1, Text = $OriginText, Foreground = @Fg2, VerticalAlignment = Center ]
             Button [ Grid.Column = 2, Variant = Ghost, Command = $RemoveCommand ] {
                 TextBlock [ Text = "Remove" ]
+            }
+        }
+    }
+
+    DataTemplate x:key="SecurityModelTeamTemplate" [ DataType = TeamRowViewModel ] {
+        StackPanel [ Orientation = Vertical ] {
+            Grid [ Style = @TenantTableColumns ] {
+                ColumnDefinitions {
+                    ColumnDefinition [ Width = GridLength.Star ]
+                    ColumnDefinition [ Width = GridLength.Star ]
+                    ColumnDefinition [ Width = GridLength.Auto ]
+                }
+                TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $Name, Placeholder = "Team name", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+                ComboBox [ Grid.Column = 1, ItemsSource = $UnitOptions, SelectedItem = $SelectedUnit, IsEnabled = $CanEdit,
+                           HorizontalAlignment = Stretch, Margin = (0,0,8,0) ]
+                Button [ Grid.Column = 2, Variant = Ghost, Command = $RemoveCommand ] {
+                    TextBlock [ Text = "Remove" ]
+                }
+            }
+
+            TextBlock [ Text = "Identity provider groups", Style = @TenantSectionCaption ]
+            ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $IdpGroups,
+                      ItemTemplate = @SecurityModelIdpGroupTemplate ]
+            Grid [ Margin = (0,4,0,8) ] {
+                ColumnDefinitions {
+                    ColumnDefinition [ Width = GridLength.Star ]
+                    ColumnDefinition [ Width = GridLength.Auto ]
+                }
+                TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $NewIdpGroup, Placeholder = "Group name or id", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+                Button [ Grid.Column = 1, Variant = Secondary, Command = $AddIdpGroupCommand ] {
+                    TextBlock [ Text = "Link group" ]
+                }
+            }
+
+            Grid [ Margin = (0,4,0,0) ] {
+                ColumnDefinitions {
+                    ColumnDefinition [ Width = GridLength.Star ]
+                    ColumnDefinition [ Width = GridLength.Auto ]
+                }
+                TextBlock [ Grid.Column = 0, Text = "Members", Style = @TenantSectionCaption ]
+                Button [ Grid.Column = 1, Variant = Ghost, Command = $LoadMembersCommand ] {
+                    TextBlock [ Text = "Show members" ]
+                }
+            }
+            TextBlock [ Text = $MembersErrorText, Foreground = @Fg2, Visibility = $HasMembersError << ToVisibility ]
+            ListBox [ Style = @TenantTableList, HorizontalAlignment = Stretch, ItemsSource = $Members,
+                      ItemTemplate = @SecurityModelTeamMemberTemplate ]
+            Grid [ Margin = (0,4,0,8) ] {
+                ColumnDefinitions {
+                    ColumnDefinition [ Width = GridLength.Star ]
+                    ColumnDefinition [ Width = GridLength.Auto ]
+                }
+                TextBox [ UsesNativeInput = true, Grid.Column = 0, Text = $NewManualMember, Placeholder = "Person id", IsEnabled = $CanEdit, Margin = (0,0,8,0) ]
+                Button [ Grid.Column = 1, Variant = Secondary, Command = $AddManualMemberCommand ] {
+                    TextBlock [ Text = "Add member" ]
+                }
             }
         }
     }
