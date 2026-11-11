@@ -63,6 +63,7 @@ import type { IEnvironmentGraphHost } from './host/environment/environment-engin
 import { EnvironmentCypherExecute } from './host/environment/environment-cypher-execute.js'
 import { EnvironmentModelView } from './host/environment/environment-model-view.js'
 import { EnvironmentDataWriter } from './host/environment/environment-data-writer.js'
+import { DataChangedPush } from './host/environment/data-changed-push.js'
 import { EnvironmentShareService } from './host/environment/environment-share-service.js'
 import { EnvironmentAssignService } from './host/environment/environment-assign-service.js'
 import { EnvironmentScopeRules } from './host/environment/environment-scope-rules.js'
@@ -171,6 +172,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private environmentModelView: EnvironmentModelView | undefined
     private environmentExecute: EnvironmentCypherExecute | undefined
     private environmentWriter: EnvironmentDataWriter | undefined
+    private dataChanges: DataChangedPush | undefined
     private environmentShares: EnvironmentShareService | undefined
     private environmentAssign: EnvironmentAssignService | undefined
     private readAuth: Promise<TenantReadAuthorization> | undefined
@@ -495,6 +497,22 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.environmentWriter
     }
 
+    /**
+     * The runtime `data/changed` push (ruling S16) following {@link PragmaticServer.EnvironmentEngine}'s commits; runtime
+     * connections subscribe under their {@link PragmaticServer.EnvironmentScopes}. Memoized, disposed with the server
+     * before the engine host; runtime tenants only (dev tenants keep `solution/graphChanged`).
+     */
+    public DataChanges(): DataChangedPush
+    {
+        if (this.disposing !== undefined)
+        {
+            throw new Error(PragmaticServer.DisposedMessage)
+        }
+        this.AssertRuntimePurpose()
+        this.dataChanges ??= new DataChangedPush(this.EnvironmentEngine())
+        return this.dataChanges
+    }
+
     private async BuildEnvironmentScopes(): Promise<AccessScopeSource>
     {
         const host = this.EnvironmentEngine()
@@ -788,6 +806,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     {
         try
         {
+            this.dataChanges?.dispose()
             // the scope source unsubscribes from the engine host and the security source before the host goes
             const environmentScopes = await this.environmentScopes?.catch(() => undefined)
             environmentScopes?.dispose()

@@ -212,7 +212,7 @@ export class EnvironmentFixture
         const handler = ServerConnectionHandler.Attach(serverSocket, await server.LanguageService(), await server.Manager(), context,
             runtime.connectors ?? development.connectors, runtime.cypherQuery ?? development.cypherQuery, undefined, undefined, undefined, undefined, undefined, undefined,
             server.Purpose(), runtime.applications, runtime.data, undefined, runtime.cypherExecute ?? development.cypherExecute, runtime.deployProvider,
-            development.devGraphService, runtime.environmentGraphHost, runtime.modelView ?? development.modelView)
+            development.devGraphService, runtime.environmentGraphHost, runtime.modelView ?? development.modelView, runtime.dataChanges)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.clients.push({ Client: client, Handler: handler })
         return client

@@ -12,6 +12,7 @@ export class EngineSchemaCatalog
     private readonly byName: ReadonlyMap<string, IDefinitionDescription>
     private readonly members = new Map<string, ReadonlyMap<string, MemberInput>>()
     private readonly applicable = new Map<string, ReadonlySet<string>>()
+    private readonly descendants = new Map<string, readonly string[]>()
 
     public constructor(public readonly Description: ISchemaDescription)
     {
@@ -43,6 +44,18 @@ export class EngineSchemaCatalog
             parent = this.byName.get(parent)?.Parent ?? null
         }
         return chain
+    }
+
+    /** Every concept that has `concept` as a proper ancestor, in description order (empty for an unknown name or a leaf). */
+    public Descendants(concept: string): readonly string[]
+    {
+        let below = this.descendants.get(concept)
+        if (below === undefined)
+        {
+            below = this.Concepts().filter(name => this.Ancestors(name).includes(concept))
+            this.descendants.set(concept, below)
+        }
+        return below
     }
 
     /** The keys whose scope entries apply to an instance of `concept`: itself, its ancestors and every carried aspect. */

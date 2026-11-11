@@ -491,7 +491,7 @@ export class PragmaticServerHost
                         policy: new BackpressurePolicy(resilience.backpressureSoftBytes, resilience.backpressureHardBytes, resilience.backpressureGraceMs),
                         onShed: () => this.logger.Info(PragmaticServerHost.ShedLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.ShedEvent }),
                     })
-                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, runtime.connectors ?? development.connectors, runtime.cypherQuery ?? development.cypherQuery, this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.data, this.paging, runtime.cypherExecute ?? development.cypherExecute, runtime.deployProvider, development.devGraphService, runtime.environmentGraphHost, runtime.modelView ?? development.modelView)
+                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, runtime.connectors ?? development.connectors, runtime.cypherQuery ?? development.cypherQuery, this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.data, this.paging, runtime.cypherExecute ?? development.cypherExecute, runtime.deployProvider, development.devGraphService, runtime.environmentGraphHost, runtime.modelView ?? development.modelView, runtime.dataChanges)
                     this.handlers.add(handler)
                     const revocable: IRevocableConnection =
                     {

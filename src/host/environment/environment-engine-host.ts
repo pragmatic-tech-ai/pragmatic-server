@@ -3,6 +3,7 @@ import type { ConnectorError, IGraphEngineOptions, ISchemaDescription, ISignal, 
 import { StoragePackageSource } from '@pragmatic-tech-ai/todl'
 import { EngineCellMapper, EnvironmentCatalogComposer, SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import type { IEnvironmentCatalog, IPackageDelivery } from '@pragmatic-tech-ai/todl/engine'
+import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable, IServiceProvider, IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { StructuredLogger } from '../../observability/logger.js'
@@ -44,7 +45,7 @@ export interface IEnvironmentDiagnostics
 {
     /** A redelivery (upgrade or reopen) did not apply; the host is stale and the next use retries it. */
     UpgradeFailed(error: unknown): void
-    /** A `Changed` subscriber threw (the upgrade itself applied). */
+    /** A `Changed` or `Opened` subscriber threw (the upgrade or open itself applied). */
     ChangedHandlerFailed(error: unknown): void
     /**
      * `GraphEngine.ConnectorRevertFailed` of an opened engine: a connector's compensation failed after the caller was
@@ -163,6 +164,22 @@ export interface IEnvironmentHostTiming
     readonly MaxDrainMs?: number
 }
 
+/** `EnvironmentEngineHost.Opened`: raised with each engine the host launches (first open, reopen, recovery). */
+class EngineOpened implements ISignal<GraphEngine>
+{
+    private readonly signal = new Signal<GraphEngine>()
+
+    public Subscribe(handler: (engine: GraphEngine) => void): ISubscription
+    {
+        return this.signal.subscribe(handler)
+    }
+
+    public Raise(engine: GraphEngine): void
+    {
+        this.signal.emit(engine)
+    }
+}
+
 /**
  * One opened engine: the snapshot it runs, the key of its external connector set, its lazy external connectors (kept
  * so a refresh can reset them, R23) and its ConnectorRevertFailed subscription.
@@ -215,7 +232,8 @@ class OpenedEnvironment implements IDisposable
  * differs; a changed one reopens (an engine's connectors are fixed at Open): new callers wait on the mutex, the engine
  * is disposed (an LMDB store admits one engine at a time, so it is closed before the next opens: a reader handed out
  * before the reopen fails with GraphError Disposed, unlike the dev host's grace retirement, R20) and reopened on the
- * same path (Open upgrades it). `Changed` is raised after every applied upgrade or reopen. A redelivery that fails is
+ * same path (Open upgrades it). `Changed` is raised after every applied upgrade or reopen; `Opened` with every engine
+ * launched (first open included), before any caller can commit on it. A redelivery that fails is
  * reported (`UpgradeFailed`) and leaves the host stale: the next `Engine()` / `Snapshot()` / `Description()` redelivers
  * before serving (and fails while that fails).
  *
@@ -236,8 +254,14 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
     private static readonly MaxSettles = 5
 
     public readonly Changed: ISignal<void>
+    /**
+     * Raised synchronously with each engine the host launches (the first open, a reopen, the recovery from a failed
+     * one), before any caller sees it: a follower of the engine's own signals subscribes here (S16).
+     */
+    public readonly Opened: ISignal<GraphEngine>
 
     private readonly changed = new EngineHostChanged()
+    private readonly opening = new EngineOpened()
     private readonly mutex = new AsyncMutex()
     private opened: OpenedEnvironment | undefined
     private stale = false
@@ -258,6 +282,13 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
     )
     {
         this.Changed = this.changed
+        this.Opened = this.opening
+    }
+
+    /** The engine running now, without opening one (undefined before the first open, while reopening, after dispose). */
+    public Running(): GraphEngine | undefined
+    {
+        return this.disposing === undefined ? this.opened?.Engine : undefined
     }
 
     public async Engine(): Promise<GraphEngine>
@@ -439,6 +470,14 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
         }
         this.launched = true
         const reverts = engine.ConnectorRevertFailed.Subscribe(error => this.diagnostics.RevertFailed(error))
+        try
+        {
+            this.opening.Raise(engine)
+        }
+        catch (error)
+        {
+            this.diagnostics.ChangedHandlerFailed(error)
+        }
         return new OpenedEnvironment(engine, snapshot, EnvironmentEngineHost.KeyOf(snapshot), connectors, reverts)
     }
 
