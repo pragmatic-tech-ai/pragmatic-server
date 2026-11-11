@@ -1,6 +1,5 @@
-import { AccessScope, EdgeDirection, ValueType } from '@pragmatic-tech-ai/graph'
-import type { CellValue, Cypher, GraphEngine, GraphReader, GraphTransaction, IFetchedView } from '@pragmatic-tech-ai/graph'
-import { SystemNames } from '@pragmatic-tech-ai/todl/engine'
+import { AccessScope, ValueType } from '@pragmatic-tech-ai/graph'
+import type { CellValue, Cypher, GraphEngine, GraphTransaction, IFetchedView } from '@pragmatic-tech-ai/graph'
 import type { ExternalIdentity, IEnvironmentCatalog, IExternalBinding } from '@pragmatic-tech-ai/todl/engine'
 import { AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppWriteOpDto, AppWriteOpResultDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -12,7 +11,7 @@ import { EngineWriteFailure } from '../engine/engine-write-failure.js'
 import type { IWriteFailureOutcome } from '../engine/engine-write-failure.js'
 import type { RuntimeWritePayloadValidator } from '../runtime-write-payload-validator.js'
 import type { EnvironmentEngineHost } from './environment-engine-host.js'
-import { DeleteGrantsScope } from './service-scopes.js'
+import { DeleteGrantsScope, RecordGrantDeletion } from '../engine/record-grant-deletion.js'
 
 /**
  * One pre-checked data/write op: its kind, target id (an update's or delete's id; a create's client id on an engine
@@ -54,8 +53,8 @@ interface IPreRead
  *   (the source row is keyed by it; a payload id member that differs, or a binding mapping no id member, is
  *   `invalid`); two creates with one client id are `invalid` "duplicate id in batch". The first failing op gets its
  *   status, every other op `failed` "atomic batch rolled back".
- * - A System reader then finds the grants linked to each deleted record (`Links(record, In, record)`, kept when the far
- *   node is exactly a `todl.system.ShareGrant`) and the engine create ids already taken (`denied` "not authorized for
+ * - A System reader then finds the grants linked to each deleted record (`RecordGrantDeletion.PreRead`: `Links(record,
+ *   In, record)`, kept when the far node is exactly a `todl.system.ShareGrant`) and the engine create ids already taken (`denied` "not authorized for
  *   this record", as before: a create cannot overwrite). The batch runs under `DeleteGrantsScope.For(callerScope,
  *   grantIds, catalog, deletedIds)`: a caller scope never writes grants (R31), so the delete of each pre-read grant is
  *   admitted for exactly those ids, and every grant linking a deleted record is visible to the transaction whoever
@@ -199,13 +198,7 @@ export class EnvironmentDataWriter
         const reader = await engine.BeginRead(AccessScope.System)
         try
         {
-            for (const record of deleted)
-            {
-                for (const grant of await EnvironmentDataWriter.GrantsOf(reader, record))
-                {
-                    if (!grants.has(grant)) grants.set(grant, record)
-                }
-            }
+            for (const [grant, record] of await RecordGrantDeletion.PreRead(reader, deleted)) grants.set(grant, record)
             for (const id of created)
             {
                 if (await reader.ConceptOf(id) !== undefined) taken.add(id)
@@ -216,17 +209,6 @@ export class EnvironmentDataWriter
             reader.dispose()
         }
         return { Grants: grants, Taken: taken }
-    }
-
-    /** The ShareGrant nodes `reader` sees linking `record` (a lookalike `record` relationship is not a grant). */
-    private static async GrantsOf(reader: GraphReader, record: string): Promise<string[]>
-    {
-        const grants: string[] = []
-        for (const link of await reader.Links(record, EdgeDirection.In, SystemNames.Record))
-        {
-            if (await reader.ConceptOf(link.PublicId) === SystemNames.ShareGrant) grants.push(link.PublicId)
-        }
-        return grants
     }
 
     /**
@@ -246,7 +228,7 @@ export class EnvironmentDataWriter
             {
                 return { Op: index, Outcome: EnvironmentDataWriter.Invisible }
             }
-            if (op.Kind === AppWriteOpKind.Delete && (await EnvironmentDataWriter.GrantsOf(transaction, op.Id!)).some(grant => !grants.has(grant)))
+            if (op.Kind === AppWriteOpKind.Delete && await RecordGrantDeletion.LinkedSince(transaction, op.Id!, grants))
             {
                 return { Op: index, Outcome: EngineWriteFailure.Conflict }
             }
@@ -285,12 +267,7 @@ export class EnvironmentDataWriter
                 for (const [member, value] of op.Cells) batch.SetProperty(index, op.Id!, member, value)
                 return
             default:
-                for (const [grant, record] of grants)
-                {
-                    if (record !== op.Id || deletedGrants.has(grant)) continue
-                    deletedGrants.add(grant)
-                    batch.DeleteNode(index, grant)
-                }
+                RecordGrantDeletion.Record(batch, index, op.Id!, grants, deletedGrants)
                 batch.DeleteNode(index, op.Id!)
         }
     }

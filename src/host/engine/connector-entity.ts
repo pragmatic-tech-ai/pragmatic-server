@@ -1,5 +1,5 @@
 import { DateTimeValue, DateValue, DurationValue } from '@pragmatic-tech-ai/graph'
-import type { CellValue, Cypher, RowVersion } from '@pragmatic-tech-ai/graph'
+import type { CellValue, Cypher } from '@pragmatic-tech-ai/graph'
 import type { EntityDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { WireScalarValue } from '../wire-scalar.js'
 
@@ -25,12 +25,6 @@ export class ConnectorEntity
         const fields: Record<string, WireScalarValue> = {}
         for (const [member, value] of node.Properties) fields[member] = ConnectorEntity.Scalar(value)
         return { id: node.PublicId, concept: node.Concept, fields }
-    }
-
-    /** A row version as a wire scalar (a bigint as `Scalar` renders it). */
-    public static Version(version: RowVersion): WireScalarValue
-    {
-        return ConnectorEntity.Scalar(version)
     }
 
     public static Scalar(value: CellValue): WireScalarValue

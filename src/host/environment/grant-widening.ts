@@ -1,7 +1,7 @@
 import { ShareGrantScope, ShareRight, SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import type { IShareSubjects } from '@pragmatic-tech-ai/todl/engine'
 import { WriteRule } from '../engine/access-scope-conjunction.js'
-import type { ScopeDraft } from './scope-draft.js'
+import type { ScopeDraft } from '../engine/scope-draft.js'
 
 /**
  * The runtime share widening (ruling S5 Finish (a) and (b), as amended by A3): records shared with the caller become

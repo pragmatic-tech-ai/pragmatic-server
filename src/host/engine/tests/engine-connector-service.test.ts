@@ -4,6 +4,7 @@ import { AccessScope } from '@pragmatic-tech-ai/graph'
 import type { INodeView } from '@pragmatic-tech-ai/graph'
 import { DataSourceAdapterCatalog, QueryCompareOp, WriteOperationKind } from '@pragmatic-tech-ai/todl'
 import type { QueryRequest } from '@pragmatic-tech-ai/todl'
+import { ShareRight, ShareSubject, SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { AppWriteStatus, ConnectorFilterOp, ConnectorWriteOp, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ConnectorPagedWriteResultDto, ConnectorWriteOpDto, EntityDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -35,9 +36,9 @@ class ConnectorFx
     public static readonly ExtApp = 'ext-app'
     public static readonly AppVersion = '1.0.0'
     public static readonly CrmTodl = 'namespace crm {\n  concept Account { name : string?; owner : string?; }\n  model Crm : crm { }\n}\n'
-    public static readonly ExtTodl = 'namespace ext {\n  concept Customer { id : string?; name : string?; amount : integer?; }\n  concept Vendor { id : string?; name : string?; }\n'
+    public static readonly ExtTodl = 'namespace ext {\n  concept Customer { id : string?; name : string?; amount : integer?; score : number?; }\n  concept Vendor { id : string?; name : string?; }\n'
         + '  concept Order { id : string?; total : integer?; ver : integer?; }\n  datasource src { kind = sql; connection = "ext-db"; }\n'
-        + '  model Ext : ext { connect src; populate Customer key cust_id { id = "cust_id"; name = "nm"; amount = "amt"; } populate Vendor key vend_id { id = "vend_id"; name = "nm"; read-only; }'
+        + '  model Ext : ext { connect src; populate Customer key cust_id { id = "cust_id"; name = "nm"; amount = "amt"; score = "sc"; } populate Vendor key vend_id { id = "vend_id"; name = "nm"; read-only; }'
         + ' populate Order key ord_id { id = "ord_id"; total = "tot"; ver = "ver"; version ver; concurrency optimistic; } }\n}\n'
     public static readonly ModelId = 'ext'
     public static readonly Connector = 'src'
@@ -53,6 +54,8 @@ class ConnectorFx
     public static readonly OrderKey = 'ord_id'
     public static readonly NameField = 'nm'
     public static readonly AmountField = 'amt'
+    public static readonly ScoreField = 'sc'
+    public static readonly Score = 'score'
     public static readonly TotalField = 'tot'
     public static readonly VersionField = 'ver'
     public static readonly Name = 'name'
@@ -73,7 +76,9 @@ class ConnectorFx
     public static readonly OwnReader = 'own-reader'
     public static readonly WriteConflict = 'write conflict'
     public static readonly RecordDenied = 'not authorized for this record'
-    public static readonly ReadOnlyBinding = 'binding is read-only'
+    public static readonly NoVersionField = 'expectedVersion needs a binding with a version field'
+    public static readonly KeyNotFit = 'the key does not fit the binding\'s id field'
+    public static readonly G1 = 'g1'
     public static readonly NothingToFlush = 'NothingToFlush'
     public static readonly UnknownFilterField = /unknown filter field/
     public static readonly ReadWhere = /where is supported on connector\/readPage only/
@@ -112,8 +117,8 @@ class ConnectorFx
             fx.Live(ConnectorFx.CrmApp, ConnectorFx.AppVersion, [ConnectorFx.Crm])
             fx.Live(ConnectorFx.ExtApp, ConnectorFx.AppVersion, [ConnectorFx.Ext])
             fx.Source.Adapter.Seed(ConnectorFx.CustomerSource, [
-                { [ConnectorFx.CustomerKey]: 'k1', [ConnectorFx.NameField]: ConnectorFx.Acme, [ConnectorFx.AmountField]: '50' },
-                { [ConnectorFx.CustomerKey]: 'k2', [ConnectorFx.NameField]: ConnectorFx.Bolt, [ConnectorFx.AmountField]: '150' },
+                { [ConnectorFx.CustomerKey]: 'k1', [ConnectorFx.NameField]: ConnectorFx.Acme, [ConnectorFx.AmountField]: '50', [ConnectorFx.ScoreField]: '1.5' },
+                { [ConnectorFx.CustomerKey]: 'k2', [ConnectorFx.NameField]: ConnectorFx.Bolt, [ConnectorFx.AmountField]: '150', [ConnectorFx.ScoreField]: '2.5' },
                 { [ConnectorFx.CustomerKey]: 'k3', [ConnectorFx.NameField]: ConnectorFx.Cog, [ConnectorFx.AmountField]: '300' },
             ])
             fx.Source.Adapter.Seed(ConnectorFx.VendorSource, [{ [ConnectorFx.VendorKey]: 'v1', [ConnectorFx.NameField]: ConnectorFx.Acme }])
@@ -188,6 +193,18 @@ class ConnectorFx
         }
     }
 
+    /** A share grant of `record` to p2 (System transaction). */
+    public static async Grant(fx: EnvironmentFixture, id: string, record: string): Promise<void>
+    {
+        const transaction = await (await fx.Server.EnvironmentEngine().Engine()).Begin(AccessScope.System)
+        transaction.CreateNode(id, SystemNames.ShareGrant, { Owner: SystemNames.Model })
+        transaction.SetProperty(id, SystemNames.SubjectKind, ShareSubject.Principal)
+        transaction.SetProperty(id, SystemNames.SubjectId, ConnectorFx.P2)
+        transaction.SetProperty(id, ShareRight.Read, true)
+        transaction.Link(id, SystemNames.Record, record)
+        await transaction.Commit()
+    }
+
     public static async CustomerId(fx: EnvironmentFixture, key: string): Promise<string>
     {
         const identity = (await fx.Server.EnvironmentEngine().Snapshot()).Catalog.Identity
@@ -212,7 +229,12 @@ class DevConnectorFx
     public static readonly Root = 'mem/c'
     public static readonly File = 'crm.todl'
     public static readonly Customer = 'crm.Customer'
-    public static readonly Bound = 'namespace crm {\n  concept Customer { name : string?; }\n  datasource crm { kind = sql; connection = "crm-db"; }\n  model App : crm { connect crm; populate Customer key cust_id { name = "nm"; } }\n}\n'
+    public static readonly Bound = 'namespace crm {\n  concept Customer { id : string?; name : string?; }\n  datasource crm { kind = sql; connection = "crm-db"; }\n  model App : crm { connect crm; populate Customer key cust_id { id = "cust_id"; name = "nm"; } }\n}\n'
+
+    public static readonly Source = 'Customer'
+    public static readonly Connector = 'crm'
+    public static readonly KeyField = 'cust_id'
+    public static readonly NameField = 'nm'
 
     public readonly Fx = new EngineHostFx()
     public readonly Factory = new MemorySourceAdapterFactory()
@@ -223,7 +245,10 @@ class DevConnectorFx
     {
         const c = new MemoryStorage(DevConnectorFx.Root, { [DevConnectorFx.File]: DevConnectorFx.Bound })
         this.Fx.Solution = new FakeSolution(EngineHostFx.SolutionName, [{ Storage: this.Fx.A }, { Storage: this.Fx.B }, { Storage: c }])
-        this.Factory.Adapter.Seed('Customer', [{ cust_id: '1', nm: ConnectorFx.Acme }, { cust_id: '2', nm: ConnectorFx.Bolt }])
+        this.Factory.Adapter.Seed(DevConnectorFx.Source, [
+            { [DevConnectorFx.KeyField]: '1', [DevConnectorFx.NameField]: ConnectorFx.Acme },
+            { [DevConnectorFx.KeyField]: '2', [DevConnectorFx.NameField]: ConnectorFx.Bolt },
+        ])
         const services = new ServiceProvider()
         const adapters = new DataSourceAdapterCatalog().Register(this.Factory)
         services.registerInstance(DataSourceAdapterCatalog.ServiceKey, adapters)
@@ -231,6 +256,19 @@ class DevConnectorFx
         this.Host.InstallWriteFence(HeldFence.Instance)
         const scopes = new AccessScopeSource(this.Host, new DevScopeRules(this.Host, undefined, false))
         this.Service = new EngineConnectorService(this.Host, () => Promise.resolve(scopes), adapters, services)
+    }
+
+    /** The one connector model of the dev solution. */
+    public async ModelId(): Promise<string>
+    {
+        const listed = await this.Service.List()
+        assert.equal(listed.length, 1, JSON.stringify(listed))
+        return listed[0]!.modelId
+    }
+
+    public static Op(op: ConnectorWriteOp, key: string, fields?: Record<string, string>): ConnectorWriteOpDto
+    {
+        return { op, concept: DevConnectorFx.Customer, connector: DevConnectorFx.Connector, source: DevConnectorFx.Source, key, ...(fields === undefined ? {} : { fields }) }
     }
 }
 
@@ -299,8 +337,12 @@ describe('connector endpoints on the engine', () =>
             assert.equal(ConnectorFx.Pushed(request, ConnectorFx.AmountField), false, 'no numeric term reaches the source: every row is fetched')
             assert.deepEqual(await read(ConnectorFx.Amount, ConnectorFilterOp.Eq, 150), [ConnectorFx.Bolt])
             assert.equal(ConnectorFx.Pushed(ConnectorFx.LastRequest(fx.Source.Adapter, ConnectorFx.CustomerSource), ConnectorFx.AmountField), false)
+            assert.deepEqual(await read(ConnectorFx.Score, ConnectorFilterOp.Eq, 2.5), [ConnectorFx.Bolt])
+            assert.equal(ConnectorFx.Pushed(ConnectorFx.LastRequest(fx.Source.Adapter, ConnectorFx.CustomerSource), ConnectorFx.ScoreField), false, 'eq on a Float64 member is not pushed')
             assert.deepEqual(await read(ConnectorFx.Name, ConnectorFilterOp.Neq, ConnectorFx.Acme), [ConnectorFx.Bolt, ConnectorFx.Cog])
             assert.equal(ConnectorFx.Pushed(ConnectorFx.LastRequest(fx.Source.Adapter, ConnectorFx.CustomerSource), ConnectorFx.NameField), false, 'ne on a String member is not pushed')
+            assert.deepEqual(await read(ConnectorFx.Name, ConnectorFilterOp.Lt, ConnectorFx.Bolt), [ConnectorFx.Acme])
+            assert.equal(ConnectorFx.Pushed(ConnectorFx.LastRequest(fx.Source.Adapter, ConnectorFx.CustomerSource), ConnectorFx.NameField), false, 'lt on a String member is not pushed')
             // an unknown field is InvalidParams; connector/read still refuses where
             await assert.rejects(service.ReadPage(ConnectorFx.Context(fx), { modelId: ConnectorFx.ModelId, concept: ConnectorFx.Customer, where: [{ field: ConnectorFx.Missing, op: ConnectorFilterOp.Eq, value: 1 }] }, new PagingLimits()),
                 ConnectorFx.IsInvalidParams(ConnectorFx.UnknownFilterField))
@@ -321,6 +363,8 @@ describe('connector endpoints on the engine', () =>
             const rows = fx.Source.Adapter.Rows(ConnectorFx.CustomerSource)
             assert.deepEqual(rows.find(row => row[ConnectorFx.CustomerKey] === 'k8'), { [ConnectorFx.CustomerKey]: 'k8', [ConnectorFx.NameField]: 'Dyn', [ConnectorFx.AmountField]: 7 })
             assert.ok(rows.some(row => row[ConnectorFx.CustomerKey] === 'k9' && row[ConnectorFx.NameField] === 'Eon'))
+            const unfit = await service.WritePaged(ConnectorFx.Context(fx), { modelId: ConnectorFx.ModelId, operations: [{ ...ConnectorFx.Upsert(ConnectorFx.Customer, ConnectorFx.CustomerSource, 'x', {}), key: true }] })
+            assert.deepEqual(ConnectorFx.Statuses(unfit), [[AppWriteStatus.Invalid, ConnectorFx.KeyNotFit]], 'a boolean key does not fit a String id member')
         })
     })
 
@@ -331,8 +375,10 @@ describe('connector endpoints on the engine', () =>
             const result = await service.WritePaged(ConnectorFx.Context(fx), { modelId: ConnectorFx.ModelId, operations: [
                 ConnectorFx.Upsert(ConnectorFx.Customer, ConnectorFx.CustomerSource, 'k1', { [ConnectorFx.Name]: ConnectorFx.Renamed }),
                 ConnectorFx.Delete(ConnectorFx.Customer, ConnectorFx.CustomerSource, 'k2'),
+                ConnectorFx.Delete(ConnectorFx.Customer, ConnectorFx.CustomerSource, 'k404'),
             ] })
-            assert.deepEqual(result.results, [{ key: 'k1', status: AppWriteStatus.Applied }, { key: 'k2', status: AppWriteStatus.Applied }], JSON.stringify(result))
+            assert.deepEqual(result.results, [{ key: 'k1', status: AppWriteStatus.Applied }, { key: 'k2', status: AppWriteStatus.Applied }, { key: 'k404', status: AppWriteStatus.Applied }],
+                'a key the source no longer holds is already deleted (R48)')
             const rows = fx.Source.Adapter.Rows(ConnectorFx.CustomerSource)
             assert.equal(rows.find(row => row[ConnectorFx.CustomerKey] === 'k1')![ConnectorFx.NameField], ConnectorFx.Renamed, 'the existing row is updated, not created')
             assert.equal(rows.some(row => row[ConnectorFx.CustomerKey] === 'k2'), false, 'the deleted row is gone')
@@ -342,17 +388,18 @@ describe('connector endpoints on the engine', () =>
 
     test('writePaged expectedVersion guards the write', async () =>
     {
-        const adapter = new MemorySourceAdapter()
-        adapter.BumpVersions = true
         await ConnectorFx.Run(async (fx, service) =>
         {
             const stale = await service.WritePaged(ConnectorFx.Context(fx), { modelId: ConnectorFx.ModelId, operations: [ConnectorFx.Upsert(ConnectorFx.Order, ConnectorFx.OrderSource, 'o1', { [ConnectorFx.Total]: 11 }, 7)] })
             assert.deepEqual(ConnectorFx.Statuses(stale), [[AppWriteStatus.Conflict, ConnectorFx.WriteConflict]])
             assert.equal(fx.Source.Adapter.Batches.length, 0, 'nothing was written')
+            const unversioned = await service.WritePaged(ConnectorFx.Context(fx), { modelId: ConnectorFx.ModelId, operations: [ConnectorFx.Upsert(ConnectorFx.Customer, ConnectorFx.CustomerSource, 'k1', { [ConnectorFx.Name]: ConnectorFx.Renamed }, 1)] })
+            assert.deepEqual(ConnectorFx.Statuses(unversioned), [[AppWriteStatus.Invalid, ConnectorFx.NoVersionField]])
             const applied = await service.WritePaged(ConnectorFx.Context(fx), { modelId: ConnectorFx.ModelId, operations: [ConnectorFx.Upsert(ConnectorFx.Order, ConnectorFx.OrderSource, 'o1', { [ConnectorFx.Total]: 12 }, 1)] })
-            assert.deepEqual(applied.results, [{ key: 'o1', status: AppWriteStatus.Applied, version: 2 }], JSON.stringify(applied))
+            assert.deepEqual(applied.results, [{ key: 'o1', status: AppWriteStatus.Applied }], 'no version is reported (R50)')
             assert.equal(fx.Source.Adapter.Rows(ConnectorFx.OrderSource)[0]![ConnectorFx.TotalField], 12)
-        }, adapter)
+            assert.equal(fx.Source.Adapter.Batches.length, 1)
+        })
     })
 
     test('writePaged outside the scope is denied', async () =>
@@ -363,9 +410,7 @@ describe('connector endpoints on the engine', () =>
                 ConnectorFx.Upsert(ConnectorFx.Vendor, ConnectorFx.VendorSource, 'v1', { [ConnectorFx.Name]: ConnectorFx.Renamed }),
                 ConnectorFx.Upsert(ConnectorFx.Customer, ConnectorFx.CustomerSource, 'k1', { [ConnectorFx.Name]: ConnectorFx.Renamed }),
             ] })
-            const vendor = result.results[0]!
-            assert.ok((vendor.status === AppWriteStatus.Denied && vendor.reason === ConnectorFx.RecordDenied)
-                || (vendor.status === AppWriteStatus.Invalid && vendor.reason === ConnectorFx.ReadOnlyBinding), JSON.stringify(result))
+            assert.deepEqual(result.results[0], { key: 'v1', status: AppWriteStatus.Denied, reason: ConnectorFx.RecordDenied }, 'the read-only guard (Finish (c)) refuses the write')
             assert.equal(result.results[1]!.status, AppWriteStatus.Failed, 'the batch is one transaction')
             assert.equal(fx.Source.Adapter.Batches.length, 0, 'nothing was written')
             assert.equal(fx.Source.Adapter.Rows(ConnectorFx.VendorSource)[0]![ConnectorFx.NameField], ConnectorFx.Acme)
@@ -386,6 +431,12 @@ describe('connector endpoints on the engine', () =>
             assert.equal(denied.results[0]!.applied, 0)
             assert.deepEqual(denied.results[0]!.failures.map(f => f.key), [ConnectorFx.R2], JSON.stringify(denied))
             assert.ok(await ConnectorFx.Node(fx, ConnectorFx.R1) !== undefined && await ConnectorFx.Node(fx, ConnectorFx.R2) !== undefined, 'nothing was removed')
+            // p1's own account goes, with the share grant linking it, in the same transaction (R49)
+            await ConnectorFx.Grant(fx, ConnectorFx.G1, ConnectorFx.R1)
+            const own = await service.WriteBack(ConnectorFx.Context(fx), { modelId: ConnectorFx.Crm.id, dirty: [], deleted: [ConnectorFx.R1] })
+            assert.deepEqual(own, { results: [{ applied: 1, failures: [] }], diagnostics: [] }, JSON.stringify(own))
+            assert.equal(await ConnectorFx.Node(fx, ConnectorFx.R1), undefined)
+            assert.equal(await ConnectorFx.Node(fx, ConnectorFx.G1), undefined, 'the grant is gone with its record')
             // external: a read-only binding's row cannot be deleted, a writable one's is, after the fetch
             const vendor = await ConnectorFx.VendorId(fx, 'v1')
             const refused = await service.WriteBack(ConnectorFx.Context(fx), { modelId: ConnectorFx.ModelId, dirty: [], deleted: [vendor] })
@@ -437,6 +488,48 @@ describe('connector endpoints on the engine', () =>
             assert.deepEqual(listed[0]!.bindings.map(b => b.concept), [DevConnectorFx.Customer])
             const page = await dev.Service.Read(DevScopeFx.Context(DevScopeFx.P1), { modelId, concept: DevConnectorFx.Customer }, new PagingLimits())
             assert.deepEqual(page.items.map(row => row.fields[ConnectorFx.Name]).sort(), [ConnectorFx.Acme, ConnectorFx.Bolt])
+        }
+        finally
+        {
+            await dev.Host.dispose()
+        }
+    })
+
+    test('dev writePaged creates and deletes through the shared service', async () =>
+    {
+        const dev = new DevConnectorFx()
+        try
+        {
+            const modelId = await dev.ModelId()
+            const result = await dev.Service.WritePaged(DevScopeFx.Context(DevScopeFx.P1), { modelId, operations: [
+                DevConnectorFx.Op(ConnectorWriteOp.Upsert, '3', { [ConnectorFx.Name]: ConnectorFx.Cog }),
+                DevConnectorFx.Op(ConnectorWriteOp.Delete, '1'),
+            ] })
+            assert.deepEqual(result.results, [{ key: '3', status: AppWriteStatus.Applied }, { key: '1', status: AppWriteStatus.Applied }], JSON.stringify(result))
+            const rows = dev.Factory.Adapter.Rows(DevConnectorFx.Source).map(row => [row[DevConnectorFx.KeyField], row[DevConnectorFx.NameField]])
+            assert.deepEqual(rows.sort(), [['2', ConnectorFx.Bolt], ['3', ConnectorFx.Cog]])
+        }
+        finally
+        {
+            await dev.Host.dispose()
+        }
+    })
+
+    test('dev refresh resets the running engine\'s connectors', async () =>
+    {
+        const dev = new DevConnectorFx()
+        try
+        {
+            const modelId = await dev.ModelId()
+            const read = async (): Promise<number> => (await dev.Service.Read(DevScopeFx.Context(DevScopeFx.P1), { modelId, concept: DevConnectorFx.Customer }, new PagingLimits())).items.length
+            assert.equal(await read(), 2)
+            const opened = dev.Factory.Opened.length
+            await dev.Service.Refresh()
+            assert.equal(await read(), 2)
+            assert.equal(dev.Factory.Opened.length, opened + 1, 'the dev host reset its lazy connectors and the catalog re-opened the adapter')
+            await dev.Host.dispose()
+            dev.Host.ResetConnectors()
+            assert.equal(dev.Factory.Opened.length, opened + 1, 'a reset after dispose is a no-op')
         }
         finally
         {

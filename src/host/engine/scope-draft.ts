@@ -1,7 +1,7 @@
 import { AccessDefault, AccessScope, ConceptIs, FalsePredicate, Not, Or, TruePredicate } from '@pragmatic-tech-ai/graph'
 import type { IReadOnlyMembers, IWriteRules, Predicate } from '@pragmatic-tech-ai/graph'
-import { AccessScopeConjunction, PredicateFold, WriteRule } from '../engine/access-scope-conjunction.js'
-import type { EngineSchemaCatalog } from '../engine/engine-schema-catalog.js'
+import { AccessScopeConjunction, PredicateFold, WriteRule } from './access-scope-conjunction.js'
+import type { EngineSchemaCatalog } from './engine-schema-catalog.js'
 
 /** Folds disjunctions so a constant never leaves a needless tree (False is the identity, True absorbs). */
 export class PredicateAny

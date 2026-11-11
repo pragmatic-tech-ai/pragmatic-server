@@ -13,7 +13,7 @@ import type { IPlacementDefaults } from '../engine/depth-scope-compiler.js'
 import { ExternalConcepts } from '../engine/external-concepts.js'
 import { SecuredScopeRules } from '../engine/secured-scope-rules.js'
 import type { EnvironmentSnapshot } from './environment-engine-host.js'
-import { ScopeDraft } from './scope-draft.js'
+import { ScopeDraft } from '../engine/scope-draft.js'
 import { GrantWidening } from './grant-widening.js'
 
 /** The environment snapshot the rules read (EnvironmentEngineHost). */

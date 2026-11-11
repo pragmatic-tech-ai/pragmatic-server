@@ -1,5 +1,5 @@
-import { Cypher, ValueType } from '@pragmatic-tech-ai/graph'
-import type { AccessScope, CellValue, GraphEngine, GraphTransaction, IFetchedView } from '@pragmatic-tech-ai/graph'
+import { AccessScope, Cypher, ValueType } from '@pragmatic-tech-ai/graph'
+import type { CellValue, GraphEngine, GraphTransaction, IFetchedView } from '@pragmatic-tech-ai/graph'
 import type { DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
 import type { ExternalIdentity, IExternalBinding } from '@pragmatic-tech-ai/todl/engine'
 import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
@@ -12,7 +12,6 @@ import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { PagingLimits } from '../../config/paging-limits.js'
 import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
 import { PageFingerprint } from '../paging/page-request.js'
-import type { WireScalarValue } from '../wire-scalar.js'
 import { RuntimeWritePayloadValidator } from '../runtime-write-payload-validator.js'
 import type { IGraphScopeSource } from './access-scope-source.js'
 import { ConnectorEntity } from './connector-entity.js'
@@ -24,6 +23,7 @@ import { EngineWriteFailure } from './engine-write-failure.js'
 import type { IWriteFailureOutcome } from './engine-write-failure.js'
 import type { IEngineSnapshot, IGraphEngineHost } from './graph-engine-host.js'
 import { ModelScopes } from './model-scopes.js'
+import { DeleteGrantsScope, RecordGrantDeletion } from './record-grant-deletion.js'
 import { EngineWriteAttribution, RecordedBatch } from './recorded-batch.js'
 
 /** The `connector/*` endpoints' engine side, for any engine host (ruling S1); the wire DTOs are the protocol's. */
@@ -90,15 +90,19 @@ interface ISettled
  *   the concept's members the binding maps (never its id or version member), checked as `data/write` checks them. Every
  *   row is fetched in the transaction first (`GraphTransaction.Fetch`, R15): an upsert updates the row when the fetch
  *   returns it, else creates it with that public id, its id member set to the key and Owner = the binding model; a
- *   delete deletes the fetched row (an absent one is the engine's InvisibleNode refusal). A non-null `expectedVersion` is
- *   the write guard (R16): the fetched row's version must equal it (else `conflict` "write conflict" and nothing is
- *   written), and the engine carries that version to the source as ExpectedVersion. A pre-check or commit failure gives
- *   the op it names the mapped status (EngineWriteFailure) and every other op `failed` "atomic batch rolled back".
- *   Applied upserts on a versioned binding carry the source's new `version`, read back after the commit.
+ *   delete deletes the fetched row; a key the source no longer holds records nothing and is `applied` (idempotent, R48:
+ *   connector concepts are not scope-gated, A6, so an absent fetch means absent). A non-null `expectedVersion` is the
+ *   write guard (R16): it needs a binding with a version field (else `invalid`), the fetched row's version must equal it
+ *   (else `conflict` "write conflict" and nothing is written), and the engine carries that version to the source as
+ *   ExpectedVersion. A pre-check or commit failure gives the op it names the mapped status (EngineWriteFailure) and
+ *   every other op `failed` "atomic batch rolled back". Results carry no `version` (R50: reporting the new version waits
+ *   for the engine to report the source versions a commit wrote).
  * - `WriteBack`: writes commit when made, so `dirty` ids flush nothing (diagnostic `NothingToFlush`); `deleted` ids are
- *   deleted in one transaction under the caller scope AND the model filter after a fetch (audit defect 2): an id the
- *   transaction cannot see, or a delete the scope refuses, is a failure and nothing is removed. A grant linking a deleted
- *   engine record is left in storage (it widens nothing without its record; ruling R45's leftover).
+ *   deleted in one transaction under the caller scope after a fetch (audit defect 2): an id the transaction cannot see,
+ *   or one another model owns, or a delete the scope refuses, is a failure and nothing is removed. The share grants
+ *   linking a deleted record are deleted in the same transaction (R49, {@link RecordGrantDeletion}, as `data/write`:
+ *   pre-read by a System reader, the scope widened by {@link DeleteGrantsScope}, a grant linked since refuses the batch
+ *   as a conflict).
  * - `Refresh`: invalidates the snapshot specs' adapters in the process-wide `DataSourceAdapterCatalog` and resets the
  *   host's lazy external connectors (R23), so the next use re-opens with fresh credentials. `Test` probes one connector:
  *   it opens the adapter through the catalog and queries the id field of the first binding (never a secret or raw error).
@@ -118,11 +122,14 @@ export class EngineConnectorService implements IGraphConnectorService
     private static readonly FieldNotWritable = 'field not writable'
     private static readonly DuplicateKey = 'duplicate key in batch'
     private static readonly NoIdMember = 'the binding has no id field to take the id'
+    private static readonly KeyNotFit = 'the key does not fit the binding\'s id field'
+    private static readonly NoVersionField = 'expectedVersion needs a binding with a version field'
     private static readonly NothingToFlushCode = 'NothingToFlush'
     private static readonly NothingToFlushMessage = 'writes are committed when made; nothing is pending'
     private static readonly UnknownConnectorDetail = 'unknown connector'
     private static readonly ProbeFailedDetail = 'connection probe failed'
-    private static readonly NumericKey = /^-?\d+$/
+    private static readonly IntegerKey = /^-?\d+$/
+    private static readonly DecimalKey = /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/
     private static readonly Invisible: IWriteFailureOutcome = { Status: AppWriteStatus.Denied, Reason: EngineWriteFailure.RecordDenied }
 
     private readonly modelScopes = new ModelScopes()
@@ -243,14 +250,7 @@ export class EngineConnectorService implements IGraphConnectorService
         {
             transaction.dispose()
         }
-        const versions = await EngineConnectorService.VersionsAfter(engine, scope, planned)
-        return {
-            results: planned.map((op, index): ConnectorWriteOpResultDto =>
-            {
-                const version = versions.get(index)
-                return version === undefined ? { key: op.Key, status: AppWriteStatus.Applied } : { key: op.Key, status: AppWriteStatus.Applied, version }
-            }),
-        }
+        return { results: planned.map((op): ConnectorWriteOpResultDto => ({ key: op.Key, status: AppWriteStatus.Applied })) }
     }
 
     public async WriteBack(context: AccessContext, params: ConnectorWriteBackParams): Promise<FlushOutcomeDto>
@@ -260,26 +260,29 @@ export class EngineConnectorService implements IGraphConnectorService
         if (deleted.length === 0) return { results: [{ applied: 0, failures: [] }], diagnostics }
         const { Engine: engine, Snapshot: snapshot } = await this.Settled()
         EngineConnectorService.RequireModel(snapshot, params.modelId)
+        const catalog = this.modelScopes.CatalogOf(snapshot.Description)
+        const grants = await EngineConnectorService.GrantsOf(engine, deleted)
         const graphScope = await (await this.scopes()).ScopeFor(context)
-        const transaction = await engine.Begin(this.modelScopes.For(graphScope.Scope, params.modelId, snapshot.Description))
+        const transaction = await engine.Begin(DeleteGrantsScope.For(graphScope.Scope, new Set(grants.keys()), catalog, new Set(deleted)))
         let refusal: IRefusal | undefined
         try
         {
-            const batch = new RecordedBatch(transaction)
             const fetched = await EngineConnectorService.Fetch(transaction, deleted, snapshot.Identity)
-            if (!EngineConnectorService.IsRefusal(fetched))
+            if (EngineConnectorService.IsRefusal(fetched))
             {
-                const invisible = deleted.filter(id => !fetched.has(id))
+                refusal = fetched
+            }
+            else
+            {
+                // the model filter: a record another model owns is not this model's to delete
+                const invisible = deleted.filter(id => fetched.get(id)?.Owner !== params.modelId)
                 if (invisible.length > 0)
                 {
                     return { results: [{ applied: 0, failures: invisible.map(id => EngineConnectorService.Failure(id, EngineConnectorService.Invisible)) }], diagnostics }
                 }
-                deleted.forEach((id, index) => batch.DeleteNode(index, id))
-                refusal = await EngineConnectorService.Commit(transaction, snapshot.Identity, batch)
-            }
-            else
-            {
-                refusal = fetched
+                const batch = new RecordedBatch(transaction)
+                refusal = await EngineConnectorService.RecordDeletes(transaction, batch, deleted, grants)
+                refusal ??= await EngineConnectorService.Commit(transaction, snapshot.Identity, batch)
             }
         }
         finally
@@ -363,6 +366,7 @@ export class EngineConnectorService implements IGraphConnectorService
             cells = checked.Cells
         }
         const expected = op.expectedVersion === null ? undefined : op.expectedVersion
+        if (expected !== undefined && binding.Binding.VersionField === undefined) return EngineConnectorService.Invalid(EngineConnectorService.NoVersionField)
         return { Key: op.key, Kind: op.op, Id: id, Binding: binding, Cells: cells, Expected: expected }
     }
 
@@ -402,7 +406,8 @@ export class EngineConnectorService implements IGraphConnectorService
     {
         if (op.Kind === ConnectorWriteOp.Delete)
         {
-            batch.DeleteNode(index, op.Id)
+            // R48: a key the source no longer holds is already deleted (connector rows are not scope-gated, A6)
+            if (row !== undefined) batch.DeleteNode(index, op.Id)
             return undefined
         }
         if (row === undefined)
@@ -410,8 +415,10 @@ export class EngineConnectorService implements IGraphConnectorService
             const member = identity.IdMemberName(op.Binding)
             const type = identity.IdMemberType(op.Binding)
             if (member === undefined || type === undefined) return EngineConnectorService.Invalid(EngineConnectorService.NoIdMember)
+            const key = EngineConnectorService.KeyCell(op.Key, type)
+            if (key === undefined) return EngineConnectorService.Invalid(EngineConnectorService.KeyNotFit)
             batch.CreateNode(index, op.Id, op.Binding.Binding.Concept, op.Binding.Model)
-            batch.SetProperty(index, op.Id, member, EngineConnectorService.KeyCell(op.Key, type))
+            batch.SetProperty(index, op.Id, member, key)
         }
         else
         {
@@ -421,13 +428,25 @@ export class EngineConnectorService implements IGraphConnectorService
         return undefined
     }
 
-    /** The source key as the id member's cell: an integer for a numeric id member and a decimal key, else its text. */
-    private static KeyCell(key: ConnectorWriteOpDto['key'], type: ValueType): CellValue
+    /**
+     * The source key as the id member's cell: an integer for an Int64 id member, a number for a Float64 one, the text for a
+     * String one; undefined when the key's text does not fit the member (empty or non-numeric text on a numeric member,
+     * a boolean key, or another type).
+     */
+    private static KeyCell(key: ConnectorWriteOpDto['key'], type: ValueType): CellValue | undefined
     {
         const text = String(key)
-        if (type === ValueType.Int64 && EngineConnectorService.NumericKey.test(text)) return BigInt(text)
-        if (type === ValueType.Float64 && Number.isFinite(Number(text))) return Number(text)
-        return text
+        switch (type)
+        {
+            case ValueType.Int64:
+                return EngineConnectorService.IntegerKey.test(text) ? BigInt(text) : undefined
+            case ValueType.Float64:
+                return EngineConnectorService.DecimalKey.test(text) && Number.isFinite(Number(text)) ? Number(text) : undefined
+            case ValueType.String:
+                return typeof key === 'boolean' ? undefined : text
+            default:
+                return undefined
+        }
     }
 
     /** The rows of `ids` the transaction sees (TODL ids fetched as their binding's concept and model), or the refusal of a failed fetch. */
@@ -461,30 +480,44 @@ export class EngineConnectorService implements IGraphConnectorService
         }
     }
 
-    /**
-     * The source's version of each applied upsert on a versioned binding, read back in a fresh transaction under the
-     * same scope (the commit reports none); an op whose row has no version is absent.
-     */
-    private static async VersionsAfter(engine: GraphEngine, scope: AccessScope, planned: readonly IPagedOp[]): Promise<ReadonlyMap<number, WireScalarValue>>
+    /** Grant id -> the deleted record it links, as a System reader sees them before the transaction (R49). */
+    private static async GrantsOf(engine: GraphEngine, records: readonly string[]): Promise<ReadonlyMap<string, string>>
     {
-        const versions = new Map<number, WireScalarValue>()
-        const versioned = planned.map((op, index) => [op, index] as const).filter(([op]) => op.Kind === ConnectorWriteOp.Upsert && op.Binding.Binding.VersionField !== undefined)
-        if (versioned.length === 0) return versions
-        const transaction = await engine.Begin(scope)
+        const reader = await engine.BeginRead(AccessScope.System)
         try
         {
-            const fetched = await transaction.Fetch(versioned.map(([op]) => ({ PublicId: op.Id, Concept: op.Binding.Binding.Concept, Owner: op.Binding.Model })))
-            for (const [op, index] of versioned)
-            {
-                const version = fetched.get(op.Id)?.Version
-                if (version !== undefined) versions.set(index, ConnectorEntity.Version(version))
-            }
+            return await RecordGrantDeletion.PreRead(reader, records)
         }
         finally
         {
-            transaction.dispose()
+            reader.dispose()
         }
-        return versions
+    }
+
+    /**
+     * Records each deleted record's grants then the record (as op `index`, R49), or the refusal of a record a grant was
+     * linked to since the pre-read (R40: `conflict`).
+     */
+    private static async RecordDeletes(transaction: GraphTransaction, batch: RecordedBatch, deleted: readonly string[], grants: ReadonlyMap<string, string>): Promise<IRefusal | undefined>
+    {
+        const recorded = new Set<string>()
+        for (let index = 0; index < deleted.length; index++)
+        {
+            const id = deleted[index]!
+            if (await RecordGrantDeletion.LinkedSince(transaction, id, grants)) return { Op: index, Outcome: EngineWriteFailure.Conflict }
+            try
+            {
+                RecordGrantDeletion.Record(batch, index, id, grants, recorded)
+                batch.DeleteNode(index, id)
+            }
+            catch (error)
+            {
+                const outcome = EngineWriteFailure.Map(error)
+                if (outcome === undefined) throw error
+                return { Op: index, Outcome: outcome }
+            }
+        }
+        return undefined
     }
 
     /** The engine and its snapshot once their versions agree (an upgrade being applied installs its snapshot after the engine). */

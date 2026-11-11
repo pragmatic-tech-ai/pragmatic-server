@@ -606,10 +606,12 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
     /**
      * Forgets every opened external connector of the running engine (R23), so the next use of each opens it again;
      * nothing when the engine is not open (or still opening: its connectors have not opened anything yet). A retired
-     * engine's connectors are not reset: it serves only the readers already handed out until its grace ends.
+     * engine's connectors are not reset: it serves only the readers already handed out until its grace ends. A no-op
+     * once the host is disposing.
      */
     public ResetConnectors(): void
     {
+        if (this.disposing !== undefined) return
         this.openedEngine?.Running.ResetConnectors()
     }
 
@@ -845,6 +847,8 @@ export class DevGraphEngineHost implements IDevGraphEngine, IDisposable
     /** Bounded: a hung connector call never makes dispose hang (reported, the engine is disposed regardless). */
     private async Teardown(): Promise<void>
     {
+        // a reset after dispose is a no-op: the connectors of a disposed engine open nothing more
+        this.openedEngine = undefined
         this.debounce?.dispose()
         this.debounce = undefined
         // bounded too: a hang inside the recompile (Source.Current) or engine.Upgrade never makes dispose hang
