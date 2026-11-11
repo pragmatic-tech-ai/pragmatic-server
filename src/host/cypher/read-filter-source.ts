@@ -16,10 +16,7 @@ export interface IReadFilterSource
 {
     ReadFilterFor(context: AccessContext): Promise<IInstanceFilter>
 
-    /** Every concept the tenant security model references (the set an app's own concepts are subtracted from to form the depth-filter bypass). */
-    GovernedConceptsFor(context: AccessContext): Promise<ReadonlySet<string>>
-
-    /** False when the tenant has NO security model (the depth filter is deny-all): nothing may be treated as app-private then. */
+    /** False when the tenant has NO security model (the depth filter is deny-all). */
     HasSecurityModelFor(context: AccessContext): Promise<boolean>
 }
 
@@ -147,12 +144,6 @@ export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthori
         return new AccessDepthInstanceFilter(evaluator, context.Principal, PrivilegeAction.Read)
     }
 
-    public async GovernedConceptsFor(context: AccessContext): Promise<ReadonlySet<string>>
-    {
-        const evaluator = await this.EvaluatorFor(context.Tenant.Id)
-        return evaluator.GovernedConcepts()
-    }
-
     public async HasSecurityModelFor(context: AccessContext): Promise<boolean>
     {
         return (await this.SecurityOf(context.Tenant.Id)).HasSecurityModel
@@ -234,7 +225,7 @@ export class TenantReadAuthorization implements IReadFilterSource, IWriteAuthori
     }
 }
 
-/** No identity subsystem: the access-depth axis is inactive (keeps everything; the composite degrades to the predicate filter). */
+/** No identity subsystem: the access-depth axis is inactive (keeps everything). */
 export class AllowAllReadFilterSource implements IReadFilterSource
 {
     public static readonly Instance = new AllowAllReadFilterSource()
@@ -242,11 +233,6 @@ export class AllowAllReadFilterSource implements IReadFilterSource
     public async ReadFilterFor(): Promise<IInstanceFilter>
     {
         return new AllowAllInstanceFilter()
-    }
-
-    public async GovernedConceptsFor(): Promise<ReadonlySet<string>>
-    {
-        return new Set<string>()
     }
 
     public async HasSecurityModelFor(): Promise<boolean>

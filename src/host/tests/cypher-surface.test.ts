@@ -18,7 +18,6 @@ interface CypherFixtureOptions
     modelTodl?: string
     secondMember?: boolean
     openSolution?: boolean
-    context?: AccessContext
     limits?: CypherLimits
 }
 
@@ -32,7 +31,6 @@ class CypherSurfaceFixture
     private static readonly SecondMemberEntry = '{ "path": "models2", "type": "meta-model" }'
     private static readonly FirstMemberEntry = '{ "path": "models", "type": "meta-model" }'
     public static readonly SecondModelTodl = 'namespace acme { model Extra : acme { Service s3 { label = "gamma"; } } }'
-    public static readonly RegionModelTodl = 'namespace acme { concept Account { region : string?; } policy Account { allow read when entity.region == "eu"; } model Bank : acme { Account a1 { region = "eu"; label = "visible"; } Account a2 { region = "us"; label = "hidden"; } } }'
     public static readonly LabelQuery = 'MATCH (a:Service) RETURN a.label'
     public static readonly OrderedQuery = 'MATCH (a) RETURN a.label ORDER BY a.label'
     public static readonly CrossOrderedQuery = 'MATCH (a), (b) RETURN a.label ORDER BY a.label'
@@ -42,17 +40,6 @@ class CypherSurfaceFixture
     public static readonly WriteQuery = 'CREATE (n)'
     public static readonly MatchSetQuery = "MATCH (a:Service) SET a.label = 'x' RETURN a"
     public static readonly ExecuteMethod = 'cypher/execute'
-    public static readonly AccountLabels = 'MATCH (a:Account) RETURN a.label'
-    public static readonly AccountCount = 'MATCH (a:Account) RETURN count(a) AS c'
-    public static readonly AccountNodes = 'MATCH (a:Account) RETURN a'
-
-    public static Restricted(): AccessContext
-    {
-        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
-        const principal = new Principal('u1', 't1', PrincipalKind.User, new Map(), [])
-        const grants = [new Grant('u1', Role.Viewer, new ResourceRef(ResourceKind.Tenant, 't1', []))]
-        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
-    }
 
     /** Adds a second member project (models2) to the copied solution, contributing an extra instance. */
     public static AddSecondMember(solution: string): void
@@ -84,7 +71,7 @@ class CypherSurfaceFixture
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, options.context ?? CypherSurfaceFixture.Permissive(), () => Promise.reject(new Error(CypherSurfaceFixture.NoConnectors)), server.DevCypher(), undefined, undefined, undefined, undefined, undefined, options.limits, TenantPurpose.Development)
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, CypherSurfaceFixture.Permissive(), () => Promise.reject(new Error(CypherSurfaceFixture.NoConnectors)), server.DevCypher(), undefined, undefined, undefined, undefined, undefined, options.limits, TenantPurpose.Development)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {
@@ -247,20 +234,6 @@ test('cypher/query node cell rehydrates through SnapshotReader', async () =>
         assert.ok(alpha !== undefined)
         assert.ok(alpha.concept.endsWith('Service'))
         assert.ok(alpha.fieldNames().includes('label'))
-    })
-})
-
-test('cypher/query hides RBAC-restricted instances from RETURN and from count', async () =>
-{
-    const options = { modelTodl: CypherSurfaceFixture.RegionModelTodl, context: CypherSurfaceFixture.Restricted() }
-    await CypherSurfaceFixture.WithOptions(options, async client =>
-    {
-        const labels = await client.CypherQuery(CypherSurfaceFixture.AccountLabels)
-        assert.deepEqual(labels.items, [['visible']])
-        const count = await client.CypherQuery(CypherSurfaceFixture.AccountCount)
-        assert.deepEqual(count.items, [[1]])
-        const nodes = await client.CypherQuery(CypherSurfaceFixture.AccountNodes)
-        assert.equal(nodes.items.length, 1)
     })
 })
 

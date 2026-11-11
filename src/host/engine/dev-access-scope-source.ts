@@ -1,8 +1,7 @@
 import { createHash } from 'node:crypto'
 import { AccessDefault, AccessScope } from '@pragmatic-tech-ai/graph'
 import type { CellValue, Cypher, GraphEngine, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
-import type { Repository } from '@pragmatic-tech-ai/todl'
-import { PolicyScopeCompiler, TodlNodePlacement } from '@pragmatic-tech-ai/todl/engine'
+import { TodlNodePlacement } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
@@ -10,12 +9,9 @@ import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
 import { ConnectorPrincipalDigest } from '../connector-read-authorization.js'
-import { AccessScopeConjunction } from './access-scope-conjunction.js'
 import { DepthScopeCompiler } from './depth-scope-compiler.js'
 import type { IPlacementDefaults } from './depth-scope-compiler.js'
 import type { IDevGraphEngine } from './dev-graph-engine-host.js'
-import { EngineSchemaCatalog } from './engine-schema-catalog.js'
-import { PrincipalFacts } from './principal-facts.js'
 import { SavedMemberReader } from './saved-member-reader.js'
 
 /** What one caller may see and write on the dev graph engine: the only place dev access is decided. */
@@ -53,7 +49,7 @@ export interface ITenantSecuritySource
     readonly Invalidated: ISignal<string>
 }
 
-/** Where the scope compilers' diagnostics go (policy leaves the engine cannot express, depth rules compiled to False). */
+/** Where the scope compiler's diagnostics go (depth rules compiled to False). */
 export interface IDevScopeDiagnostics
 {
     ScopeDiagnostics(messages: readonly string[]): void
@@ -97,19 +93,14 @@ export class DevAccessScopeError extends Error
     }
 }
 
-/** The engine schema one scope is compiled against, with what is derived from it once per version. */
+/** The engine schema one scope is compiled against. */
 class SchemaState
 {
     public readonly Version: string
-    public readonly Catalog: EngineSchemaCatalog
-    public readonly Policies: PolicyScopeCompiler
 
-    public constructor(public readonly Engine: GraphEngine, public readonly Description: ISchemaDescription, repository: Repository)
+    public constructor(public readonly Engine: GraphEngine, public readonly Description: ISchemaDescription)
     {
         this.Version = Description.Version
-        this.Catalog = new EngineSchemaCatalog(Description)
-        // validated against the description (ruling P4-l): a policy never names what the engine lacks
-        this.Policies = PolicyScopeCompiler.FromRepository(repository, Description)
     }
 }
 
@@ -184,13 +175,11 @@ class DevScope implements IDevScope
 }
 
 /**
- * Decides each caller's dev access as one engine {@link AccessScope}: the TODL policies (PolicyScopeCompiler over the
- * engine's current repository and description) AND the tenant security model's access depth and field security
- * (DepthScopeCompiler), deny-wins (AccessScopeConjunction). The engine then enforces it on every read and write.
+ * Decides each caller's dev access as one engine {@link AccessScope}: the tenant security model's access depth and
+ * field security (DepthScopeCompiler). The engine then enforces it on every read and write.
  *
- * - No identity subsystem: the policy rows only, Default Allow, no write rules (today's dev writes are open without
- *   identity; reads are policy-filtered).
- * - Identity configured: policy AND depth; a tenant with no security model is deny-all (fail-closed, as today).
+ * - No identity subsystem: Default Allow, no rows and no write rules (dev reads and writes are open without identity).
+ * - Identity configured: the depth scope alone; a tenant with no security model is deny-all (fail-closed).
  *
  * Scopes are cached per Digest (principal digest, tenant, claims hash, engine schema version, security generation);
  * the generation is bumped and the cache dropped when the security model is invalidated
@@ -272,7 +261,7 @@ export class DevAccessScopeSource implements IDevScopeSource, IDisposable
         return this.scopes.size
     }
 
-    /** Claims are hashed (they may carry personal data); policies and claim-mapped roles read them, so they key the scope. */
+    /** Claims are hashed (they may carry personal data); claim-mapped roles read them, so they key the scope. */
     private DigestOf(context: AccessContext, version: string): string
     {
         const claims = [...context.Principal.Claims].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
@@ -290,12 +279,11 @@ export class DevAccessScopeSource implements IDevScopeSource, IDisposable
 
     private async Compile(context: AccessContext, schema: SchemaState, digest: string): Promise<CompiledScope>
     {
-        const policy = schema.Policies.Compile(new PrincipalFacts(context.Principal), AccessDefault.Allow)
-        const messages = schema.Policies.Diagnostics.map(diagnostic => diagnostic.Message)
+        const messages: string[] = []
         let compiled: CompiledScope
         if (!this.identityConfigured)
         {
-            compiled = new CompiledScope(AccessScope.Build({ Default: AccessDefault.Allow, Rows: policy.Rows }), digest, NoPlacementDefaults.Instance)
+            compiled = new CompiledScope(AccessScope.Build({ Default: AccessDefault.Allow }), digest, NoPlacementDefaults.Instance)
         }
         else
         {
@@ -303,7 +291,7 @@ export class DevAccessScopeSource implements IDevScopeSource, IDisposable
             const hasModel = await this.readAuthorization!.HasSecurityModelFor(context)
             const depth = DepthScopeCompiler.Compile(evaluator, context.Principal, schema.Description, hasModel)
             messages.push(...depth.Diagnostics.map(diagnostic => diagnostic.Message))
-            compiled = new CompiledScope(AccessScopeConjunction.And(policy, depth.Scope(), schema.Catalog), digest, depth)
+            compiled = new CompiledScope(depth.Scope(), digest, depth)
         }
         // the engine's own scope validation (ruling R63): a scope it would reject is never handed out
         const reader = await schema.Engine.BeginRead(compiled.Scope)
@@ -320,7 +308,7 @@ export class DevAccessScopeSource implements IDevScopeSource, IDisposable
         this.diagnostics.ScopeDiagnostics(fresh)
     }
 
-    /** The engine and the snapshot it runs, read so the repository and description belong to the engine's version. */
+    /** The engine and the description it runs, read so the description belongs to the engine's version. */
     private async Schema(): Promise<SchemaState>
     {
         for (let attempt = 0; attempt < DevAccessScopeSource.MaxSnapshotReads; attempt++)
@@ -328,10 +316,9 @@ export class DevAccessScopeSource implements IDevScopeSource, IDisposable
             const engine = await this.host.Engine()
             if (this.schema !== undefined && this.schema.Engine === engine && this.schema.Version === engine.SchemaVersion) return this.schema
             const description = await this.host.Description()
-            const repository = await this.host.Repository()
-            if (description === await this.host.Description() && description.Version === engine.SchemaVersion)
+            if (description.Version === engine.SchemaVersion)
             {
-                this.schema = new SchemaState(engine, description, repository)
+                this.schema = new SchemaState(engine, description)
                 return this.schema
             }
         }

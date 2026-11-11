@@ -6,7 +6,6 @@ import { join } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import {
     Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink, Cypher,
-    PolicyNodeKind, PolicyRefRoot, PolicyCompareOp,
     type PackageDocument, type CompiledPackage,
 } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
@@ -18,7 +17,6 @@ import { DataSourceKind, WriteOperationKind, WriteConcurrency, WriteAtomicity } 
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
 import { NodePlatform } from '../../../platform/node-platform.js'
-import { AccessPolicySetting } from '../../apps/access-policy-setting.js'
 import { BuiltinAdapterFactory } from '../../connectors/builtin-adapter-factory.js'
 import { BuiltinBindings } from '../../connectors/builtin-bindings.js'
 import { BuiltinStoreEngine } from '../../connectors/builtin-store-engine.js'
@@ -41,16 +39,14 @@ class RecordSharingFixture
     private static readonly Label = 'label'
     private static readonly Secret = 'secret'
     private static readonly SecretValue = 'hush'
-    private static readonly Deny = 'deny'
-    private static readonly Read = 'read'
     private static readonly Profile = 'secret-readers'
     private static readonly ProfileName = 'Secret readers'
     public static readonly Query = 'MATCH (w:Widget) RETURN w.label AS label, w.secret AS secret'
     public static readonly Principal = 'p1'
     public static readonly Other = 'p2'
-    /** Sales-owned: visible by depth + predicate. */
+    /** Sales-owned: visible by depth. */
     public static readonly VisibleLabel = 'S1'
-    /** Root-owned (depth denies) AND label-denied by the predicate: shared with the principal. */
+    /** Root-owned (depth denies): shared with the principal. */
     public static readonly SharedLabel = 'SHARED'
     /** Root-owned (depth denies), unshared. */
     public static readonly HiddenLabel = 'R1'
@@ -81,14 +77,6 @@ class RecordSharingFixture
             name: RecordSharingFixture.AppName, version: RecordSharingFixture.Version,
             packages: [{ id: RecordSharingFixture.Id, version: RecordSharingFixture.Version }],
         }))
-        writeFileSync(join(this.apps, RecordSharingFixture.AppName, AccessPolicySetting.PolicyFile), JSON.stringify({ [RecordSharingFixture.Qualified]: [{
-            effect: RecordSharingFixture.Deny, action: RecordSharingFixture.Read,
-            predicate: {
-                kind: PolicyNodeKind.Compare, op: PolicyCompareOp.Eq,
-                left: { kind: PolicyNodeKind.Ref, root: PolicyRefRoot.Entity, member: RecordSharingFixture.Label },
-                right: { kind: PolicyNodeKind.Literal, value: RecordSharingFixture.SharedLabel },
-            },
-        }] }))
         this.server = new PragmaticServer({
             packagesRoot: this.packages, applicationsRoot: this.apps, purpose: TenantPurpose.Runtime,
             builtinStoreEngine: BuiltinStoreEngine.Document,
@@ -203,7 +191,7 @@ class RecordSharingFixture
     }
 }
 
-test('without a share, the root-owned and predicate-denied records are hidden', async () =>
+test('without a share, the root-owned records are hidden', async () =>
 {
     const fx = new RecordSharingFixture()
     try
@@ -218,7 +206,7 @@ test('without a share, the root-owned and predicate-denied records are hidden', 
     }
 })
 
-test('a Read share bypasses depth AND the attribute predicate for that record only; the unshared record stays hidden; field mask stays', async () =>
+test('a Read share bypasses depth for that record only; the unshared record stays hidden; field mask stays', async () =>
 {
     const fx = new RecordSharingFixture()
     try

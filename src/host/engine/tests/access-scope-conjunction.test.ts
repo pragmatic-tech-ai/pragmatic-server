@@ -19,8 +19,8 @@ class ConjunctionFx
         {},
     ]
 
-    /** A policy-shaped scope (Default Allow) with one always-true entry keyed on the reserved root, for reads and writes. */
-    public static RootPolicy(): AccessScope
+    /** A Default Allow scope with one always-true entry keyed on the reserved root, for reads and writes. */
+    public static RootScope(): AccessScope
     {
         const always = new IsNull(ConjunctionFx.Class)
         return AccessScope.Build({
@@ -33,7 +33,7 @@ class ConjunctionFx
 
 describe('AccessScopeConjunction', () =>
 {
-    test('a policy on todl.Element keeps the Widget and Term decisions unchanged', async () =>
+    test('an always-true scope on todl.Element keeps the Widget and Term decisions unchanged', async () =>
     {
         const { Auth } = await DevScopeFx.Authorization(DevScopeFx.Model([
             DevScopeFx.Privilege(PrivilegeAction.Read, AccessLevel.User),
@@ -42,7 +42,7 @@ describe('AccessScopeConjunction', () =>
         const context = DevScopeFx.Context(DevScopeFx.P1)
         const description = DevScopeFx.Description()
         const depth = DepthScopeCompiler.Compile(await Auth.EvaluatorForContext(context), context.Principal, description, await Auth.HasSecurityModelFor(context)).Scope()
-        const combined = AccessScopeConjunction.And(ConjunctionFx.RootPolicy(), depth, new EngineSchemaCatalog(description))
+        const combined = AccessScopeConjunction.And(ConjunctionFx.RootScope(), depth, new EngineSchemaCatalog(description))
         for (const concept of ConjunctionFx.Concepts)
         {
             for (const axis of ConjunctionFx.Axes)

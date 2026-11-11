@@ -699,11 +699,6 @@ class ScriptedHost implements IDevGraphEngine
         return this.proxy
     }
 
-    public Repository(): ReturnType<IDevGraphEngine['Repository']>
-    {
-        return this.inner.Repository()
-    }
-
     public Description(): ReturnType<IDevGraphEngine['Description']>
     {
         return this.inner.Description()

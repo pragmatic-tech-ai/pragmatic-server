@@ -3,11 +3,10 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, cpSync, rmSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, ResponseError, CursorStaleError } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, ResponseError, CursorStaleError, AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import {
     Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink,
-    PolicyNodeKind, PolicyRefRoot, PolicyCompareOp,
     type PackageDocument, type CompiledPackage,
 } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -15,7 +14,6 @@ import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Rol
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
-import { AccessPolicySetting } from '../apps/access-policy-setting.js'
 
 class RuntimeSurfaceFixture
 {
@@ -26,8 +24,6 @@ class RuntimeSurfaceFixture
     private static readonly SourceSuffix = '.todl'
     private static readonly NoConnectors = 'no connectors'
     private static readonly Namespace = 'shop'
-    private static readonly Deny = 'deny'
-    private static readonly Read = 'read'
     private static readonly Label = 'label'
     private static readonly Next = 'next'
     private static readonly Prev = 'prev'
@@ -42,11 +38,8 @@ class RuntimeSurfaceFixture
     public static readonly AppB = 'demo2'
     public static readonly PkgA = 'shop'
     public static readonly PkgB = 'depot'
-    public static readonly OpenPolicy = '{}'
-    public static readonly MalformedPolicy = '{ not json'
     public static readonly WidgetLabels = 'MATCH (w:Widget) RETURN w.label AS label'
     public static readonly GadgetLabels = 'MATCH (g:Gadget) RETURN g.label AS label'
-    public static readonly EdgeQuery = 'MATCH (a:Widget)-[:next]->(b:Widget) RETURN a.label AS a, b.label AS b'
     public static readonly ServiceLabels = 'MATCH (a:Service) RETURN a.label'
     public static readonly Hi = 'Hi'
     public static readonly Bye = 'Bye'
@@ -61,12 +54,12 @@ class RuntimeSurfaceFixture
     public static readonly PrincipalId = 'p1'
     public static readonly TenantName = 'Tenant One'
     public static readonly Renamed = 'other-name'
-    public static readonly MalformedPolicyMessage = /internal error/
     public static readonly UnknownLabel = /unknown label/i
 
     public readonly Packages = mkdtempSync(join(tmpdir(), RuntimeSurfaceFixture.PkgPrefix))
     public readonly Apps = mkdtempSync(join(tmpdir(), RuntimeSurfaceFixture.AppsPrefix))
     private readonly disposables: Array<() => Promise<void>> = []
+    private runtime: PragmaticServer | undefined
 
     public static Permissive(): AccessContext
     {
@@ -123,28 +116,18 @@ class RuntimeSurfaceFixture
         writeFileSync(join(this.Apps, app, RuntimeSurfaceFixture.ManifestFile), JSON.stringify({ name, version: RuntimeSurfaceFixture.Version, packages: [] }))
     }
 
-    public WritePolicy(app: string, text: string): void
+    /** Creates one `concept` record labelled `label` in the running Runtime server's built-in store (a data change). */
+    public async CreateRecord(app: string, concept: string, label: string): Promise<void>
     {
-        writeFileSync(join(this.Apps, app, AccessPolicySetting.PolicyFile), text)
-    }
-
-    public DenyLabel(app: string, concept: string, label: string): void
-    {
-        const rules = [{
-            effect: RuntimeSurfaceFixture.Deny, action: RuntimeSurfaceFixture.Read,
-            predicate: {
-                kind: PolicyNodeKind.Compare, op: PolicyCompareOp.Eq,
-                left: { kind: PolicyNodeKind.Ref, root: PolicyRefRoot.Entity, member: RuntimeSurfaceFixture.Label },
-                right: { kind: PolicyNodeKind.Literal, value: label },
-            },
-        }]
-        this.WritePolicy(app, JSON.stringify({ [concept]: rules }))
+        const result = await this.runtime!.WriteForPragmaticApp(RuntimeSurfaceFixture.Permissive(), app, [{ op: AppWriteOpKind.Create, concept, fields: { [RuntimeSurfaceFixture.Label]: label } }])
+        assert.equal(result.results[0]?.status, AppWriteStatus.Applied, JSON.stringify(result))
     }
 
     /** Starts a Runtime server over the seeded dirs and returns a function producing connected clients. */
     public async Runtime(): Promise<() => PragmaticClient>
     {
         const server = new PragmaticServer({ packagesRoot: this.Packages, applicationsRoot: this.Apps, purpose: TenantPurpose.Runtime })
+        this.runtime = server
         await server.Start()
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
@@ -261,33 +244,6 @@ test('runtime e2e: development tenant rejects application/* but still queries it
     })
 })
 
-test('runtime e2e: access policy hides instances and edges, is live, and fails closed when malformed', async () =>
-{
-    await RuntimeSurfaceFixture.Run(async fx =>
-    {
-        await fx.Seed(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.PkgA, RuntimeSurfaceFixture.Widget, [RuntimeSurfaceFixture.Hi, RuntimeSurfaceFixture.Bye], true)
-        const client = (await fx.Runtime())()
-        await client.OpenApplication(RuntimeSurfaceFixture.AppA)
-        const before = await client.CypherQuery(RuntimeSurfaceFixture.EdgeQuery)
-        assert.equal(before.items.length, 1)
-
-        fx.DenyLabel(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.Widget, RuntimeSurfaceFixture.Bye)
-        const denied = await client.CypherQuery(RuntimeSurfaceFixture.WidgetLabels)
-        assert.deepEqual(RuntimeSurfaceFixture.Column(denied), [RuntimeSurfaceFixture.Hi])
-        const edges = await client.CypherQuery(RuntimeSurfaceFixture.EdgeQuery)
-        assert.equal(edges.items.length, 0)
-
-        fx.WritePolicy(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.OpenPolicy)
-        const open = await client.CypherQuery(RuntimeSurfaceFixture.WidgetLabels)
-        assert.deepEqual(RuntimeSurfaceFixture.Column(open), [RuntimeSurfaceFixture.Bye, RuntimeSurfaceFixture.Hi])
-        const reopenedEdges = await client.CypherQuery(RuntimeSurfaceFixture.EdgeQuery)
-        assert.equal(reopenedEdges.items.length, 1)
-
-        fx.WritePolicy(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.MalformedPolicy)
-        await assert.rejects(() => client.CypherQuery(RuntimeSurfaceFixture.WidgetLabels), RuntimeSurfaceFixture.MalformedPolicyMessage)
-    })
-})
-
 test('runtime e2e: each connection sees only its own bound application', async () =>
 {
     await RuntimeSurfaceFixture.Run(async fx =>
@@ -353,7 +309,7 @@ test('runtime e2e: a cursor stays valid while the app data is unchanged and goes
         const first = await client.CypherQuery(RuntimeCursorFixture.Ordered, undefined, { pageSize: 1 })
         const second = await client.CypherQuery(RuntimeCursorFixture.Ordered, undefined, { cursor: first.nextCursor, pageSize: 1 })
         assert.deepEqual(RuntimeSurfaceFixture.Column(second), [RuntimeSurfaceFixture.Cog])
-        fx.DenyLabel(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.Widget, RuntimeSurfaceFixture.Bolt)
+        await fx.CreateRecord(RuntimeSurfaceFixture.AppA, RuntimeSurfaceFixture.Widget, RuntimeSurfaceFixture.Alpha)
         await assert.rejects(() => client.CypherQuery(RuntimeCursorFixture.Ordered, undefined, { cursor: second.nextCursor, pageSize: 1 }), RuntimeCursorFixture.IsStale)
     })
 })

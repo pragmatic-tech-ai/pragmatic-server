@@ -5,13 +5,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { newDb } from 'pg-mem'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
-import { compilePackage, BlobPackageStore, StoragePackageSink, Cypher, PolicyNodeKind, PolicyRefRoot, PolicyCompareOp } from '@pragmatic-tech-ai/todl'
+import { compilePackage, BlobPackageStore, StoragePackageSink, Cypher } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import type { ReferencedLabelSet } from '../../../pragmatic-server.js'
 import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
-import { AccessPolicySetting } from '../../apps/access-policy-setting.js'
 import { CypherParamConverter } from '../cypher-param-converter.js'
 import { PpSecurityHarness } from './pp-security-harness.js'
 
@@ -27,9 +26,6 @@ class ConnectorReadFixture
     private static readonly SourceUri = 'shop.todl'
     private static readonly BrokenDatabase = 'broken'
     private static readonly Principal = 'p1'
-    private static readonly Deny = 'deny'
-    private static readonly Read = 'read'
-    private static readonly LabelField = 'label'
     private static readonly WidgetConcept = 'shop.Widget'
     private static readonly PoolError = 'no such database'
     private static readonly CreateWidget = 'CREATE TABLE "Widget" (widget_id text PRIMARY KEY, owning_bu text, label text, description text)'
@@ -123,27 +119,9 @@ namespace shop {
         return ConnectorReadFixture.Retarget(PpSecurityHarness.BuSecurityModel(ConnectorReadFixture.Principal))
     }
 
-    public static Org(): ISecurityModelConfig
-    {
-        return ConnectorReadFixture.Retarget(PpSecurityHarness.OrgSecurityModel(ConnectorReadFixture.Principal))
-    }
-
     public MutateWidget(): void
     {
         this.db.public.none(ConnectorReadFixture.UpdateWidget)
-    }
-
-    public DenyLabel(label: string): void
-    {
-        const rules = [{
-            effect: ConnectorReadFixture.Deny, action: ConnectorReadFixture.Read,
-            predicate: {
-                kind: PolicyNodeKind.Compare, op: PolicyCompareOp.Eq,
-                left: { kind: PolicyNodeKind.Ref, root: PolicyRefRoot.Entity, member: ConnectorReadFixture.LabelField },
-                right: { kind: PolicyNodeKind.Literal, value: label },
-            },
-        }]
-        writeFileSync(join(this.apps, ConnectorReadFixture.AppName, AccessPolicySetting.PolicyFile), JSON.stringify({ [ConnectorReadFixture.WidgetConcept]: rules }))
     }
 
     public static async Labels(server: PragmaticServer, query: string, labels: ReferencedLabelSet, params?: { [k: string]: string }): Promise<string[]>
@@ -258,16 +236,6 @@ test('SP-3b compose: the BusinessUnit depth filter hides a connector-backed inst
     })
 })
 
-test('SP-3b compose: a predicate deny drops a connector-backed instance the depth axis allows', async () =>
-{
-    await Case.Run(ConnectorReadFixture.Org(), async (fx, server) =>
-    {
-        assert.deepEqual(await Case.Read(server, ConnectorReadFixture.WidgetLabels), ['R1', 'S1', 'S2'])
-        fx.DenyLabel('S1')
-        assert.deepEqual(await Case.Read(server, ConnectorReadFixture.WidgetLabels), ['R1', 'S2'])
-    })
-})
-
 test('wildcard: an unlabeled node pattern prefetches every connector concept', async () =>
 {
     await Case.Run(undefined, async (_fx, server) =>
@@ -340,13 +308,3 @@ test('push-down: the query WHERE reaches the source SQL, and the rows match the 
     })
 })
 
-test('push-down: an access-policy deny is never pushed as a narrowing, and composes with the query filter', async () =>
-{
-    await Case.Run(ConnectorReadFixture.Org(), async (fx, server) =>
-    {
-        fx.DenyLabel('S1')
-        assert.deepEqual(await ConnectorReadFixture.PushedLabels(server, ConnectorReadFixture.WidgetLabels), ['R1', 'S2'])
-        assert.deepEqual(await ConnectorReadFixture.PushedLabels(server, ConnectorReadFixture.WhereQuery, { v: 'S1' }), [])
-        assert.deepEqual(await ConnectorReadFixture.PushedLabels(server, ConnectorReadFixture.WhereQuery, { v: 'S2' }), ['S2'])
-    })
-})

@@ -192,7 +192,7 @@ class VisibleInstanceCache
  *   structure it is typed by the represented concept, and the legacy mask asked that concept too, so its attrs are
  *   masked by that concept's hidden members, not by todl.Term's. A typed node whose concept the engine lacks has every
  *   field masked (fail-closed).
- * - Under a scope that restricts no read (no identity and no policy) every node is kept and nothing is masked.
+ * - Under a scope that restricts no read (no identity) every node is kept and nothing is masked.
  *
  * Unsaved buffers (ruling T8-a): the structure may hold an instance the saved snapshot lacks (or whose concept the
  * buffer changed). Such an instance is hidden unless the scope restricts no read, where it is visible as before:

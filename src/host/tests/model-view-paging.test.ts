@@ -2,7 +2,6 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Repository, EdgeKind } from '@pragmatic-tech-ai/todl'
 import type { Edge } from '@pragmatic-tech-ai/todl'
-import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { ModelReadFilter } from '../model-read-filter.js'
 import type { ModelMemberPage } from '../model-projection.js'
 import { AllowAllFieldReadMask } from '../cypher/field-masked-graph-query.js'
@@ -59,7 +58,7 @@ class DanglingEdgeRepository extends Repository
     }
 }
 
-/** An in-memory repository: five customers (two eu, three us) under an eu-only read policy, with peer/manager edges. */
+/** An in-memory repository: five customers (two eu, three us) with peer/manager edges. */
 class FilterFixture
 {
     public static readonly Namespace = 'shop'
@@ -77,30 +76,15 @@ class FilterFixture
     public static readonly EuValue = 'eu'
     public static readonly UsValue = 'us'
     public static readonly SecretValue = 's3cr3t'
-    public static readonly HiddenCount = 3
     public static readonly RelationshipKind = 'Relationship'
     public static readonly InstanceTier = 'Instance'
     public static readonly OntologyTier = 'Ontology'
     public static readonly Ghost = 'shop.ghost'
     public static readonly Eu2Local = 'eu2'
-    public static readonly TenantId = 't1'
-    public static readonly TenantName = 'Tenant One'
-    public static readonly ReaderId = 'u1'
     private static readonly StringType = 'string'
-    private static readonly PolicySuffix = '@policy'
-    private static readonly AllowEffect = 'allow'
-    private static readonly ReadAction = 'read'
     private static readonly MissingMemberPrefix = 'member must be on the page: '
-    private static readonly SizePrefix = 'size '
 
-    public static Context(): AccessContext
-    {
-        const tenant = new Tenant(FilterFixture.TenantId, TenantKind.SelfHosted, FilterFixture.TenantName)
-        const principal = new Principal(FilterFixture.ReaderId, FilterFixture.TenantId, PrincipalKind.User, new Map(), [])
-        return new AccessContext(principal, tenant, [], new ResourceAuthorizationPolicy())
-    }
-
-    public static Build(withPolicy: boolean, repo: Repository = new Repository()): Repository
+    public static Build(repo: Repository = new Repository()): Repository
     {
         const b = repo.builder()
         b.setNamespace(FilterFixture.Namespace)
@@ -108,11 +92,6 @@ class FilterFixture
         b.defineConcept(FilterFixture.Concept)
         b.addField(FilterFixture.Concept, FilterFixture.Region, FilterFixture.StringType)
         b.addField(FilterFixture.Concept, FilterFixture.Secret, FilterFixture.StringType)
-        if (withPolicy)
-        {
-            const predicate = { kind: 2, op: 0, left: { kind: 0, root: 1, member: FilterFixture.Region }, right: { kind: 1, value: FilterFixture.EuValue } }
-            b.definePolicy(FilterFixture.Concept + FilterFixture.PolicySuffix, FilterFixture.Concept, JSON.stringify([{ effect: FilterFixture.AllowEffect, action: FilterFixture.ReadAction, predicate }]))
-        }
         FilterFixture.Customer(b, FilterFixture.Eu1, FilterFixture.EuValue)
         b.setField(FilterFixture.Eu1, FilterFixture.Secret, FilterFixture.SecretValue)
         FilterFixture.Customer(b, FilterFixture.Eu2, FilterFixture.EuValue)
@@ -131,11 +110,6 @@ class FilterFixture
         const member = page.Items.find(m => m.id === id)
         assert.ok(member !== undefined, FilterFixture.MissingMemberPrefix + id)
         return member
-    }
-
-    public static SizeLabel(size: number): string
-    {
-        return FilterFixture.SizePrefix + size
     }
 
     /** Pages the filter from offset 0 to the end, returning every page. */
@@ -163,7 +137,7 @@ class FilterFixture
 
 test('member carries localId/namespace/tier/isClass/attrs/edges', () =>
 {
-    const filter = new ModelReadFilter(FilterFixture.Build(false), FilterFixture.Context(), AllowAllFieldReadMask.Instance)
+    const filter = new ModelReadFilter(FilterFixture.Build(), AllowAllFieldReadMask.Instance)
     const page = filter.Page(new Map(), 0, 100)
     const member = FilterFixture.Member(page, FilterFixture.Eu1)
     assert.equal(member.kind, FilterFixture.Concept)
@@ -181,49 +155,16 @@ test('member carries localId/namespace/tier/isClass/attrs/edges', () =>
     assert.equal(structural.tier, FilterFixture.OntologyTier)
 })
 
-test('hidden nodes are excluded before paging', () =>
-{
-    const repo = FilterFixture.Build(true)
-    const n = repo.allNodes().length
-    const visible = n - FilterFixture.HiddenCount
-    const filter = new ModelReadFilter(repo, FilterFixture.Context(), AllowAllFieldReadMask.Instance)
-    for (const size of [1, 2, 3, visible, visible + 1])
-    {
-        const pages = FilterFixture.Walk(filter, new Map(), size)
-        const items = pages.flatMap(p => p.Items.map(m => m.id))
-        assert.equal(items.length, visible, FilterFixture.SizeLabel(size))
-        assert.equal(new Set(items).size, visible, FilterFixture.SizeLabel(size))
-        assert.equal(pages.length, Math.ceil(visible / size), FilterFixture.SizeLabel(size))
-        assert.ok(pages.slice(0, -1).every(p => p.HasMore), FilterFixture.SizeLabel(size))
-        assert.equal(pages[pages.length - 1]!.HasMore, false, FilterFixture.SizeLabel(size))
-        assert.ok(pages.every(p => p.Items.length > 0), FilterFixture.SizeLabel(size))
-        for (const hidden of [FilterFixture.Us1, FilterFixture.Us2, FilterFixture.Us3])
-        {
-            assert.ok(!items.includes(hidden))
-        }
-    }
-})
-
 test('a field-masked attr is absent', () =>
 {
-    const filter = new ModelReadFilter(FilterFixture.Build(false), FilterFixture.Context(), new DenyOneFieldMask(FilterFixture.Concept, FilterFixture.Secret))
+    const filter = new ModelReadFilter(FilterFixture.Build(), new DenyOneFieldMask(FilterFixture.Concept, FilterFixture.Secret))
     const member = FilterFixture.Member(filter.Page(new Map(), 0, 100), FilterFixture.Eu1)
     assert.deepEqual(member.attrs, { [FilterFixture.Region]: FilterFixture.EuValue })
 })
 
-test('an edge to a hidden node is dropped', () =>
-{
-    const filter = new ModelReadFilter(FilterFixture.Build(true), FilterFixture.Context(), AllowAllFieldReadMask.Instance)
-    const member = FilterFixture.Member(filter.Page(new Map(), 0, 100), FilterFixture.Eu1)
-    assert.deepEqual(member.edges, [
-        { kind: FilterFixture.RelationshipKind, via: FilterFixture.Peer, to: FilterFixture.Eu2 },
-        { kind: FilterFixture.RelationshipKind, via: FilterFixture.Manager, to: FilterFixture.Eu2 },
-    ])
-})
-
 test('an edge whose via field is masked is dropped', () =>
 {
-    const filter = new ModelReadFilter(FilterFixture.Build(false), FilterFixture.Context(), new DenyOneFieldMask(FilterFixture.Concept, FilterFixture.Manager))
+    const filter = new ModelReadFilter(FilterFixture.Build(), new DenyOneFieldMask(FilterFixture.Concept, FilterFixture.Manager))
     const member = FilterFixture.Member(filter.Page(new Map(), 0, 100), FilterFixture.Eu1)
     assert.deepEqual(member.edges, [
         { kind: FilterFixture.RelationshipKind, via: FilterFixture.Peer, to: FilterFixture.Eu2 },
@@ -233,9 +174,9 @@ test('an edge whose via field is masked is dropped', () =>
 
 test('provenanceOf holds only page members', () =>
 {
-    const repo = FilterFixture.Build(true)
+    const repo = FilterFixture.Build()
     const provenance = new Map(repo.allNodes().map(node => [node.id, `${node.id}.todl`] as [string, string]))
-    const filter = new ModelReadFilter(repo, FilterFixture.Context(), AllowAllFieldReadMask.Instance)
+    const filter = new ModelReadFilter(repo, AllowAllFieldReadMask.Instance)
     for (const page of FilterFixture.Walk(filter, provenance, 2))
     {
         assert.deepEqual(Object.keys(page.ProvenanceOf).sort(), page.Items.map(m => m.id).filter(id => provenance.has(id)).sort())
@@ -245,10 +186,10 @@ test('provenanceOf holds only page members', () =>
 test('an edge to an unresolvable node is dropped', () =>
 {
     // the graph store rejects a dangling edge on insert, so a repository surfaces one from outEdges instead
-    const repo = FilterFixture.Build(false, new DanglingEdgeRepository(FilterFixture.Eu1, FilterFixture.Peer, FilterFixture.Ghost))
+    const repo = FilterFixture.Build(new DanglingEdgeRepository(FilterFixture.Eu1, FilterFixture.Peer, FilterFixture.Ghost))
     assert.equal(repo.resolve(FilterFixture.Ghost), undefined)
     assert.ok(repo.outEdges(FilterFixture.Eu1).some(e => e.to === FilterFixture.Ghost))
-    const filter = new ModelReadFilter(repo, FilterFixture.Context(), AllowAllFieldReadMask.Instance)
+    const filter = new ModelReadFilter(repo, AllowAllFieldReadMask.Instance)
     const member = FilterFixture.Member(filter.Page(new Map(), 0, 100), FilterFixture.Eu1)
     assert.ok(member.edges.length > 0)
     assert.ok(member.edges.every(e => e.to !== FilterFixture.Ghost))
@@ -256,23 +197,13 @@ test('an edge to an unresolvable node is dropped', () =>
 
 test('a via that resolves to a visible node is kept and masked by its localId', () =>
 {
-    const repo = FilterFixture.Build(true)
+    const repo = FilterFixture.Build()
     repo.addEdge({ kind: EdgeKind.Relationship, via: FilterFixture.Eu2, from: FilterFixture.Eu1, to: FilterFixture.Eu2 })
     const mask = new RecordingFieldMask()
-    const filter = new ModelReadFilter(repo, FilterFixture.Context(), mask)
+    const filter = new ModelReadFilter(repo, mask)
     const member = FilterFixture.Member(filter.Page(new Map(), 0, 100), FilterFixture.Eu1)
     assert.ok(member.edges.some(e => e.via === FilterFixture.Eu2 && e.to === FilterFixture.Eu2))
     assert.ok(mask.Asked.includes(RecordingFieldMask.Key(FilterFixture.Concept, FilterFixture.Eu2Local)))
     assert.ok(!mask.Asked.includes(RecordingFieldMask.Key(FilterFixture.Concept, FilterFixture.Eu2)))
 })
 
-test('a via that resolves to a hidden node is dropped', () =>
-{
-    const repo = FilterFixture.Build(true)
-    repo.addEdge({ kind: EdgeKind.Relationship, via: FilterFixture.Us2, from: FilterFixture.Eu1, to: FilterFixture.Eu2 })
-    assert.ok(repo.outEdges(FilterFixture.Eu1).some(e => e.via === FilterFixture.Us2))
-    const filter = new ModelReadFilter(repo, FilterFixture.Context(), AllowAllFieldReadMask.Instance)
-    const member = FilterFixture.Member(filter.Page(new Map(), 0, 100), FilterFixture.Eu1)
-    assert.ok(member.edges.length > 0)
-    assert.ok(member.edges.every(e => e.via !== FilterFixture.Us2))
-})

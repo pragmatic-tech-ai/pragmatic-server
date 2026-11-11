@@ -13,7 +13,7 @@ export interface IMemberReadGate
 
 /**
  * The field-read mask as a member gate: untyped nodes are ontology definitions / model containers (never
- * policy-governed instances), so field security does not apply to them; every typed node asks the mask for its type.
+ * secured instances), so field security does not apply to them; every typed node asks the mask for its type.
  */
 export class FieldReadMaskGate implements IMemberReadGate
 {

@@ -215,7 +215,7 @@ describe('DevGraphEngineHost', () =>
             assert.deepEqual(await HostFx.NamesIn(first), ['Ada', 'Bo'])
             const description = await h.Host.Description()
             assert.equal(description.Version, first.SchemaVersion)
-            assert.ok((await h.Host.Repository()).has(EngineHostFx.C1))
+            assert.ok((await h.Host.Snapshot()).Repository.has(EngineHostFx.C1))
             assert.equal(h.Fx.Lang.GraphChanged.subscriberCount, 1)
         }
         finally
@@ -393,7 +393,7 @@ describe('DevGraphEngineHost', () =>
             const engine = await h.Host.Engine()
             const empty = await h.Host.Description()
             assert.deepEqual(empty.Seed, [], 'no solution seeds no instances')
-            assert.equal((await h.Host.Repository()).has(EngineHostFx.C1), false)
+            assert.equal((await h.Host.Snapshot()).Repository.has(EngineHostFx.C1), false)
             h.Fx.Solution = solution
             h.Fx.Lang.RaiseGraphChanged()
             await h.Settle()

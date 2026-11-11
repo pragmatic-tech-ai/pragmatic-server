@@ -37,7 +37,7 @@ export interface IPlacementDefaults
     Defaults(concept: string): ReadonlyMap<string, CellValue>
 }
 
-/** The access-depth axis of one principal's dev scope, before it is combined with the policy scope. */
+/** The access-depth axis of one principal's dev scope: its rows, writes and hidden fields, and the create defaults. */
 export class DepthScope implements IPlacementDefaults
 {
     private static readonly NoDefaults: ReadonlyMap<string, CellValue> = new Map()

@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
-import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog, Cypher, ConjunctiveQueryFilterProvider } from '@pragmatic-tech-ai/todl'
+import { SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey, ConnectorPrefetch, ConnectorRuntimeGraphQuery, DataSourceAdapterCatalog, Cypher } from '@pragmatic-tech-ai/todl'
 import type { ModelConnectorPlan, IDataSourceAdapterProvider, IConnectorQueryFilterProvider } from '@pragmatic-tech-ai/todl'
 import type { Domain } from '@pragmatic-tech-ai/todl/domain'
 import { NodeProjectSystemComposer } from '@pragmatic-tech-ai/todl/project-system'
@@ -33,9 +33,8 @@ import { SolutionConnectorPlanner } from './connectors/solution-connector-planne
 import { ConnectorRuntime } from './connectors/connector-runtime.js'
 import { PolicyConnectionResolver } from './host/policy-connection-resolver.js'
 import type { ConnectorsPolicy } from './host/connector-policy.js'
-import { Action } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { IdentityEnforcement, PolicyCatalog, CompositeInstanceFilter, AllowAllInstanceFilter, ConceptBypassInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
+import { AllowAllInstanceFilter } from '@pragmatic-tech-ai/todl-identity-engine'
 import { TenantReadAuthorization, AllowAllReadFilterSource, AllowAllFieldReadMaskSource } from './host/cypher/read-filter-source.js'
 import { FieldMaskedGraphQuery, AllowAllFieldReadMask } from './host/cypher/field-masked-graph-query.js'
 import { AllowAllWriteAuthorizerSource } from './host/cypher/read-filter-source.js'
@@ -54,7 +53,6 @@ import type { AppWriteOpDto, AppWriteResultDto, ShareParams, ShareResultDto, Uns
 import { ResponseError, ErrorCodes, AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ShareService } from './host/sharing/share-service.js'
 import { AssignService } from './host/sharing/assign-service.js'
-import { AccessPolicySetting } from './host/apps/access-policy-setting.js'
 import { FilteredGraphQuery } from './host/cypher/filtered-graph-query.js'
 import { InProcessWriteLock, type IWriteLock } from './host/cypher/write-lock.js'
 import { GraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
@@ -148,7 +146,7 @@ export type ReferencedLabelSet = { labels: readonly string[]; wildcard: boolean;
 /** The read query a runtime graph is built for: its WHERE / inline-property equalities are pushed into connector pulls. */
 export type CypherScanQuery = { text: string; parameters: ReadonlyMap<string, Cypher.ParameterValue> }
 
-type AppBase = { domain: Domain; plan: ModelConnectorPlan; nativeBase: IGraphQuery; defaultConcepts: ReadonlySet<string>; ownConcepts: ReadonlySet<string> }
+type AppBase = { domain: Domain; plan: ModelConnectorPlan; nativeBase: IGraphQuery; defaultConcepts: ReadonlySet<string> }
 
 /** Headless single-tenant in-process host: composes the engine over the lazy root and opens a solution. */
 export class PragmaticServer implements IEnvironmentGraphHost
@@ -329,15 +327,14 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /** Per-request connector write authorization over the KEYED write target: allow-all without identity, else the tenant's
-     *  depth authorizer plus the depth gate (connector rows have no per-app attribute policy, so the predicate is allow-all,
-     *  mirroring the connector read filter). */
+     *  depth authorizer plus the depth gate (the gate's predicate is allow-all, as for every write: ownership is decided by
+     *  the depth evaluator alone, mirroring the connector read filter). */
     public async ConnectorWriteAuthorizationFor(context: AccessContext, target: IWriteTargetSource): Promise<IHydrateAuthorization>
     {
         if (this.identity === undefined)
         {
             return ConnectorHydrateWriter.AllowAll()
         }
-        // Connector rows have no app attribute policy, so the sharing predicate is allow-all and ownership is enforced solely by the depth evaluator, mirroring the depth-only connector READ side.
         const auth = await this.ReadAuthorization()
         return { authorizer: await auth.WriteAuthorizerFor(context), gate: await auth.WriteInstanceGateFor(context, new AllowAllInstanceFilter(), target) }
     }
@@ -366,11 +363,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
         {
             return AllowAllWriteInstanceGate.Instance
         }
-        const rules = await AccessPolicySetting.Load(this.AppsStorage(), name)
-        const predicate = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Write).InstanceFilter()
         const target = new FilteredReadWriteTargetSource(this, context, name)
         const auth = await this.ReadAuthorization()
-        const gate = await auth.WriteInstanceGateFor(context, predicate, target)
+        const gate = await auth.WriteInstanceGateFor(context, new AllowAllInstanceFilter(), target)
         const shareIndex = await this.ShareIndexFor(context, name)
         if (shareIndex.IsEmpty())
         {
@@ -532,9 +527,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * The policy-filtered graph for a bound application: cached base graph, connector-backed concepts the query references
-     * prefetched fresh per query, then the SP-3b depth+predicate filter over the result. The connector layer sits INSIDE the filter,
-     * so a connector-minted instance is filtered exactly like a native one.
+     * The security-filtered graph for a bound application: cached base graph, connector-backed concepts the query references
+     * prefetched fresh per query, then the tenant security model's depth filter (widened by record shares) over the
+     * result. The connector layer sits INSIDE the filter, so a connector-minted instance is filtered exactly like a native one.
      */
     public async GraphForPragmaticApp(context: AccessContext, name: string, labels: ReferencedLabelSet = PragmaticServer.NoLabels, maskFields = true, query?: CypherScanQuery): Promise<IGraphQuery>
     {
@@ -542,22 +537,16 @@ export class PragmaticServer implements IEnvironmentGraphHost
         const nativeBase = built.nativeBase
         const concepts = PragmaticServer.ConnectorConcepts(labels, built.plan, nativeBase)
         const services = this.root.Services()
-        const rules = await AccessPolicySetting.Load(this.AppsStorage(), name)
-        const enforcement = IdentityEnforcement.Over(PolicyCatalog.FromPolicies(rules), context, Action.Read)
         const shareIndex = await this.ShareIndexFor(context, name)
         const snapshot = concepts.length === 0
             ? new Map()
             : await ConnectorPrefetch.ForConcepts(concepts, built.plan, services.getRequired(DataSourceAdapterCatalog.ServiceKey), services, built.domain,
-                PragmaticServer.PushDownFor(query, nativeBase, enforcement, shareIndex.IsEmpty()))
+                PragmaticServer.PushDownFor(query, nativeBase))
         const base = new ConnectorRuntimeGraphQuery(nativeBase, snapshot, built.defaultConcepts)
-        const predicate = enforcement.InstanceFilter()
-        const depthSource = await this.DepthFilterSource()
-        const bypass = await this.AppPrivateConcepts(depthSource, context, built)
-        const depth = new ConceptBypassInstanceFilter(await depthSource.ReadFilterFor(context), bypass)
-        const composite = new CompositeInstanceFilter([predicate, depth])
+        const depth = await (await this.DepthFilterSource()).ReadFilterFor(context)
         const instanceFilter = shareIndex.IsEmpty()
-            ? composite
-            : new ShareWideningInstanceFilter(composite, shareIndex, ConceptIdFields.From(built.plan))
+            ? depth
+            : new ShareWideningInstanceFilter(depth, shareIndex, ConceptIdFields.From(built.plan))
         const filtered = new FilteredGraphQuery(base, instanceFilter)
         if (!maskFields || this.identity === undefined)
         {
@@ -572,48 +561,14 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * The source filters a runtime pull may push down. Each is a SUPERSET of what the in-memory filters keep: the query's
-     * own WHERE / inline-property equalities (CypherPushDown) and, unless record shares widen visibility past the access
-     * policy, the policy's push-down. Nothing is pushed for a non-query build (writes, write-target reads).
+     * The source filter a runtime pull may push down: the query's own WHERE / inline-property equalities
+     * (CypherPushDown), a SUPERSET of what the in-memory filters keep. Nothing is pushed for a non-query build (writes,
+     * write-target reads).
      */
-    private static PushDownFor(query: CypherScanQuery | undefined, schema: IGraphQuery, enforcement: IdentityEnforcement, noShares: boolean): IConnectorQueryFilterProvider | undefined
+    private static PushDownFor(query: CypherScanQuery | undefined, schema: IGraphQuery): IConnectorQueryFilterProvider | undefined
     {
         if (query === undefined) return undefined
-        const fromQuery = Cypher.CypherPushDown.Analyze(query.text, new Cypher.GraphQuerySchema(schema), query.parameters)
-        return noShares ? new ConjunctiveQueryFilterProvider(fromQuery, enforcement.QueryFilterProvider()) : fromQuery
-    }
-
-    /**
-     * The concepts the bound app owns outright: declared by one of its OWN manifest packages and by no other manifest in its
-     * Domain (so a transitive dependency's concept never qualifies). A TypeInfo does not expose its declaring model, so
-     * ownership is read off each loaded manifest instead.
-     */
-    private static OwnConcepts(domain: Domain, nativeBase: IGraphQuery, manifest: PragmaticAppManifest): ReadonlySet<string>
-    {
-        const ownPackages = new Set(manifest.packages.map(p => p.id))
-        const own = new Set<string>()
-        const foreign = new Set<string>()
-        for (const m of domain.manifests)
-        {
-            const target = ownPackages.has(m.model) ? own : foreign
-            for (const t of m.types())
-            {
-                target.add(t.fullName)
-            }
-        }
-        return new Set(nativeBase.Concepts().map(t => t.fullName).filter(full => own.has(full) && !foreign.has(full)))
-    }
-
-    /** The own concepts the tenant security model does not reference: the org depth filter defers to the app policy for these alone. */
-    private async AppPrivateConcepts(source: IReadFilterSource, context: AccessContext, built: AppBase): Promise<ReadonlySet<string>>
-    {
-        if (!(await source.HasSecurityModelFor(context)))
-        {
-            // No security model: the depth filter is deny-all by design, so no concept may defer to app policy.
-            return new Set<string>()
-        }
-        const governed = await source.GovernedConceptsFor(context)
-        return new Set([...built.ownConcepts].filter(full => !governed.has(full)))
+        return Cypher.CypherPushDown.Analyze(query.text, new Cypher.GraphQuerySchema(schema), query.parameters)
     }
 
     private async ShareServiceFor(context: AccessContext, name: string): Promise<ShareService>
@@ -782,7 +737,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         const nativeBase = new GraphQuery(domain.Snapshot)
         const connectorName = `${PragmaticServer.BuiltinConnectorPrefix}${manifest.name}${PragmaticServer.AppGraphKeySeparator}${manifest.version}`
         const augmented = BuiltinBindings.Augment(plan, nativeBase, connectorName, this.DataRootFor(manifest.name), this.BuiltinEngine())
-        return { domain, plan: augmented.plan, nativeBase, defaultConcepts: augmented.defaultConcepts, ownConcepts: PragmaticServer.OwnConcepts(domain, nativeBase, manifest) }
+        return { domain, plan: augmented.plan, nativeBase, defaultConcepts: augmented.defaultConcepts }
     }
 
     /** The per-app record-share store (memoized), over the app's built-in document store. */

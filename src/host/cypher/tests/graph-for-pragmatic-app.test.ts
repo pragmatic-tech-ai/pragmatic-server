@@ -6,14 +6,12 @@ import { join } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import {
     Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink, Cypher,
-    PolicyNodeKind, PolicyRefRoot, PolicyCompareOp,
     type PackageDocument, type CompiledPackage,
 } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
-import { AccessPolicySetting } from '../../apps/access-policy-setting.js'
 
 class GraphForAppFixture
 {
@@ -29,11 +27,8 @@ class GraphForAppFixture
     private static readonly LabelsQuery = 'MATCH (w:Widget) RETURN w.label AS label'
     private static readonly Concept = 'Widget'
     private static readonly Label = 'label'
-    public static readonly Hidden = 'Bye'
-    public static readonly Visible = 'Hi'
-    private static readonly Deny = 'deny'
-    private static readonly Read = 'read'
-    private static readonly OpenPolicy = '{}'
+    public static readonly Tail = 'Bye'
+    public static readonly Hero = 'Hi'
 
     private readonly packages = mkdtempSync(join(tmpdir(), GraphForAppFixture.PkgPrefix))
     private readonly apps = mkdtempSync(join(tmpdir(), GraphForAppFixture.AppsPrefix))
@@ -64,24 +59,6 @@ class GraphForAppFixture
         return this.server
     }
 
-    public DenyHidden(): void
-    {
-        const rules = [{
-            effect: GraphForAppFixture.Deny, action: GraphForAppFixture.Read,
-            predicate: {
-                kind: PolicyNodeKind.Compare, op: PolicyCompareOp.Eq,
-                left: { kind: PolicyNodeKind.Ref, root: PolicyRefRoot.Entity, member: GraphForAppFixture.Label },
-                right: { kind: PolicyNodeKind.Literal, value: GraphForAppFixture.Hidden },
-            },
-        }]
-        this.WritePolicy(JSON.stringify({ [GraphForAppFixture.Concept]: rules }))
-    }
-
-    public OpenPolicy(): void
-    {
-        this.WritePolicy(GraphForAppFixture.OpenPolicy)
-    }
-
     public static Labels(graph: IGraphQuery): string[]
     {
         return Cypher.CypherEngine.OverQuery(graph).Execute(GraphForAppFixture.LabelsQuery).Rows
@@ -105,41 +82,31 @@ class GraphForAppFixture
         rmSync(this.apps, { recursive: true, force: true })
     }
 
-    private WritePolicy(text: string): void
-    {
-        writeFileSync(join(this.apps, GraphForAppFixture.AppName, AccessPolicySetting.PolicyFile), text)
-    }
-
     private static Repo(): Repository
     {
         const repo = new Repository()
         repo.builder()
-            .defineConcept('Widget')
-            .addField('Widget', GraphForAppFixture.Label, 'string', Cardinality.Optional)
+            .defineConcept(GraphForAppFixture.Concept)
+            .addField(GraphForAppFixture.Concept, GraphForAppFixture.Label, 'string', Cardinality.Optional)
             .setNamespace('shop')
             .assertInstance('Widget', 'shop.hero')
-            .setField('shop.hero', GraphForAppFixture.Label, GraphForAppFixture.Visible)
+            .setField('shop.hero', GraphForAppFixture.Label, GraphForAppFixture.Hero)
             .assertInstance('Widget', 'shop.tail')
-            .setField('shop.tail', GraphForAppFixture.Label, GraphForAppFixture.Hidden)
+            .setField('shop.tail', GraphForAppFixture.Label, GraphForAppFixture.Tail)
             .commit()
         return repo
     }
 }
 
-test('GraphForPragmaticApp applies the live access-policy setting over a cached base graph', async () =>
+test('GraphForPragmaticApp reads every instance over a cached base graph', async () =>
 {
     const fx = new GraphForAppFixture()
     try
     {
         const server = await fx.Setup()
         const ctx = GraphForAppFixture.Permissive()
-        fx.DenyHidden()
-        const denied = await server.GraphForPragmaticApp(ctx, GraphForAppFixture.Name)
-        assert.deepEqual(GraphForAppFixture.Labels(denied), [GraphForAppFixture.Visible])
-
-        fx.OpenPolicy()
-        const open = await server.GraphForPragmaticApp(ctx, GraphForAppFixture.Name)
-        assert.deepEqual(GraphForAppFixture.Labels(open), [GraphForAppFixture.Hidden, GraphForAppFixture.Visible])
+        const graph = await server.GraphForPragmaticApp(ctx, GraphForAppFixture.Name)
+        assert.deepEqual(GraphForAppFixture.Labels(graph), [GraphForAppFixture.Tail, GraphForAppFixture.Hero])
 
         const first = await GraphForAppFixture.BaseOf(server)
         const second = await GraphForAppFixture.BaseOf(server)

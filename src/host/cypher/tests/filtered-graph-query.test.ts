@@ -6,14 +6,20 @@ import { join } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import {
     Repository, Cardinality, toJSON, BlobPackageStore, StoragePackageSink, StoragePackageSource,
-    PolicyNodeKind, PolicyRefRoot, PolicyCompareOp,
-    type PackageDocument, type CompiledPackage, type IInstanceFilter,
+    type PackageDocument, type CompiledPackage, type IInstanceFilter, type IInstanceView,
 } from '@pragmatic-tech-ai/todl'
 import type { IGraphQuery } from '@pragmatic-tech-ai/todl/graph-api'
-import { AccessContext, Action, Principal, PrincipalKind, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
-import { PolicyCatalog, IdentityEnforcement, FusionAccessPolicy } from '@pragmatic-tech-ai/todl-identity-engine'
 import { RuntimeAppGraph } from '../runtime-app-graph.js'
 import { FilteredGraphQuery } from '../filtered-graph-query.js'
+
+/** Hides every acme.Secret whose code is `hidden`; keeps everything else. */
+class HiddenSecretFilter implements IInstanceFilter
+{
+    public Keep(view: IInstanceView): boolean
+    {
+        return !(view.Concept === Fixture.Secret && view.Field(Fixture.Code) === Fixture.Hidden)
+    }
+}
 
 class Fixture
 {
@@ -34,9 +40,6 @@ class Fixture
     public static readonly DocB = 'acme.d2'
     public static readonly Points = 'points'
     public static readonly PointedBy = 'pointedBy'
-    public static readonly EffectDeny = 'deny'
-    public static readonly ActionRead = 'read'
-    public static readonly TenantId = 't1'
     public static readonly AppName = 'x'
     public static readonly AppVersion = '1'
 
@@ -58,22 +61,6 @@ class Fixture
         return await RuntimeAppGraph.BuildQuery(
             new StoragePackageSource(new NodeFsStorage(this.Dir)),
             { name: Fixture.AppName, version: Fixture.AppVersion, packages: [{ id: Fixture.Id, version: Fixture.Version }] })
-    }
-
-    public Filter(): IInstanceFilter
-    {
-        const rules = JSON.stringify([{
-            effect: Fixture.EffectDeny, action: Fixture.ActionRead,
-            predicate: {
-                kind: PolicyNodeKind.Compare, op: PolicyCompareOp.Eq,
-                left: { kind: PolicyNodeKind.Ref, root: PolicyRefRoot.Entity, member: Fixture.Code },
-                right: { kind: PolicyNodeKind.Literal, value: Fixture.Hidden },
-            },
-        }])
-        const catalog = PolicyCatalog.FromPolicies([{ concept: Fixture.Secret, rulesJson: rules }])
-        const principal = new Principal('u1', Fixture.TenantId, PrincipalKind.User, new Map(), [])
-        const ctx = new AccessContext(principal, new Tenant(Fixture.TenantId, TenantKind.Saas, 'Acme'), [], new FusionAccessPolicy(catalog))
-        return IdentityEnforcement.Over(catalog, ctx, Action.Read).InstanceFilter()
     }
 
     public Dispose(): void
@@ -112,7 +99,7 @@ test('denied instances are hidden from listing, reflection and edges', async () 
         const inner = await fx.Build()
         assert.ok(Fixture.Ids(inner.AllInstances()).includes(Fixture.SecretHidden), 'precondition: unfiltered graph has the secret')
         assert.deepEqual(Fixture.Ids(inner.Refs(Fixture.DocA, Fixture.Link)), [Fixture.SecretHidden], 'precondition: edge exists')
-        const q = new FilteredGraphQuery(inner, fx.Filter())
+        const q = new FilteredGraphQuery(inner, new HiddenSecretFilter())
 
         assert.ok(!Fixture.Ids(q.AllInstances()).includes(Fixture.SecretHidden))
         assert.ok(Fixture.Ids(q.AllInstances()).includes(Fixture.SecretOpen))

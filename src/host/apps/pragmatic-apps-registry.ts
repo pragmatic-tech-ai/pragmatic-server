@@ -61,7 +61,7 @@ export class PragmaticAppsRegistry
     /**
      * Rejects names that are empty, dots-only (`.`, `..`, `...`), dot-leading (`.git`), end in a dot or space, are Windows
      * reserved device names (`CON`, `NUL`, `COM1`, ... with or without an extension), contain a path separator, or contain a control / non-printable character (below U+0020, DEL).
-     * Shared with the access-policy loader and the app ingest (package ids, versions, every UI path segment).
+     * Shared with the app ingest (package ids, versions, every UI path segment).
      */
     public static AssertValidName(name: string): void
     {

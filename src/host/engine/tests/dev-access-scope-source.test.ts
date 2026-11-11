@@ -1,23 +1,18 @@
 import { afterEach, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessDefault, AccessError, AccessErrorCode, AccessScope, Cypher, GraphError, GraphErrorCode, IsNull } from '@pragmatic-tech-ai/graph'
+import { AccessError, AccessErrorCode, AccessScope, Cypher, GraphError, GraphErrorCode } from '@pragmatic-tech-ai/graph'
 import type { GraphEngine, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
-import type { Repository } from '@pragmatic-tech-ai/todl'
-import { TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import { AccessLevel, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { TenantReadAuthorization } from '../../cypher/read-filter-source.js'
-import { AccessScopeConjunction } from '../access-scope-conjunction.js'
 import { DevAccessScopeSource } from '../dev-access-scope-source.js'
-import { EngineSchemaCatalog } from '../engine-schema-catalog.js'
 import type { IDevScopeDiagnostics } from '../dev-access-scope-source.js'
 import { DevGraphEngineHost } from '../dev-graph-engine-host.js'
 import type { IDevEngineDiagnostics, IDevGraphEngine } from '../dev-graph-engine-host.js'
 import type { IWriteFence } from '../server-model-workspace.js'
 import type { DevSnapshot } from '../dev-snapshot-source.js'
-import { PrincipalFacts } from '../principal-facts.js'
 import { FakeLanguageService, FakeSolution, HeldFence, MemoryStorage } from './engine-host-fixture.js'
 import { DevScopeFx } from './dev-scope-fixture.js'
 
@@ -66,11 +61,6 @@ class ProbeHost implements IDevGraphEngine
         return this.Inner.Engine()
     }
 
-    public Repository(): Promise<Repository>
-    {
-        return this.Inner.Repository()
-    }
-
     public Description(): Promise<ISchemaDescription>
     {
         return this.Inner.Description()
@@ -102,7 +92,7 @@ class ProbeHost implements IDevGraphEngine
     }
 }
 
-/** One dev solution member declaring acme.Widget / acme.Gadget, optional policies, and model acme.Shop (w1..w3, g1). */
+/** One dev solution member declaring acme.Widget / acme.Gadget and model acme.Shop (w1..w3, g1). */
 class SourceFx
 {
     public static readonly Model = 'acme.Shop'
@@ -126,13 +116,11 @@ class SourceFx
     public static readonly CreateOrg = DevScopeFx.Privilege(PrivilegeAction.Create, AccessLevel.Organization)
     public static readonly ReadOrg = DevScopeFx.Privilege(PrivilegeAction.Read, AccessLevel.Organization)
     public static readonly ReadUser = DevScopeFx.Privilege(PrivilegeAction.Read, AccessLevel.User)
-    private static readonly Policies = 'POLICIES'
     private static readonly Source = 'namespace acme {\n'
         + '  concept Widget { owner : string?; owningBu : string?; secret : string?; code : string?; }\n'
         + '  concept Gadget { code : string?; }\n'
         + '  concept Gizmo : Widget { }\n'
         + '  taxonomy Kinds : represents Widget { term Big { } }\n'
-        + '  POLICIES\n'
         + '  model Shop : acme {\n'
         + '    Widget w1 { owner = "p1"; owningBu = "sales"; code = "w1"; secret = "s1"; }\n'
         + '    Widget w2 { owner = "p2"; owningBu = "north"; code = "w2"; secret = "s2"; }\n'
@@ -146,9 +134,9 @@ class SourceFx
     public readonly Lang = new FakeLanguageService()
     public readonly Host: ProbeHost
 
-    public constructor(policies: string = '')
+    public constructor()
     {
-        this.Storage = new MemoryStorage('mem/acme', { 'model.todl': SourceFx.Source.replace(SourceFx.Policies, policies) })
+        this.Storage = new MemoryStorage('mem/acme', { 'model.todl': SourceFx.Source })
         const solution = new FakeSolution('sol', [{ Storage: this.Storage }])
         this.Host = new ProbeHost(new DevGraphEngineHost(() => Promise.resolve(solution), () => Promise.resolve(this.Lang), undefined, new SilentDiagnostics()))
         // the test writes straight through the engine, without DevCypherExecute's lease: writes fail closed without a fence
@@ -159,17 +147,6 @@ class SourceFx
     {
         const result = await new Cypher.CypherEngine(engine).Execute(scope, query)
         return result.Rows.map(row => (row[0] instanceof Cypher.ScalarValue ? row[0].Value : null))
-    }
-
-    /** A policy-shaped scope (Default Allow) with one always-true entry keyed on the reserved root, for reads and writes. */
-    public static RootPolicy(): AccessScope
-    {
-        const always = new IsNull(TodlNames.Class)
-        return AccessScope.Build({
-            Default: AccessDefault.Allow,
-            Rows: new Map([[TodlNames.Element, always]]),
-            Writes: new Map([[TodlNames.Element, { Create: always, Update: always, Delete: always }]]),
-        })
     }
 
     public static Denied(error: unknown): boolean
@@ -194,19 +171,19 @@ class ScopeFx
         this.Diagnostics = diagnostics
     }
 
-    public static async With(model: ISecurityModelConfig | undefined, policies = ''): Promise<{ Fx: ScopeFx; Auth: TenantReadAuthorization; Store: Awaited<ReturnType<typeof DevScopeFx.Authorization>>['Store'] }>
+    public static async With(model: ISecurityModelConfig | undefined): Promise<{ Fx: ScopeFx; Auth: TenantReadAuthorization; Store: Awaited<ReturnType<typeof DevScopeFx.Authorization>>['Store'] }>
     {
         const { Auth, Store } = await DevScopeFx.Authorization(model)
-        const source = new SourceFx(policies)
+        const source = new SourceFx()
         const diagnostics = new RecordingScopeDiagnostics()
         const fx = new ScopeFx(source, new DevAccessScopeSource(source.Host, Auth, true, undefined, diagnostics), diagnostics)
         ScopeFx.Track(fx)
         return { Fx: fx, Auth, Store }
     }
 
-    public static Anonymous(policies = ''): ScopeFx
+    public static Anonymous(): ScopeFx
     {
-        const source = new SourceFx(policies)
+        const source = new SourceFx()
         const diagnostics = new RecordingScopeDiagnostics()
         const fx = new ScopeFx(source, new DevAccessScopeSource(source.Host, undefined, false, undefined, diagnostics), diagnostics)
         ScopeFx.Track(fx)
@@ -263,24 +240,6 @@ describe('DevAccessScopeSource', () =>
         assert.equal((await fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))).Scope, first.Scope, 'the most recently used scope survives')
     })
 
-    test('a policy keyed on todl.Element keeps the Widget and Term decisions unchanged on a real engine', async () =>
-    {
-        const { Fx } = await ScopeFx.With(DevScopeFx.Model([SourceFx.ReadUser, SourceFx.CreateOrg]))
-        const devScope = await Fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))
-        const depth = devScope.Scope
-        const combined = AccessScopeConjunction.And(SourceFx.RootPolicy(), depth, new EngineSchemaCatalog(await Fx.Source.Host.Description()))
-        const engine = await Fx.Engine()
-        for (const query of [SourceFx.Widgets, SourceFx.Gadgets, SourceFx.Gizmos, SourceFx.Terms, SourceFx.AllNodes, SourceFx.Secrets])
-        {
-            assert.deepEqual(await SourceFx.Column(engine, combined, query), await SourceFx.Column(engine, depth, query), query)
-        }
-        assert.deepEqual(await SourceFx.Column(engine, combined, SourceFx.Widgets), ['w1'], 'p1\'s own Widget stays visible')
-        assert.equal((await SourceFx.Column(engine, combined, SourceFx.Terms)).length, 1, 'terms stay readable')
-        // writes too: an Organization create passes both, an ungoverned concept is refused by both
-        await new Cypher.CypherEngine(engine).Execute(combined, SourceFx.Create, { Placement: devScope.Placement(SourceFx.Model) })
-        await assert.rejects(new Cypher.CypherEngine(engine).Execute(combined, SourceFx.CreateGadget, { Placement: devScope.Placement(SourceFx.Model) }), SourceFx.Denied)
-    })
-
     test('no identity allows all', async () =>
     {
         const fx = ScopeFx.Anonymous()
@@ -291,14 +250,6 @@ describe('DevAccessScopeSource', () =>
         assert.deepEqual(await fx.Column(DevScopeFx.P1, SourceFx.Gadgets), ['g1'])
         await fx.Write(DevScopeFx.P1, SourceFx.Create)
         assert.deepEqual(await SourceFx.Column(await fx.Engine(), AccessScope.System, SourceFx.Created), [null], 'no identity: no create defaults')
-    })
-
-    test('no identity still applies the policy rows (today\'s ModelReadFilter), not its write rules', async () =>
-    {
-        const fx = ScopeFx.Anonymous('policy Widget { deny read when entity.code == "w2"; deny write when entity.code == "w1"; }')
-        assert.deepEqual(await fx.Column(DevScopeFx.P1, SourceFx.Widgets), ['w1', 'w3', 'z1'])
-        await fx.Write(DevScopeFx.P1, SourceFx.SetCode)
-        assert.deepEqual(await fx.Column(DevScopeFx.P1, SourceFx.Widgets), ['w1x', 'w3', 'z1'], 'dev writes are open without identity')
     })
 
     test('no security model is deny all', async () =>
@@ -322,16 +273,6 @@ describe('DevAccessScopeSource', () =>
         assert.deepEqual((await new Cypher.CypherEngine(engine).Execute(AccessScope.System, SourceFx.Created)).Rows.map(r => r.map(c => (c as Cypher.ScalarValue).Value)), [[DevScopeFx.P1, DevScopeFx.Sales]])
         await assert.rejects(Fx.Write(DevScopeFx.P1, SourceFx.CreateFor), SourceFx.Denied, 'a query-set owner wins over the default and must pass the Create rule')
         await assert.rejects(Fx.Write(DevScopeFx.P1, SourceFx.CreateGadget), SourceFx.Denied)
-    })
-
-    test('policy and depth combine (deny wins)', async () =>
-    {
-        const policies = 'policy Widget { deny read when entity.code == "w3"; } policy Gadget { allow read when entity.code == "g1"; }'
-        const { Fx } = await ScopeFx.With(DevScopeFx.Model([SourceFx.ReadOrg]), policies)
-        assert.deepEqual(await Fx.Column(DevScopeFx.P1, SourceFx.Widgets), ['w1', 'w2'], 'policy deny under an Organization grant')
-        assert.deepEqual(await Fx.Column(DevScopeFx.P1, SourceFx.Gadgets), [], 'policy allow cannot open a concept depth denies')
-        const user = await ScopeFx.With(DevScopeFx.Model([SourceFx.ReadUser]), 'policy Widget { allow read when entity.code != "w1"; }')
-        assert.deepEqual(await user.Fx.Column(DevScopeFx.P1, SourceFx.Widgets), [], 'depth admits w1 only, policy denies it')
     })
 
     test('secured field reads as hidden and its read-only twin refuses writes', async () =>
@@ -374,7 +315,7 @@ describe('DevAccessScopeSource', () =>
         // the model governs acme.Nope and owns acme.Gear / acme.Counter, which this schema lacks; the owner field of Widget is renamed away
         const base = DevScopeFx.Model([SourceFx.ReadUser, DevScopeFx.Privilege(PrivilegeAction.Read, AccessLevel.Organization, SourceFx.Unknown)], DevScopeFx.Fields([DevScopeFx.MissingField, DevScopeFx.Secret], []))
         const model = { ...base, ownershipRules: base.ownershipRules.map(rule => rule.concept === DevScopeFx.Widget ? { ...rule, owner: { kind: rule.owner!.kind, value: DevScopeFx.MissingField } } : rule) }
-        const { Fx } = await ScopeFx.With(model, 'policy Widget { allow read when entity.' + DevScopeFx.MissingField + ' == "x"; }')
+        const { Fx } = await ScopeFx.With(model)
         const scope = await Fx.Scopes.ScopeFor(DevScopeFx.Context(DevScopeFx.P1))
         assert.equal(scope.Scope.Rows.has(SourceFx.Unknown), false)
         assert.deepEqual(await Fx.Column(DevScopeFx.P1, SourceFx.Widgets), [], 'missing owner field: User level denies')
@@ -444,17 +385,5 @@ describe('DevAccessScopeSource', () =>
         assert.match(place.PublicId, /^acme\./)
         assert.equal(place.Owner, SourceFx.Model)
         assert.equal(place.Defaults, undefined)
-    })
-})
-
-describe('PrincipalFacts', () =>
-{
-    test('groups read the principal groups, any other fact a claim', () =>
-    {
-        const facts = new PrincipalFacts(DevScopeFx.Context(DevScopeFx.P1, new Map([['dept', 'eng']]), ['admins']).Principal)
-        assert.equal(facts.Id, DevScopeFx.P1)
-        assert.deepEqual(facts.Get('groups'), ['admins'])
-        assert.equal(facts.Get('dept'), 'eng')
-        assert.equal(facts.Get('absent'), undefined)
     })
 })
