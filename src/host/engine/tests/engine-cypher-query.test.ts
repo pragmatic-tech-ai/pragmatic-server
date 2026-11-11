@@ -8,7 +8,7 @@ import { AccessScope, Cypher, GraphEngine, StorageKind } from '@pragmatic-tech-a
 import type { ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { TodlFileConnector, TodlNodePlacement } from '@pragmatic-tech-ai/todl/engine'
 import { Disposable } from '@pragmatic-tech-ai/todl-runtime'
-import { CursorStaleError, CypherCells, ErrorCodes, PageCursorCodec } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { CursorStaleError, CypherCells, ErrorCodes, PageCursorCodec, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherCellDto, CypherParamValue, CypherQueryPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
@@ -528,6 +528,16 @@ test('order by a non-returned expression pages by offset', async () =>
         const pages = await world.Walk(context, DevCypherFx.RankOrdered, DevCypherFx.PageSize)
         const reversed = Array.from({ length: DevCypherFx.ManyCount }, (_, at) => DevCypherFx.Label(DevCypherFx.ManyCount - at))
         assert.deepEqual(pages.flat(), reversed)
+    })
+})
+
+test('a query with writes is refused by EngineCypherQuery itself and commits nothing', async () =>
+{
+    await FixedSchemaWorld.With(async world =>
+    {
+        await assert.rejects(() => world.Run(FixedSchemaWorld.CreateAa, 10), (error: unknown) =>
+            error instanceof ResponseError && error.code === ErrorCodes.InvalidParams && error.message === EngineCypherQuery.ReadEndpointWriteMessage)
+        assert.deepEqual((await world.Run(FixedSchemaWorld.OrderedNames, 10)).items, [['Ada'], ['Bo']], 'the create never ran')
     })
 })
 

@@ -329,7 +329,7 @@ export class DevModelView implements IGraphModelView, IDisposable
         })
     }
 
-    public async Hidden(context: AccessContext, nodeId: string): Promise<boolean>
+    private async Hidden(context: AccessContext, nodeId: string): Promise<boolean>
     {
         const solution = await this.solution()
         if (solution === undefined)

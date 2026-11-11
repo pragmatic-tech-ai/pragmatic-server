@@ -46,6 +46,15 @@ export class EngineSchemaCatalog
         return chain
     }
 
+    /**
+     * True when an instance of `actual` is a record of `concept` (ruling S8): `actual` is `concept` or one of its
+     * subconcepts. An aspect `actual` carries does not qualify.
+     */
+    public IsConceptOrSubtype(actual: string, concept: string): boolean
+    {
+        return actual === concept || this.Ancestors(actual).includes(concept)
+    }
+
     /** Every concept that has `concept` as a proper ancestor, in description order (empty for an unknown name or a leaf). */
     public Descendants(concept: string): readonly string[]
     {

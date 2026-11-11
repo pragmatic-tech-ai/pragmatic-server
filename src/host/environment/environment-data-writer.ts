@@ -273,10 +273,10 @@ export class EnvironmentDataWriter
         }
     }
 
-    /** True when the transaction sees the record as an instance of `concept` (or a subconcept). */
+    /** True when the transaction sees the record as an instance of `concept` or a subconcept (an aspect does not qualify, S8). */
     private static IsRecordOf(view: IFetchedView | undefined, concept: string, catalog: EngineSchemaCatalog): boolean
     {
-        return view !== undefined && catalog.Applicable(view.Concept).has(concept)
+        return view !== undefined && catalog.IsConceptOrSubtype(view.Concept, concept)
     }
 
     /** Every op's result for a refused batch: the attributed op gets the outcome, the others are rolled back. */

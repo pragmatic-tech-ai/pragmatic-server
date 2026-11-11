@@ -1,6 +1,6 @@
 import { Cypher } from '@pragmatic-tech-ai/graph'
 import type { GraphEngine, GraphReader } from '@pragmatic-tech-ai/graph'
-import { CursorStaleError, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { CursorStaleError, CypherProtocol, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherQueryPageDto, PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { PagingLimits } from '../../config/paging-limits.js'
@@ -91,6 +91,8 @@ class Attempt
  *   nor skip rows, while an upgrade or another principal stales the cursor. A query that saw the engine upgrade while it
  *   ran is run again, up to {@link EngineCypherQuery.MaxAttempts} times; a continuation page that never settles is
  *   CursorStale, a first page EngineCypherQueryError Unsettled.
+ * - Read-only by construction: a query with writes is refused before anything runs (InvalidParams
+ *   {@link EngineCypherQuery.ReadEndpointWriteMessage}; writes belong on `cypher/execute`).
  * - Engine Syntax / Semantic / IntegerOverflow errors are InvalidParams; a timeout is {@link EngineCypherQuery.TimeoutCode}.
  */
 export class EngineCypherQuery implements IGraphCypherQuery
@@ -101,6 +103,7 @@ export class EngineCypherQuery implements IGraphCypherQuery
     private static readonly FingerprintTag = 'cypher'
     private static readonly ModelScopeTag = 'model'
     public static readonly ModelNotFoundMessage = `${InvalidParamsPrefix.Text}model not found`
+    public static readonly ReadEndpointWriteMessage = `${InvalidParamsPrefix.Text}writes are not supported on ${CypherProtocol.Query.method}; send them to ${CypherProtocol.Execute.method}`
 
     private readonly modelScopes = new ModelScopes()
 
@@ -115,6 +118,7 @@ export class EngineCypherQuery implements IGraphCypherQuery
 
     public async Run(context: AccessContext, request: IDevCypherRequest): Promise<CypherQueryPageDto>
     {
+        EngineCypherQuery.RefuseWrites(request.Source)
         for (let attempt = 1; attempt <= EngineCypherQuery.MaxAttempts; attempt++)
         {
             const outcome = await this.Attempt(context, request, attempt === EngineCypherQuery.MaxAttempts)
@@ -169,6 +173,24 @@ export class EngineCypherQuery implements IGraphCypherQuery
             if (EngineCypherQuery.Continues(request.Page.Params)) throw new ResponseError(CursorStaleError.Code, CursorStaleError.Message)
         }
         return Attempt.Done(mapped)
+    }
+
+    /** Refuses a query with writes: this class runs read-only Cypher whoever hands it a source. */
+    private static RefuseWrites(source: string): void
+    {
+        let writes: boolean
+        try
+        {
+            writes = new Cypher.CypherParser(source).Parse().HasWrites()
+        }
+        catch (error)
+        {
+            throw EngineCypherQuery.WireError(error)
+        }
+        if (writes)
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, EngineCypherQuery.ReadEndpointWriteMessage)
+        }
     }
 
     private static Fingerprint(request: IDevCypherRequest, schemaVersion: string, scope: IGraphScope): string

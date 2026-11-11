@@ -245,18 +245,6 @@ describe('runtime model/view on the environment engine', () =>
         })
     })
 
-    test('Hidden is false for an unknown id and true for an out-of-scope node', async () =>
-    {
-        await ViewFx.Run({ Identity: true, SecurityModel: ViewFx.Model() }, async fx =>
-        {
-            await ViewFx.SeedAccounts(fx)
-            const view = fx.Server.EnvironmentModelView()
-            const context = fx.ContextFor(ViewFx.Principal(ViewFx.P1))
-            assert.equal(await view.Hidden(context, ViewFx.Unknown), false)
-            assert.equal(await view.Hidden(context, ViewFx.A2), true, 'p2\'s account is outside p1\'s scope')
-        })
-    })
-
     test('an upgrade between pages stales the cursor', async () =>
     {
         await ViewFx.Run({}, async fx =>

@@ -36,7 +36,7 @@ export class RecordGrants
     public static async View(reader: GraphReader, id: string, concept: string, catalog: EngineSchemaCatalog): Promise<EngineInstanceView | undefined>
     {
         const actual = await reader.ConceptOf(id)
-        if (actual === undefined || (actual !== concept && !catalog.Ancestors(actual).includes(concept))) return undefined
+        if (actual === undefined || !catalog.IsConceptOrSubtype(actual, concept)) return undefined
         return EngineInstanceView.Of(reader, id)
     }
 

@@ -17,8 +17,6 @@ export interface IModelViewPage
 export interface IGraphModelView
 {
     Page(context: AccessContext, memberId: string | undefined, page: IModelViewPage): Promise<ModelViewPageDto>
-    /** True when the graph holds `nodeId` and the caller's scope hides it (false for an unknown id). */
-    Hidden(context: AccessContext, nodeId: string): Promise<boolean>
     /** The resources `model/resources` lists for `nodeId` (`[]` for a hidden or unknown node). */
     Resources(context: AccessContext, nodeId: string): Promise<ResolvedResourceDto[]>
 }

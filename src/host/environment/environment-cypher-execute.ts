@@ -23,7 +23,9 @@ import type { EnvironmentEngineHost, EnvironmentSnapshot } from './environment-e
  *
  * - No tenant write lease: the tenant-ownership lease already makes the engine single-owner and its OCC serializes
  *   (S1). Executes of one host run one at a time under an in-process mutex (ruling R37), so the `expectedRevision`
- *   check and the write it guards are atomic: no commit through this class lands between them.
+ *   check and the write it guards are atomic against other `cypher/execute` calls only. Other writers (data/write,
+ *   share, assign, connector commits) are not under this mutex and can commit between the revision read and the
+ *   write: a write that reads its targets is still caught by the engine's OCC (and retried), a plain CREATE is not.
  * - CREATEs are placed by `IGraphScope.Placement()` (S6: the home package for engine nodes, the binding for external
  *   ones; `modelId` does not affect placement). External writes run through the DataSourceConnector at commit and are
  *   compensated on failure (R9).

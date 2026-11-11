@@ -20,7 +20,8 @@ import type { EnvironmentEngineHost } from './environment-engine-host.js'
  */
 export interface IEnvironmentDataChanges
 {
-    Subscribe(context: AccessContext, send: (payload: DataChangedPayload) => void): IDisposable
+    /** `permits` is asked before each push's scope is resolved: a connection it refuses costs no scope compile. */
+    Subscribe(context: AccessContext, send: (payload: DataChangedPayload) => void, permits?: () => boolean): IDisposable
 }
 
 /** Where the push reports a window it could not deliver (it never throws at the engine). */
@@ -59,7 +60,7 @@ export class DataChangedSkipError extends Error
     }
 }
 
-/** One connection's subscription: its scope (resolved per push) and its sink. */
+/** One connection's subscription: its gate (checked per push), its scope (resolved per push) and its sink. */
 class DataChangeSubscriber implements IDisposable
 {
     private live = true
@@ -68,8 +69,15 @@ class DataChangeSubscriber implements IDisposable
         public readonly Scope: () => Promise<IGraphScope>,
         public readonly Send: (payload: DataChangedPayload) => void,
         private readonly remove: (subscriber: DataChangeSubscriber) => void,
+        private readonly permits: (() => boolean) | undefined,
     )
     {
+    }
+
+    /** True when the connection may receive this push (no gate: always); asked before its scope is resolved. */
+    public Permits(): boolean
+    {
+        return this.permits === undefined || this.permits()
     }
 
     public get Live(): boolean
@@ -167,11 +175,14 @@ export class DataChangedPush implements IDisposable
         if (running !== undefined) this.Follow(running)
     }
 
-    /** Pushes to `send` until the returned handle is disposed; `scope` is resolved for each push. */
-    public Subscribe(scope: () => Promise<IGraphScope>, send: (payload: DataChangedPayload) => void): IDisposable
+    /**
+     * Pushes to `send` until the returned handle is disposed; `permits` (when given) is asked first on each push and a
+     * refusal skips the subscriber without resolving `scope`, which is otherwise resolved for each push.
+     */
+    public Subscribe(scope: () => Promise<IGraphScope>, send: (payload: DataChangedPayload) => void, permits?: () => boolean): IDisposable
     {
         if (this.disposed) return new Disposable(() => {})
-        const subscriber = new DataChangeSubscriber(scope, send, gone => this.subscribers.delete(gone))
+        const subscriber = new DataChangeSubscriber(scope, send, gone => this.subscribers.delete(gone), permits)
         this.subscribers.add(subscriber)
         return subscriber
     }
@@ -345,6 +356,8 @@ export class DataChangedPush implements IDisposable
         {
             try
             {
+                // the connection's gate first: one that may not read is never compiled a scope
+                if (!subscriber.Permits()) continue
                 const scope = (await subscriber.Scope()).Scope
                 // the catalog of the snapshot the scope was just resolved on, not one read before it
                 const snapshot = this.host.RunningSnapshot()

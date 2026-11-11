@@ -1,5 +1,4 @@
-import { AccessScope, Cypher } from '@pragmatic-tech-ai/graph'
-import type { GraphEngine, GraphReader } from '@pragmatic-tech-ai/graph'
+import { Cypher } from '@pragmatic-tech-ai/graph'
 import { EdgeKind, Tier } from '@pragmatic-tech-ai/todl'
 import { SystemNames, TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import { CursorStaleError, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -88,7 +87,6 @@ class EnvironmentModelMember
  *   cursor). A page that saw the engine upgrade is read again (`MaxAttempts`); one that never settles is CursorStale for
  *   a continuation, else EngineCypherQueryError Unsettled. The scope alone decides what is visible; nothing is masked
  *   here, and the grant exclusion is structural, never an access decision.
- * - `Hidden`: the engine holds `nodeId` (a System read) and the caller's scope does not show it.
  * - `Resources`: always `[]` (the runtime holds no source resources).
  */
 export class EnvironmentModelView implements IGraphModelView
@@ -147,30 +145,9 @@ export class EnvironmentModelView implements IGraphModelView
         throw new EngineCypherQueryError(EngineCypherQueryErrorCode.Unsettled)
     }
 
-    public async Hidden(context: AccessContext, nodeId: string): Promise<boolean>
-    {
-        const engine = await this.host.Engine()
-        if (await EnvironmentModelView.ConceptOf(engine, AccessScope.System, nodeId) === undefined) return false
-        const scope = (await (await this.scopes()).ScopeFor(context)).Scope
-        return await EnvironmentModelView.ConceptOf(engine, scope, nodeId) === undefined
-    }
-
     public async Resources(_context: AccessContext, _nodeId: string): Promise<ResolvedResourceDto[]>
     {
         return []
-    }
-
-    private static async ConceptOf(engine: GraphEngine, scope: AccessScope, nodeId: string): Promise<string | undefined>
-    {
-        const reader: GraphReader = await engine.BeginRead(scope)
-        try
-        {
-            return await reader.ConceptOf(nodeId)
-        }
-        finally
-        {
-            reader.dispose()
-        }
     }
 
     private static Yield(): Promise<void>

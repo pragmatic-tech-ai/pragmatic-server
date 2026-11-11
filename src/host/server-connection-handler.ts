@@ -76,7 +76,6 @@ export class ServerConnectionHandler
     private static readonly ModelViewUnavailableMessage = `${InvalidParamsPrefix.Text}model view not available`
     private static readonly NotRuntimeMessage = 'operation requires a runtime tenant'
     private static readonly ConnectorsUnavailableMessage = 'connectors are not available on this connection'
-    private static readonly ReadEndpointWriteMessage = `${InvalidParamsPrefix.Text}writes are not supported on ${CypherProtocol.Query.method}; send them to ${CypherProtocol.Execute.method}`
     private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
     private static readonly GraphServiceUnavailableMessage = 'graph service is not available on this tenant'
     private static readonly EnvironmentGraphHostUnavailableMessage = 'environment graph host is not available on this tenant'
@@ -189,7 +188,7 @@ export class ServerConnectionHandler
         })
         // ruling S16: runtime connections whose gate allows cypher/query get data/changed, re-checked per push
         this.dataSubscription = this.purpose === TenantPurpose.Runtime
-            ? dataChanges?.Subscribe(accessContext, payload => this.PushDataChanged(payload))
+            ? dataChanges?.Subscribe(accessContext, payload => this.PushDataChanged(payload), () => this.PermitsDataChanged())
             : undefined
         this.buildStateSubscription = languageService.BuildStateChanged.subscribe(async state =>
         {
@@ -214,7 +213,7 @@ export class ServerConnectionHandler
      * S14) and the `data/changed` feed (S16); all
      * undefined unless the server is a Runtime tenant.
      */
-    public static RuntimeAttachArgs(server: { Purpose(): TenantPurpose; Applications(): PragmaticAppsRegistry; WriteForPragmaticApp(context: AccessContext, name: string, operations: readonly AppWriteOpDto[]): Promise<AppWriteResultDto>; ShareForPragmaticApp(context: AccessContext, name: string, params: ShareParams): Promise<ShareResultDto>; UnshareForPragmaticApp(context: AccessContext, name: string, params: UnshareParams): Promise<UnshareResultDto>; ListSharesForPragmaticApp(context: AccessContext, name: string, params: ListSharesParams): Promise<ListSharesResultDto>; AssignForPragmaticApp(context: AccessContext, name: string, params: AssignParams): Promise<AssignResultDto>; DeployApplication(params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>; LoadEnvironmentGraph(params: GraphLoadParamsDto): Promise<GraphLoadedDto>; LoadedGraph(): Promise<GraphLoadedDto | null>; EnvironmentCypher(): IGraphCypherQuery; EnvironmentExecute(): IGraphCypherExecute; EnvironmentConnectors(): IGraphConnectorService; EnvironmentModelView(): IGraphModelView; EnvironmentScopes(): Promise<IGraphScopeSource>; DataChanges(): { Subscribe(scope: () => Promise<IGraphScope>, send: (payload: DataChangedPayload) => void): IDisposable } }): { applications: PragmaticAppsRegistry | undefined; deployProvider: ((params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>) | undefined; environmentGraphHost: IEnvironmentGraphHost | undefined; cypherQuery: IGraphCypherQuery | undefined; cypherExecute: IGraphCypherExecute | undefined; data: IEnvironmentDataService | undefined; connectors: IGraphConnectorService | undefined; modelView: IGraphModelView | undefined; dataChanges: IEnvironmentDataChanges | undefined }
+    public static RuntimeAttachArgs(server: { Purpose(): TenantPurpose; Applications(): PragmaticAppsRegistry; WriteForPragmaticApp(context: AccessContext, name: string, operations: readonly AppWriteOpDto[]): Promise<AppWriteResultDto>; ShareForPragmaticApp(context: AccessContext, name: string, params: ShareParams): Promise<ShareResultDto>; UnshareForPragmaticApp(context: AccessContext, name: string, params: UnshareParams): Promise<UnshareResultDto>; ListSharesForPragmaticApp(context: AccessContext, name: string, params: ListSharesParams): Promise<ListSharesResultDto>; AssignForPragmaticApp(context: AccessContext, name: string, params: AssignParams): Promise<AssignResultDto>; DeployApplication(params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>; LoadEnvironmentGraph(params: GraphLoadParamsDto): Promise<GraphLoadedDto>; LoadedGraph(): Promise<GraphLoadedDto | null>; EnvironmentCypher(): IGraphCypherQuery; EnvironmentExecute(): IGraphCypherExecute; EnvironmentConnectors(): IGraphConnectorService; EnvironmentModelView(): IGraphModelView; EnvironmentScopes(): Promise<IGraphScopeSource>; DataChanges(): { Subscribe(scope: () => Promise<IGraphScope>, send: (payload: DataChangedPayload) => void, permits?: () => boolean): IDisposable } }): { applications: PragmaticAppsRegistry | undefined; deployProvider: ((params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>) | undefined; environmentGraphHost: IEnvironmentGraphHost | undefined; cypherQuery: IGraphCypherQuery | undefined; cypherExecute: IGraphCypherExecute | undefined; data: IEnvironmentDataService | undefined; connectors: IGraphConnectorService | undefined; modelView: IGraphModelView | undefined; dataChanges: IEnvironmentDataChanges | undefined }
     {
         if (server.Purpose() !== TenantPurpose.Runtime)
         {
@@ -228,7 +227,7 @@ export class ServerConnectionHandler
             Assign: (context, name, params) => server.AssignForPragmaticApp(context, name, params),
         }
         const dataChanges: IEnvironmentDataChanges = {
-            Subscribe: (context, send) => server.DataChanges().Subscribe(async () => (await server.EnvironmentScopes()).ScopeFor(context), send),
+            Subscribe: (context, send, permits) => server.DataChanges().Subscribe(async () => (await server.EnvironmentScopes()).ScopeFor(context), send, permits),
         }
         return { applications: server.Applications(), deployProvider: params => server.DeployApplication(params), environmentGraphHost: server, cypherQuery: server.EnvironmentCypher(), cypherExecute: server.EnvironmentExecute(), data, connectors: server.EnvironmentConnectors(), modelView: server.EnvironmentModelView(), dataChanges }
     }
@@ -289,10 +288,17 @@ export class ServerConnectionHandler
         this.connection.dispose()
     }
 
-    private PushDataChanged(payload: DataChangedPayload): void
+    /** True when this connection may receive `data/changed` now: open, and its gates allow cypher/query (S16). */
+    private PermitsDataChanged(): boolean
     {
         const method = CypherProtocol.Query.method
-        if (this.disposed || !this.scopeGate.Allows(method) || !this.gate.Permits(method))
+        return !this.disposed && this.scopeGate.Allows(method) && this.gate.Permits(method)
+    }
+
+    private PushDataChanged(payload: DataChangedPayload): void
+    {
+        // re-checked at delivery: the gate may have changed while the scope resolved
+        if (!this.PermitsDataChanged())
         {
             return
         }
@@ -632,7 +638,7 @@ export class ServerConnectionHandler
             const model = new Cypher.CypherParser(source).Parse()
             if (model.HasWrites())
             {
-                throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.ReadEndpointWriteMessage)
+                throw new ResponseError(ErrorCodes.InvalidParams, EngineCypherQuery.ReadEndpointWriteMessage)
             }
             const last = model.Parts[model.Parts.length - 1]?.Projection
             if (paged && last !== undefined && (last.Skip !== undefined || last.Limit !== undefined))

@@ -386,7 +386,6 @@ class ModelFixture
     /** The originals used `shop.Customer:cust-eu`; a TODL instance id cannot hold a colon, so the engine id is `shop.custEu`. */
     public static readonly Eu = 'shop.custEu'
     public static readonly Us = 'shop.custUs'
-    public static readonly Unknown = 'shop.doesNotExist'
     /** The provenance value (source of origin) the structure reports for each customer. */
     public static readonly EuProvenance = 'a.todl'
     public static readonly UsProvenance = 'b.todl'
@@ -654,14 +653,6 @@ test('a hidden instance id does not leak through provenanceOf', async () =>
         const projection = await DevWorld.Page(world.View(new FixedStructure(ModelFixture.Build(), provenance)), DevWorld.Reader(), world.MemberId, ViewFx.All)
         assert.equal(projection.provenanceOf[ModelFixture.Eu], ModelFixture.EuProvenance)
         assert.equal(ModelFixture.Us in projection.provenanceOf, false)
-    })
-})
-
-test('Hidden is false for an id the model cannot resolve', async () =>
-{
-    await DevWorld.With(ModelFixture.Todl, undefined, async world =>
-    {
-        assert.equal(await world.View(new FixedStructure(ModelFixture.Build())).Hidden(DevWorld.Reader(), ModelFixture.Unknown), false)
     })
 })
 
@@ -975,9 +966,6 @@ test('depth hides an instance from model/view', async () =>
         assert.ok(!ids.includes(DepthFx.W2))
         // the concept itself is schema: depth never hides it
         assert.ok(ids.includes(DepthFx.Widget))
-        const view = world.Server.DevModelView()
-        assert.equal(await view.Hidden(DevWorld.Owner(), DepthFx.W2), true)
-        assert.equal(await view.Hidden(DevWorld.Owner(), DepthFx.W1), false)
         // a principal outside the security model sees no instance (fail-closed), and p1's cursor is stale for it
         const other = world.Connect(DevWorld.Owner(ViewFx.OtherId))
         const otherIds = (await other.ModelView(world.MemberId)).items.map(m => m.id)
@@ -1005,7 +993,6 @@ test('an annotated term is admitted with its resources under an org read, and De
         for (const id of [ClassFx.Big, ClassFx.Premium, ClassFx.Basic, ClassFx.W1]) assert.ok(!ids.includes(id), id)
         assert.ok(ids.includes(ClassFx.Widget))
         assert.deepEqual(await client.Resources(ClassFx.Big), [])
-        assert.equal(await world.Server.DevModelView().Hidden(DevWorld.Owner(), ClassFx.Big), true)
     })
 })
 
@@ -1105,7 +1092,6 @@ test('an instance only in an unsaved buffer is hidden under a restricted scope, 
         await world.Language.WhenIdle()
         const ids = (await client.ModelView(world.MemberId)).items.map(m => m.id)
         assert.ok(!ids.includes(DepthFx.W3))
-        assert.equal(await world.Server.DevModelView().Hidden(DevWorld.Owner(), DepthFx.W3), true)
         assert.ok(ids.includes(DepthFx.W1))
     })
 })
