@@ -127,7 +127,10 @@ class PendingChange
  * concepts merge into the next payload, whose commit is never older than the last one pushed: the commit is a
  * monotonic watermark that may repeat across payloads. A window due while the engine is reopening (or before any
  * commit can be named) is merged back into the pending change and goes out with the next window, opened by the next
- * receipt or by the next engine `Opened` announces.
+ * receipt or by the next engine `Opened` announces. Following a REPLACEMENT engine (a reopen, not the first open)
+ * queues the root `todl.Element` at that engine's snapshot commit: a reopen is schema-level like an Upgrade commit,
+ * its own open/upgrade commit is raised before the follow, and a subscriber skipped while it began lost its window,
+ * so every subscriber hears "maybe yours".
  *
  * Coalescing: the first receipt starts one `CoalesceMs` window (closed synchronously when its timer fires, so a
  * receipt queued behind a running step opens the next); when it ends, every live subscriber gets `{ commit: latest,
@@ -188,16 +191,47 @@ export class DataChangedPush implements IDisposable
     private Follow(engine: GraphEngine): void
     {
         if (this.disposed || this.follow?.Engine === engine) return
+        const replacing = this.follow !== undefined
         this.follow?.dispose()
         this.follow = new EngineFollow(engine, [
             engine.CommitApplied.Subscribe(applied => this.Receive(() => this.CommitConcepts(engine, applied))),
             engine.ConnectorApplied.Subscribe(applied => this.Receive(() => this.ConnectorConcepts(engine, applied))),
         ])
-        // a change requeued while the engine was reopening goes out with the next window
-        this.Enqueue(async () =>
+        if (replacing)
         {
-            if (this.pending.Concepts.size > 0) this.OpenWindow()
-        })
+            // a reopen is schema-level, like an Upgrade commit: its open/upgrade commit was raised before this follow,
+            // and a subscriber skipped while it began lost its window, so every subscriber is told the root
+            this.Receive(() => this.ReopenConcepts(engine))
+        }
+        else
+        {
+            // a change requeued before the first engine opened goes out with the next window
+            this.Enqueue(async () =>
+            {
+                if (this.pending.Concepts.size > 0) this.OpenWindow()
+            })
+        }
+    }
+
+    /** The root at the replacement engine's current snapshot commit (none named when that read fails). */
+    private async ReopenConcepts(engine: GraphEngine): Promise<readonly [bigint | undefined, readonly string[]]>
+    {
+        try
+        {
+            const reader = await engine.BeginRead(AccessScope.System)
+            try
+            {
+                return [reader.SnapshotCommit, [TodlNames.Element]]
+            }
+            finally
+            {
+                reader.dispose()
+            }
+        }
+        catch
+        {
+            return [undefined, [TodlNames.Element]]
+        }
     }
 
     /** Queues one receipt in arrival order and opens the window if none is open. */

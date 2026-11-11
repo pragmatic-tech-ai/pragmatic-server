@@ -17,7 +17,8 @@ import type { IGraphScope } from '../../engine/access-scope-source.js'
 import type { IUpgradeTimer } from '../../engine/bounded-wait.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
 import { ScopedAccessContext, TokenScope } from '../../token-scope.js'
-import { DataChangedPush } from '../data-changed-push.js'
+import { NullLogger } from '../../../observability/logger.js'
+import { DataChangedPush, LoggerDataChangedDiagnostics } from '../data-changed-push.js'
 import { EnvironmentEngineHost } from '../environment-engine-host.js'
 import type { EnvironmentSnapshot } from '../environment-engine-host.js'
 import { EnvironmentFixture } from './environment-fixture.js'
@@ -152,6 +153,8 @@ class PushFx
     public static readonly R3 = 'r3'
     public static readonly K5 = 'k5'
     public static readonly P1 = 'p1'
+    /** Diagnostics for the tests that provoke skipped subscribers on purpose. */
+    public static readonly Silent = new LoggerDataChangedDiagnostics(new NullLogger())
     public static readonly DevPrefix = 'ps-push-dev-'
 
     public static Principal(id: string): Principal
@@ -320,7 +323,7 @@ describe('data/changed push', () =>
         {
             const timer = new ManualTimer()
             const host = fx.Server.EnvironmentEngine()
-            const push = new DataChangedPush(host, timer)
+            const push = new DataChangedPush(host, timer, PushFx.Silent)
             try
             {
                 const context = fx.ContextFor(PushFx.Principal(PushFx.P1))
@@ -380,7 +383,7 @@ describe('data/changed push', () =>
             // a standalone host on the store (the server's own engine is never opened in this test)
             const host = GatedHost.Over(fx)
             const timer = new ManualTimer()
-            const push = new DataChangedPush(host, timer)
+            const push = new DataChangedPush(host, timer, PushFx.Silent)
             try
             {
                 const inbox = new Inbox()
@@ -404,6 +407,50 @@ describe('data/changed push', () =>
         })
     })
 
+    test('a subscriber skipped while a reopen began hears the root after it', async () =>
+    {
+        await PushFx.Run({}, async fx =>
+        {
+            const host = GatedHost.Over(fx)
+            const timer = new ManualTimer()
+            const push = new DataChangedPush(host, timer, PushFx.Silent)
+            try
+            {
+                const inbox = new Inbox()
+                const denying = new DenyingScope(PushFx.Customer)
+                let calls = 0
+                // the first flush sees a reopen begin while this subscriber's scope resolves: it is skipped
+                const scope = async () =>
+                {
+                    if (calls++ === 0) host.Reopening = true
+                    return denying
+                }
+                push.Subscribe(scope, payload => inbox.Receive(payload))
+                const first = await host.Engine()
+                await fx.Seed([{ Concept: PushFx.Account, Id: PushFx.R1 }], host)
+                timer.Fire()
+                await Inbox.Quiet()
+                assert.deepEqual(inbox.Payloads, [], 'skipped for the window')
+                host.Reopening = false
+                // a new external connector set reopens the engine
+                fx.Live(PushFx.ExtApp, PushFx.AppVersion, [PushFx.Ext])
+                await host.Redeliver()
+                const reopened = await host.Engine()
+                assert.notEqual(reopened, first, 'the engine was reopened')
+                await Inbox.Quiet()
+                timer.Fire()
+                const reader = await reopened.BeginRead(AccessScope.System)
+                const commit = String(reader.SnapshotCommit)
+                reader.dispose()
+                assert.deepEqual(await inbox.Await(), [{ commit, concepts: [TodlNames.Element] }], 'the reopen is pushed as the root')
+            }
+            finally
+            {
+                push.dispose()
+            }
+        }, false)
+    })
+
     test('reopened engine keeps pushing', async () =>
     {
         await PushFx.Run({}, async fx =>
@@ -417,7 +464,10 @@ describe('data/changed push', () =>
             assert.notEqual(await host.Engine(), first, 'the engine was reopened')
             await PushFx.Applied(fx, [{ op: AppWriteOpKind.Create, concept: PushFx.Account, fields: { [PushFx.Name]: PushFx.A } }])
             const commit = await PushFx.Commit(fx)
-            assert.deepEqual((await inbox.Await()).at(-1), { commit, concepts: [PushFx.Account] })
+            // the reopen's root may share the write's window
+            const last = (await inbox.Await()).at(-1)!
+            assert.equal(last.commit, commit)
+            assert.ok(last.concepts.includes(PushFx.Account), JSON.stringify(last))
         }, false)
     })
 
