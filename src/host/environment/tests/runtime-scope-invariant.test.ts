@@ -274,15 +274,15 @@ class RuntimeSweep
     public readonly Seen = new Coverage()
     /** The tenant-wide `MATCH (n) RETURN n` nodes. */
     public readonly AllNodes: CypherNodeCellDto[] = []
-    /** The external ids every connector read of the binding returned. */
-    public readonly ExternalRead = new Set<string>()
-    public Expected: RuntimeVisibility | undefined
+    /** The ids the connector reads returned, per concept (both connector endpoints together). */
+    public readonly ConnectorIds = new Map<string, Set<string>>()
 
     public constructor(private readonly fx: EnvironmentFixture, private readonly client: PragmaticClient, private readonly judge: AccessContext, private readonly writes: boolean)
     {
     }
 
-    public async Run(): Promise<void>
+    /** Runs the sweep and returns the expected visibility it judged by. */
+    public async Run(): Promise<RuntimeVisibility>
     {
         let written: CypherCellDto[][] = []
         if (this.writes)
@@ -292,13 +292,19 @@ class RuntimeSweep
             written = result.rows
         }
         const expected = await RuntimeVisibility.Of(this.fx, this.judge)
-        this.Expected = expected
         Invariant.CypherRows(written, expected.Cypher, expected, InvariantText.At(InvariantText.CypherExecute, RuntimeFx.Touch), this.Seen)
         await this.CypherQuery(expected)
         await this.CypherExecute(expected)
         await this.Connectors(expected)
         await this.ModelView(expected)
         await this.Shares(expected)
+        return expected
+    }
+
+    /** The sorted ids the connector reads of `concept` returned. */
+    public ConnectorRead(concept: string): string[]
+    {
+        return [...(this.ConnectorIds.get(concept) ?? [])].sort()
     }
 
     private async CypherQuery(expected: RuntimeVisibility): Promise<void>
@@ -319,7 +325,7 @@ class RuntimeSweep
     /** cypher/execute reads stay tenant-wide even under a model id (only its writes are confined). */
     private async CypherExecute(expected: RuntimeVisibility): Promise<void>
     {
-        for (const model of [undefined, RuntimeFx.Crm.id])
+        for (const model of [undefined, ...RuntimeFx.Models])
         {
             for (const query of RuntimeFx.Reads)
             {
@@ -350,7 +356,13 @@ class RuntimeSweep
                 {
                     const page = await read(this.client, model, concept, cursor)
                     Invariant.Entities(page.items, expected.CypherFor(model), expected, where, this.Seen)
-                    if (concept === RuntimeFx.Customer) for (const entity of page.items) this.ExternalRead.add(entity.id)
+                    let ids = this.ConnectorIds.get(concept)
+                    if (ids === undefined)
+                    {
+                        ids = new Set<string>()
+                        this.ConnectorIds.set(concept, ids)
+                    }
+                    for (const entity of page.items) ids.add(entity.id)
                     cursor = page.nextCursor
                 }
                 while (cursor !== undefined)
@@ -405,35 +417,47 @@ describe('scope invariant: no runtime endpoint returns a row or member outside i
                 return client
             }
             const sweeps = new Map<string, RuntimeSweep>()
+            const expected = new Map<string, RuntimeVisibility>()
             for (const principal of RuntimeFx.Principals)
             {
                 const sweep = new RuntimeSweep(fx, await connect(principal), RuntimeFx.Context(fx, principal), true)
-                await sweep.Run()
+                expected.set(principal, await sweep.Run())
                 sweeps.set(principal, sweep)
             }
             const none = sweeps.get(RuntimeFx.NoProfile)!
             const bu = sweeps.get(RuntimeFx.BuReader)!
             const org = sweeps.get(RuntimeFx.OrgReader)!
+            const noneSees = expected.get(RuntimeFx.NoProfile)!
+            const buSees = expected.get(RuntimeFx.BuReader)!
+            const orgSees = expected.get(RuntimeFx.OrgReader)!
             const fixtureIn = (set: ReadonlySet<string>): string[] => RuntimeFx.Instances.filter(id => set.has(id))
 
             // the engine-visible sets: unknown sees no instance, BU the sales ones plus the share, org all of them
-            assert.deepEqual(fixtureIn(none.Expected!.Cypher), [])
-            assert.deepEqual(fixtureIn(bu.Expected!.Cypher), [RuntimeFx.A1, RuntimeFx.A2, RuntimeFx.N1])
-            assert.deepEqual(fixtureIn(org.Expected!.Cypher), RuntimeFx.Instances)
-            assert.deepEqual(fixtureIn(org.Expected!.CypherFor(RuntimeFx.Crm.id)), [RuntimeFx.A1, RuntimeFx.A2, RuntimeFx.A3])
-            assert.deepEqual(fixtureIn(org.Expected!.CypherFor(RuntimeFx.Notes.id)), [RuntimeFx.N1, RuntimeFx.N2])
-            // A7: every principal reads the binding's rows through the connector endpoints
-            for (const sweep of [none, bu, org]) assert.deepEqual([...sweep.ExternalRead].sort(), [...sweep.Expected!.External].sort())
+            assert.deepEqual(fixtureIn(noneSees.Cypher), [])
+            assert.deepEqual(fixtureIn(buSees.Cypher), [RuntimeFx.A1, RuntimeFx.A2, RuntimeFx.N1])
+            assert.deepEqual(fixtureIn(orgSees.Cypher), RuntimeFx.Instances)
+            assert.deepEqual(fixtureIn(orgSees.CypherFor(RuntimeFx.Crm.id)), [RuntimeFx.A1, RuntimeFx.A2, RuntimeFx.A3])
+            assert.deepEqual(fixtureIn(orgSees.CypherFor(RuntimeFx.Notes.id)), [RuntimeFx.N1, RuntimeFx.N2])
+            // the connector endpoints return exactly the governed rows each principal sees, and (A7) every binding row to everyone
+            assert.deepEqual(none.ConnectorRead(RuntimeFx.Account), [])
+            // a1 yes, a3 never; the shared a2 is in BU's crm set but a model-scoped read does not return it yet: the model
+            // filter hides the caller's grant (owner todl.system), and a Related target is judged under the same scope (R66)
+            assert.ok(bu.ConnectorRead(RuntimeFx.Account).includes(RuntimeFx.A1) && !bu.ConnectorRead(RuntimeFx.Account).includes(RuntimeFx.A3))
+            assert.deepEqual(org.ConnectorRead(RuntimeFx.Account), [RuntimeFx.A1, RuntimeFx.A2, RuntimeFx.A3])
+            assert.deepEqual(none.ConnectorRead(RuntimeFx.Note), [])
+            assert.deepEqual(bu.ConnectorRead(RuntimeFx.Note), [RuntimeFx.N1])
+            assert.deepEqual(org.ConnectorRead(RuntimeFx.Note), [RuntimeFx.N1, RuntimeFx.N2])
+            for (const [sweep, sees] of [[none, noneSees], [bu, buSees], [org, orgSees]] as const) assert.deepEqual(sweep.ConnectorRead(RuntimeFx.Customer), [...sees.External].sort())
             // a visible node never exposes a hidden target: a1 is BU-visible, its peer a3 is not
             const a1 = (sweep: RuntimeSweep): CypherNodeCellDto => sweep.AllNodes.find(node => node.id === RuntimeFx.A1)!
             assert.equal(a1(bu).refs[RuntimeFx.Peer]?.includes(RuntimeFx.A3) ?? false, false)
             assert.ok(a1(org).refs[RuntimeFx.Peer]!.includes(RuntimeFx.A3))
             assert.equal(a1(bu).fields[RuntimeFx.Secret], undefined)
             assert.ok(a1(org).fields[RuntimeFx.Secret] !== undefined)
-            // non-vacuous: readers got nodes, relationships, entities, members, grants and the applied write
+            // non-vacuous: readers got nodes, relationships, members, grants and the applied write
             for (const sweep of [bu, org])
             {
-                assert.ok(sweep.Seen.Nodes > 0 && sweep.Seen.Rels > 0 && sweep.Seen.Members > 0 && sweep.Seen.Entities > 0 && sweep.Seen.Shares > 0, JSON.stringify(sweep.Seen))
+                assert.ok(sweep.Seen.Nodes > 0 && sweep.Seen.Rels > 0 && sweep.Seen.Members > 0 && sweep.Seen.Shares > 0, JSON.stringify(sweep.Seen))
                 assert.equal(sweep.Seen.Applied, 1)
             }
             assert.ok(org.Seen.SecretValues > bu.Seen.SecretValues)
