@@ -1,5 +1,6 @@
 import { OciRegistryClient } from '../oci-registry-client.js'
 import { ReleaseDescriptorCodec, type ReleaseDescriptor, type ReleaseImage } from './release-descriptor.js'
+import { ReleaseRegistry } from './release-registry.js'
 import { ReleaseSignature } from './release-signature.js'
 import { ReleaseApps, type ReleaseApp, type ReleaseTag } from './release-tag.js'
 
@@ -52,7 +53,6 @@ export class ReleasePublisher
     public static readonly LayerMediaType = 'application/vnd.pragmatic.release.v1+json'
     public static readonly SignatureAnnotation = 'org.pragmatic.release.signature'
     public static readonly KeyAnnotation = 'org.pragmatic.release.key'
-    private static readonly PathSeparator = '/'
     private static readonly SchemaVersion = 1
 
     public constructor(
@@ -110,6 +110,6 @@ export class ReleasePublisher
 
     private repo(name: string): string
     {
-        return this.namespace + ReleasePublisher.PathSeparator + name
+        return ReleaseRegistry.RepositoryPath(this.namespace, name)
     }
 }

@@ -3,16 +3,20 @@ import type { OciRegistryClient } from '../oci-registry-client.js'
 import { ReleaseState } from '../manifest-record.js'
 import type { ManifestRecord, ManifestRelease } from '../manifest-record.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
-import { ReleaseRegistryUnavailableError } from '../rollout-errors.js'
+import { ManifestExistsError, ReleaseRegistryUnavailableError } from '../rollout-errors.js'
 import { ReleaseDescriptorCodec, ReleaseDescriptorInvalidError } from './release-descriptor.js'
 import type { ReleaseDescriptor } from './release-descriptor.js'
 import { ReleasePublisher } from './release-publisher.js'
+import { ReleaseRegistry } from './release-registry.js'
 import { ReleaseSignature } from './release-signature.js'
 import { ReleaseApp, ReleaseApps, ReleaseTag, ReleaseTagInvalidError } from './release-tag.js'
 import type { ReleaseTrustKeys } from './release-trust-keys.js'
 
-/** Versions imported by one refresh, split by outcome, and how many listed versions were already in the catalogue. */
-export type ReleaseRefreshResult = { imported: string[]; rejected: string[]; unchanged: number }
+/**
+ * Versions imported by one refresh, split by outcome; how many listed versions were already imported releases; and the
+ * listed versions hidden by a locally published manifest of the same id (never imported while that manifest exists).
+ */
+export type ReleaseRefreshResult = { imported: string[]; rejected: string[]; unchanged: number; shadowed: string[] }
 
 type PulledDescriptor = { layer: Uint8Array; layerDigest: string; annotations: Record<string, string> }
 
@@ -24,15 +28,11 @@ type PulledDescriptor = { layer: Uint8Array; layerDigest: string; annotations: R
  */
 export class ReleaseCatalog
 {
-    private static readonly RegistryHost = 'ghcr.io/'
-    private static readonly PathSeparator = '/'
-    private static readonly DigestSeparator = '@'
-    private static readonly TagPrefix = 'release/'
     private static readonly NoImage = ''
     private static readonly StatusNotFound = 404
     /** An untrusted key id comes from the registry; it is named in the reason only when it has a plain identifier shape. */
     private static readonly PlainKeyId = /^[A-Za-z0-9._-]{1,64}$/
-    private static readonly ArtifactInvalid = 'descriptor artifact invalid: '
+    private static readonly ArtifactInvalid = 'descriptor artifact invalid'
     private static readonly DescriptorInvalid = 'descriptor invalid: '
     private static readonly KeyMissing = 'signing key missing'
     private static readonly KeyUntrusted = 'untrusted signing key'
@@ -57,9 +57,9 @@ export class ReleaseCatalog
 
     public async Refresh(): Promise<ReleaseRefreshResult>
     {
-        const result: ReleaseRefreshResult = { imported: [], rejected: [], unchanged: 0 }
+        const result: ReleaseRefreshResult = { imported: [], rejected: [], unchanged: 0, shadowed: [] }
         const pending: ManifestRecord[] = []
-        const known = new Set(this.deployments.AllManifests().map(m => m.id))
+        const known = new Map(this.deployments.AllManifests().map(m => [m.id, m]))
         try
         {
             for (const tag of await this.registry.ListTags(this.Repo(ReleasePublisher.DescriptorRepository)))
@@ -69,9 +69,17 @@ export class ReleaseCatalog
                 {
                     continue
                 }
-                if (known.has(release.Version))
+                const existing = known.get(release.Version)
+                if (existing !== undefined)
                 {
-                    result.unchanged++
+                    if (existing.release === undefined)
+                    {
+                        result.shadowed.push(release.Version)
+                    }
+                    else
+                    {
+                        result.unchanged++
+                    }
                     continue
                 }
                 const record = await this.Inspect(release)
@@ -83,7 +91,7 @@ export class ReleaseCatalog
         }
         catch (error)
         {
-            if (ReleaseCatalog.IsUnavailable(error))
+            if (error instanceof OciUnavailableError || error instanceof OciResponseError)
             {
                 throw new ReleaseRegistryUnavailableError()
             }
@@ -91,7 +99,20 @@ export class ReleaseCatalog
         }
         for (const record of pending)
         {
-            await this.deployments.ImportRelease(record)
+            try
+            {
+                await this.deployments.ImportRelease(record)
+            }
+            catch (error)
+            {
+                if (error instanceof ManifestExistsError)
+                {
+                    // A concurrent refresh (or publish) recorded the version since the listing: nothing changes here.
+                    result.unchanged++
+                    continue
+                }
+                throw error
+            }
             const outcome = record.release?.state === ReleaseState.Verified ? result.imported : result.rejected
             outcome.push(record.id)
         }
@@ -109,15 +130,17 @@ export class ReleaseCatalog
         }
         catch (error)
         {
-            if (error instanceof OciProtocolError)
-            {
-                return S.Rejected(tag, S.ArtifactInvalid + error.message)
-            }
             if (error instanceof OciResponseError && error.status === S.StatusNotFound)
             {
                 return undefined
             }
-            throw error
+            if (S.IsTransportFailure(error))
+            {
+                throw error
+            }
+            // Anything else is this artifact's own fault (bad shape, bad layer digest, altered bytes): reject it with a fixed
+            // sentence, so one malformed descriptor neither blocks every refresh nor echoes registry-supplied text.
+            return S.Rejected(tag, S.ArtifactInvalid)
         }
         let descriptor: ReleaseDescriptor
         try
@@ -205,7 +228,6 @@ export class ReleaseCatalog
 
     private Verified(descriptor: ReleaseDescriptor): ManifestRecord
     {
-        const S = ReleaseCatalog
         const images = {} as NonNullable<ManifestRelease['images']>
         for (const app of ReleaseApps.All)
         {
@@ -215,7 +237,7 @@ export class ReleaseCatalog
         return {
             id: descriptor.version,
             channel: descriptor.channel,
-            image: S.RegistryHost + server.repository + S.DigestSeparator + server.digest,
+            image: ReleaseRegistry.DigestReference(server.repository, server.digest),
             digest: server.digest,
             signed: true,
             publishedAt: descriptor.builtAt,
@@ -248,7 +270,7 @@ export class ReleaseCatalog
     {
         try
         {
-            return ReleaseTag.Parse(ReleaseCatalog.TagPrefix + tag)
+            return ReleaseTag.FromVersion(tag)
         }
         catch (error)
         {
@@ -261,16 +283,17 @@ export class ReleaseCatalog
     }
 
     /**
-     * Unreachable, credential refused (401), or any other unexpected answer outside a descriptor pull (an unreadable tag
-     * list, a 5xx, a HEAD without a digest): the registry as a whole cannot be read, so nothing is imported.
+     * Unreachable, or answered with a transport status (401 refused credential, 5xx, ...) rather than malformed content: the
+     * registry, not the artifact, is at fault. Refresh turns these (and any OCI error outside a descriptor pull, such as an
+     * unreadable tag list) into ReleaseRegistryUnavailableError, so nothing is imported.
      */
-    private static IsUnavailable(error: unknown): boolean
+    private static IsTransportFailure(error: unknown): boolean
     {
-        return error instanceof OciUnavailableError || error instanceof OciResponseError
+        return error instanceof OciUnavailableError || (error instanceof OciResponseError && !(error instanceof OciProtocolError))
     }
 
     private Repo(name: string): string
     {
-        return this.namespace + ReleaseCatalog.PathSeparator + name
+        return ReleaseRegistry.RepositoryPath(this.namespace, name)
     }
 }

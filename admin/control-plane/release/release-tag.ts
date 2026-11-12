@@ -41,6 +41,8 @@ export class ReleaseTagInvalidError extends Error
 /** A `release/X.Y.Z` (stable) or `release/X.Y.Z-early.N` (early access) git tag. */
 export class ReleaseTag
 {
+    /** The git tag name prefix in front of the version. */
+    public static readonly Prefix = 'release/'
     private static readonly RefPrefix = 'refs/tags/'
     private static readonly Pattern = /^release\/((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(-early\.(?:0|[1-9]\d*))?)$/
 
@@ -58,5 +60,11 @@ export class ReleaseTag
         }
         const channel = match[2] === undefined ? Channel.Stable : Channel.EarlyAccess
         return new ReleaseTag(match[1], channel)
+    }
+
+    /** The release tag for a bare version (`1.4.0`, `1.4.0-early.2`); throws ReleaseTagInvalidError for anything else. */
+    public static FromVersion(version: string): ReleaseTag
+    {
+        return ReleaseTag.Parse(ReleaseTag.Prefix + version)
     }
 }

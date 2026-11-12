@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { OciRegistryClient, type OciFetch } from '../oci-registry-client.js'
 import { ReleasePublisher } from './release-publisher.js'
+import { ReleaseRegistry } from './release-registry.js'
 import { ReleaseTag } from './release-tag.js'
 
 export type ReleaseCliOutput = { Out: (line: string) => void; Err: (line: string) => void }
@@ -40,7 +41,6 @@ export class ReleasePublishCli
     private static readonly EnvToken = 'RELEASE_REGISTRY_TOKEN'
     private static readonly EnvRegistry = 'RELEASE_REGISTRY'
     private static readonly EnvNamespace = 'RELEASE_NAMESPACE'
-    private static readonly DefaultRegistry = 'ghcr.io'
     private static readonly DefaultNamespace = 'pragmatic-tech-ai'
     private static readonly SchemeMarker = '://'
     private static readonly HttpsScheme = 'https://'
@@ -113,7 +113,7 @@ export class ReleasePublishCli
     private static NewPublisher(env: NodeJS.ProcessEnv, fetchFn?: OciFetch): ReleasePublisher
     {
         const S = ReleasePublishCli
-        const host = S.EnvOr(env, S.EnvRegistry, S.DefaultRegistry)
+        const host = S.EnvOr(env, S.EnvRegistry, ReleaseRegistry.DefaultHost)
         const baseUrl = host.includes(S.SchemeMarker) ? host : S.HttpsScheme + host
         const credential = { username: S.Env(env, S.EnvUser), token: S.Env(env, S.EnvToken) }
         const registry = new OciRegistryClient(baseUrl, fetchFn, credential)

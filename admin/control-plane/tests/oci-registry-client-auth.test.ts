@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { OciRegistryClient, OciResponseError, type OciFetch } from '../oci-registry-client.js'
+import { OciProtocolError, OciRegistryClient, OciResponseError, type OciFetch } from '../oci-registry-client.js'
 import { FakeOciRegistry } from './fake-oci-registry.js'
 
 const Base = 'https://registry.test'
@@ -247,3 +247,31 @@ test('PullArtifactLayer rejects manifest annotations with non-string values', as
 
     await assert.rejects(client.PullArtifactLayer('r', 't'), (e: unknown) => e instanceof OciResponseError)
 })
+
+class MalformedManifests
+{
+    public static readonly ManifestType = 'application/vnd.oci.image.manifest.v1+json'
+    public static readonly Message = 'The OCI manifest is not a single-layer artifact'
+    public static readonly Cases: ReadonlyArray<[string, unknown]> = [
+        ['a null manifest', null],
+        ['an array manifest', []],
+        ['a null layer', { schemaVersion: 2, layers: [null] }],
+        ['a string layer', { schemaVersion: 2, layers: ['sha256:' + 'a'.repeat(64)] }],
+        ['layers that are not an array', { schemaVersion: 2, layers: { length: 1, 0: { digest: 'sha256:' + 'a'.repeat(64) } } }],
+        ['two layers', { schemaVersion: 2, layers: [{ digest: 'sha256:' + 'a'.repeat(64) }, { digest: 'sha256:' + 'b'.repeat(64) }] }],
+        ['a sha512 layer digest', { schemaVersion: 2, layers: [{ digest: 'sha512:' + 'a'.repeat(128) }] }],
+    ]
+}
+
+for (const [label, manifest] of MalformedManifests.Cases)
+{
+    test('PullArtifactLayer refuses ' + label + ' with a fixed OciProtocolError before any blob pull', async () =>
+    {
+        const fake = new FakeOciRegistry(Base)
+        const client = new OciRegistryClient(Base, fake.Fetch)
+        fake.PutManifest('r', 't', new TextEncoder().encode(JSON.stringify(manifest)), MalformedManifests.ManifestType)
+
+        await assert.rejects(client.PullArtifactLayer('r', 't'), (e: unknown) => e instanceof OciProtocolError && e.message === MalformedManifests.Message)
+        assert.equal(fake.Requests.some(r => r.url.includes('/blobs/')), false)
+    })
+}

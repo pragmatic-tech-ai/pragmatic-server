@@ -1045,17 +1045,19 @@ class ReleaseFx
     public static readonly Digest = 'sha256:' + 'c'.repeat(64)
     public static readonly BuiltAt = '2026-11-12T10:00:00.000Z'
     public static readonly Reason = 'image digest mismatch: pragmatic-env-gateway'
+    public static readonly KeyId = 'release-2026'
+    public static readonly ImagePrefix = 'ghcr.io/pragmatic-tech-ai/pragmatic-env-server@'
 
     public static Verified(version: string): ManifestRecord
     {
         return {
             id: version,
-            image: 'ghcr.io/pragmatic-tech-ai/pragmatic-env-server@' + ReleaseFx.Digest,
+            image: ReleaseFx.ImagePrefix + ReleaseFx.Digest,
             digest: ReleaseFx.Digest,
             signed: true,
             channel: Channel.Stable,
             publishedAt: ReleaseFx.BuiltAt,
-            release: { state: ReleaseState.Verified, builtAt: ReleaseFx.BuiltAt, signingKeyId: 'release-2026' },
+            release: { state: ReleaseState.Verified, builtAt: ReleaseFx.BuiltAt, signingKeyId: ReleaseFx.KeyId },
         }
     }
 

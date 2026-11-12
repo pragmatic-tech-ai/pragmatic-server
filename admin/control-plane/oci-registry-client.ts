@@ -443,7 +443,7 @@ export class OciRegistryClient
     {
         const S = OciRegistryClient
         const manifestBytes = await this.PullManifest(repo, tag)
-        let manifest: { layers?: Array<{ digest?: unknown }>; annotations?: Record<string, string> }
+        let manifest: unknown
         try
         {
             manifest = JSON.parse(new TextDecoder().decode(manifestBytes))
@@ -452,8 +452,8 @@ export class OciRegistryClient
         {
             throw new OciProtocolError(S.BadManifestMessage)
         }
-        const layerDigest = manifest.layers?.length === 1 ? manifest.layers[0].digest : undefined
-        if (typeof layerDigest !== 'string')
+        const layerDigest = S.SingleLayerDigest(manifest)
+        if (layerDigest === undefined)
         {
             throw new OciProtocolError(S.BadManifestMessage)
         }
@@ -462,12 +462,33 @@ export class OciRegistryClient
         {
             throw new OciProtocolError(S.LayerMismatchMessage)
         }
-        const annotations = manifest.annotations ?? {}
-        if (typeof annotations !== 'object' || Object.values(annotations).some(v => typeof v !== 'string'))
+        const annotations = (manifest as { annotations?: unknown }).annotations ?? {}
+        if (!S.IsPlainObject(annotations) || Object.values(annotations).some(v => typeof v !== 'string'))
         {
             throw new OciProtocolError(S.BadAnnotationsMessage)
         }
-        return { layer, layerDigest, annotations }
+        return { layer, layerDigest, annotations: annotations as Record<string, string> }
+    }
+
+    /** The digest of the manifest's only layer when the manifest is an object with exactly one layer object carrying a sha256 digest. */
+    private static SingleLayerDigest(manifest: unknown): string | undefined
+    {
+        const S = OciRegistryClient
+        if (!S.IsPlainObject(manifest) || !Array.isArray(manifest.layers) || manifest.layers.length !== 1)
+        {
+            return undefined
+        }
+        const layer: unknown = manifest.layers[0]
+        if (!S.IsPlainObject(layer) || typeof layer.digest !== 'string' || !S.DigestShape.test(layer.digest))
+        {
+            return undefined
+        }
+        return layer.digest
+    }
+
+    private static IsPlainObject(value: unknown): value is Record<string, unknown>
+    {
+        return typeof value === 'object' && value !== null && !Array.isArray(value)
     }
 
     private static AssertReference(reference: string): void
