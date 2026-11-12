@@ -1,5 +1,5 @@
 import { CommitKind, GraphEngine, StorageKind, WriteOp } from '@pragmatic-tech-ai/graph'
-import type { BatchOp, ConnectorChangeSet, ConnectorContext, ICommitApplied, IConnectorTransaction, IGraphConnector, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
+import type { BatchOp, ConnectorChangeSet, ConnectorContext, ICommitApplied, IConnectorApplyResult, IConnectorTransaction, IGraphConnector, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { EnvironmentCatalogError, TodlFileConnector } from '@pragmatic-tech-ai/todl/engine'
 import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
@@ -338,7 +338,9 @@ class TrackedTransaction implements IConnectorTransaction
     {
     }
 
-    public Apply(changes: ConnectorChangeSet): Promise<void>
+    // Engine 0.5.0 widened IConnectorTransaction.Apply to report what the source assigned (IConnectorApplyResult,
+    // carrying Versions); this tracking decorator forwards that result through unchanged so the version ledger sees it.
+    public Apply(changes: ConnectorChangeSet): Promise<IConnectorApplyResult | void>
     {
         for (const change of changes.Changes)
         {
