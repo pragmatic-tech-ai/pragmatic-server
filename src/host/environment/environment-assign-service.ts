@@ -6,7 +6,7 @@ import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { AccessDepthEvaluator, AssignOutcome, Tier1Catalog } from '@pragmatic-tech-ai/todl-identity-engine'
 import { AppWriteStatus, AssignStatus, ShareSubjectKind } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AssignParams, AssignResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { IGraphScopeSource } from '../engine/access-scope-source.js'
+import type { IGraphScope, IGraphScopeSource } from '../engine/access-scope-source.js'
 import type { EngineSchemaCatalog } from '../engine/engine-schema-catalog.js'
 import { EngineWriteFailure } from '../engine/engine-write-failure.js'
 import type { EnvironmentEngineHost } from './environment-engine-host.js'
@@ -61,7 +61,7 @@ export class EnvironmentAssignService
         const tier1 = await this.tier1()
         const model = await tier1.Model()
         const scope = await (await this.scopes()).ScopeFor(context)
-        const concept = await EnvironmentAssignService.ConceptOf(engine, scope.Scope, params, catalog)
+        const concept = await EnvironmentAssignService.ConceptOf(engine, scope, params, catalog)
         if (concept === undefined) return { status: AssignStatus.NotFound, reason: EnvironmentAssignService.RecordNotFound }
         const security = snapshot.Catalog.Security
         const evaluator = AccessDepthEvaluator.For(security, model, Tier1Catalog.EngineStoredConcepts(snapshot.Catalog))
@@ -69,12 +69,12 @@ export class EnvironmentAssignService
         if (computed.outcome === AssignOutcome.Unsupported) return { status: AssignStatus.Invalid, reason: EnvironmentAssignService.OrganizationOwnedReason }
         const grants = await tier1.Grants(context, snapshot)
         const base = await tier1.AssignRecords(context, snapshot)
-        const transaction = await engine.Begin(AssignScope.For(base, concept, params.id, EnvironmentAssignService.SystemFields, catalog))
+        const transaction = await engine.Begin(AssignScope.For(base, concept, params.id, EnvironmentAssignService.SystemFields, catalog), { Connector: scope.Connector })
         try
         {
             const view = await RecordGrants.View(transaction, params.id, concept, catalog)
             if (view === undefined || view.Concept !== concept) return { status: AssignStatus.NotFound, reason: EnvironmentAssignService.RecordNotFound }
-            const allowed = await RecordGrants.Covers(engine, grants, PrivilegeAction.Assign, concept, params.id)
+            const allowed = await RecordGrants.Covers(engine, scope.Connector, grants, PrivilegeAction.Assign, concept, params.id)
                 || await RecordGrants.Holds(transaction, params.id, RecordGrants.Subjects(context, model), ShareRight.Assign)
             if (!allowed) return { status: AssignStatus.Denied, reason: EnvironmentAssignService.NotAuthorized }
             const rejection = EnvironmentAssignService.StatusFor(computed.outcome)
@@ -96,9 +96,9 @@ export class EnvironmentAssignService
     }
 
     /** The record's concept as the caller's scope sees it, when it is `params.concept` or a subconcept. */
-    private static async ConceptOf(engine: GraphEngine, scope: AccessScope, params: AssignParams, catalog: EngineSchemaCatalog): Promise<string | undefined>
+    private static async ConceptOf(engine: GraphEngine, scope: IGraphScope, params: AssignParams, catalog: EngineSchemaCatalog): Promise<string | undefined>
     {
-        const reader = await engine.BeginRead(scope)
+        const reader = await engine.BeginRead(scope.Scope, { Connector: scope.Connector })
         try
         {
             return (await RecordGrants.View(reader, params.id, params.concept, catalog))?.Concept

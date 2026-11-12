@@ -1,4 +1,4 @@
-import { AuthMethod, Credential, PresentedSecret, AuthenticatedResult } from '@pragmatic-tech-ai/todl-identity'
+import { AuthMethod, Credential, PresentedSecret, AuthenticatedResult, SystemPrincipal } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext, Tenant } from '@pragmatic-tech-ai/todl-identity'
 import { AccessContextAssembler } from '@pragmatic-tech-ai/todl-identity-node'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
@@ -6,9 +6,12 @@ import { trace, isSpanContextValid } from '@opentelemetry/api'
 import { NullAccessAuditSink, AuditSurface, AuditOutcome } from './access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
 import { ScopedAccessContext } from './token-scope.js'
+import { SystemPrincipalScope } from './environment/system-principal-scope.js'
 
 /** Resolves a bearer token to an AccessContext: session first, then service token. Fail-closed:
- *  an unresolved token returns null and no context is built. */
+ *  an unresolved token returns null and no context is built. A principal in the reserved system namespace (the
+ *  environment's system id, or any id starting with `SystemPrincipalScope.ReservedPrefix`) is refused like an unknown
+ *  credential: a User with that id would own the system principal's records at User depth. */
 export class ConnectionAuthenticator
 {
     private static readonly EmptyReference = ''
@@ -26,9 +29,15 @@ export class ConnectionAuthenticator
 
     public async ResolveAsync(token: string, tenant: Tenant, pack: ServerIdentityPack): Promise<AccessContext | null>
     {
-        const context = await this.Resolve(token, tenant, pack)
+        const resolved = await this.Resolve(token, tenant, pack)
+        const context = resolved !== null && ConnectionAuthenticator.Reserved(resolved.Principal.Id, tenant) ? null : resolved
         this.Emit(tenant, context)
         return context
+    }
+
+    private static Reserved(principalId: string, tenant: Tenant): boolean
+    {
+        return SystemPrincipal.IsId(principalId, tenant.Id) || principalId.startsWith(SystemPrincipalScope.ReservedPrefix)
     }
 
     private Emit(tenant: Tenant, context: AccessContext | null): void

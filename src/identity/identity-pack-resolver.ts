@@ -15,8 +15,8 @@ export interface ResolvedPack
 
 /** Resolves a tenant's composite identity pack from its stored IdentityConfig: the base ServerIdentityPack
  *  authenticators (service-token + local-password) plus, for an OIDC pack id, the cloud Entra/Google pack's
- *  depth-aware OIDC authenticator, at the config's delegation depth. The OIDC pack is wired over the SAME
- *  tenant store-set so group->grant writes are read back by the resource policy. */
+ *  depth-aware OIDC authenticator, at the config's delegation depth (and Entra's on-behalf-of source tokens). The
+ *  OIDC pack is wired over the SAME tenant store-set so group->grant writes are read back by the resource policy. */
 export class IdentityPackResolver
 {
     private static readonly GenericScopes: readonly string[] = ['openid', 'email', 'profile']
@@ -50,6 +50,8 @@ export class IdentityPackResolver
             ExtraAuthenticators: oidcAuthenticator === undefined ? machineAuthenticators : [oidcAuthenticator, ...machineAuthenticators],
             DelegationDepth: config.DelegationDepth,
             Policy: policy,
+            // per-user source tokens (PR12): Entra's on-behalf-of provider; other packs keep the local default
+            SourceTokens: oidcPack instanceof MicrosoftEntraPack ? oidcPack.SourceTokens : undefined,
         })
         return { Pack: pack, Oidc: oidcPack }
     }

@@ -1,5 +1,5 @@
 import { AccessDefault, AccessScope, And, EdgeDirection, IdIn } from '@pragmatic-tech-ai/graph'
-import type { GraphEngine, GraphReader } from '@pragmatic-tech-ai/graph'
+import type { ConnectorContext, GraphEngine, GraphReader } from '@pragmatic-tech-ai/graph'
 import { ShareGrants, ShareSubject, SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import type { ExternalIdentity, IShareSubjects, ShareRight } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
@@ -33,10 +33,10 @@ export class RecordGrants
      * `Rows[concept] = And(grants.Covers(action, concept), IdIn{id})` (Default Deny) returns it. `concept` is the record's
      * own concept, so the privilege is judged on it as the scope compiler judges each record (a share does not count).
      */
-    public static async Covers(engine: GraphEngine, grants: Tier1Grants, action: PrivilegeAction, concept: string, id: string): Promise<boolean>
+    public static async Covers(engine: GraphEngine, connector: ConnectorContext, grants: Tier1Grants, action: PrivilegeAction, concept: string, id: string): Promise<boolean>
     {
         const rows = new Map([[concept, new And([grants.Covers(action, concept), new IdIn(new Set([id]))])]])
-        const reader = await engine.BeginRead(AccessScope.Build({ Default: AccessDefault.Deny, Rows: rows }))
+        const reader = await engine.BeginRead(AccessScope.Build({ Default: AccessDefault.Deny, Rows: rows }), { Connector: connector })
         try
         {
             return (await reader.ConceptOf(id)) === concept

@@ -9,6 +9,7 @@ import { trace } from '@opentelemetry/api'
 import { NullAccessAuditSink, AuditSurface, AuditOutcome } from './access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
 import type { RequestInstrumentation } from '../observability/request-instrumentation.js'
+import type { ICallerCredentialRevoker } from './connectors/caller-credentials.js'
 
 /** The OIDC surface the auth endpoint needs: begin an authorization and look up the OIDC authenticator.
  *  Satisfied structurally by the cloud OIDC identity-provider packs. */
@@ -81,9 +82,12 @@ export class AuthHttpEndpoint
     private readonly audit: IAccessAuditSink
     private readonly instrumentation: RequestInstrumentation | undefined
     private readonly browser: BrowserSessionAuth
+    private readonly credentials: ICallerCredentialRevoker | undefined
 
-    public constructor(pack: ServerIdentityPack, tenant: Tenant, oidc?: OidcFrontDoor, machine?: MachineAuthContext, instrumentation?: RequestInstrumentation, audit: IAccessAuditSink = new NullAccessAuditSink(), browser: BrowserSessionAuth = new BrowserSessionAuth())
+    /** `credentials`: revoked for the principal that signs out (its per-user source credentials, R27). */
+    public constructor(pack: ServerIdentityPack, tenant: Tenant, oidc?: OidcFrontDoor, machine?: MachineAuthContext, instrumentation?: RequestInstrumentation, audit: IAccessAuditSink = new NullAccessAuditSink(), browser: BrowserSessionAuth = new BrowserSessionAuth(), credentials?: ICallerCredentialRevoker)
     {
+        this.credentials = credentials
         this.browser = browser
         this.instrumentation = instrumentation
         this.audit = audit
@@ -233,6 +237,7 @@ export class AuthHttpEndpoint
             return
         }
         await this.pack.Sessions.Revoke(session.Id)
+        await this.credentials?.Revoke(session.PrincipalId)
         res.setHeader(AuthHttpEndpoint.SetCookieHeader, this.browser.BuildClearCookie(req))
         res.setHeader(AuthHttpEndpoint.CacheControlHeader, AuthHttpEndpoint.NoStore)
         res.statusCode = AuthHttpEndpoint.NoContentStatus

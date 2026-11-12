@@ -84,7 +84,7 @@ export class EnvironmentShareService
             throw new ResponseError(ErrorCodes.InvalidParams, InvalidParamsPrefix.Text + RecordGrants.ExternalRecordReason)
         }
         const scope = await (await this.scopes()).ScopeFor(context)
-        const reader = await engine.BeginRead(ShareServiceScope.Listing(scope.Scope, params.id, snapshot.SchemaCatalog))
+        const reader = await engine.BeginRead(ShareServiceScope.Listing(scope.Scope, params.id, snapshot.SchemaCatalog), { Connector: scope.Connector })
         try
         {
             const view = await RecordGrants.View(reader, params.id, params.concept, snapshot.SchemaCatalog)
@@ -122,12 +122,12 @@ export class EnvironmentShareService
         const grants = await tier1.Grants(context, snapshot)
         const scope = await (await this.scopes()).ScopeFor(context)
         const grant = ShareGrants.PublicId(params.id, kind, params.subject.id)
-        const transaction = await engine.Begin(ShareServiceScope.For(scope.Scope, new Set([grant]), params.id, snapshot.SchemaCatalog))
+        const transaction = await engine.Begin(ShareServiceScope.For(scope.Scope, new Set([grant]), params.id, snapshot.SchemaCatalog), { Connector: scope.Connector })
         try
         {
             const view = await RecordGrants.View(transaction, params.id, params.concept, snapshot.SchemaCatalog)
             if (view === undefined) return { status: ShareStatus.NotFound, reason: EnvironmentShareService.RecordNotFound }
-            const allowed = await RecordGrants.Covers(engine, grants, PrivilegeAction.Share, view.Concept, params.id)
+            const allowed = await RecordGrants.Covers(engine, scope.Connector, grants, PrivilegeAction.Share, view.Concept, params.id)
                 || await RecordGrants.Holds(transaction, params.id, RecordGrants.Subjects(context, model), ShareRight.Share)
             if (!allowed) return { status: ShareStatus.Denied, reason: EnvironmentShareService.NotAuthorized }
             if (write === GrantWrite.Put)

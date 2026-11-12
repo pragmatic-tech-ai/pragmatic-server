@@ -1,4 +1,4 @@
-import { AccessScope, CommitKind, WriteOp } from '@pragmatic-tech-ai/graph'
+import { AccessScope, CommitKind, ConnectorContext, WriteOp } from '@pragmatic-tech-ai/graph'
 import type { BatchOp, GraphEngine, ICommitApplied, IConnectorApplied, ISubscription } from '@pragmatic-tech-ai/graph'
 import { TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
@@ -168,6 +168,8 @@ export class DataChangedPush implements IDisposable
         private readonly host: EnvironmentEngineHost,
         private readonly timer: IUpgradeTimer = new TimeoutUpgradeTimer(),
         private readonly diagnostics: IDataChangedDiagnostics = new LoggerDataChangedDiagnostics(),
+        /** The background context its own System reads run under (PR12): the system principal's; Anonymous without identity. */
+        private readonly connector: ConnectorContext = ConnectorContext.Anonymous,
     )
     {
         this.opened = host.Opened.Subscribe(engine => this.Follow(engine))
@@ -229,7 +231,7 @@ export class DataChangedPush implements IDisposable
     {
         try
         {
-            const reader = await engine.BeginRead(AccessScope.System)
+            const reader = await engine.BeginRead(AccessScope.System, { Connector: this.connector })
             try
             {
                 return [reader.SnapshotCommit, [TodlNames.Element]]
@@ -296,7 +298,7 @@ export class DataChangedPush implements IDisposable
         {
             try
             {
-                const reader = await engine.BeginRead(AccessScope.System)
+                const reader = await engine.BeginRead(AccessScope.System, { Connector: this.connector })
                 try
                 {
                     for (const id of unresolved) concepts.add((await reader.ConceptOf(id)) ?? TodlNames.Element)
@@ -321,7 +323,7 @@ export class DataChangedPush implements IDisposable
         if (applied.Commit !== undefined) return [applied.Commit, concepts]
         try
         {
-            const reader = await engine.BeginRead(AccessScope.System)
+            const reader = await engine.BeginRead(AccessScope.System, { Connector: this.connector })
             try
             {
                 return [reader.SnapshotCommit, concepts]

@@ -1,5 +1,5 @@
 import { ConnectorError, Cypher } from '@pragmatic-tech-ai/graph'
-import type { AccessScope, GraphEngine, GraphReader } from '@pragmatic-tech-ai/graph'
+import type { AccessScope, ConnectorContext, GraphEngine, GraphReader } from '@pragmatic-tech-ai/graph'
 import { AppWriteStatus, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherExecuteResultDto, CypherQueryPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { EngineBridgeError, EngineBridgeErrorCode } from '@pragmatic-tech-ai/todl/engine'
@@ -316,7 +316,7 @@ export class DevCypherExecute implements IGraphCypherExecute
         try
         {
             const cypher = new Cypher.CypherEngine(engine, { MaxVarLength: request.maxVarLength })
-            result = await cypher.Execute(scope, request.cypher, { Parameters: request.parameters, Limits: { Cancel: deadline }, Placement: devScope.Placement(modelId) })
+            result = await cypher.Execute(scope, request.cypher, { Parameters: request.parameters, Limits: { Cancel: deadline }, Placement: devScope.Placement(modelId), Connector: devScope.Connector })
         }
         catch (error)
         {
@@ -327,16 +327,16 @@ export class DevCypherExecute implements IGraphCypherExecute
             if (kind === DevWriteFailureKind.SourcesChanged && fence.Lost) return ExecuteAttempt.Done(await this.LeaseLost())
             return ExecuteAttempt.Done(await this.Refuse(kind))
         }
-        return ExecuteAttempt.Done(await this.Applied(engine, snapshot, scope, result))
+        return ExecuteAttempt.Done(await this.Applied(engine, snapshot, scope, devScope.Connector, result))
     }
 
     /** The applied result; nothing after the commit can fail it (reported, rows best-effort). */
-    private async Applied(engine: GraphEngine, snapshot: DevSnapshot, scope: AccessScope, result: Cypher.CypherResult): Promise<CypherExecuteResultDto>
+    private async Applied(engine: GraphEngine, snapshot: DevSnapshot, scope: AccessScope, connector: ConnectorContext, result: Cypher.CypherResult): Promise<CypherExecuteResultDto>
     {
         let page = DevCypherExecute.NoRows
         try
         {
-            page = await DevCypherExecute.Page(engine, snapshot, scope, result)
+            page = await DevCypherExecute.Page(engine, snapshot, scope, connector, result)
         }
         catch (error)
         {
@@ -373,12 +373,12 @@ export class DevCypherExecute implements IGraphCypherExecute
     }
 
     /** The RETURN rows in TODL's wire shape, a reader under the write's scope telling the mapper what it hides. */
-    private static async Page(engine: GraphEngine, snapshot: DevSnapshot, scope: AccessScope, result: Cypher.CypherResult): Promise<CypherQueryPageDto>
+    private static async Page(engine: GraphEngine, snapshot: DevSnapshot, scope: AccessScope, connector: ConnectorContext, result: Cypher.CypherResult): Promise<CypherQueryPageDto>
     {
         let reader: GraphReader | undefined
         try
         {
-            reader = await engine.BeginRead(scope)
+            reader = await engine.BeginRead(scope, { Connector: connector })
             return CypherResultMapper.ToWire(snapshot.CellMapper.MapResult(Cypher.CypherEngine.ToDto(result), reader))
         }
         finally

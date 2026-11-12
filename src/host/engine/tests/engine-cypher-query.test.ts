@@ -4,7 +4,7 @@ import { mkdtempSync, cpSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import { AccessScope, Cypher, GraphEngine, StorageKind } from '@pragmatic-tech-ai/graph'
+import { AccessScope, ConnectorContext, Cypher, GraphEngine, StorageKind } from '@pragmatic-tech-ai/graph'
 import type { ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { TodlFileConnector, TodlNodePlacement } from '@pragmatic-tech-ai/todl/engine'
 import { Disposable } from '@pragmatic-tech-ai/todl-runtime'
@@ -305,7 +305,7 @@ class FixedSchemaWorld implements IGraphEngineHost
 
     private constructor(private readonly engine: GraphEngine, private readonly snapshot: IEngineSnapshot)
     {
-        const scope: IGraphScope = { Scope: AccessScope.System, Digest: FixedSchemaWorld.ScopeDigest, Placement: () => FixedSchemaWorld.Placement() }
+        const scope: IGraphScope = { Scope: AccessScope.System, Digest: FixedSchemaWorld.ScopeDigest, Connector: ConnectorContext.Anonymous, Placement: () => FixedSchemaWorld.Placement() }
         this.query = new EngineCypherQuery(this, async () => ({ ScopeFor: async () => scope, Dropped: new SilentSignal() }))
     }
 

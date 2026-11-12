@@ -1,5 +1,5 @@
 import { AccessScope, Cypher } from '@pragmatic-tech-ai/graph'
-import type { GraphEngine, GraphReader } from '@pragmatic-tech-ai/graph'
+import type { ConnectorContext, GraphEngine, GraphReader } from '@pragmatic-tech-ai/graph'
 import { AppWriteStatus, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherExecuteResultDto, CypherQueryPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
@@ -15,6 +15,7 @@ import { ExecuteAttempt, LoggerExecuteDiagnostics } from '../engine/graph-cypher
 import type { ICypherExecuteRequest, IExecuteDiagnostics, IGraphCypherExecute } from '../engine/graph-cypher-execute.js'
 import { ModelWriteScopes } from '../engine/model-write-scopes.js'
 import type { EnvironmentEngineHost, EnvironmentSnapshot } from './environment-engine-host.js'
+import { CallerConnectorContext } from './caller-connector-context.js'
 
 /**
  * The runtime `cypher/execute` (rulings S13, Q9) on the environment engine, under the caller's environment scope: the
@@ -83,9 +84,10 @@ export class EnvironmentCypherExecute implements IGraphCypherExecute
     private async Attempt(context: AccessContext, modelId: string | undefined, request: ICypherExecuteRequest, deadline: Cypher.Deadline, last: boolean): Promise<ExecuteAttempt>
     {
         const [engine, snapshot] = await this.host.Settled()
+        const connector = CallerConnectorContext.For(context.Principal)
         if (request.expectedRevision !== undefined)
         {
-            const revision = await EnvironmentCypherExecute.Revision(engine)
+            const revision = await EnvironmentCypherExecute.Revision(engine, connector)
             if (request.expectedRevision !== revision)
             {
                 return ExecuteAttempt.Done(CypherExecuteResultMapper.Refused(AppWriteStatus.Conflict, revision, EnvironmentCypherExecute.RevisionReason))
@@ -97,27 +99,27 @@ export class EnvironmentCypherExecute implements IGraphCypherExecute
         try
         {
             const cypher = new Cypher.CypherEngine(engine, { MaxVarLength: request.maxVarLength })
-            result = await cypher.Execute(scope, request.cypher, { Parameters: request.parameters, Limits: { Cancel: deadline }, Placement: graphScope.Placement(modelId) })
+            result = await cypher.Execute(scope, request.cypher, { Parameters: request.parameters, Limits: { Cancel: deadline }, Placement: graphScope.Placement(modelId), Connector: connector })
         }
         catch (error)
         {
             const failure = EngineWriteFailure.Map(error)
             if (failure === undefined) throw EngineCypherQuery.WireError(error)
             if (EngineWriteFailure.IsEngineConflict(error) && !last) return ExecuteAttempt.Conflicted
-            return ExecuteAttempt.Done(await EnvironmentCypherExecute.Refused(failure, engine))
+            return ExecuteAttempt.Done(await EnvironmentCypherExecute.Refused(failure, engine, connector))
         }
-        return ExecuteAttempt.Done(await this.Applied(engine, snapshot, scope, result))
+        return ExecuteAttempt.Done(await this.Applied(engine, snapshot, scope, connector, result))
     }
 
     /** The applied result; nothing after the commit can fail it (reported, rows best-effort). */
-    private async Applied(engine: GraphEngine, snapshot: EnvironmentSnapshot, scope: AccessScope, result: Cypher.CypherResult): Promise<CypherExecuteResultDto>
+    private async Applied(engine: GraphEngine, snapshot: EnvironmentSnapshot, scope: AccessScope, connector: ConnectorContext, result: Cypher.CypherResult): Promise<CypherExecuteResultDto>
     {
         let page = EnvironmentCypherExecute.NoRows
         let revision = result.Commit === undefined ? undefined : Number(result.Commit)
         try
         {
-            page = await EnvironmentCypherExecute.Page(engine, snapshot, scope, result)
-            revision ??= await EnvironmentCypherExecute.Revision(engine)
+            page = await EnvironmentCypherExecute.Page(engine, snapshot, scope, connector, result)
+            revision ??= await EnvironmentCypherExecute.Revision(engine, connector)
         }
         catch (error)
         {
@@ -127,15 +129,15 @@ export class EnvironmentCypherExecute implements IGraphCypherExecute
         return CypherExecuteResultMapper.Applied(AppWriteStatus.Applied, revision ?? 0, page, result.Stats?.ToDto())
     }
 
-    private static async Refused(failure: IWriteFailureOutcome, engine: GraphEngine): Promise<CypherExecuteResultDto>
+    private static async Refused(failure: IWriteFailureOutcome, engine: GraphEngine, connector: ConnectorContext): Promise<CypherExecuteResultDto>
     {
-        return CypherExecuteResultMapper.Refused(failure.Status, await EnvironmentCypherExecute.Revision(engine), failure.Reason)
+        return CypherExecuteResultMapper.Refused(failure.Status, await EnvironmentCypherExecute.Revision(engine, connector), failure.Reason)
     }
 
     /** The latest commit number (the wire `revision`). */
-    private static async Revision(engine: GraphEngine): Promise<number>
+    private static async Revision(engine: GraphEngine, connector: ConnectorContext): Promise<number>
     {
-        const reader = await engine.BeginRead(AccessScope.System)
+        const reader = await engine.BeginRead(AccessScope.System, { Connector: connector })
         try
         {
             return Number(reader.SnapshotCommit)
@@ -147,12 +149,12 @@ export class EnvironmentCypherExecute implements IGraphCypherExecute
     }
 
     /** The RETURN rows in TODL's wire shape, a reader under the write's scope telling the mapper what it hides. */
-    private static async Page(engine: GraphEngine, snapshot: EnvironmentSnapshot, scope: AccessScope, result: Cypher.CypherResult): Promise<CypherQueryPageDto>
+    private static async Page(engine: GraphEngine, snapshot: EnvironmentSnapshot, scope: AccessScope, connector: ConnectorContext, result: Cypher.CypherResult): Promise<CypherQueryPageDto>
     {
         let reader: GraphReader | undefined
         try
         {
-            reader = await engine.BeginRead(scope)
+            reader = await engine.BeginRead(scope, { Connector: connector })
             return CypherResultMapper.ToWire(snapshot.CellMapper.MapResult(Cypher.CypherEngine.ToDto(result), reader))
         }
         finally

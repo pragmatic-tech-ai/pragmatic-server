@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
-import type { AccessScope } from '@pragmatic-tech-ai/graph'
+import type { AccessScope, ConnectorContext } from '@pragmatic-tech-ai/graph'
 import type { Cypher, GraphEngine, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
+import { CallerConnectorContext } from '../environment/caller-connector-context.js'
 import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
 import { EngineSchemaCatalog } from './engine-schema-catalog.js'
@@ -16,6 +17,12 @@ export interface IGraphScope
 {
     /** Passed to every read and write the caller runs on the engine; endpoints never filter or mask on their own. */
     readonly Scope: AccessScope
+    /**
+     * On whose behalf the caller's connector calls run (PR12): passed as `{ Connector }` to every BeginRead, Begin and
+     * Cypher Execute opened under this scope. The caller's principal for user-started work, the system principal's for
+     * background work (SystemPrincipalScope).
+     */
+    readonly Connector: ConnectorContext
     /**
      * Where the caller's CREATEs go, stamped from the acting principal's facts (owned concepts, C3). `modelId` is the model the write is
      * confined to; a host whose placement needs one (dev) refuses its absence with InvalidArgument.
@@ -156,7 +163,7 @@ class GraphScope implements IGraphScope
     public readonly Scope: AccessScope
     public readonly Digest: string
 
-    public constructor(private readonly compiled: CompiledScope, private readonly rules: IPreparedRules)
+    public constructor(private readonly compiled: CompiledScope, private readonly rules: IPreparedRules, public readonly Connector: ConnectorContext)
     {
         this.Scope = compiled.Scope
         this.Digest = compiled.Digest
@@ -231,7 +238,7 @@ export class AccessScopeSource implements IGraphScopeSource, IDisposable
                 if (this.scopes.get(digest) === built) this.scopes.delete(digest)
             })
         }
-        return new GraphScope(await compiled, prepared)
+        return new GraphScope(await compiled, prepared, CallerConnectorContext.For(context.Principal))
     }
 
     public dispose(): void
@@ -268,7 +275,7 @@ export class AccessScopeSource implements IGraphScopeSource, IDisposable
         const records = await prepared.Records(context)
         const scope = await prepared.Finish(records.Scope, context)
         // the engine's own scope validation (ruling R63): a scope it would reject is never handed out
-        const reader = await schema.Engine.BeginRead(scope)
+        const reader = await schema.Engine.BeginRead(scope, { Connector: CallerConnectorContext.For(context.Principal) })
         reader.dispose()
         this.Report(records.Diagnostics)
         return new CompiledScope(scope, digest, records.Principal)

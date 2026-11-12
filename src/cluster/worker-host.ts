@@ -654,7 +654,7 @@ export class WorkerHost
             }
             const server = await this.registry.ServerFor(environmentId)
             const pack = await server.Pack()
-            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation, this.audit, this.browserAuth)
+            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation, this.audit, this.browserAuth, server.CallerCredentials())
             await endpoint.Handle(req, res)
         }
         catch

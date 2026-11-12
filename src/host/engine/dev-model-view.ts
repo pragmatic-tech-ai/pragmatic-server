@@ -384,7 +384,7 @@ export class DevModelView implements IGraphModelView, IDisposable
             let reader: GraphReader
             try
             {
-                reader = await engine.BeginRead(scope.Scope)
+                reader = await engine.BeginRead(scope.Scope, { Connector: scope.Connector })
             }
             catch (error)
             {

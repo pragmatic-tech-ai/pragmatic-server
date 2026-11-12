@@ -1,5 +1,6 @@
 import { join } from 'node:path'
-import { StorageKind } from '@pragmatic-tech-ai/graph'
+import { ConnectorContext, StorageKind } from '@pragmatic-tech-ai/graph'
+import type { ISubscription } from '@pragmatic-tech-ai/graph'
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantPurpose } from './tenancy/tenant-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
@@ -14,6 +15,7 @@ import type { IProvisionedSecretSource } from './config/provisioned-secret-sourc
 import { TenantConfigStoreKey } from '@pragmatic-tech-ai/todl-identity'
 import type { Tenant, IdentityConfig, ITenantConfigStore } from '@pragmatic-tech-ai/todl-identity'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
+import { UpstreamTokenVault } from '@pragmatic-tech-ai/todl-identity-cloud'
 import type { IHttpClient, IOidcFlowStateStore } from '@pragmatic-tech-ai/todl-identity-cloud'
 import type { OidcFrontDoor } from './host/auth-http-endpoint.js'
 import type { MachinePrincipalMap } from './host/machine-principal-map.js'
@@ -22,7 +24,12 @@ import { ServerBootstrap } from './identity/server-bootstrap.js'
 import { DeploymentMode } from './platform/deployment-mode.js'
 import { PlatformSelector } from './platform/platform-selector.js'
 import type { PlatformServices } from './platform/platform-services.js'
-import { ConnectorsHost, NpmAdapterPackProvider, WorkerThreadSandboxFactory, ChildProcessSandboxFactory } from '@pragmatic-tech-ai/todl-connectors-host'
+import { ConnectorsHost, NpmAdapterPackProvider, WorkerThreadSandboxFactory, ChildProcessSandboxFactory, SqlAdapterFactory, RestAdapterFactory, CypherAdapterFactory, DocumentAdapterFactory } from '@pragmatic-tech-ai/todl-connectors-host'
+import { CallerCredentialAdapterProvider } from './host/connectors/caller-credential-adapter-factory.js'
+import { CallerCredentials } from './host/connectors/caller-credentials.js'
+import type { ICallerCredentialRevoker } from './host/connectors/caller-credentials.js'
+import { CallerConnectorContext } from './host/environment/caller-connector-context.js'
+import { SystemPrincipalScope } from './host/environment/system-principal-scope.js'
 import { SandboxStrategy } from './config/server-config.js'
 import type { AdapterPacksConfig } from './config/server-config.js'
 import type { ConnectorsHostOptions } from '@pragmatic-tech-ai/todl-connectors-host'
@@ -51,6 +58,7 @@ import { DevGraphEngineHost, LoggerDevEngineDiagnostics } from './host/engine/de
 import { LoggerDevWriteDiagnostics } from './host/engine/server-model-workspace.js'
 import type { IDevGraphEngine } from './host/engine/dev-graph-engine-host.js'
 import { AccessScopeSource, LoggerScopeDiagnostics } from './host/engine/access-scope-source.js'
+import type { IGraphScope } from './host/engine/access-scope-source.js'
 import { DevScopeRules } from './host/engine/dev-scope-rules.js'
 import { EngineCypherQuery } from './host/engine/engine-cypher-query.js'
 import { DevModelView, LoggerDevModelViewDiagnostics } from './host/engine/dev-model-view.js'
@@ -155,6 +163,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private readonly platform: PlatformServices
     private readonly identity: IdentityModule | undefined
     private readonly connectorsHost: ConnectorsHost
+    private readonly callerCredentials: CallerCredentials
     private disposing: Promise<void> | undefined
     private pack: ServerIdentityPack | undefined
     private tenant: Tenant | undefined
@@ -181,6 +190,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private environmentAssign: EnvironmentAssignService | undefined
     private securitySetting: Promise<EnvironmentSecuritySetting> | undefined
     private directorySync: Promise<IdpDirectorySyncHost> | undefined
+    private deprovisioned: ISubscription | undefined
+    private systemPrincipal: Promise<SystemPrincipalScope> | undefined
     private environmentRules: EnvironmentScopeRules | undefined
     private devExecute: DevCypherExecute | undefined
 
@@ -193,17 +204,17 @@ export class PragmaticServer implements IEnvironmentGraphHost
             .Module(new SolutionServicesModule())
             .Module(new LanguageServiceModule())
         this.root = builder.Build()
-        this.connectorsHost = new ConnectorsHost(PragmaticServer.ConnectorsOptions(options))
-        for (const factory of options.adapterFactories ?? [])
-        {
-            this.connectorsHost.Catalog.Register(factory)
-        }
+        this.callerCredentials = new CallerCredentials(options.logger)
+        this.connectorsHost = new ConnectorsHost(PragmaticServer.ConnectorsOptions(options, this.callerCredentials))
+        this.RegisterAdapterFactories()
         this.RegisterInfrastructure(options.packagesRoot ?? PragmaticServer.DefaultPackagesDir)
     }
 
-    private static ConnectorsOptions(options: PragmaticServerOptions): ConnectorsHostOptions | undefined
+    /** The connectors host's options: the adapter-pack provider (if any) wrapped in the caller's credentials (PR12). */
+    private static ConnectorsOptions(options: PragmaticServerOptions, credentials: CallerCredentials): ConnectorsHostOptions | undefined
     {
-        const provider = options.connectors?.provider ?? PragmaticServer.AdapterPackProvider(options)
+        const packs = options.connectors?.provider ?? PragmaticServer.AdapterPackProvider(options)
+        const provider = packs === undefined ? undefined : new CallerCredentialAdapterProvider(packs, credentials)
         if (options.connectorsPolicy === undefined)
         {
             return provider === undefined ? options.connectors : { ...options.connectors, provider }
@@ -249,6 +260,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
                 this.pack = composed.pack
                 this.tenant = composed.tenant
                 this.oidc = composed.oidc
+                this.callerCredentials.Bind(composed.pack.SourceTokens, composed.tenant, new UpstreamTokenVault(composed.pack.Secrets))
+                this.RegisterAdapterFactories()
             }
             catch (error)
             {
@@ -369,6 +382,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
         const setting = await this.SecuritySetting()
         const sync = new IdpDirectorySync(pack.DirectorySource, pack.IdpDirectory, pack.Sessions, pack.Audit)
         const host = new IdpDirectorySyncHost(sync, setting, this.Tenant())
+        // R27: a deprovisioned principal's stored upstream tokens, cached source tokens and inner connections go
+        this.deprovisioned?.dispose()
+        this.deprovisioned = this.callerCredentials.Follow(host.Deprovisioned)
         // one run when the tenant's server starts serving (its first admin connection builds this)
         void host.RunNow()
         return host
@@ -576,8 +592,60 @@ export class PragmaticServer implements IEnvironmentGraphHost
             throw new Error(PragmaticServer.DisposedMessage)
         }
         this.AssertRuntimePurpose()
-        this.dataChanges ??= new DataChangedPush(this.EnvironmentEngine(), undefined, new LoggerDataChangedDiagnostics(this.options.logger ?? new NullLogger()))
+        this.dataChanges ??= new DataChangedPush(this.EnvironmentEngine(), undefined, new LoggerDataChangedDiagnostics(this.options.logger ?? new NullLogger()), this.BackgroundConnector())
         return this.dataChanges
+    }
+
+    /**
+     * The scope of work no user started (connector population, scheduled flows, agents, identity resolution, deploy
+     * backfill): the environment's system principal's (SystemPrincipalScope), memoized per scope-source generation (a
+     * security reload or an engine upgrade yields a fresh scope with the same rights). Runtime tenants with identity only.
+     */
+    public async SystemScope(): Promise<IGraphScope>
+    {
+        return (await this.SystemPrincipal()).Scope()
+    }
+
+    /** The system principal's scope and assign scope (SystemPrincipalScope), memoized; disposed before the scope source. */
+    public SystemPrincipal(): Promise<SystemPrincipalScope>
+    {
+        if (this.disposing !== undefined)
+        {
+            return Promise.reject(new Error(PragmaticServer.DisposedMessage))
+        }
+        this.AssertRuntimePurpose()
+        if (this.systemPrincipal === undefined)
+        {
+            const built = this.BuildSystemPrincipal()
+            this.systemPrincipal = built
+            built.catch(() =>
+            {
+                if (this.systemPrincipal === built)
+                {
+                    this.systemPrincipal = undefined
+                }
+            })
+        }
+        return this.systemPrincipal
+    }
+
+    /** Revokes a principal's per-user source credentials (R27): the auth endpoint calls it on sign-out. */
+    public CallerCredentials(): ICallerCredentialRevoker
+    {
+        return this.callerCredentials
+    }
+
+    private async BuildSystemPrincipal(): Promise<SystemPrincipalScope>
+    {
+        const tenant = this.Tenant()
+        const scopes = await this.EnvironmentScopes()
+        return new SystemPrincipalScope(scopes, this.environmentRules!, tenant)
+    }
+
+    /** The context background work's own engine reads run under: the system principal's; Anonymous without identity. */
+    private BackgroundConnector(): ConnectorContext
+    {
+        return this.identity === undefined ? ConnectorContext.Anonymous : CallerConnectorContext.System(this.Tenant())
     }
 
     private async BuildEnvironmentScopes(): Promise<AccessScopeSource>
@@ -882,10 +950,14 @@ export class PragmaticServer implements IEnvironmentGraphHost
         try
         {
             this.dataChanges?.dispose()
+            // the system principal's scope follows the scope source: it unsubscribes first
+            const systemPrincipal = await this.systemPrincipal?.catch(() => undefined)
+            systemPrincipal?.dispose()
             // the scope source unsubscribes from the engine host and the security setting before either goes
             const environmentScopes = await this.environmentScopes?.catch(() => undefined)
             environmentScopes?.dispose()
             // the directory sync host polls the setting: stop it before the setting goes
+            this.deprovisioned?.dispose()
             const directorySync = await this.directorySync?.catch(() => undefined)
             directorySync?.dispose()
             const setting = await this.securitySetting?.catch(() => undefined)
@@ -944,6 +1016,27 @@ export class PragmaticServer implements IEnvironmentGraphHost
         catch
         {
             // draining is best-effort; never block teardown on it
+        }
+    }
+
+    /**
+     * Registers the built-in adapter factories and `adapterFactories` (a later one replaces an earlier one of its kind),
+     * each wrapped in the caller's credentials (PR12). Run at construction (unbound: caller's-identity connections are
+     * refused) and again once identity is bound (Start).
+     */
+    private RegisterAdapterFactories(): void
+    {
+        const connectors = this.options.connectors
+        const factories: IDataSourceAdapterFactory[] = [
+            new SqlAdapterFactory(connectors?.buildPool),
+            new RestAdapterFactory(connectors?.restClient),
+            new CypherAdapterFactory(),
+            new DocumentAdapterFactory(),
+            ...(this.options.adapterFactories ?? []),
+        ]
+        for (const factory of factories)
+        {
+            this.connectorsHost.Catalog.Register(this.callerCredentials.Wrap(factory))
         }
     }
 

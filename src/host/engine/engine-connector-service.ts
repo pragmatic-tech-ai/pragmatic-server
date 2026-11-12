@@ -1,5 +1,5 @@
 import { AccessScope, Cypher, ValueType } from '@pragmatic-tech-ai/graph'
-import type { CellValue, GraphEngine, GraphTransaction, IFetchedView } from '@pragmatic-tech-ai/graph'
+import type { CellValue, ConnectorContext, GraphEngine, GraphTransaction, IFetchedView } from '@pragmatic-tech-ai/graph'
 import type { DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
 import type { ExternalIdentity, IExternalBinding } from '@pragmatic-tech-ai/todl/engine'
 import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
@@ -25,6 +25,7 @@ import type { IEngineSnapshot, IGraphEngineHost } from './graph-engine-host.js'
 import { ModelScopes } from './model-scopes.js'
 import { DeleteGrantsScope, RecordGrantDeletion } from './record-grant-deletion.js'
 import { EngineWriteAttribution, RecordedBatch } from './recorded-batch.js'
+import { CallerConnectorContext } from '../environment/caller-connector-context.js'
 
 /** The `connector/*` endpoints' engine side, for any engine host (ruling S1); the wire DTOs are the protocol's. */
 export interface IGraphConnectorService
@@ -238,8 +239,8 @@ export class EngineConnectorService implements IGraphConnectorService
             planned.push(op)
         }
         const identity = snapshot.Identity!
-        const scope = (await (await this.scopes()).ScopeFor(context)).Scope
-        const transaction = await engine.Begin(scope)
+        const graphScope = await (await this.scopes()).ScopeFor(context)
+        const transaction = await engine.Begin(graphScope.Scope, { Connector: graphScope.Connector })
         try
         {
             const batch = new RecordedBatch(transaction)
@@ -263,9 +264,9 @@ export class EngineConnectorService implements IGraphConnectorService
         const { Engine: engine, Snapshot: snapshot } = await this.Settled()
         EngineConnectorService.RequireModel(snapshot, params.modelId)
         const catalog = this.modelScopes.CatalogOf(snapshot.Description)
-        const grants = await EngineConnectorService.GrantsOf(engine, deleted)
+        const grants = await EngineConnectorService.GrantsOf(engine, deleted, CallerConnectorContext.For(context.Principal))
         const graphScope = await (await this.scopes()).ScopeFor(context)
-        const transaction = await engine.Begin(DeleteGrantsScope.For(graphScope.Scope, new Set(grants.keys()), catalog, new Set(deleted)))
+        const transaction = await engine.Begin(DeleteGrantsScope.For(graphScope.Scope, new Set(grants.keys()), catalog, new Set(deleted)), { Connector: graphScope.Connector })
         let refusal: IRefusal | undefined
         try
         {
@@ -325,7 +326,7 @@ export class EngineConnectorService implements IGraphConnectorService
             let result: Cypher.CypherResult
             try
             {
-                result = await new Cypher.CypherEngine(engine).Execute(scope, source, { Parameters: where.Parameters, Limits: page.Limits() })
+                result = await new Cypher.CypherEngine(engine).Execute(scope, source, { Parameters: where.Parameters, Limits: page.Limits(), Connector: graphScope.Connector })
             }
             catch (error)
             {
@@ -489,9 +490,9 @@ export class EngineConnectorService implements IGraphConnectorService
     }
 
     /** Grant id -> the deleted record it links, as a System reader sees them before the transaction (R49). */
-    private static async GrantsOf(engine: GraphEngine, records: readonly string[]): Promise<ReadonlyMap<string, string>>
+    private static async GrantsOf(engine: GraphEngine, records: readonly string[], connector: ConnectorContext): Promise<ReadonlyMap<string, string>>
     {
-        const reader = await engine.BeginRead(AccessScope.System)
+        const reader = await engine.BeginRead(AccessScope.System, { Connector: connector })
         try
         {
             return await RecordGrantDeletion.PreRead(reader, records)

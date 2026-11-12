@@ -1,9 +1,10 @@
 import { AccessScope, ValueType } from '@pragmatic-tech-ai/graph'
-import type { CellValue, Cypher, GraphEngine, GraphTransaction, IFetchedView } from '@pragmatic-tech-ai/graph'
+import type { CellValue, ConnectorContext, Cypher, GraphEngine, GraphTransaction, IFetchedView } from '@pragmatic-tech-ai/graph'
 import type { ExternalIdentity, IEnvironmentCatalog, IExternalBinding } from '@pragmatic-tech-ai/todl/engine'
 import { AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppWriteOpDto, AppWriteOpResultDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
+import { CallerConnectorContext } from './caller-connector-context.js'
 import type { IGraphScopeSource } from '../engine/access-scope-source.js'
 import type { EngineSchemaCatalog } from '../engine/engine-schema-catalog.js'
 import { EngineWriteFailure } from '../engine/engine-write-failure.js'
@@ -114,13 +115,14 @@ export class EnvironmentDataWriter
             if (!('Kind' in op)) return EnvironmentDataWriter.Refused(operations.length, { Op: index, Outcome: op })
             planned.push(op)
         }
-        const pre = await EnvironmentDataWriter.PreRead(engine, planned)
+        // the pre-read runs before the scope resolves (a grant linked between them is refused at commit), as the caller
+        const pre = await EnvironmentDataWriter.PreRead(engine, planned, CallerConnectorContext.For(context.Principal))
         const taken = planned.findIndex(op => op.Kind === AppWriteOpKind.Create && op.Id !== undefined && pre.Taken.has(op.Id))
         if (taken >= 0) return EnvironmentDataWriter.Refused(operations.length, { Op: taken, Outcome: EnvironmentDataWriter.Invisible })
         const graphScope = await (await this.scopes()).ScopeFor(context)
         const deleted = new Set(planned.filter(op => op.Kind === AppWriteOpKind.Delete).map(op => op.Id!))
         const scope = DeleteGrantsScope.For(graphScope.Scope, new Set(pre.Grants.keys()), catalog, deleted)
-        const transaction = await engine.Begin(scope)
+        const transaction = await engine.Begin(scope, { Connector: graphScope.Connector })
         try
         {
             const batch = new RecordedBatch(transaction)
@@ -189,14 +191,14 @@ export class EnvironmentDataWriter
     }
 
     /** What a System reader sees before the transaction: the deleted records' grants and the engine create ids taken. */
-    private static async PreRead(engine: GraphEngine, planned: readonly IPlannedOp[]): Promise<IPreRead>
+    private static async PreRead(engine: GraphEngine, planned: readonly IPlannedOp[], connector: ConnectorContext): Promise<IPreRead>
     {
         const grants = new Map<string, string>()
         const taken = new Set<string>()
         const deleted = planned.filter(op => op.Kind === AppWriteOpKind.Delete).map(op => op.Id!)
         const created = planned.filter(op => op.Kind === AppWriteOpKind.Create && op.Id !== undefined).map(op => op.Id!)
         if (deleted.length === 0 && created.length === 0) return { Grants: grants, Taken: taken }
-        const reader = await engine.BeginRead(AccessScope.System)
+        const reader = await engine.BeginRead(AccessScope.System, { Connector: connector })
         try
         {
             for (const [grant, record] of await RecordGrantDeletion.PreRead(reader, deleted)) grants.set(grant, record)

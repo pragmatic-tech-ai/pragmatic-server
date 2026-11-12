@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AccessDefault, AccessScope, FalsePredicate, StorageKind } from '@pragmatic-tech-ai/graph'
+import { AccessDefault, AccessScope, ConnectorContext, FalsePredicate, StorageKind } from '@pragmatic-tech-ai/graph'
 import { TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import { AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppWriteOpDto, AppWriteResultDto, DataChangedPayload, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -52,6 +52,7 @@ class DenyingScope implements IGraphScope
 {
     private static readonly NoPlacement = 'the denying scope places nothing'
     public readonly Digest = 'denying'
+    public readonly Connector = ConnectorContext.Anonymous
     public readonly Scope: AccessScope
 
     public constructor(concept: string)

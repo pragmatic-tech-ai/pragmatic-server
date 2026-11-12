@@ -156,6 +156,12 @@ export class EnvironmentScopeRules implements IScopeRules, IEnvironmentTier1
         return new EnvironmentPreparedRules(snapshot.SchemaCatalog, catalog, this.setting, String(this.setting?.Generation ?? 0)).Finish(scope, context)
     }
 
+    /** The environment host's current snapshot (what `AssignRecords` is computed against when no request holds one). */
+    public Snapshot(): Promise<EnvironmentSnapshot>
+    {
+        return this.host.Snapshot()
+    }
+
     public dispose(): void
     {
         for (const subscription of this.subscriptions.splice(0)) subscription.dispose()

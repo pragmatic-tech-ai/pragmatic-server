@@ -128,7 +128,7 @@ export class EnvironmentModelView implements IGraphModelView
             let result: Cypher.CypherResult
             try
             {
-                result = await new Cypher.CypherEngine(engine).Execute(scope, EnvironmentModelView.Source, { Limits: keyset.Limits() })
+                result = await new Cypher.CypherEngine(engine).Execute(scope, EnvironmentModelView.Source, { Limits: keyset.Limits(), Connector: graphScope.Connector })
             }
             catch (error)
             {

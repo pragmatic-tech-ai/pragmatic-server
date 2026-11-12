@@ -151,9 +151,9 @@ export class EngineCypherQuery implements IGraphCypherQuery
         try
         {
             // one reader under the query's scope per attempt: it tells the mapper which members the scope hides
-            reader = await engine.BeginRead(scope)
+            reader = await engine.BeginRead(scope, { Connector: graphScope.Connector })
             const cypher = new Cypher.CypherEngine(engine, { MaxVarLength: request.MaxVarLength })
-            const result = await cypher.Execute(scope, request.Source, { Parameters: request.Parameters, Limits: page.Limits(Cypher.Deadline.After(request.TimeoutMs)) })
+            const result = await cypher.Execute(scope, request.Source, { Parameters: request.Parameters, Limits: page.Limits(Cypher.Deadline.After(request.TimeoutMs)), Connector: graphScope.Connector })
             mapped = CypherResultMapper.ToWire(snapshot.CellMapper.MapResult(Cypher.CypherEngine.ToDto(result), reader), page.NextCursor(result))
         }
         catch (error)
