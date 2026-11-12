@@ -806,7 +806,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         return false
     }
 
-    /** Serves the three identity-admin reads (snapshot, config, security model); false for any other leaf. */
+    /** Serves the identity-admin reads (snapshot, config, tokens, security model, security catalog, security changes); false for any other leaf. */
     private async AdminRead(res: ServerResponse, name: string, leaf: string): Promise<boolean>
     {
         if (leaf === TenantApiEndpoint.SnapshotLeaf)

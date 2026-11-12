@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ConnectionFailureKind, DataSourceKind, ReconnectingAdapter, WriteAtomicity, WriteConcurrency } from '@pragmatic-tech-ai/todl'
-import type { ExternalRecord, IDataSourceAdapter, IDataSourceAdapterFactory, IDataSourceContext, QueryRequest, ResolvedConnection, WriteBatch, WriteResult } from '@pragmatic-tech-ai/todl'
+import type { DataSourceAdapterCatalog, ExternalRecord, IDataSourceAdapter, IDataSourceAdapterFactory, IDataSourceContext, QueryRequest, ResolvedConnection, WriteBatch, WriteResult } from '@pragmatic-tech-ai/todl'
 import { SqlAdapterFactory } from '@pragmatic-tech-ai/todl-connectors-host'
 import type { PgPoolOptions } from '@pragmatic-tech-ai/todl-connectors-host'
 import type { Pool } from 'pg'
@@ -427,14 +427,23 @@ class RegistrationFx
     public static readonly NoAdapter = 'no data-source adapter available'
 }
 
+/** Reaches the server's process-wide adapter catalog (protected on PragmaticServer). */
+class CatalogServer extends PragmaticServer
+{
+    public Catalog(): DataSourceAdapterCatalog
+    {
+        return this.AdapterCatalog()
+    }
+}
+
 describe('caller credentials registration', () =>
 {
     test('every adapter kind the server registers is wrapped in the caller\'s credentials', async () =>
     {
-        const server = new PragmaticServer({ purpose: TenantPurpose.Runtime })
+        const server = new CatalogServer({ purpose: TenantPurpose.Runtime })
         try
         {
-            const catalog = server.AdapterCatalog()
+            const catalog = server.Catalog()
             for (const kind of Object.values(DataSourceKind))
             {
                 const spec = { Name: kind, Kind: kind, Config: { [CallerCredentialAdapterFactory.CredentialsKey]: ConnectionCredentialMode.Caller } }

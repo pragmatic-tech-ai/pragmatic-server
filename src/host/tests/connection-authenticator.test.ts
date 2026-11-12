@@ -5,7 +5,6 @@ import { PrincipalKind, Tenant, TenantKind, Principal, PresentedSecret, SystemPr
 import { FakeStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import { ConnectionAuthenticator } from '../connection-authenticator.js'
-import { SystemPrincipalScope } from '../environment/system-principal-scope.js'
 
 class AuthenticatorFixture
 {
@@ -65,7 +64,7 @@ test('IdP principal cannot claim the system id', async () =>
     const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
     const tenant = AuthenticatorFixture.Tenant1()
     const authenticator = new ConnectionAuthenticator()
-    for (const id of [SystemPrincipal.IdFor(tenant.Id), SystemPrincipalScope.ReservedPrefix + AuthenticatorFixture.OtherEnvironment])
+    for (const id of [SystemPrincipal.IdFor(tenant.Id), SystemPrincipal.IdFor(AuthenticatorFixture.OtherEnvironment)])
     {
         const { Token } = await pack.Tokens.Issue(tenant, id, [], null)
         assert.equal(await authenticator.ResolveAsync(Token, tenant, pack), null, id + ' is refused like an unknown credential')

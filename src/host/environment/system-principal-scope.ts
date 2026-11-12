@@ -6,8 +6,9 @@ import type { IGraphScope, IGraphScopeSource } from '../engine/access-scope-sour
 import type { EnvironmentScopeRules } from './environment-scope-rules.js'
 
 /**
- * The scope of work no user started (connector population, scheduled flows, agents, identity resolution, deploy
- * backfill): the environment's system principal (`SystemPrincipal.For(tenant.Id)`, C7), System Administrator at the
+ * The scope of work no user started. Today that is the deploy ownership backfill; any future background work
+ * (connector population, scheduled flows, agents, identity resolution) must run under it too. It is the environment's
+ * system principal (`SystemPrincipal.For(tenant.Id)`, C7), System Administrator at the
  * root business unit by the tier-1 compiler, so it reads every record and secured field and its creates are owned by
  * `system:<environment>` in the root unit. Its AccessContext carries no RBAC grants: it never passes the PolicyGate and
  * exists only in-process. Its connector calls run under `CallerConnectorContext.System(tenant)` (the scope source keys

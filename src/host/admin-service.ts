@@ -227,15 +227,32 @@ export class AdminService
         return config
     }
 
-    /** Replaces the whole config; a carried security setting is checked as SetSecurityModel checks it. */
+    /**
+     * Replaces the whole config; a carried security setting is checked as SetSecurityModel checks it (and triggers a
+     * directory sync, as SetSecurityModel does). On a Runtime tenant a config without a security setting keeps the
+     * stored one: dropping it would leave the environment deny-all.
+     */
     public async SetConfig(actor: string, config: IdentityConfig): Promise<void>
     {
         if (config.SecurityModel !== undefined)
         {
             await this.CheckSecurityModel(config.SecurityModel)
         }
-        await this.Locked(config.SecurityModel, () => this.configStore.Save(this.tenant.Id, config))
-        this.security?.Invalidate()
+        await this.Locked(config.SecurityModel, async () =>
+        {
+            let saved = config
+            if (config.SecurityModel === undefined && this.security !== undefined)
+            {
+                const kept = (await this.configStore.Get(this.tenant.Id))?.SecurityModel
+                saved = new IdentityConfig(config.PackId, config.DelegationDepth, config.ProviderSettings, config.GroupRoleMap, config.ClaimsMapping, kept)
+            }
+            await this.configStore.Save(this.tenant.Id, saved)
+        })
+        if (config.SecurityModel !== undefined)
+        {
+            this.security?.Invalidate()
+            this.security?.RequestSync()
+        }
         const detail = new Map<string, string>([
             [AdminService.ActorKey, actor],
             [AdminService.ActionKey, AdminService.SetConfigAction],

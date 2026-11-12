@@ -5,7 +5,7 @@ import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
 import { AsyncMutex } from '../cypher/async-mutex.js'
 
-/** Where the change log reports what it never throws: an unreadable file and an append that did not land. */
+/** Where the change log reports what it never throws: a malformed file and an append that did not land. */
 export interface ISecurityChangeLogDiagnostics
 {
     Unreadable(error: unknown): void
@@ -57,8 +57,9 @@ class MalformedSecurityChangeLogError extends Error
  * the last `MaxEntries` deploys and promotes that changed any, newest first, for tenant-admin's change log. `Append`
  * is called with a non-empty diff only; it rewrites the file atomically (temp file + rename, the temp removed when the
  * rename fails), appends one at a time, and drops the oldest entries beyond `MaxEntries`. The log is a record, never
- * a gate: an unreadable file lists as empty and an append that fails is reported, neither throws (a deploy whose
- * setting is already pruned is not failed by its log). Survives a restart.
+ * a gate: a malformed file lists as empty (reported), and an append that fails (including a storage read error,
+ * which never overwrites the history) is reported, not thrown (a deploy whose setting is already pruned is not failed
+ * by its log). Survives a restart.
  */
 export class SecurityChangeLog
 {
@@ -89,16 +90,20 @@ export class SecurityChangeLog
         })
     }
 
-    /** The logged changes, newest first; empty when nothing was ever logged or the file cannot be read (reported). */
+    /**
+     * The logged changes, newest first; empty when nothing was ever logged or the stored content is malformed
+     * (reported). A storage read error propagates, so `Append` reports it instead of overwriting the history.
+     */
     public async List(): Promise<SecurityChangesDto[]>
     {
+        if (!(await this.storage.Exists(SecurityChangeLog.FileName)))
+        {
+            return []
+        }
+        const text = await this.storage.ReadText(SecurityChangeLog.FileName)
         try
         {
-            if (!(await this.storage.Exists(SecurityChangeLog.FileName)))
-            {
-                return []
-            }
-            const entries: unknown = JSON.parse(await this.storage.ReadText(SecurityChangeLog.FileName))
+            const entries: unknown = JSON.parse(text)
             if (!Array.isArray(entries)) throw new MalformedSecurityChangeLogError()
             return entries as SecurityChangesDto[]
         }

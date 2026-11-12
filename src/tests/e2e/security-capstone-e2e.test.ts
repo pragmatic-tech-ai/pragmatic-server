@@ -34,6 +34,7 @@ import type { IPortProbe } from '../../../admin/control-plane/port-allocator.js'
 import { TenantRegistry } from '../../../admin/control-plane/tenant-registry.js'
 import { TenantPurposeName } from '../../../environments/seed/bundle.js'
 import type { EnvDefinition } from '../../../environments/seed/bundle.js'
+import { DockerEnv } from '../../../environments/seed/docker.js'
 import type { ILogProcess } from '../../../environments/seed/docker.js'
 import { UserSeeder } from '../../../environments/seed/users.js'
 import { ServerBootstrap } from '../../bin/server-bootstrap.js'
@@ -575,14 +576,8 @@ class SalesFx
  */
 class InProcessDocker implements IDockerEnv
 {
-    private static readonly DataDir = 'data'
-    private static readonly TenantsFile = 'tenants.json'
-    private static readonly MasterKeyFile = 'master.key'
-    private static readonly SecretsFile = 'provisioned-secrets.json'
     private static readonly Utf8 = 'utf8'
     private static readonly NoText = ''
-    private static readonly DeploymentModeLocal = 'local'
-    private static readonly LocalhostOriginPrefix = 'http://localhost:'
 
     private host: PragmaticServerHost | undefined
 
@@ -595,13 +590,13 @@ class InProcessDocker implements IDockerEnv
     {
         const read = (path: string): string => readFileSync(path, InProcessDocker.Utf8)
         const config = ServerConfigLoader.Load({
-            PRAGMATIC_BASE_DIR: join(bundleDir, InProcessDocker.DataDir),
-            PRAGMATIC_TENANTS_FILE: join(bundleDir, InProcessDocker.TenantsFile),
-            PRAGMATIC_MASTER_KEY_FILE: join(bundleDir, InProcessDocker.MasterKeyFile),
-            PRAGMATIC_PROVISIONED_SECRETS_FILE: join(bundleDir, InProcessDocker.SecretsFile),
-            PRAGMATIC_PORT: String(def.hostPort),
-            PRAGMATIC_DEPLOYMENT_MODE: InProcessDocker.DeploymentModeLocal,
-            ...(def.purpose === TenantPurposeName.Runtime ? { PRAGMATIC_ALLOWED_ORIGINS: InProcessDocker.LocalhostOriginPrefix + String(def.hostPort) } : {}),
+            [DockerEnv.EnvBaseDir]: join(bundleDir, DockerEnv.DataSubdir),
+            [DockerEnv.EnvTenantsFile]: join(bundleDir, DockerEnv.TenantsFile),
+            [DockerEnv.EnvMasterKeyFile]: join(bundleDir, DockerEnv.MasterKeyFile),
+            [DockerEnv.EnvSecretsFile]: join(bundleDir, DockerEnv.SecretsFile),
+            [DockerEnv.EnvPort]: String(def.hostPort),
+            [DockerEnv.EnvDeploymentMode]: DockerEnv.DeploymentModeLocal,
+            ...(def.purpose === TenantPurposeName.Runtime ? { [DockerEnv.EnvAllowedOrigins]: DockerEnv.LocalhostOriginPrefix + String(def.hostPort) } : {}),
         }, read)
         const logger = new ServerNullLogger()
         const audit = ServerBootstrap.AuditSink(config, logger)
