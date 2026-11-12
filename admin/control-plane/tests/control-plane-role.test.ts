@@ -1,6 +1,59 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { ControlPlaneRole, ControlPlaneRoleInvalidError, ControlPlaneRoles, EdgeRoleWithoutChannelError } from '../control-plane-role.js'
+import { ControlPlaneRole, ControlPlaneRoleInvalidError, ControlPlaneRoles, ControlPlaneStart, EdgeRoleWithoutChannelError, type IControlPlaneListenerStarts } from '../control-plane-role.js'
+
+/** Records which listeners the start sequence asked for, in order. */
+class RecordingListeners implements IControlPlaneListenerStarts
+{
+    public readonly Started: string[] = []
+
+    public async StartOperatorHost(): Promise<void>
+    {
+        this.Started.push('operator')
+    }
+
+    public async StartAgentChannel(): Promise<void>
+    {
+        this.Started.push('channel')
+    }
+
+    public async StartTenantPlane(): Promise<void>
+    {
+        this.Started.push('tenant')
+    }
+
+    public static async StartedBy(role: ControlPlaneRole): Promise<string[]>
+    {
+        const listeners = new RecordingListeners()
+        await new ControlPlaneStart(role).Run(listeners)
+        return listeners.Started
+    }
+}
+
+describe('control-plane start sequence', () =>
+{
+    it('all starts the operator host, then the agent channel, then the tenant plane', async () =>
+    {
+        assert.deepEqual(await RecordingListeners.StartedBy(ControlPlaneRole.All), ['operator', 'channel', 'tenant'])
+    })
+
+    it('edge starts only the agent channel', async () =>
+    {
+        assert.deepEqual(await RecordingListeners.StartedBy(ControlPlaneRole.Edge), ['channel'])
+    })
+
+    it('admin starts everything except the agent channel', async () =>
+    {
+        assert.deepEqual(await RecordingListeners.StartedBy(ControlPlaneRole.Admin), ['operator', 'tenant'])
+    })
+
+    it('only the edge skips the operator-side services', () =>
+    {
+        assert.equal(ControlPlaneRoles.ServesOperators(ControlPlaneRole.All), true)
+        assert.equal(ControlPlaneRoles.ServesOperators(ControlPlaneRole.Admin), true)
+        assert.equal(ControlPlaneRoles.ServesOperators(ControlPlaneRole.Edge), false)
+    })
+})
 
 describe('control-plane role', () =>
 {
@@ -35,6 +88,7 @@ describe('control-plane role', () =>
         {
             assert.ok(err instanceof ControlPlaneRoleInvalidError)
             assert.match(err.message, /PRAGMATIC_CONTROL_PLANE_ROLE/)
+            assert.match(err.message, /all, edge, admin$/)
             assert.doesNotMatch(err.message, /sneaky-value/)
             return true
         })

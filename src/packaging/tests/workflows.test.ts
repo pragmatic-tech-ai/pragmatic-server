@@ -43,17 +43,19 @@ test('ci workflow runs tests, checks the image closures and bakes the app images
     assert.doesNotMatch(text, /--push/)
 })
 
-interface WorkflowStep
+interface IWorkflowStep
 {
     name?: string
     if?: string
     run?: string
+    uses?: string
+    with?: Record<string, unknown>
 }
 
 test('release workflow publishes on release tags only, and never leaks its credentials', () =>
 {
     const text = Workflows.Text('release.yml')
-    const doc = parse(text) as { on: { push: { tags: string[] } }; permissions: Record<string, string>; jobs: Record<string, { steps?: WorkflowStep[] }> }
+    const doc = parse(text) as { on: { push: { tags: string[] } }; permissions: Record<string, string>; jobs: Record<string, { steps?: IWorkflowStep[] }> }
     assert.deepEqual(doc.on, { push: { tags: ['release/*'] } })
     assert.deepEqual(doc.permissions, { contents: 'read', packages: 'write' })
     const steps = Object.values(doc.jobs).flatMap(job => job.steps ?? [])
@@ -67,7 +69,16 @@ test('release workflow publishes on release tags only, and never leaks its crede
     const cleanup = steps.find(step => step.if === 'always()' && /rm -f .*release\.key.*npmrc/.test(step.run ?? ''))
     assert.ok(cleanup !== undefined, 'an always() step removes the key and the npmrc')
     assert.doesNotMatch(text, /set -x/)
-    assert.doesNotMatch(text, /run:.*\$\{\{ secrets\.(RELEASE_SIGNING_KEY|PACKAGES_TOKEN) \}\}/, 'secrets reach scripts through env, not the script text')
+    for (const run of runs)
+    {
+        assert.doesNotMatch(run, /\$\{\{\s*secrets\./, 'secrets reach scripts through env, not the script text')
+    }
+    for (const step of steps.filter(s => s.uses !== undefined))
+    {
+        assert.match(step.uses as string, /@[0-9a-f]{40}$/, `third-party action pinned by commit sha: ${step.uses}`)
+    }
+    const checkout = steps.find(step => step.uses?.startsWith('actions/checkout@') === true)
+    assert.equal(checkout?.with?.['persist-credentials'], false, 'the checkout does not leave the token in .git/config')
 })
 
 test('ci workflow builds TODL like every other sibling (no DOM workaround)', () =>

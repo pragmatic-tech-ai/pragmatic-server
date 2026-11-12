@@ -84,6 +84,25 @@ class Fixture
     public static readonly HttpsPrefix = 'https://'
     public static readonly EvilHttpsOrigin = 'https://evil.example'
     public static readonly EnvHostValue = 'x.example'
+    public static readonly HealthPath = '/healthz'
+    public static readonly HealthBody = 'ok'
+    public static readonly Ok = 200
+
+    public static Body(host: ControlPlaneHost, path: string): Promise<string>
+    {
+        const addr = host.Address()
+        return new Promise((resolve, reject) =>
+        {
+            const req = request({ host: addr.address, port: addr.port, method: Fixture.Get, path }, res =>
+            {
+                let body = ''
+                res.on('data', chunk => { body += String(chunk) })
+                res.on('end', () => resolve(body))
+            })
+            req.on('error', reject)
+            req.end()
+        })
+    }
 
     public static Send(host: ControlPlaneHost, method: string, path: string, headers: Record<string, string>): Promise<number>
     {
@@ -135,6 +154,14 @@ describe('ControlPlaneHost host guards', () =>
     {
         await Start()
         assert.equal(await Fixture.Send(host, Fixture.Get, Fixture.StatePath, { [Fixture.HostHeader]: Fixture.AttackerWithPort }), Fixture.Forbidden)
+    })
+
+    it('answers /healthz with 200 without a session, before the Host guard and the SPA fallback', async () =>
+    {
+        await Start([Fixture.Configured])
+        assert.equal(await Fixture.Send(host, Fixture.Get, Fixture.HealthPath, {}), Fixture.Ok)
+        assert.equal(await Fixture.Send(host, Fixture.Get, Fixture.HealthPath, { [Fixture.HostHeader]: Fixture.Attacker }), Fixture.Ok)
+        assert.equal(await Fixture.Body(host, Fixture.HealthPath), Fixture.HealthBody)
     })
 
     it('accepts a loopback Host with no config', async () =>

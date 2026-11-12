@@ -116,7 +116,8 @@ RUN set -e; mkdir /todl-dev-stash; for pkg in esbuild typescript; do \
 # Shared runtime base: the app images below differ only in what they copy and how they start.
 FROM node:22-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS runtime
 ENV NODE_ENV=production
-RUN useradd --system --create-home --uid 10001 pragmatic
+# uid and gid are both 10001, so the --chown=10001:10001 copies below never leave files under an orphan group.
+RUN groupadd --system --gid 10001 pragmatic && useradd --system --create-home --uid 10001 --gid 10001 pragmatic
 WORKDIR /workspace/pragmatic-server
 
 FROM runtime AS pragmatic-platform-admin
@@ -134,9 +135,8 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin /workspace/pragmatic-server/dist-tenant-admin
 USER 10001
 EXPOSE 7000
-# The operator listener has no /healthz route: any HTTP answer on it means the process is serving.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD node -e "const r=require('node:http').request({host:'127.0.0.1',port:process.env.PRAGMATIC_ADMIN_PORT||7000,path:'/healthz'},()=>process.exit(0));r.on('error',()=>process.exit(1));r.end()"
+  CMD node -e "const r=require('node:http').request({host:'127.0.0.1',port:process.env.PRAGMATIC_ADMIN_PORT||7000,path:'/healthz'},x=>process.exit(x.statusCode===200?0:1));r.on('error',()=>process.exit(1));r.end()"
 ENTRYPOINT ["node", "dist-tenant-admin/admin/control-plane/server.js"]
 
 # The same control plane, started as the agent-channel listener only (PRAGMATIC_CONTROL_PLANE_ROLE=edge).
@@ -219,9 +219,8 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin /workspace/pragmatic-server/dist-tenant-admin
 USER 10001
-# The tenant plane answers 403 to a Host that is not a tenant subdomain: any HTTP answer means the process is serving.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD node -e "const r=require('node:http').request({host:'127.0.0.1',port:process.env.PRAGMATIC_TENANT_ADMIN_PORT,path:'/healthz'},()=>process.exit(0));r.on('error',()=>process.exit(1));r.end()"
+  CMD node -e "const r=require('node:http').request({host:'127.0.0.1',port:process.env.PRAGMATIC_TENANT_ADMIN_PORT,path:'/healthz'},x=>process.exit(x.statusCode===200?0:1));r.on('error',()=>process.exit(1));r.end()"
 ENTRYPOINT ["node", "dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-admind.js"]
 
 # The tenant IdP; its CA tooling shells out to the openssl CLI.

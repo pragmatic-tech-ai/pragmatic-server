@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import type { Duplex } from 'node:stream'
 import { resolve } from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
+import { HealthEndpoint } from '../../src/host/health-endpoint.js'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { ConsoleRegistration, ConsoleRegistrationState } from './console-registration.js'
 import type { IEnvironmentService } from './control-plane-host.js'
@@ -70,6 +71,7 @@ export class TenantPlaneHost
     private readonly registrationSubscription: IDisposable | undefined
     private httpServer: HttpServer | undefined
     private wsServer: WebSocketServer | undefined
+    private readonly health = new HealthEndpoint()
     /** Tenant ws sockets mapped to their teardown (events: unsubscribe; logs: kill the stream). Close() runs each. */
     private readonly clients = new Map<WebSocket, TrackedSocket>()
 
@@ -216,6 +218,11 @@ export class TenantPlaneHost
             {
                 req.resume()
                 PlaneHttp.WriteJson(res, TenantPlaneHost.StatusBadRequest, { error: TenantPlaneHost.BadRequestMessage })
+                return
+            }
+            // Liveness before the Host check and the tenant bundle: a probe carries no session and dials 127.0.0.1.
+            if (PlaneHttp.WriteHealthIfProbe(this.health, req, res, path, true))
+            {
                 return
             }
             // The desktop surface is Host-independent (Plexus dials plain loopback): its tenant comes from the flow or bearer.

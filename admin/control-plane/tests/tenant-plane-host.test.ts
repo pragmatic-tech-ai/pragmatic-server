@@ -464,6 +464,17 @@ describe('TenantPlaneHost routing and isolation', () =>
         assert.equal(r.body, TenantSentinel)
     })
 
+    it('answers /healthz with 200 without a session, on any Host, and never from the tenant bundle', async () =>
+    {
+        for (const hostHeader of [Kit.TenantHost, Kit.UnknownHost, '127.0.0.1'])
+        {
+            const r = await Kit.Raw(host, HttpMethod.Get, '/healthz', { [Kit.HostHeader]: hostHeader })
+            assert.equal(r.status, 200)
+            assert.equal(r.body, 'ok')
+        }
+        assert.equal(api.Calls, 0)
+    })
+
     it('refuses traversal out of the tenant root', async () =>
     {
         const plain = await Kit.Raw(host, HttpMethod.Get, TraversalPath, { [Kit.HostHeader]: Kit.TenantHost })

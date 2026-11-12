@@ -18,15 +18,24 @@ export interface IControlPlaneListeners
     TenantPlane: boolean
 }
 
+/** Starts each listener a composed control plane holds; ControlPlaneStart decides which of them a role starts. */
+export interface IControlPlaneListenerStarts
+{
+    StartOperatorHost(): Promise<void>
+    StartAgentChannel(): Promise<void>
+    StartTenantPlane(): Promise<void>
+}
+
 /** The role variable holds a value that is not a known role (the value itself is never echoed). */
 export class ControlPlaneRoleInvalidError extends Error
 {
     private static readonly ErrorName = 'ControlPlaneRoleInvalidError'
-    private static readonly MessageText = 'PRAGMATIC_CONTROL_PLANE_ROLE must be one of: all, edge, admin'
+    private static readonly MessagePrefix = 'PRAGMATIC_CONTROL_PLANE_ROLE must be one of: '
+    private static readonly Separator = ', '
 
-    public constructor()
+    public constructor(allowed: readonly string[])
     {
-        super(ControlPlaneRoleInvalidError.MessageText)
+        super(ControlPlaneRoleInvalidError.MessagePrefix + allowed.join(ControlPlaneRoleInvalidError.Separator))
         this.name = ControlPlaneRoleInvalidError.ErrorName
     }
 }
@@ -47,7 +56,7 @@ export class EdgeRoleWithoutChannelError extends Error
 export class ControlPlaneRoles
 {
     public static readonly EnvVar = 'PRAGMATIC_CONTROL_PLANE_ROLE'
-    private static readonly Known: readonly ControlPlaneRole[] = [ControlPlaneRole.All, ControlPlaneRole.Edge, ControlPlaneRole.Admin]
+    public static readonly Known: readonly ControlPlaneRole[] = Object.values(ControlPlaneRole)
 
     /** Pure: the role named by the environment; unset or blank is `all`. */
     public static Of(env: NodeJS.ProcessEnv): ControlPlaneRole
@@ -60,7 +69,7 @@ export class ControlPlaneRoles
         const role = ControlPlaneRoles.Known.find(r => r === raw)
         if (role === undefined)
         {
-            throw new ControlPlaneRoleInvalidError()
+            throw new ControlPlaneRoleInvalidError(ControlPlaneRoles.Known)
         }
         return role
     }
@@ -73,12 +82,47 @@ export class ControlPlaneRoles
         return { OperatorHost: !edge, AgentChannel: !admin, TenantPlane: !edge }
     }
 
+    /**
+     * Pure: whether the role opens the operator-side state (operator accounts, the master key and the sealed secrets,
+     * the environment reconcile, the account back-fill, the DNS re-check). The edge serves only the agent channel, so a
+     * co-deployed edge never repeats that work.
+     */
+    public static ServesOperators(role: ControlPlaneRole): boolean
+    {
+        return role !== ControlPlaneRole.Edge
+    }
+
     /** Refuses an edge process with no agent-channel port: it would serve nothing. */
     public static RequireListener(role: ControlPlaneRole, agentChannelEnabled: boolean): void
     {
         if (role === ControlPlaneRole.Edge && !agentChannelEnabled)
         {
             throw new EdgeRoleWithoutChannelError()
+        }
+    }
+}
+
+/** The start sequence of one control-plane process: operator host, then agent channel, then tenant plane, as its role allows. */
+export class ControlPlaneStart
+{
+    public constructor(private readonly role: ControlPlaneRole)
+    {
+    }
+
+    public async Run(listeners: IControlPlaneListenerStarts): Promise<void>
+    {
+        const starts = ControlPlaneRoles.ListenersOf(this.role)
+        if (starts.OperatorHost)
+        {
+            await listeners.StartOperatorHost()
+        }
+        if (starts.AgentChannel)
+        {
+            await listeners.StartAgentChannel()
+        }
+        if (starts.TenantPlane)
+        {
+            await listeners.StartTenantPlane()
         }
     }
 }

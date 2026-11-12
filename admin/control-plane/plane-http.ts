@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { extname, resolve, sep } from 'node:path'
+import type { HealthEndpoint } from '../../src/host/health-endpoint.js'
 
 /** Stateless HTTP primitives shared by the control-plane host and any other plane host (host/origin checks, JSON + static responses). */
 export class PlaneHttp
@@ -10,6 +11,7 @@ export class PlaneHttp
     public static readonly OriginHeader = 'origin'
     public static readonly ContentType = 'Content-Type'
     public static readonly JsonType = 'application/json; charset=utf-8'
+    public static readonly TextPlainType = 'text/plain; charset=utf-8'
     public static readonly DefaultType = 'application/octet-stream'
     public static readonly MethodGet = 'GET'
     public static readonly MethodHead = 'HEAD'
@@ -136,5 +138,22 @@ export class PlaneHttp
     {
         res.writeHead(status, { [PlaneHttp.ContentType]: PlaneHttp.JsonType })
         res.end(JSON.stringify(body))
+    }
+
+    /**
+     * Answers the unauthenticated liveness / readiness probes (`/healthz`, `/readyz`) when `path` is one of them, before
+     * any Host, Origin, session or SPA handling, as the gateway and worker do; false for every other request.
+     */
+    public static WriteHealthIfProbe(health: HealthEndpoint, req: IncomingMessage, res: ServerResponse, path: string, ready: boolean): boolean
+    {
+        const answer = health.Handle(req.method ?? PlaneHttp.MethodGet, path, ready)
+        if (answer === null)
+        {
+            return false
+        }
+        req.resume()
+        res.writeHead(answer.status, { [PlaneHttp.ContentType]: PlaneHttp.TextPlainType })
+        res.end(answer.body)
+        return true
     }
 }

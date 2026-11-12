@@ -91,7 +91,90 @@ import type { TenantPlane } from './tenant-auth/tenant-plane.js'
 import type { IEnvironmentService } from './control-plane-host.js'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 import type { IRolloutClient } from './tenant-api/rollout-client.js'
-import { ControlPlaneRoles } from './control-plane-role.js'
+import { ControlPlaneRoles, ControlPlaneStart, type IControlPlaneListenerStarts } from './control-plane-role.js'
+
+/** The composed tenant listener, its port/bind already validated (so a bad tenant port fails before any socket binds). */
+interface ITenantPlaneStart
+{
+    host: TenantPlaneHost
+    port: number
+    bind: string
+    scheme: string
+    baseDomain: string
+}
+
+/** The operator side of a composed control plane: absent for the edge role. */
+interface IOperatorSideStart
+{
+    host: ControlPlaneHost
+    port: number
+    tenant: ITenantPlaneStart | undefined
+}
+
+/** The agent-channel listener; `raw` is the port variable as given, for the invalid-port warning. */
+interface IAgentChannelStart
+{
+    host: AgentChannelHost
+    port: number
+    raw: string | undefined
+    bind: string
+}
+
+/** What ControlPlaneServer.Main composed for each listener; ControlPlaneStart decides which of them this role starts. */
+class ComposedListeners implements IControlPlaneListenerStarts
+{
+    private static readonly BindHost = '127.0.0.1'
+    private static readonly ListeningPrefix = 'Control plane listening on http://localhost:'
+    private static readonly ListeningSuffix = '/'
+    private static readonly AgentChannelListeningPrefix = 'Agent channel listening on '
+    private static readonly AgentChannelInvalidPortWarning = 'Ignoring invalid PRAGMATIC_AGENT_CHANNEL_PORT (expected an integer 1-65535); agent channel not started: '
+    private static readonly TenantListeningPrefix = 'Tenant plane listening on '
+    private static readonly SchemeHostSeparator = '://'
+    private static readonly HostPortSeparator = ':'
+
+    public constructor(private readonly operator: IOperatorSideStart | undefined, private readonly channel: IAgentChannelStart)
+    {
+    }
+
+    /** The operator listener is structurally loopback-only: no tenant route is mounted on it. */
+    public async StartOperatorHost(): Promise<void>
+    {
+        if (this.operator === undefined)
+        {
+            return
+        }
+        await this.operator.host.Listen(this.operator.port, ComposedListeners.BindHost)
+        console.log(ComposedListeners.ListeningPrefix + String(this.operator.port) + ComposedListeners.ListeningSuffix)
+    }
+
+    public async StartAgentChannel(): Promise<void>
+    {
+        const L = ComposedListeners
+        const c = this.channel
+        if (c.port === ControlPlaneServer.AgentChannelDisabled)
+        {
+            if (c.raw !== undefined && c.raw !== '')
+            {
+                console.warn(L.AgentChannelInvalidPortWarning + c.raw)
+            }
+            return
+        }
+        await c.host.Listen(c.port, c.bind)
+        console.log(L.AgentChannelListeningPrefix + c.bind + L.HostPortSeparator + String(c.port))
+    }
+
+    public async StartTenantPlane(): Promise<void>
+    {
+        const L = ComposedListeners
+        const t = this.operator?.tenant
+        if (t === undefined)
+        {
+            return
+        }
+        await t.host.Listen(t.port, t.bind)
+        console.log(L.TenantListeningPrefix + t.scheme + L.SchemeHostSeparator + t.baseDomain + L.HostPortSeparator + String(t.port) + L.ListeningSuffix)
+    }
+}
 
 export class ControlPlaneServer
 {
@@ -104,7 +187,6 @@ export class ControlPlaneServer
     public static readonly IdpsFile = 'idps.json'
     private static readonly MaxPort = TenantPlaneComposer.MaxPort
     private static readonly BadPortPrefix = 'Invalid PRAGMATIC_ADMIN_PORT: '
-    private static readonly BindHost = '127.0.0.1'
     private static readonly DataDir = 'data'
     private static readonly KeysDirName = PlatformHiveOrchestratorFactory.KeysDirName
     private static readonly SigningKeyRefEnvVar = 'PRAGMATIC_ADMIN_SIGNING_KEY_REF'
@@ -125,8 +207,6 @@ export class ControlPlaneServer
     private static readonly ReleasePoliciesFile = 'release-policies.json'
     private static readonly AdoptionLedgerFile = 'adoption-ledger.json'
     private static readonly PortalSegment = 'portal'
-    private static readonly ListeningPrefix = 'Control plane listening on http://localhost:'
-    private static readonly ListeningSuffix = '/'
     private static readonly MasterKeyEnvVar = 'PRAGMATIC_ADMIN_MASTER_KEY_FILE'
     private static readonly OperatorEmailEnvVar = 'PRAGMATIC_ADMIN_OPERATOR_EMAIL'
     private static readonly OperatorPasswordEnvVar = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD'
@@ -154,11 +234,6 @@ export class ControlPlaneServer
     private static readonly AgentChannelUrlInvalidWarning = 'Ignoring invalid PRAGMATIC_AGENT_CHANNEL_URL (expected an absolute http(s) URL); hive install bundles are unavailable: '
     // How a pod in Docker Desktop's Kubernetes reaches this machine; override with PRAGMATIC_AGENT_CHANNEL_URL elsewhere.
     private static readonly DefaultAgentChannelUrlPrefix = 'http://host.docker.internal:'
-    private static readonly AgentChannelListeningPrefix = 'Agent channel listening on '
-    private static readonly AgentChannelInvalidPortWarning = 'Ignoring invalid PRAGMATIC_AGENT_CHANNEL_PORT (expected an integer 1-65535); agent channel not started: '
-    private static readonly TenantListeningPrefix = 'Tenant plane listening on '
-    private static readonly SchemeHostSeparator = '://'
-    private static readonly HostPortSeparator = ':'
     private static readonly SecretTtlEnvVar = 'PRAGMATIC_TENANT_ADMIN_SECRET_TTL_HOURS'
     private static readonly HealthProbeMsEnvVar = 'PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_MS'
     private static readonly HealthProbeTimeoutMsEnvVar = 'PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_TIMEOUT_MS'
@@ -171,27 +246,38 @@ export class ControlPlaneServer
 
     public static async Main(): Promise<void>
     {
-        // The role is read first, so an unknown value (or an edge with no channel port) fails before any state is touched;
-        // `all` starts every listener, as before the role existed.
+        // The role and the agent-channel port are read first, so an unknown role (or an edge with no channel port) fails
+        // before any state is touched; `all` composes and starts everything, as before the role existed.
         const role = ControlPlaneRoles.Of(process.env)
-        const listeners = ControlPlaneRoles.ListenersOf(role)
-        ControlPlaneRoles.RequireListener(role, ControlPlaneServer.ParseAgentChannelPort(process.env[ControlPlaneServer.AgentChannelPortEnvVar]) !== ControlPlaneServer.AgentChannelDisabled)
+        const agentChannelRaw = process.env[ControlPlaneServer.AgentChannelPortEnvVar]
+        const agentChannelPort = ControlPlaneServer.ParseAgentChannelPort(agentChannelRaw)
+        ControlPlaneRoles.RequireListener(role, agentChannelPort !== ControlPlaneServer.AgentChannelDisabled)
+        // Operator-side state is opened only by roles that serve operators: the edge (agent channel only) skips the operator
+        // accounts, the master key and sealed secrets, the environment reconcile, the account back-fill and the DNS re-check.
+        // What the channel itself needs (the directory, the deployment registry and its signer, adverts, owner resets, email
+        // domains) is composed for every role (R3: the real split is piece 3).
+        const servesOperators = ControlPlaneRoles.ServesOperators(role)
         const here = dirname(fileURLToPath(import.meta.url))
         const dataRoot = join(here, ControlPlaneServer.DataDir)
         mkdirSync(dataRoot, { recursive: true })
         const opts = ControlPlaneServer.ReadOperatorOptions(process.env, dataRoot)
-        const operator = await OperatorIdentity.Compose(opts)
-        const masterKey = MasterKeyFile.Load(opts.masterKeyFile)
+        const operator = servesOperators ? await OperatorIdentity.Compose(opts) : undefined
+        const masterKey = servesOperators ? MasterKeyFile.Load(opts.masterKeyFile) : undefined
         const docker = new DockerEnvAdapter(new DockerEnv())
         const registry = new EnvironmentRegistry(join(dataRoot, TenantPlaneComposer.RegistryFile), docker)
         await registry.Load()
-        await registry.Reconcile()
+        if (servesOperators)
+        {
+            await registry.Reconcile()
+        }
         const directory = new PlatformDirectory(
             new ClientRegistry(join(dataRoot, ControlPlaneServer.ClientsFile)),
             new TenantRegistry(join(dataRoot, ControlPlaneServer.TenantsFile)),
             new HiveRegistry(join(dataRoot, ControlPlaneServer.HivesFile)),
             registry)
         await directory.Load()
+        // Every role: the deployment registry the agent channel serves is built over the manifest signer, which needs the
+        // platform key (the trust-root back-fill this runs is idempotent, so a co-deployed edge and admin agree).
         const signing = await ControlPlaneServer.PlatformSigningOf(process.env, dataRoot, directory)
         const allocator = new PortAllocator(TenantPlaneComposer.EnvPortFloor, new NetPortProbe())
         const bundle = new BundleBuilderAdapter()
@@ -224,20 +310,33 @@ export class ControlPlaneServer
         // Operator Owner resets of in-hive consoles: recorded by the console installer, answered to the console in its advert.
         const ownerResets = new ConsoleOwnerResets(join(dataRoot, ControlPlaneServer.ConsoleOwnerResetsFile))
         await Promise.all([manifests.Load(), audit.Load(), desktopAudit.Load(), graphAudit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load(), accountIndex.Load(), adverts.Load(), approvals.Load(), ownerResets.Load()])
-        await accountIndex.BackfillFrom(directory)
+        if (servesOperators)
+        {
+            await accountIndex.BackfillFrom(directory)
+        }
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(signing.PlatformSigner.KeyRef, dataRoot, signing.ImageSigner), policies, ledger)
-        // One tenant session store for the tenant plane and the Owner password reset (which ends the Owner's sessions).
-        const tenantSessions = TenantPlaneComposer.TenantSessionsOf(dataRoot)
-        const principalSessions = new TenantPrincipalSessions(tenantSessions)
-        const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn), principalSessions, accountIndex)
-        const agentChannelRaw = process.env[ControlPlaneServer.AgentChannelPortEnvVar]
-        const agentChannelPort = ControlPlaneServer.ParseAgentChannelPort(agentChannelRaw)
         const agentChannelUrlRaw = process.env[ControlPlaneServer.AgentChannelUrlEnvVar]
         const agentChannelUrl = ControlPlaneServer.AgentChannelUrl(agentChannelPort, agentChannelUrlRaw)
         if (agentChannelPort !== ControlPlaneServer.AgentChannelDisabled && agentChannelUrl === undefined)
         {
             console.warn(ControlPlaneServer.AgentChannelUrlInvalidWarning + String(agentChannelUrlRaw))
         }
+        // One email-domain service for the operator routes, the control-plane tenant plane and the console adverts the agent
+        // channel receives, over the shared adverts and approvals.
+        const domainVerifier = new DomainTxtVerifier(new NodeTxtResolver())
+        const emailDomains = new PlatformEmailDomains(directory, adverts, approvals, domainVerifier)
+        const channel = new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, ownerResets, emailDomains))
+        const agentBind = ControlPlaneServer.ParseAgentChannelBind(process.env[ControlPlaneServer.AgentChannelBindEnvVar])
+        const channelStart: IAgentChannelStart = { host: channel, port: agentChannelPort, raw: agentChannelRaw, bind: agentBind }
+        if (operator === undefined || masterKey === undefined)
+        {
+            await new ControlPlaneStart(role).Run(new ComposedListeners(undefined, channelStart))
+            return
+        }
+        // One tenant session store for the tenant plane and the Owner password reset (which ends the Owner's sessions).
+        const tenantSessions = TenantPlaneComposer.TenantSessionsOf(dataRoot)
+        const principalSessions = new TenantPrincipalSessions(tenantSessions)
+        const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn), principalSessions, accountIndex)
         // Installs a Local hive's agent through the same cluster access the orchestrators already hold; off with the channel.
         const agentInstaller = new HiveAgentInstaller(directory, orchestrators, deployments, observations, agentChannelUrl)
         // Console keys and the dev CA are sealed under the master key; discovery and the console installer share one fingerprint-key source.
@@ -250,9 +349,6 @@ export class ControlPlaneServer
             new DevCertificateAuthority(join(dataRoot, DevCertificateAuthority.DirName), sealed), new InHiveIdpAdmin(orchestrators, sealed),
             new PlatformConsoleImageApproval(signing.PlatformSigner, PlatformHiveOrchestratorFactory.VerifierFor(dataRoot)),
             new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)), agentChannelUrl, new SystemInstallClock(), adverts, ownerResets)
-        // One email-domain service for the operator routes and the control-plane tenant plane, over the shared adverts and approvals.
-        const domainVerifier = new DomainTxtVerifier(new NodeTxtResolver())
-        const emailDomains = new PlatformEmailDomains(directory, adverts, approvals, domainVerifier)
         // Daily DNS re-check of verified domains (after approvals.Load; its interval timer is unref'd, so no shutdown hook).
         new DomainVerificationRechecker(approvals, domainVerifier).Start()
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery, consoleInstaller, adverts, approvals, emailDomains)
@@ -262,8 +358,8 @@ export class ControlPlaneServer
             { endpoints, audit: desktopAudit }, emailDomains, new TenantGraphAccess(graphService, graphAudit))
         // Resolve (and validate) the tenant port + bind BEFORE binding the operator listener, so a misconfigured
         // tenant port fails fast at startup rather than after the operator socket is already live.
-        let tenantStart: { host: TenantPlaneHost; port: number; bind: string; scheme: string; baseDomain: string } | undefined
-        if (tenantPlane !== undefined && listeners.TenantPlane)
+        let tenantStart: ITenantPlaneStart | undefined
+        if (tenantPlane !== undefined)
         {
             const baseDomain = process.env[ControlPlaneServer.TenantBaseDomainEnvVar] as string
             const scheme = TenantPlaneComposer.TenantScheme(process.env[ControlPlaneServer.TenantSchemeEnvVar])
@@ -286,28 +382,8 @@ export class ControlPlaneServer
             const tenantBind = TenantPlaneComposer.TenantBind(process.env[ControlPlaneServer.TenantBindEnvVar])
             tenantStart = { host: tenantHost, port: tenantPort, bind: tenantBind, scheme, baseDomain }
         }
-        // The operator listener is structurally loopback-only: no tenant route is mounted on it.
-        if (listeners.OperatorHost)
-        {
-            await host.Listen(port, ControlPlaneServer.BindHost)
-            console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)
-        }
-        if (agentChannelPort === ControlPlaneServer.AgentChannelDisabled && agentChannelRaw !== undefined && agentChannelRaw !== '')
-        {
-            console.warn(ControlPlaneServer.AgentChannelInvalidPortWarning + agentChannelRaw)
-        }
         // The admin role still derives the channel URL above (hive bundles point at the edge) but does not listen on it.
-        if (agentChannelPort !== ControlPlaneServer.AgentChannelDisabled && listeners.AgentChannel)
-        {
-            const agentBind = ControlPlaneServer.ParseAgentChannelBind(process.env[ControlPlaneServer.AgentChannelBindEnvVar])
-            await new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, ownerResets, emailDomains)).Listen(agentChannelPort, agentBind)
-            console.log(ControlPlaneServer.AgentChannelListeningPrefix + agentBind + ControlPlaneServer.HostPortSeparator + String(agentChannelPort))
-        }
-        if (tenantStart !== undefined)
-        {
-            await tenantStart.host.Listen(tenantStart.port, tenantStart.bind)
-            console.log(ControlPlaneServer.TenantListeningPrefix + tenantStart.scheme + ControlPlaneServer.SchemeHostSeparator + tenantStart.baseDomain + ControlPlaneServer.HostPortSeparator + String(tenantStart.port) + ControlPlaneServer.ListeningSuffix)
-        }
+        await new ControlPlaneStart(role).Run(new ComposedListeners({ host, port, tenant: tenantStart }, channelStart))
     }
 
     /** Pure: derives operator-identity compose options and cookie policy from the environment. */

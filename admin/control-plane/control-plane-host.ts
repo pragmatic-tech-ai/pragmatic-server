@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net'
 import type { Duplex } from 'node:stream'
 import { resolve } from 'node:path'
 import { WebSocketServer, WebSocket } from 'ws'
+import { HealthEndpoint } from '../../src/host/health-endpoint.js'
 import {
     CreateFailedError,
     DockerUnavailableError,
@@ -517,6 +518,7 @@ export class ControlPlaneHost
 
     private httpServer: HttpServer | undefined
     private wsServer: WebSocketServer | undefined
+    private readonly health = new HealthEndpoint()
     private changeSubscription: (() => void) | undefined
     private revalidating = false
     /** Operators (principal ids) with an own-password change in flight: a second one is refused (409). */
@@ -813,6 +815,11 @@ export class ControlPlaneHost
         let auditPath = ControlPlaneHost.AuditUnsetValue
         try
         {
+            // Liveness first: a probe carries no session and may present any Host (the image HEALTHCHECK dials 127.0.0.1).
+            if (PlaneHttp.WriteHealthIfProbe(this.health, req, res, new URL(req.url ?? PlaneHttp.RootPath, ControlPlaneHost.BaseUrl).pathname, true))
+            {
+                return
+            }
             if (!this.HostAllowed(req))
             {
                 PlaneHttp.WriteJson(res, ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.ForbiddenHostMessage })

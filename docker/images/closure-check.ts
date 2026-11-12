@@ -44,7 +44,7 @@ export class EsbuildLocator
 }
 
 /** One app's entry in closure.json (wire casing). Paths in `files` are relative to the workspace root. */
-export interface ClosureEntry
+export interface IClosureEntry
 {
     entrypoint: string[]
     packages: string[]
@@ -274,7 +274,7 @@ export class ClosureCheck
         return process.argv[1] !== undefined && resolve(fileURLToPath(import.meta.url)) === resolve(process.argv[1])
     }
 
-    private static Measure(app: string, entry: ClosureEntry, root: string, siblingByName: Map<string, string>, esbuild: IEsbuild, owners: Map<string, string | undefined>, targets: DockerfileTargets | undefined): IAppClosure
+    private static Measure(app: string, entry: IClosureEntry, root: string, siblingByName: Map<string, string>, esbuild: IEsbuild, owners: Map<string, string | undefined>, targets: DockerfileTargets | undefined): IAppClosure
     {
         const C = ClosureCheck
         const server = join(root, C.ServerDir)
@@ -341,7 +341,7 @@ export class ClosureCheck
     }
 
     /** The app's Dockerfile stage must copy exactly its packages and files, and start its entrypoint. */
-    private static CompareTarget(app: string, entry: ClosureEntry, targets: DockerfileTargets, missing: string[], extra: string[]): void
+    private static CompareTarget(app: string, entry: IClosureEntry, targets: DockerfileTargets, missing: string[], extra: string[]): void
     {
         const C = ClosureCheck
         const copied = targets.Copies(app)
@@ -410,11 +410,11 @@ export class ClosureCheck
         return byName
     }
 
-    private static ReadManifest(path: string): Record<string, ClosureEntry>
+    private static ReadManifest(path: string): Record<string, IClosureEntry>
     {
         try
         {
-            return JSON.parse(readFileSync(path, ClosureCheck.Utf8)) as Record<string, ClosureEntry>
+            return JSON.parse(readFileSync(path, ClosureCheck.Utf8)) as Record<string, IClosureEntry>
         }
         catch (err)
         {
