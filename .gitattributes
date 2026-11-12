@@ -1,0 +1,2 @@
+# Shell scripts run inside Linux images and containers: keep LF on every checkout (a CRLF copy fails `set -eu`).
+*.sh text eol=lf
