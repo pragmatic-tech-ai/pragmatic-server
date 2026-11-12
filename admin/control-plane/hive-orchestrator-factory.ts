@@ -1,37 +1,32 @@
-import { join, resolve } from 'node:path'
-import { CryptoImageVerifier } from './image-verifier.js'
-import { DockerImageDigest } from './image-digest.js'
+import { resolve } from 'node:path'
+import type { IImageVerifier } from './image-verifier.js'
 import { EffectiveRegistry } from './effective-registry.js'
-import { FileKeyStore } from './key-store.js'
-import { FileSignatureStore } from './signature-store.js'
 import { InClusterHiveOrchestrator, type InClusterOrchestration } from './in-cluster-hive-orchestrator.js'
 import { ForeignHiveError, UnsupportedBackendError } from './hive-orchestrator.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KubectlCli } from './kubectl.js'
 import { KubectlHiveOrchestrator } from './kubectl-hive-orchestrator.js'
+import { PinnedImageVerifier } from './pinned-image-verifier.js'
 import { HiveBackend, InfraMode } from './platform-records.js'
 import type { HiveRecord } from './platform-records.js'
 
 /**
  * Where a hive's backend x mode maps to a concrete orchestrator driver. Inside a tenant console pod (`inCluster` set) the
  * only hive it can drive is its own Local hive, through the Kubernetes API; every other hive is unsupported there.
- * A Local hive the platform provisions itself (kind on a dev box) is unsupported here: KindHiveOrchestratorFactory, which
- * only the platform composes, drives it, so the in-hive tenant admin never carries the kind driver.
+ * The dev-box drivers are not here, so the in-hive tenant admin never carries them: PlatformHiveOrchestratorFactory, which
+ * only the platform composes, verifies images against local docker digests and drives kind-provisioned Local hives. Here an
+ * attached hive outside a pod verifies nothing (every image is refused) and a provisioned one is unsupported.
  */
 export class HiveOrchestratorFactory
 {
     private static readonly DefaultLocalContext = 'docker-desktop'
 
     private static readonly DefaultDataRoot = resolve('.pragmatic-data/control-plane')
-    /** The data-root file of image signatures (written by the platform signer, read by every verifier). */
-    public static readonly SignaturesFileName = 'signatures.json'
-    /** The data-root directory of the key store (trust-root public keys, the platform signing pair). */
-    public static readonly KeysDirName = 'keys'
 
     public constructor(
         private readonly localContext: string = HiveOrchestratorFactory.DefaultLocalContext,
-        private readonly dataRoot: string = HiveOrchestratorFactory.DefaultDataRoot,
+        protected readonly dataRoot: string = HiveOrchestratorFactory.DefaultDataRoot,
         private readonly inCluster?: InClusterOrchestration)
     {
     }
@@ -62,19 +57,16 @@ export class HiveOrchestratorFactory
         throw new UnsupportedBackendError(backend, mode)
     }
 
-    /** The driver of a Local hive the platform provisions itself; none here (see KindHiveOrchestratorFactory). */
+    /** The driver of a Local hive the platform provisions itself; none here (see PlatformHiveOrchestratorFactory). */
     protected ForProvisionedLocal(hive: HiveRecord): IHiveOrchestrator
     {
         throw new UnsupportedBackendError(hive.cluster.backend, hive.cluster.mode)
     }
 
-    /** The control plane's image verifier: local docker digests, the data root's signature store and key store. */
-    public static VerifierFor(dataRoot: string): CryptoImageVerifier
+    /** The image gate of a kubectl-driven hive; here nothing is approved (the platform's factory checks signed digests). */
+    protected Verifier(): IImageVerifier
     {
-        return new CryptoImageVerifier(
-            new DockerImageDigest(),
-            new FileSignatureStore(join(dataRoot, HiveOrchestratorFactory.SignaturesFileName)),
-            new FileKeyStore(join(dataRoot, HiveOrchestratorFactory.KeysDirName)))
+        return new PinnedImageVerifier([])
     }
 
     protected BuildKubectl(hive: HiveRecord, context: string): KubectlHiveOrchestrator
@@ -83,7 +75,7 @@ export class HiveOrchestratorFactory
             new KubectlCli(context),
             new K8sManifestBuilder(),
             EffectiveRegistry.For(hive),
-            HiveOrchestratorFactory.VerifierFor(this.dataRoot),
+            this.Verifier(),
             hive.trustRootRef)
     }
 }

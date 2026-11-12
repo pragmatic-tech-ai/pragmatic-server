@@ -29,7 +29,7 @@ import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ControlPlaneHost } from './control-plane-host.js'
 import type { TenantProvisioningService } from './tenant-provisioning-service.js'
-import { KindHiveOrchestratorFactory } from './kind-hive-orchestrator-factory.js'
+import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
 import { ManifestRegistry } from './manifest-record.js'
 import { GatingRegistry } from './gating-record.js'
 import { SelectionRegistry } from './selection-record.js'
@@ -238,7 +238,7 @@ export class ControlPlaneSmoke
         const allocator = new PortAllocator(ControlPlaneSmoke.EnvPortFloor, new NetPortProbe())
         const proxy = new AdminProxy(new WsAdminConnector())
         const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneSmoke.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneSmoke.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
-        const orchestrators = new KindHiveOrchestratorFactory()
+        const orchestrators = new PlatformHiveOrchestratorFactory()
         const placement = new EnvironmentPlacement(directory)
         const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
         const operator = await OperatorIdentity.Compose({

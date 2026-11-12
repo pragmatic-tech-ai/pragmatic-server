@@ -67,7 +67,7 @@ import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import { EnvironmentPlacement } from './environment-placement.js'
 import { HiveObservationRegistry } from './hive-observation-record.js'
 import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
-import { KindHiveOrchestratorFactory } from './kind-hive-orchestrator-factory.js'
+import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { IdpLoginPage } from './idp-login-page.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
@@ -505,7 +505,7 @@ export class TenantLoginE2eSmoke
         this.idpContainers = new IdpContainerEnv(new ExecFileDockerExec())
         this.idpRegistry = new IdpRegistry(join(this.dataRoot, S.IdpsFile))
         const idpService = new IdpService(this.idpRegistry, new DockerIdpDriver(new PortAllocator(S.IdpPortFloor, new NetPortProbe()), this.idpContainers, this.dataRoot, DockerEnv.ImageName))
-        const orchestrators = new KindHiveOrchestratorFactory(S.K8sContext, join(this.dataRoot, S.OrchestratorDir))
+        const orchestrators = new PlatformHiveOrchestratorFactory(S.K8sContext, join(this.dataRoot, S.OrchestratorDir))
         const placement = new EnvironmentPlacement(directory)
         const service = new EnvironmentService(
             environments, new PortAllocator(S.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()),

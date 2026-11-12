@@ -12,7 +12,7 @@ import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ControlPlaneHost } from './control-plane-host.js'
 import { LoginThrottle } from './login-throttle.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
-import { KindHiveOrchestratorFactory } from './kind-hive-orchestrator-factory.js'
+import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
 import { constants as osConstants } from 'node:os'
 import { ClusterTunnelPool } from './cluster-tunnel-pool.js'
 import { EnvironmentEndpoints } from './environment-endpoints.js'
@@ -105,9 +105,9 @@ export class ControlPlaneServer
     private static readonly BadPortPrefix = 'Invalid PRAGMATIC_ADMIN_PORT: '
     private static readonly BindHost = '127.0.0.1'
     private static readonly DataDir = 'data'
-    private static readonly KeysDirName = HiveOrchestratorFactory.KeysDirName
+    private static readonly KeysDirName = PlatformHiveOrchestratorFactory.KeysDirName
     private static readonly SigningKeyRefEnvVar = 'PRAGMATIC_ADMIN_SIGNING_KEY_REF'
-    private static readonly SignaturesFileName = HiveOrchestratorFactory.SignaturesFileName
+    private static readonly SignaturesFileName = PlatformHiveOrchestratorFactory.SignaturesFileName
     private static readonly TrustAdoptedPrefix = 'Platform signing key '
     private static readonly TrustAdoptedInfix = ' set as the trust root of hives: '
     private static readonly HiveIdSeparator = ', '
@@ -135,8 +135,6 @@ export class ControlPlaneServer
     private static readonly TrustedProxyEnvVar = 'PRAGMATIC_ADMIN_TRUSTED_PROXY'
     private static readonly AllowedHostsEnvVar = 'PRAGMATIC_ADMIN_ALLOWED_HOSTS'
     private static readonly ListSeparator = ','
-    private static readonly TrueToken = 'true'
-    private static readonly OneToken = '1'
     private static readonly TenantPortEnvVar = 'PRAGMATIC_TENANT_ADMIN_PORT'
     private static readonly TenantBindEnvVar = 'PRAGMATIC_TENANT_ADMIN_BIND'
     private static readonly TenantBaseDomainEnvVar = 'PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN'
@@ -194,7 +192,7 @@ export class ControlPlaneServer
         const seeder = new UserSeederAdapter(new UserSeeder())
         const proxy = new AdminProxy(new WsAdminConnector())
         const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
-        const orchestrators = new KindHiveOrchestratorFactory(undefined, dataRoot)
+        const orchestrators = new PlatformHiveOrchestratorFactory(undefined, dataRoot)
         const placement = new EnvironmentPlacement(directory)
         // In-cluster environments are reached through pooled kubectl port-forwards; every tunnel dies with the process.
         const tunnels = new ClusterTunnelPool()
@@ -244,7 +242,7 @@ export class ControlPlaneServer
         // Installs a Local hive's tenant console through the same cluster access.
         const consoleInstaller = new TenantConsoleInstaller(directory, orchestrators, new TenantAdminBootstrap(deployments), fingerprintKeys,
             new DevCertificateAuthority(join(dataRoot, DevCertificateAuthority.DirName), sealed), new InHiveIdpAdmin(orchestrators, sealed),
-            new PlatformConsoleImageApproval(signing.PlatformSigner, HiveOrchestratorFactory.VerifierFor(dataRoot)),
+            new PlatformConsoleImageApproval(signing.PlatformSigner, PlatformHiveOrchestratorFactory.VerifierFor(dataRoot)),
             new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)), agentChannelUrl, new SystemInstallClock(), adverts, ownerResets)
         // One email-domain service for the operator routes and the control-plane tenant plane, over the shared adverts and approvals.
         const domainVerifier = new DomainTxtVerifier(new NodeTxtResolver())
@@ -313,16 +311,10 @@ export class ControlPlaneServer
             identityRoot: join(dataRoot, ControlPlaneServer.IdentitySegment),
             operatorEmail: env[ControlPlaneServer.OperatorEmailEnvVar] ?? ControlPlaneServer.DefaultOperatorEmail,
             initialPassword: password === undefined || password === '' ? undefined : password,
-            secureCookie: secure === ControlPlaneServer.TrueToken || secure === ControlPlaneServer.OneToken,
-            trustedProxy: proxied === ControlPlaneServer.TrueToken || proxied === ControlPlaneServer.OneToken,
+            secureCookie: TenantPlaneComposer.ReadsTrue(secure),
+            trustedProxy: TenantPlaneComposer.ReadsTrue(proxied),
             allowedHosts: ControlPlaneServer.ParseHostList(env[ControlPlaneServer.AllowedHostsEnvVar]),
         }
-    }
-
-    /** Pure: whether an env flag is set to true ('true' or '1'). */
-    public static ReadsTrue(raw: string | undefined): boolean
-    {
-        return raw === ControlPlaneServer.TrueToken || raw === ControlPlaneServer.OneToken
     }
 
     /** Pure: splits a comma-separated host list, trimming blanks and dropping empties. */
@@ -364,7 +356,7 @@ export class ControlPlaneServer
         }
         // The control plane's tenant plane is the one Plexus talks to, so it carries the desktop surface.
         return TenantPlaneComposer.BuildTenantPlane(dataRoot, idpService, directory, secureCookie, service, rollout, orchestrators, placement,
-            masterKey, adminClientRegistry, secretTtlHours, sessions, principals, ControlPlaneServer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]), true, relay, emailDomains, undefined, graphs)
+            masterKey, adminClientRegistry, secretTtlHours, sessions, principals, TenantPlaneComposer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]), true, relay, emailDomains, undefined, graphs)
     }
 
     /** Pure: the agent-channel port, or AgentChannelDisabled when unset, blank, or not an integer in 1..65535. */

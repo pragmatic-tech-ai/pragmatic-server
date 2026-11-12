@@ -65,6 +65,14 @@ export class TenantPlaneComposer
     private static readonly DefaultHealthProbeTimeoutMs = 60000
     private static readonly TenantAdminOidcDir = 'tenant-admin-oidc'
     private static readonly PositiveIntegerPattern = /^[0-9]+$/
+    private static readonly TrueToken = 'true'
+    private static readonly OneToken = '1'
+
+    /** Pure: whether an env flag is set to true ('true' or '1'). */
+    public static ReadsTrue(raw: string | undefined): boolean
+    {
+        return raw === TenantPlaneComposer.TrueToken || raw === TenantPlaneComposer.OneToken
+    }
 
     /**
      * Gate-free composition of the tenant plane; callers decide whether the plane is active (ControlPlaneServer.ComposeTenantPlane

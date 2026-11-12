@@ -65,7 +65,7 @@ describe('NoHostEnvironmentRuntime', () =>
             await assert.rejects(verb, (err: unknown) => err instanceof HostRuntimeUnavailableError && err.message.endsWith(NoHostFixture.Name))
         }
         assert.throws(() => runtime.LogStream(ctx, () => undefined), HostRuntimeUnavailableError)
-        assert.throws(() => runtime.BuildCommand(), HostRuntimeUnavailableError)
+        assert.throws(() => runtime.BuildCommand(), (err: unknown) => err instanceof HostRuntimeUnavailableError && err.message === HostRuntimeUnavailableError.NoHostBackendMessage)
     })
 
     it('lets stop and teardown pass and probes nothing as running: there is nothing here to stop', async () =>

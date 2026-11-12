@@ -7,13 +7,14 @@ import { KubectlHiveOrchestrator } from '../kubectl-hive-orchestrator.js'
 import { KubectlCli } from '../kubectl.js'
 import { KindClusterName } from '../kind-cluster-name.js'
 import { KindHiveOrchestrator } from '../kind-hive-orchestrator.js'
-import { KindHiveOrchestratorFactory } from '../kind-hive-orchestrator-factory.js'
+import { PlatformHiveOrchestratorFactory } from '../platform-hive-orchestrator-factory.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { HiveRecord } from '../platform-records.js'
 import { InClusterHiveOrchestrator } from '../in-cluster-hive-orchestrator.js'
 import type { InClusterOrchestration } from '../in-cluster-hive-orchestrator.js'
 import { EnvNamespaceGuard } from '../env-namespace-guard.js'
 import { PinnedImageVerifier } from '../pinned-image-verifier.js'
+import { CryptoImageVerifier, ImageVerificationError } from '../image-verifier.js'
 import { KubeApiClient } from '../kube-api-client.js'
 
 class FactoryFixture
@@ -85,13 +86,13 @@ for (const [backend, mode] of FactoryFixture.Unsupported)
 
 test('Local + Provision resolves to a KindHiveOrchestrator on the platform factory', () =>
 {
-    const factory = new KindHiveOrchestratorFactory()
+    const factory = new PlatformHiveOrchestratorFactory()
     assert.ok(factory.For(FactoryFixture.Hive(HiveBackend.Local, InfraMode.Provision)) instanceof KindHiveOrchestrator)
 })
 
 test('the platform factory still drives an attached Local hive through kubectl', () =>
 {
-    const factory = new KindHiveOrchestratorFactory()
+    const factory = new PlatformHiveOrchestratorFactory()
     assert.ok(factory.For(FactoryFixture.Hive(HiveBackend.Local, InfraMode.Attach)) instanceof KubectlHiveOrchestrator)
 })
 
@@ -103,9 +104,19 @@ test('Local + Provision is unsupported without the kind driver (the in-hive tena
         (e: unknown) => e instanceof UnsupportedBackendError && e.message.includes(HiveBackend.Local) && e.message.includes(InfraMode.Provision))
 })
 
+test('off-pod, the base factory approves no image while the platform factory checks signed docker digests', async () =>
+{
+    const hive = FactoryFixture.Hive(HiveBackend.Local, InfraMode.Attach)
+    const base = new HiveOrchestratorFactory().For(hive) as unknown as { verifier: unknown }
+    assert.ok(base.verifier instanceof PinnedImageVerifier)
+    await assert.rejects((base.verifier as PinnedImageVerifier).Verify('registry.local/pragmatic-server:1.0.0', undefined), ImageVerificationError)
+    const platform = new PlatformHiveOrchestratorFactory().For(hive) as unknown as { verifier: unknown }
+    assert.ok(platform.verifier instanceof CryptoImageVerifier)
+})
+
 test('two hives with different ids get different cluster names', () =>
 {
-    const factory = new KindHiveOrchestratorFactory()
+    const factory = new PlatformHiveOrchestratorFactory()
     const a = factory.For(FactoryFixture.HiveWithId('hive-a')) as KindHiveOrchestrator
     const b = factory.For(FactoryFixture.HiveWithId('hive-b')) as KindHiveOrchestrator
     assert.notEqual(a.ClusterName, b.ClusterName)

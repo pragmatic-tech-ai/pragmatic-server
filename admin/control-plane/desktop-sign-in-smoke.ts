@@ -37,7 +37,7 @@ import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
 import { DockerEnvironmentRuntime } from './environment-runtime.js'
 import { EnvironmentService } from './environment-service.js'
-import { KindHiveOrchestratorFactory } from './kind-hive-orchestrator-factory.js'
+import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
 import { HiveRegistry } from './hive-registry.js'
 import { IdpAdminClient } from './idp-admin-client.js'
 import { ExecFileDockerExec, IdpContainerEnv } from './idp-container-env.js'
@@ -420,7 +420,7 @@ export class DesktopSignInSmoke
             new HiveRegistry(join(this.dataRoot, S.HivesFile)),
             registry)
         await directory.Load()
-        const orchestrators = new KindHiveOrchestratorFactory(undefined, this.dataRoot)
+        const orchestrators = new PlatformHiveOrchestratorFactory(undefined, this.dataRoot)
         const placement = new EnvironmentPlacement(directory)
         const bundle = new BundleBuilderAdapter()
         const idp = new IdpService(new IdpRegistry(join(this.dataRoot, S.IdpsFile)), new DockerIdpDriver(new PortAllocator(0, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), this.dataRoot, DockerEnv.ImageName))

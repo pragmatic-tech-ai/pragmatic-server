@@ -52,7 +52,8 @@ import { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
 import { EnvironmentService } from './environment-service.js'
 import type { EnvironmentWorkload } from './environment-workload.js'
 import { HiveHealthProducer } from './hive-health-producer.js'
-import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
 import { DockerImageDigest } from './image-digest.js'
 import { ImageSigner } from './image-signer.js'
 import { InClusterEnvironmentRuntime } from './in-cluster-environment-runtime.js'
@@ -546,7 +547,7 @@ export class InClusterEnvCreateSmoke
         const docker = new DockerEnvAdapter(new DockerEnv())
         const registry = new EnvironmentRegistry(join(dataRoot, S.RegistryFileName), docker)
         await registry.Load()
-        const orchestrators = new HiveOrchestratorFactory(S.Context, dataRoot)
+        const orchestrators = new PlatformHiveOrchestratorFactory(S.Context, dataRoot)
         const placement = new EnvironmentPlacement(directory)
         this.monitorDeps = { directory, orchestrators, placement }
         return new EnvironmentService(

@@ -28,7 +28,7 @@ import { EnvStatus, EnvType, Template } from './environment-record.js'
 import type { EnvironmentRecord } from './environment-record.js'
 import { EffectiveRegistry } from './effective-registry.js'
 import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
-import { KindHiveOrchestratorFactory } from './kind-hive-orchestrator-factory.js'
+import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { DockerImageDigest } from './image-digest.js'
 import { ImageSigner } from './image-signer.js'
@@ -208,7 +208,7 @@ export class KindHiveSmoke
         const effective = EffectiveRegistry.For(S.Hive(S.HiveIdA))
         await new ImageSigner(new DockerImageDigest(), signatures, keys).Sign(effective.ImageRef(S.Image), S.SigningKeyRef)
         console.log(S.InfoTag + S.InfoSigned + S.SigningKeyRef)
-        return new KindHiveOrchestratorFactory(undefined, this.tempDir)
+        return new PlatformHiveOrchestratorFactory(undefined, this.tempDir)
     }
 
     private Resolve(factory: HiveOrchestratorFactory, hiveId: string): SmokeHive

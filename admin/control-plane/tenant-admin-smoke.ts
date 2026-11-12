@@ -39,7 +39,7 @@ import { EnvStatus, EnvType, Template } from './environment-record.js'
 import type { EnvironmentRecord, IContainerProbe } from './environment-record.js'
 import { GatingRegistry } from './gating-record.js'
 import { HiveObservationRegistry } from './hive-observation-record.js'
-import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
 import { HiveRegistry } from './hive-registry.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KubectlCli, KubectlError, NodeExecFile } from './kubectl.js'
@@ -322,7 +322,7 @@ export class TenantAdminSmoke
         {
             await store.Load()
         }
-        const factory = new HiveOrchestratorFactory(this.context, join(this.tempDir!, S.DataRootDirName))
+        const factory = new PlatformHiveOrchestratorFactory(this.context, join(this.tempDir!, S.DataRootDirName))
         return new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, factory, environments, new EnvironmentPlacement(directory), observations)
     }
 

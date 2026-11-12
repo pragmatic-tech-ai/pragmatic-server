@@ -30,7 +30,7 @@ import type { EnvironmentRecord, IContainerProbe } from './environment-record.js
 import type { EnvironmentWorkload } from './environment-workload.js'
 import { GatingRegistry } from './gating-record.js'
 import { HiveObservationRegistry } from './hive-observation-record.js'
-import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { HiveRegistry } from './hive-registry.js'
@@ -59,7 +59,7 @@ class NoContainerProbe implements IContainerProbe
 }
 
 /** A factory whose backend is unreachable: SelectTarget records the selection, then the push is skipped (left for the pull agent). */
-class UnreachableFactory extends HiveOrchestratorFactory
+class UnreachableFactory extends PlatformHiveOrchestratorFactory
 {
     public override For(hive: HiveRecord): IHiveOrchestrator
     {
@@ -216,7 +216,7 @@ export class RolloutPullSmoke
                 trustRootRef: S.SigningKeyRef,
             })
 
-            const factory = new HiveOrchestratorFactory(S.Context, dataRoot)
+            const factory = new PlatformHiveOrchestratorFactory(S.Context, dataRoot)
             const stores = await this.LoadStores()
             const placement = new EnvironmentPlacement(directory)
             // Same stores, two registries: `registry` is served to the agent; `recorder` cannot reach the cluster, so SelectTarget only records.

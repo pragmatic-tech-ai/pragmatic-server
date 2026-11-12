@@ -117,8 +117,6 @@ export class TenantAdminServer
     private static readonly BadSeedMessage = 'Invalid seed.json: expected { tenant, hives[] }'
     private static readonly MissingMasterKeyPrefix = 'Tenant-admin master key file not found: '
     private static readonly SeedFile = 'seed.json'
-    private static readonly TrueToken = 'true'
-    private static readonly OneToken = '1'
     private static readonly ListeningTemplate = 'Tenant plane listening on {scheme}://{domain}:{port}/'
     private static readonly SchemeToken = '{scheme}'
     private static readonly DomainToken = '{domain}'
@@ -185,8 +183,8 @@ export class TenantAdminServer
             baseDomain,
             scheme: TenantPlaneComposer.TenantScheme(env[TenantAdminEnv.Scheme]),
             externalPort: TenantPlaneComposer.TenantExternalPort(env[TenantAdminEnv.ExternalPort]),
-            secureCookie: TenantAdminServer.ReadsTrue(env[TenantAdminEnv.SecureCookie]),
-            trustedProxy: TenantAdminServer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]),
+            secureCookie: TenantPlaneComposer.ReadsTrue(env[TenantAdminEnv.SecureCookie]),
+            trustedProxy: TenantPlaneComposer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]),
             secretTtlHours: TenantPlaneComposer.ParseSecretTtlHours(env[TenantAdminEnv.SecretTtl]),
             probeMs: TenantPlaneComposer.ParseHealthProbeMs(env[TenantAdminEnv.HealthProbeMs]),
             probeTimeoutMs: TenantPlaneComposer.ParseHealthProbeTimeoutMs(env[TenantAdminEnv.HealthProbeTimeoutMs]),
@@ -410,12 +408,6 @@ export class TenantAdminServer
         composition.advert?.Stop()
         await composition.advert?.Idle()
         await composition.host.Close()
-    }
-
-    /** Whether an env flag is set to true ('true' or '1'). */
-    private static ReadsTrue(raw: string | undefined): boolean
-    {
-        return raw === TenantAdminServer.TrueToken || raw === TenantAdminServer.OneToken
     }
 
     private static AdvertOff(log: (line: string) => void, reason: string): undefined

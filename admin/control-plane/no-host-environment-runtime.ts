@@ -8,10 +8,13 @@ export class HostRuntimeUnavailableError extends Error
 {
     private static readonly ErrorName = 'HostRuntimeUnavailableError'
     private static readonly MessagePrefix = 'This tenant admin runs environments only in its own hive; it cannot run the unbound environment '
+    /** Said when no environment is in question (there is no host image to build). */
+    public static readonly NoHostBackendMessage = 'This tenant admin has no host backend: it builds and runs no host environment image'
 
-    public constructor(name: string)
+    /** `name` names the environment refused; without one the error says only that there is no host backend. */
+    public constructor(name?: string)
     {
-        super(HostRuntimeUnavailableError.MessagePrefix + name)
+        super(name === undefined ? HostRuntimeUnavailableError.NoHostBackendMessage : HostRuntimeUnavailableError.MessagePrefix + name)
         this.name = HostRuntimeUnavailableError.ErrorName
     }
 }
@@ -24,8 +27,6 @@ export class HostRuntimeUnavailableError extends Error
  */
 export class NoHostEnvironmentRuntime implements IEnvironmentRuntime, IContainerProbe
 {
-    private static readonly NoHostName = '(no host backend)'
-
     public PublishesHostPort(): boolean
     {
         return false
@@ -38,7 +39,7 @@ export class NoHostEnvironmentRuntime implements IEnvironmentRuntime, IContainer
 
     public BuildCommand(): string
     {
-        throw new HostRuntimeUnavailableError(NoHostEnvironmentRuntime.NoHostName)
+        throw new HostRuntimeUnavailableError()
     }
 
     public Prepare(ctx: EnvRuntimeContext): Promise<void>

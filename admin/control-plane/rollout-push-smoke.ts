@@ -28,7 +28,8 @@ import type { EnvironmentRecord, IContainerProbe } from './environment-record.js
 import type { EnvironmentWorkload } from './environment-workload.js'
 import { GatingRegistry } from './gating-record.js'
 import { HiveObservationRegistry } from './hive-observation-record.js'
-import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { HiveRegistry } from './hive-registry.js'
 import { DockerImageDigest } from './image-digest.js'
@@ -162,7 +163,7 @@ export class RolloutPushSmoke
                 trustRootRef: S.SigningKeyRef,
             })
 
-            const factory = new HiveOrchestratorFactory(S.Context, dataRoot)
+            const factory = new PlatformHiveOrchestratorFactory(S.Context, dataRoot)
             const registry = await this.ComposeRegistry(directory, factory, environments)
             await registry.Publish(S.VersionV1, S.ImageV1)
             await registry.Publish(S.VersionV2, S.ImageV2)

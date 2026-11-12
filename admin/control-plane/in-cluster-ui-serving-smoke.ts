@@ -40,7 +40,7 @@ import { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
 import { EnvironmentService } from './environment-service.js'
 import { EnvironmentWorkloadFactory } from './environment-workload.js'
 import { EnvServerSeedSource } from './env-server-seed.js'
-import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
 import { IdpAdminClient } from './idp-admin-client.js'
 import type { IIdpService, IdpConnection } from './idp-service.js'
 import { DockerImageDigest } from './image-digest.js'
@@ -516,7 +516,7 @@ export class InClusterUiServingSmoke
         const registry = new EnvironmentRegistry(join(dataRoot, S.RegistryFileName), docker)
         await registry.Load()
         this.records = registry
-        const orchestrators = new HiveOrchestratorFactory(S.Context, dataRoot)
+        const orchestrators = new PlatformHiveOrchestratorFactory(S.Context, dataRoot)
         const placement = new EnvironmentPlacement(directory)
         const actuator = new UiDeployActuator(new OciRegistryClient(S.OciScheme + InClusterRegistry.PushBase()), new UiArtifactSigner(keys), keys, orchestrators, new K8sManifestBuilder(), registry)
         return new EnvironmentService(
