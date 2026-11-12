@@ -4,16 +4,16 @@ import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
 import { AsyncMutex } from '../cypher/async-mutex.js'
 
-/** Where the store reports a pending list it cannot read (listed as empty; the next write replaces it). */
+/** Where the store reports a malformed pending list (listed as empty; the next write replaces it). */
 export interface IPendingBackfillDiagnostics
 {
     Unreadable(error: unknown): void
 }
 
-/** Reports an unreadable pending list as one warning on the server logger, by error name only. */
+/** Reports a malformed pending list as one warning on the server logger, by error name only. */
 export class LoggerPendingBackfillDiagnostics implements IPendingBackfillDiagnostics
 {
-    private static readonly Line = 'pending ownership backfill list unreadable; listed as empty: '
+    private static readonly Line = 'pending ownership backfill list malformed; listed as empty: '
     private static readonly UnknownName = 'UnknownError'
 
     public constructor(private readonly logger: ILogger = StructuredLogger.ToStdout())
@@ -45,8 +45,9 @@ class MalformedPendingBackfillError extends Error
  * the persist and the backfill cannot lose them: whichever server opens the environment next resumes them. A concept
  * leaves the list once its backfill committed, or when an open finds the catalog it launches does not own it (left by
  * a delivery whose persist step failed). Writes are atomic (temp file + rename, the temp removed on failure) and
- * serialized. An unreadable or malformed file lists as empty (reported, error name only) and the next write replaces
- * it: the list never blocks a delivery.
+ * serialized. A malformed file lists as empty (reported, error name only) and the next write replaces it, so a corrupt
+ * list never blocks a delivery; a storage read error propagates (the delivery rejects before persisting, the backfill
+ * reports and retries), so a list that could not be read is never overwritten.
  */
 export class PendingBackfillStore
 {
@@ -93,16 +94,20 @@ export class PendingBackfillStore
         })
     }
 
-    /** The owed concepts; empty when none were ever recorded or the file cannot be read (reported). */
+    /**
+     * The owed concepts; empty when none were ever recorded or the stored content is malformed (reported). A storage
+     * read error propagates (fail closed): a valid list is never overwritten because it could not be read.
+     */
     public async List(): Promise<string[]>
     {
+        if (!(await this.storage.Exists(PendingBackfillStore.FileName)))
+        {
+            return []
+        }
+        const text = await this.storage.ReadText(PendingBackfillStore.FileName)
         try
         {
-            if (!(await this.storage.Exists(PendingBackfillStore.FileName)))
-            {
-                return []
-            }
-            const concepts: unknown = JSON.parse(await this.storage.ReadText(PendingBackfillStore.FileName))
+            const concepts: unknown = JSON.parse(text)
             if (!Array.isArray(concepts) || !concepts.every(concept => typeof concept === 'string')) throw new MalformedPendingBackfillError()
             return concepts as string[]
         }
