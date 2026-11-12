@@ -6,7 +6,7 @@ import { IdpContainerEnv } from './idp-container-env.js'
 import type { StaleImage } from './idp-container-env.js'
 import { IdpStatus } from './idp-record.js'
 import type { IdpRecord } from './idp-record.js'
-import { IdpDriverMessages } from './idp-workload-driver.js'
+import { IdpDriverMessages, IdpWorkloadNames } from './idp-workload-driver.js'
 import type { IdpConnection, IIdpWorkloadDriver, IdpWorkloadRequest, IdpWorkloadResult } from './idp-workload-driver.js'
 import type { PortAllocator } from './port-allocator.js'
 
@@ -25,7 +25,7 @@ export class DockerIdpDriver implements IIdpWorkloadDriver
     private static readonly SecretsDirName = 'secrets'
     private static readonly CaFileName = 'ca.crt'
     private static readonly AdminTokenRef = 'admin-token'
-    private static readonly VolumePrefix = `${IdpContainerEnv.NamePrefix}data-`
+    private static readonly VolumePrefix = `${IdpWorkloadNames.NamePrefix}data-`
     private static readonly TokenBytes = 32
     private static readonly TokenEncoding = 'base64url'
     private static readonly FileEncoding = 'utf8'

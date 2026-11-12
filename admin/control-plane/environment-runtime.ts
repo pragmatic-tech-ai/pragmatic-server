@@ -1,7 +1,8 @@
 import type { EnvDefinition, EnvOidc } from '../../environments/seed/bundle.js'
 import type { ILogProcess } from '../../environments/seed/docker.js'
 import type { EnvironmentRecord } from './environment-record.js'
-import type { IBundleBuilder, IDockerEnv } from './docker-env-port.js'
+import type { IDockerEnv } from './docker-env-port.js'
+import type { IBundleBuilder } from './environment-seed-port.js'
 
 /** Where a brought-up environment is reachable. hostPort is set only by backends that publish a host port. */
 export type EnvEndpoint = { httpUrl: string; wsUrl: string; hostPort?: number }

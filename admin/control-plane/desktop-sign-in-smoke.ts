@@ -28,7 +28,8 @@ import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ClientRegistry } from './client-registry.js'
 import { ClusterTunnelPool } from './cluster-tunnel-pool.js'
-import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
+import { DockerEnvAdapter } from './docker-env-port.js'
+import { BundleBuilderAdapter, UserSeederAdapter } from './environment-seed-port.js'
 import { DockerIdpDriver } from './docker-idp-driver.js'
 import { EnvironmentEndpoints } from './environment-endpoints.js'
 import { EnvironmentPlacement } from './environment-placement.js'
@@ -36,7 +37,7 @@ import { EnvironmentRegistry } from './environment-registry.js'
 import { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
 import { DockerEnvironmentRuntime } from './environment-runtime.js'
 import { EnvironmentService } from './environment-service.js'
-import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import { KindHiveOrchestratorFactory } from './kind-hive-orchestrator-factory.js'
 import { HiveRegistry } from './hive-registry.js'
 import { IdpAdminClient } from './idp-admin-client.js'
 import { ExecFileDockerExec, IdpContainerEnv } from './idp-container-env.js'
@@ -419,7 +420,7 @@ export class DesktopSignInSmoke
             new HiveRegistry(join(this.dataRoot, S.HivesFile)),
             registry)
         await directory.Load()
-        const orchestrators = new HiveOrchestratorFactory(undefined, this.dataRoot)
+        const orchestrators = new KindHiveOrchestratorFactory(undefined, this.dataRoot)
         const placement = new EnvironmentPlacement(directory)
         const bundle = new BundleBuilderAdapter()
         const idp = new IdpService(new IdpRegistry(join(this.dataRoot, S.IdpsFile)), new DockerIdpDriver(new PortAllocator(0, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), this.dataRoot, DockerEnv.ImageName))

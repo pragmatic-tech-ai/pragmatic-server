@@ -7,6 +7,7 @@ import { KubectlHiveOrchestrator } from '../kubectl-hive-orchestrator.js'
 import { KubectlCli } from '../kubectl.js'
 import { KindClusterName } from '../kind-cluster-name.js'
 import { KindHiveOrchestrator } from '../kind-hive-orchestrator.js'
+import { KindHiveOrchestratorFactory } from '../kind-hive-orchestrator-factory.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { HiveRecord } from '../platform-records.js'
 import { InClusterHiveOrchestrator } from '../in-cluster-hive-orchestrator.js'
@@ -82,15 +83,29 @@ for (const [backend, mode] of FactoryFixture.Unsupported)
     })
 }
 
-test('Local + Provision resolves to a KindHiveOrchestrator', () =>
+test('Local + Provision resolves to a KindHiveOrchestrator on the platform factory', () =>
+{
+    const factory = new KindHiveOrchestratorFactory()
+    assert.ok(factory.For(FactoryFixture.Hive(HiveBackend.Local, InfraMode.Provision)) instanceof KindHiveOrchestrator)
+})
+
+test('the platform factory still drives an attached Local hive through kubectl', () =>
+{
+    const factory = new KindHiveOrchestratorFactory()
+    assert.ok(factory.For(FactoryFixture.Hive(HiveBackend.Local, InfraMode.Attach)) instanceof KubectlHiveOrchestrator)
+})
+
+test('Local + Provision is unsupported without the kind driver (the in-hive tenant admin)', () =>
 {
     const factory = new HiveOrchestratorFactory()
-    assert.ok(factory.For(FactoryFixture.Hive(HiveBackend.Local, InfraMode.Provision)) instanceof KindHiveOrchestrator)
+    assert.throws(
+        () => factory.For(FactoryFixture.Hive(HiveBackend.Local, InfraMode.Provision)),
+        (e: unknown) => e instanceof UnsupportedBackendError && e.message.includes(HiveBackend.Local) && e.message.includes(InfraMode.Provision))
 })
 
 test('two hives with different ids get different cluster names', () =>
 {
-    const factory = new HiveOrchestratorFactory()
+    const factory = new KindHiveOrchestratorFactory()
     const a = factory.For(FactoryFixture.HiveWithId('hive-a')) as KindHiveOrchestrator
     const b = factory.For(FactoryFixture.HiveWithId('hive-b')) as KindHiveOrchestrator
     assert.notEqual(a.ClusterName, b.ClusterName)

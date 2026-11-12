@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DockerEnv, EnvKind, TenantPurposeName } from '../docker.js'
 import type { EnvDefinition } from '../docker.js'
+import { EnvConventions } from '../env-conventions.js'
 
 class RunArgsProbe
 {
@@ -60,7 +61,7 @@ test('a database env adds --network to the server run args', () =>
 {
     const withDb = RunArgsProbe.DatabaseDef()
     const without = RunArgsProbe.RuntimeDef(RunArgsProbe.RuntimeHostPort)
-    assert.ok(RunArgsProbe.HasAdjacentPair(DockerEnv.RunArgs(withDb, RunArgsProbe.BundleDir), '--network', DockerEnv.NetworkName(withDb)))
+    assert.ok(RunArgsProbe.HasAdjacentPair(DockerEnv.RunArgs(withDb, RunArgsProbe.BundleDir), '--network', EnvConventions.NetworkName(withDb)))
     assert.equal(DockerEnv.RunArgs(without, RunArgsProbe.BundleDir).includes('--network'), false)
 })
 
@@ -70,9 +71,9 @@ test('PostgresRunArgs builds a pinned postgres container on the network', () =>
     const db = def.database!
     const args = DockerEnv.PostgresRunArgs(def)
     assert.equal(args[args.length - 1], 'postgres:16')
-    assert.ok(RunArgsProbe.HasAdjacentPair(args, '--name', DockerEnv.DbContainerName(def)))
-    assert.ok(RunArgsProbe.HasAdjacentPair(args, '--network', DockerEnv.NetworkName(def)))
-    assert.ok(RunArgsProbe.HasAdjacentPair(args, '-v', `${DockerEnv.DbVolumeName(def)}:/var/lib/postgresql/data`))
+    assert.ok(RunArgsProbe.HasAdjacentPair(args, '--name', EnvConventions.DbContainerName(def)))
+    assert.ok(RunArgsProbe.HasAdjacentPair(args, '--network', EnvConventions.NetworkName(def)))
+    assert.ok(RunArgsProbe.HasAdjacentPair(args, '-v', `${EnvConventions.DbVolumeName(def)}:/var/lib/postgresql/data`))
     assert.ok(RunArgsProbe.HasAdjacentPair(args, DockerEnv.EnvFlag, `POSTGRES_PASSWORD=${db.password}`))
     assert.ok(RunArgsProbe.HasAdjacentPair(args, DockerEnv.EnvFlag, `POSTGRES_USER=${db.user}`))
     assert.ok(RunArgsProbe.HasAdjacentPair(args, DockerEnv.EnvFlag, `POSTGRES_DB=${db.database}`))

@@ -1,12 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { AuditRegistry } from './audit-record.js'
-import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
-import { DockerEnvironmentRuntime } from './environment-runtime.js'
+import { BundleBuilderAdapter, UserSeederAdapter } from './environment-seed-port.js'
+import { NoHostEnvironmentRuntime } from './no-host-environment-runtime.js'
 import { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
 import { InClusterEnvironmentReach } from './in-cluster-environment-reach.js'
 import { InClusterEnvironmentRuntime } from './in-cluster-environment-runtime.js'
@@ -23,15 +22,13 @@ import { IngressTlsPolicy, type IngressTls } from './ingress-tls.js'
 import { HttpsKubeTransport, InClusterServiceAccount, KubeApiClient } from './kube-api-client.js'
 import { PinnedImageVerifier } from './pinned-image-verifier.js'
 import { TenantAdminBootstrap } from './tenant-admin-bootstrap.js'
-import { ExecFileDockerExec, IdpContainerEnv } from './idp-container-env.js'
 import { IdpAdminClient } from './idp-admin-client.js'
-import { IdpRegistry } from './idp-registry.js'
-import { DockerIdpDriver } from './docker-idp-driver.js'
-import { IdpService, type IIdpService } from './idp-service.js'
+import type { IIdpService } from './idp-service.js'
 import { InjectedIdpService } from './injected-idp-service.js'
+import { UnconfiguredIdpService } from './unconfigured-idp-service.js'
 import { MasterKeyFile } from './master-key-file.js'
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
-import { ControlPlaneServer } from './server.js'
+import { TenantPlaneComposer } from './tenant-plane-composer.js'
 import type { HiveRecord, TenantRecord } from './platform-records.js'
 import { ConsoleFingerprint } from './console-advert-contract.js'
 import { ConsoleAdvertSender, HttpConsoleAdvertTransport, IntervalAdvertTimer, SeededConsoleAccounts, type IOwnerResetFollower } from './console-advert-sender.js'
@@ -181,19 +178,18 @@ export class TenantAdminServer
         const dataRoot = TenantAdminServer.Required(env, TenantAdminEnv.DataRoot)
         const portRaw = TenantAdminServer.Required(env, TenantAdminEnv.Port)
         const baseDomain = TenantAdminServer.Required(env, TenantAdminEnv.BaseDomain)
-        const secure = env[TenantAdminEnv.SecureCookie]
         return {
             dataRoot,
-            port: ControlPlaneServer.ResolveTenantPort(portRaw),
-            bind: ControlPlaneServer.TenantBind(env[TenantAdminEnv.Bind]),
+            port: TenantPlaneComposer.ResolveTenantPort(portRaw),
+            bind: TenantPlaneComposer.TenantBind(env[TenantAdminEnv.Bind]),
             baseDomain,
-            scheme: ControlPlaneServer.TenantScheme(env[TenantAdminEnv.Scheme]),
-            externalPort: ControlPlaneServer.TenantExternalPort(env[TenantAdminEnv.ExternalPort]),
-            secureCookie: secure === TenantAdminServer.TrueToken || secure === TenantAdminServer.OneToken,
-            trustedProxy: ControlPlaneServer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]),
-            secretTtlHours: ControlPlaneServer.ParseSecretTtlHours(env[TenantAdminEnv.SecretTtl]),
-            probeMs: ControlPlaneServer.ParseHealthProbeMs(env[TenantAdminEnv.HealthProbeMs]),
-            probeTimeoutMs: ControlPlaneServer.ParseHealthProbeTimeoutMs(env[TenantAdminEnv.HealthProbeTimeoutMs]),
+            scheme: TenantPlaneComposer.TenantScheme(env[TenantAdminEnv.Scheme]),
+            externalPort: TenantPlaneComposer.TenantExternalPort(env[TenantAdminEnv.ExternalPort]),
+            secureCookie: TenantAdminServer.ReadsTrue(env[TenantAdminEnv.SecureCookie]),
+            trustedProxy: TenantAdminServer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]),
+            secretTtlHours: TenantPlaneComposer.ParseSecretTtlHours(env[TenantAdminEnv.SecretTtl]),
+            probeMs: TenantPlaneComposer.ParseHealthProbeMs(env[TenantAdminEnv.HealthProbeMs]),
+            probeTimeoutMs: TenantPlaneComposer.ParseHealthProbeTimeoutMs(env[TenantAdminEnv.HealthProbeTimeoutMs]),
             consoleHost: TenantAdminServer.OptionalOf(env, TenantAdminEnv.ConsoleHost),
             fingerprintKeyFile: TenantAdminServer.OptionalOf(env, TenantAdminEnv.FingerprintKeyFile),
             ingressTls: IngressTlsPolicy.FromEnv(env),
@@ -278,13 +274,13 @@ export class TenantAdminServer
     }
 
     /**
-     * In-cluster the operator provisioned the IdP, so the pod only CONNECTS (injected env + mounted Secret files);
-     * otherwise the dev-collapse docker-backed IdpService launches one.
+     * In-cluster the operator provisioned the IdP, so the pod only CONNECTS (injected env + mounted Secret files). Without that
+     * injection there is no IdP: the console never launches one (that is the platform's job, and the dev-box Docker IdP
+     * driver is not part of this app).
      */
-    public static BuildIdpService(env: NodeJS.ProcessEnv, dataRoot: string): IIdpService
+    public static BuildIdpService(env: NodeJS.ProcessEnv): IIdpService
     {
-        return InjectedIdpService.FromEnv(env)
-            ?? new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
+        return InjectedIdpService.FromEnv(env) ?? new UnconfiguredIdpService()
     }
 
     /**
@@ -332,18 +328,19 @@ export class TenantAdminServer
         const cfg = this.config
         const dataRoot = cfg.dataRoot
         const directory = TenantAdminServer.LoadSeed(dataRoot)
-        const keyPath = join(dataRoot, ControlPlaneServer.MasterKeyFileName)
+        const keyPath = join(dataRoot, TenantPlaneComposer.MasterKeyFileName)
         if (!existsSync(keyPath))
         {
             throw new Error(TenantAdminServer.MissingMasterKeyPrefix + keyPath)
         }
         const masterKey = MasterKeyFile.Load(keyPath)
-        const docker = new DockerEnvAdapter(new DockerEnv())
-        const registry = new EnvironmentRegistry(join(dataRoot, ControlPlaneServer.RegistryFile), docker)
+        // No host (Docker) backend: the console runs environments only in its own hive, so an unbound record never runs here.
+        const noHost = new NoHostEnvironmentRuntime()
+        const registry = new EnvironmentRegistry(join(dataRoot, TenantPlaneComposer.RegistryFile), noHost)
         await registry.Load()
-        const adminClients = new TenantAdminClientRegistry(join(dataRoot, ControlPlaneServer.TenantAdminClientsFile))
+        const adminClients = new TenantAdminClientRegistry(join(dataRoot, TenantPlaneComposer.TenantAdminClientsFile))
         await adminClients.Load()
-        const idpService = TenantAdminServer.BuildIdpService(env, dataRoot)
+        const idpService = TenantAdminServer.BuildIdpService(env)
         const account = InClusterServiceAccount.Detect(env, serviceAccountRoot)
         const inCluster = account === undefined ? undefined : TenantAdminServer.InClusterOrchestrationOf(account, directory, dataRoot)
         const orchestrators = inCluster === undefined ? new HiveOrchestratorFactory() : new HiveOrchestratorFactory(undefined, dataRoot, inCluster)
@@ -352,22 +349,22 @@ export class TenantAdminServer
         // No PlatformImageSigner here, deliberately: the platform signing key's private half never ships into a hive, so
         // the in-hive tenant admin cannot sign. It runs only images the platform signed (its hive's verification decides).
         const proxy = new AdminProxy(new WsAdminConnector())
-        const service = new EnvironmentService(registry, new PortAllocator(ControlPlaneServer.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), undefined, reach)
+        const service = new EnvironmentService(registry, new PortAllocator(TenantPlaneComposer.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(noHost, new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), undefined, reach)
         const tenant = directory.Tenant
         const emailDomains = await ConsoleEmailDomainStore.Open(join(dataRoot, ConsoleEmailDomainStore.FileName), tenant.id, tenant.emailDomains)
-        const desktopAudit = new AuditRegistry(join(dataRoot, ControlPlaneServer.DesktopAuditFile))
+        const desktopAudit = new AuditRegistry(join(dataRoot, TenantPlaneComposer.DesktopAuditFile))
         await desktopAudit.Load()
-        const graphAudit = new AuditRegistry(join(dataRoot, ControlPlaneServer.TenantGraphAuditFile))
+        const graphAudit = new AuditRegistry(join(dataRoot, TenantPlaneComposer.TenantGraphAuditFile))
         await graphAudit.Load()
         // Graphs live in the environments, so outside a pod (no reach) the routes answer 503 instead of calling out.
         const graphs = new TenantGraphAccess(reach === undefined ? undefined : new GraphService(registry, proxy, service), graphAudit)
         // The desktop surface is always served; the relay only when this console can reach its environments (in a pod).
         const relay = reach === undefined ? undefined : { endpoints: reach, audit: desktopAudit }
-        const plane = ControlPlaneServer.BuildTenantPlane(
+        const plane = TenantPlaneComposer.BuildTenantPlane(
             dataRoot, idpService, directory, cfg.secureCookie, service, this.rollout, orchestrators, placement,
             masterKey, adminClients, cfg.secretTtlHours, undefined, undefined, cfg.trustedProxy, true, relay, emailDomains, tenant.id, graphs)
         const resolver = new TenantHostResolver(cfg.baseDomain, cfg.scheme, directory, cfg.externalPort, TenantAdminServer.ConsoleAliasOf(cfg, directory))
-        const staticRoot = join(dirname(fileURLToPath(import.meta.url)), ControlPlaneServer.ParentSegment, ControlPlaneServer.TenantPortalSegment, ControlPlaneServer.DistSegment)
+        const staticRoot = join(dirname(fileURLToPath(import.meta.url)), TenantPlaneComposer.ParentSegment, TenantPlaneComposer.TenantPortalSegment, TenantPlaneComposer.DistSegment)
         const monitor = cfg.probeMs > 0
             ? new TenantHealthMonitor(directory, new HiveHealthProducer(service, orchestrators, placement), plane.events, cfg.probeMs, cfg.probeTimeoutMs, service)
             : undefined
@@ -413,6 +410,12 @@ export class TenantAdminServer
         composition.advert?.Stop()
         await composition.advert?.Idle()
         await composition.host.Close()
+    }
+
+    /** Whether an env flag is set to true ('true' or '1'). */
+    private static ReadsTrue(raw: string | undefined): boolean
+    {
+        return raw === TenantAdminServer.TrueToken || raw === TenantAdminServer.OneToken
     }
 
     private static AdvertOff(log: (line: string) => void, reason: string): undefined

@@ -49,7 +49,7 @@ import { PlatformDirectory } from './platform-directory.js'
 import { HiveBackend, InfraMode } from './platform-records.js'
 import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
 import { SelectionRegistry } from './selection-record.js'
-import { ControlPlaneServer } from './server.js'
+import { TenantPlaneComposer } from './tenant-plane-composer.js'
 import { TenantAdminBootstrap } from './tenant-admin-bootstrap.js'
 import type { TenantBootstrap } from './tenant-admin-bootstrap.js'
 import { TenantRegistry } from './tenant-registry.js'
@@ -368,7 +368,7 @@ export class TenantAdminSmoke
             status: EnvStatus.Unknown,
         }
         bootstrap.secrets.AddEntry(bootstrap.seedSecretName, S.SessionsFile, JSON.stringify({ [S.SessionsRootKey]: { [session.id]: session } }))
-        bootstrap.secrets.AddEntry(bootstrap.seedSecretName, ControlPlaneServer.RegistryFile, JSON.stringify({ [S.EnvironmentsKey]: { [record.name]: record } }))
+        bootstrap.secrets.AddEntry(bootstrap.seedSecretName, TenantPlaneComposer.RegistryFile, JSON.stringify({ [S.EnvironmentsKey]: { [record.name]: record } }))
     }
 
     /** Manifest first (creates the shared Namespace), then the Secrets; pods wait on their Secret volumes until it lands. */

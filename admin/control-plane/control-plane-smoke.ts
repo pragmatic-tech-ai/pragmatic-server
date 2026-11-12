@@ -29,7 +29,7 @@ import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ControlPlaneHost } from './control-plane-host.js'
 import type { TenantProvisioningService } from './tenant-provisioning-service.js'
-import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import { KindHiveOrchestratorFactory } from './kind-hive-orchestrator-factory.js'
 import { ManifestRegistry } from './manifest-record.js'
 import { GatingRegistry } from './gating-record.js'
 import { SelectionRegistry } from './selection-record.js'
@@ -38,7 +38,8 @@ import { RolloutRegistrationRegistry } from './rollout-registration-record.js'
 import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import { EnvironmentPlacement } from './environment-placement.js'
 import type { EnvironmentDto, PromotionResultDto } from './control-plane-host.js'
-import { BundleBuilderAdapter, DockerEnvAdapter, UserSeederAdapter } from './docker-env-port.js'
+import { DockerEnvAdapter } from './docker-env-port.js'
+import { BundleBuilderAdapter, UserSeederAdapter } from './environment-seed-port.js'
 import { DockerEnvironmentRuntime } from './environment-runtime.js'
 import { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
 import { InClusterEnvironmentRuntime } from './in-cluster-environment-runtime.js'
@@ -237,7 +238,7 @@ export class ControlPlaneSmoke
         const allocator = new PortAllocator(ControlPlaneSmoke.EnvPortFloor, new NetPortProbe())
         const proxy = new AdminProxy(new WsAdminConnector())
         const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneSmoke.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneSmoke.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
-        const orchestrators = new HiveOrchestratorFactory()
+        const orchestrators = new KindHiveOrchestratorFactory()
         const placement = new EnvironmentPlacement(directory)
         const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
         const operator = await OperatorIdentity.Compose({

@@ -15,7 +15,7 @@ import { EnvironmentPlacement } from './environment-placement.js'
 import { EnvironmentRegistry } from './environment-registry.js'
 import { GatingRegistry } from './gating-record.js'
 import { HiveObservationRegistry } from './hive-observation-record.js'
-import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
+import { KindHiveOrchestratorFactory } from './kind-hive-orchestrator-factory.js'
 import { HiveRegistry } from './hive-registry.js'
 import { ManifestRegistry } from './manifest-record.js'
 import { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
@@ -119,7 +119,7 @@ export class ManifestPublish
         const registrations = new RolloutRegistrationRegistry(join(dataRoot, ManifestPublish.RegistrationsFile))
         const observations = new HiveObservationRegistry(join(dataRoot, ManifestPublish.ObservationsFile))
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load()])
-        return new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, new HiveOrchestratorFactory(), environments, new EnvironmentPlacement(directory), observations)
+        return new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, new KindHiveOrchestratorFactory(), environments, new EnvironmentPlacement(directory), observations)
     }
 
     public static async Main(argv: readonly string[]): Promise<void>

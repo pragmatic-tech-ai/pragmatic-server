@@ -9,7 +9,7 @@ import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { InjectedIdpService } from '../injected-idp-service.js'
-import { IdpService } from '../idp-service.js'
+import { UnconfiguredIdpService } from '../unconfigured-idp-service.js'
 import { TenantAdminServer, type TenantAdminComposition } from '../tenant-admin-server.js'
 import { SeededTenantDirectory } from '../tenant-api/seeded-tenant-directory.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
@@ -23,7 +23,7 @@ import { EnvironmentPlacement } from '../environment-placement.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
 import { TenantSessionKind, type TenantSession } from '../tenant-auth/tenant-session.js'
-import { ControlPlaneServer } from '../server.js'
+import { TenantPlaneComposer } from '../tenant-plane-composer.js'
 import { TenantAdminEnv } from '../tenant-admin-env.js'
 import { ConsoleAdvertSender } from '../console-advert-sender.js'
 import { ConsoleEmailDomainStore } from '../console-email-domain-store.js'
@@ -753,7 +753,7 @@ describe('TenantAdminServer console advert', () =>
             hiveId: Names.HiveId, hostPort: Names.GraphEnvPort, containerName: Names.GraphEnvContainer, volumeName: Names.GraphEnvVolume,
             bundleDir: Names.GraphEnvBundle, createdAt: Names.Created, status: Names.GraphEnvStatus,
         }
-        writeFileSync(join(root, ControlPlaneServer.RegistryFile), JSON.stringify({ environments: { [Names.GraphEnvName]: record } }))
+        writeFileSync(join(root, TenantPlaneComposer.RegistryFile), JSON.stringify({ environments: { [Names.GraphEnvName]: record } }))
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
         const composition = await server.Compose({}, undefined, () => undefined)
         assert.equal(composition.reach, undefined)
@@ -763,7 +763,7 @@ describe('TenantAdminServer console advert', () =>
         assert.equal(composition.graphAudit.List().length, 0, 'a read is not audited')
         const post = await handle(composition, Names.Post, { name: Names.GraphName }, Names.GraphsPath)
         assert.equal(post.status, Names.Unavailable)
-        const file = join(root, ControlPlaneServer.TenantGraphAuditFile)
+        const file = join(root, TenantPlaneComposer.TenantGraphAuditFile)
         assert.ok(existsSync(file))
         const reloaded = new AuditRegistry(file)
         await reloaded.Load()
@@ -970,7 +970,7 @@ describe('TenantAdminServer console advert', () =>
     {
         writeConsoleSeed()
         // Sessions the console's own store holds before it starts: the Owner's (console and desktop) and someone else's.
-        const before = ControlPlaneServer.TenantSessionsOf(root)
+        const before = TenantPlaneComposer.TenantSessionsOf(root)
         const ownerConsole = await before.Issue(Names.TenantId, Names.PrincipalId, Names.OwnerEmail)
         const ownerDesktop = await before.Issue(Names.TenantId, Names.PrincipalId, Names.OwnerEmail, TenantSessionKind.Desktop)
         const other = await before.Issue(Names.TenantId, Names.OtherPrincipalId)
@@ -983,7 +983,7 @@ describe('TenantAdminServer console advert', () =>
         try
         {
             assert.deepEqual(JSON.parse(readFileSync(join(root, ConsoleOwnerResetFollower.FileName), Names.Utf8)), { appliedAt: Names.OwnerResetAt })
-            const after = ControlPlaneServer.TenantSessionsOf(root)
+            const after = TenantPlaneComposer.TenantSessionsOf(root)
             assert.equal(await after.Validate(ownerConsole.id), null, 'the Owner console session is refused')
             assert.equal(await after.Validate(ownerDesktop.id), null, 'the Owner desktop session is refused')
             assert.notEqual(await after.Validate(other.id), null, 'another principal keeps its session')
@@ -1121,18 +1121,18 @@ describe('TenantAdminServer.RolloutClientFrom', () =>
 
 describe('TenantAdminServer.BuildIdpService', () =>
 {
-    it('selects the injected connection-only service when the issuer env is present, else the docker-backed one', () =>
+    it('selects the injected connection-only service when the issuer env is present, else the unconfigured one', () =>
     {
-        const dir = mkdtempSync(join(tmpdir(), 'tas-idp-'))
-        try
-        {
-            const injected = TenantAdminServer.BuildIdpService({ PRAGMATIC_IDP_BROWSER_BASE_URL: 'https://b', PRAGMATIC_IDP_BASE_URL: 'https://i', PRAGMATIC_IDP_CA_FILE: '/ca', PRAGMATIC_IDP_ADMIN_TOKEN_FILE: '/t' }, dir)
-            assert.ok(injected instanceof InjectedIdpService)
-            assert.ok(TenantAdminServer.BuildIdpService({}, dir) instanceof IdpService)
-        }
-        finally
-        {
-            rmSync(dir, { recursive: true, force: true })
-        }
+        const injected = TenantAdminServer.BuildIdpService({ PRAGMATIC_IDP_BROWSER_BASE_URL: 'https://b', PRAGMATIC_IDP_BASE_URL: 'https://i', PRAGMATIC_IDP_CA_FILE: '/ca', PRAGMATIC_IDP_ADMIN_TOKEN_FILE: '/t' })
+        assert.ok(injected instanceof InjectedIdpService)
+        assert.ok(TenantAdminServer.BuildIdpService({}) instanceof UnconfiguredIdpService)
+    })
+
+    it('without an injected IdP knows no tenant IdP, never launches one and has nothing to tear down', async () =>
+    {
+        const idp = TenantAdminServer.BuildIdpService({})
+        assert.equal(await idp.ConnectForTenant('acme'), undefined)
+        await assert.rejects(idp.EnsureForTenant('acme', 'Acme'), /No identity provider is configured/)
+        await idp.TeardownForTenant('acme')
     })
 })

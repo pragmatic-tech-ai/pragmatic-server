@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { EnvKind, TenantPurposeName, type EnvDefinition } from '../../environments/seed/bundle.js'
-import { DockerEnv } from '../../environments/seed/docker.js'
+import { EnvConventions } from '../../environments/seed/env-conventions.js'
 import { Template, EnvType } from './environment-record.js'
 
 export class InvalidEnvironmentNameError extends Error
@@ -104,7 +104,7 @@ export class TemplateCatalog
             const def: EnvDefinition = { name: safe, kind: EnvKind.Dev, environmentId: safe, purpose, hostPort }
             def.database = {
                 connectionName: TemplateCatalog.DbConnectionName,
-                host: DockerEnv.DbContainerName(def),
+                host: EnvConventions.DbContainerName(def),
                 port: TemplateCatalog.DbPort,
                 database: TemplateCatalog.DbName,
                 user: TemplateCatalog.DbUser,

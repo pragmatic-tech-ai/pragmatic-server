@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { ControlPlaneServer } from '../server.js'
+import { TenantPlaneComposer } from '../tenant-plane-composer.js'
 import { TenantAdminClientRegistry } from '../tenant-auth/tenant-admin-client-record.js'
 import { DesktopRelay } from '../tenant-auth/desktop-relay.js'
 import { AuditRegistry } from '../audit-record.js'
@@ -35,31 +36,31 @@ describe('ControlPlaneServer.ExternalPortWarning', () =>
     })
 })
 
-describe('ControlPlaneServer.TenantExternalPort', () =>
+describe('TenantPlaneComposer.TenantExternalPort', () =>
 {
     it('is undefined when unset or blank (no port in the tenant origin, unchanged)', () =>
     {
-        assert.equal(ControlPlaneServer.TenantExternalPort(undefined), undefined)
-        assert.equal(ControlPlaneServer.TenantExternalPort(''), undefined)
+        assert.equal(TenantPlaneComposer.TenantExternalPort(undefined), undefined)
+        assert.equal(TenantPlaneComposer.TenantExternalPort(''), undefined)
     })
 
     it('returns a valid port', () =>
     {
-        assert.equal(ControlPlaneServer.TenantExternalPort('7002'), 7002)
-        assert.equal(ControlPlaneServer.TenantExternalPort('1'), 1)
-        assert.equal(ControlPlaneServer.TenantExternalPort('65535'), 65535)
+        assert.equal(TenantPlaneComposer.TenantExternalPort('7002'), 7002)
+        assert.equal(TenantPlaneComposer.TenantExternalPort('1'), 1)
+        assert.equal(TenantPlaneComposer.TenantExternalPort('65535'), 65535)
     })
 
     for (const bad of ['abc', '0', '70000', '1.5', '-1'])
     {
         it(`throws naming the variable for ${bad}`, () =>
         {
-            assert.throws(() => ControlPlaneServer.TenantExternalPort(bad), /PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT/)
+            assert.throws(() => TenantPlaneComposer.TenantExternalPort(bad), /PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT/)
         })
     }
 })
 
-describe('ControlPlaneServer.ParseSecretTtlHours', () =>
+describe('TenantPlaneComposer.ParseSecretTtlHours', () =>
 {
     const defaultHours = 168
 
@@ -67,18 +68,18 @@ describe('ControlPlaneServer.ParseSecretTtlHours', () =>
     {
         it(`falls back to the default for ${JSON.stringify(raw)}`, () =>
         {
-            assert.equal(ControlPlaneServer.ParseSecretTtlHours(raw), defaultHours)
+            assert.equal(TenantPlaneComposer.ParseSecretTtlHours(raw), defaultHours)
         })
     }
 
     it('returns the integer for valid positive values', () =>
     {
-        assert.equal(ControlPlaneServer.ParseSecretTtlHours('24'), 24)
-        assert.equal(ControlPlaneServer.ParseSecretTtlHours('720'), 720)
+        assert.equal(TenantPlaneComposer.ParseSecretTtlHours('24'), 24)
+        assert.equal(TenantPlaneComposer.ParseSecretTtlHours('720'), 720)
     })
 })
 
-describe('ControlPlaneServer.ParseHealthProbeMs', () =>
+describe('TenantPlaneComposer.ParseHealthProbeMs', () =>
 {
     const DefaultMs = 30000
     const DisabledRaw = '0'
@@ -93,27 +94,27 @@ describe('ControlPlaneServer.ParseHealthProbeMs', () =>
     {
         it(`falls back to the default for ${JSON.stringify(raw)}`, () =>
         {
-            assert.equal(ControlPlaneServer.ParseHealthProbeMs(raw), DefaultMs)
+            assert.equal(TenantPlaneComposer.ParseHealthProbeMs(raw), DefaultMs)
         })
     }
 
     it('returns 0 (disabled) for zero', () =>
     {
-        assert.equal(ControlPlaneServer.ParseHealthProbeMs(DisabledRaw), 0)
+        assert.equal(TenantPlaneComposer.ParseHealthProbeMs(DisabledRaw), 0)
     })
 
     it('returns the integer for a valid in-range value', () =>
     {
-        assert.equal(ControlPlaneServer.ParseHealthProbeMs(ValidRaw), ValidMs)
+        assert.equal(TenantPlaneComposer.ParseHealthProbeMs(ValidRaw), ValidMs)
     })
 
     it('accepts the minimum boundary', () =>
     {
-        assert.equal(ControlPlaneServer.ParseHealthProbeMs(MinBoundaryRaw), MinBoundaryMs)
+        assert.equal(TenantPlaneComposer.ParseHealthProbeMs(MinBoundaryRaw), MinBoundaryMs)
     })
 })
 
-describe('ControlPlaneServer.ParseHealthProbeTimeoutMs', () =>
+describe('TenantPlaneComposer.ParseHealthProbeTimeoutMs', () =>
 {
     const DefaultMs = 60000
     const DisabledRaw = '0'
@@ -128,23 +129,23 @@ describe('ControlPlaneServer.ParseHealthProbeTimeoutMs', () =>
     {
         it(`falls back to the default for ${JSON.stringify(raw)}`, () =>
         {
-            assert.equal(ControlPlaneServer.ParseHealthProbeTimeoutMs(raw), DefaultMs)
+            assert.equal(TenantPlaneComposer.ParseHealthProbeTimeoutMs(raw), DefaultMs)
         })
     }
 
     it('returns 0 (disabled) for zero', () =>
     {
-        assert.equal(ControlPlaneServer.ParseHealthProbeTimeoutMs(DisabledRaw), 0)
+        assert.equal(TenantPlaneComposer.ParseHealthProbeTimeoutMs(DisabledRaw), 0)
     })
 
     it('returns the integer for a valid in-range value', () =>
     {
-        assert.equal(ControlPlaneServer.ParseHealthProbeTimeoutMs(ValidRaw), ValidMs)
+        assert.equal(TenantPlaneComposer.ParseHealthProbeTimeoutMs(ValidRaw), ValidMs)
     })
 
     it('accepts the minimum boundary', () =>
     {
-        assert.equal(ControlPlaneServer.ParseHealthProbeTimeoutMs(MinBoundaryRaw), MinBoundaryMs)
+        assert.equal(TenantPlaneComposer.ParseHealthProbeTimeoutMs(MinBoundaryRaw), MinBoundaryMs)
     })
 })
 
@@ -185,7 +186,7 @@ describe('ControlPlaneServer.ComposeTenantPlane', () =>
         try
         {
             const registry = new TenantAdminClientRegistry(join(dir, 'tenant-admin-clients.json'))
-            const standalone = ControlPlaneServer.BuildTenantPlane(dir, stub, stub, false, stub, stub, stub, stub, randomBytes(32), registry, 168)
+            const standalone = TenantPlaneComposer.BuildTenantPlane(dir, stub, stub, false, stub, stub, stub, stub, randomBytes(32), registry, 168)
             assert.equal(standalone.desktop, undefined)
         }
         finally
@@ -207,7 +208,7 @@ describe('ControlPlaneServer.ComposeTenantPlane', () =>
             assert.ok(wired?.relay instanceof DesktopRelay)
             // Sign-out closes the session's relays: the desktop endpoint holds the same relay as its connections.
             assert.equal((wired?.desktop as unknown as { connections: unknown }).connections, wired?.relay)
-            assert.equal(ControlPlaneServer.DesktopAuditFile, 'tenant-desktop-audit.json')
+            assert.equal(TenantPlaneComposer.DesktopAuditFile, 'tenant-desktop-audit.json')
         }
         finally
         {
@@ -271,7 +272,7 @@ class GraphPlane
         const service = { List: () => [GraphPlane.Env('dev1', EnvType.Development), GraphPlane.Env('rt1', EnvType.Runtime)] } as unknown as IEnvironmentService
         const directory = { GetTenant: () => undefined, ListHives: () => [] } as unknown as ITenantDirectory
         const registry = new TenantAdminClientRegistry(join(dir, 'tenant-admin-clients.json'))
-        return ControlPlaneServer.BuildTenantPlane(dir, stub, directory, false, service, stub, stub, stub, randomBytes(32), registry, 168,
+        return TenantPlaneComposer.BuildTenantPlane(dir, stub, directory, false, service, stub, stub, stub, randomBytes(32), registry, 168,
             undefined, undefined, false, false, undefined, undefined, undefined, graphs)
     }
 
@@ -288,7 +289,7 @@ describe('ControlPlaneServer graph wiring', () =>
 {
     it('names the tenant graph audit file in the data root', () =>
     {
-        assert.equal(ControlPlaneServer.TenantGraphAuditFile, 'tenant-graph-audit.json')
+        assert.equal(TenantPlaneComposer.TenantGraphAuditFile, 'tenant-graph-audit.json')
     })
 
     it('BuildTenantPlane with graph access routes the graph paths; without it they stay 404', async () =>
@@ -296,7 +297,7 @@ describe('ControlPlaneServer graph wiring', () =>
         const dir = mkdtempSync(join(tmpdir(), 'tenant-plane-compose-'))
         try
         {
-            const access = new TenantGraphAccess(GraphPlane.Graphs, new AuditRegistry(join(dir, ControlPlaneServer.TenantGraphAuditFile)))
+            const access = new TenantGraphAccess(GraphPlane.Graphs, new AuditRegistry(join(dir, TenantPlaneComposer.TenantGraphAuditFile)))
             const wired = await GraphPlane.Send(GraphPlane.Build(dir, access), GraphPlane.DevGraphs)
             assert.equal(wired.status, 200)
             assert.deepEqual(wired.Json(), [])
@@ -314,7 +315,7 @@ describe('ControlPlaneServer graph wiring', () =>
         const dir = mkdtempSync(join(tmpdir(), 'tenant-plane-compose-'))
         try
         {
-            const access = new TenantGraphAccess(GraphPlane.Graphs, new AuditRegistry(join(dir, ControlPlaneServer.TenantGraphAuditFile)))
+            const access = new TenantGraphAccess(GraphPlane.Graphs, new AuditRegistry(join(dir, TenantPlaneComposer.TenantGraphAuditFile)))
             const res = await GraphPlane.Send(GraphPlane.Build(dir, access), GraphPlane.RuntimeGraphs)
             assert.equal(res.status, 400)
             assert.deepEqual(res.Json(), { error: TenantGraphAccess.NotDevelopmentMessage })

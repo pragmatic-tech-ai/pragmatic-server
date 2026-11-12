@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { TemplateCatalog, InvalidEnvironmentNameError } from '../template-catalog.js'
 import { Template, EnvType } from '../environment-record.js'
-import { DockerEnv } from '../../../environments/seed/docker.js'
+import { EnvConventions } from '../../../environments/seed/env-conventions.js'
 import { EnvKind, TenantPurposeName } from '../../../environments/seed/bundle.js'
 
 class CatalogFixture
@@ -100,7 +100,7 @@ describe('TemplateCatalog', () =>
         const db = r.def.database
         assert.ok(db)
         assert.equal(db.connectionName, 'appdb')
-        assert.equal(db.host, DockerEnv.DbContainerName(r.def))
+        assert.equal(db.host, EnvConventions.DbContainerName(r.def))
         assert.equal(db.port, 5432)
         assert.equal(db.database, 'appdb')
         assert.equal(db.user, 'appuser')

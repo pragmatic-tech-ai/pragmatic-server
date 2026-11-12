@@ -1,6 +1,13 @@
 import type { IdpRecord } from './idp-record.js'
 import type { IngressTls } from './ingress-tls.js'
 
+/** The names every IdP workload shares, whichever driver launches it (a dev-box container or an in-cluster workload). */
+export class IdpWorkloadNames
+{
+    /** Every per-tenant IdP workload's name starts with this, followed by the tenant id. */
+    public static readonly NamePrefix = 'pragmatic-idp-'
+}
+
 export interface IdpConnection
 {
     baseUrl: string

@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { get } from 'node:https'
 import { DockerEnv } from '../../environments/seed/docker.js'
+import { IdpWorkloadNames } from './idp-workload-driver.js'
 
 export interface IdpContainerSpec
 {
@@ -54,7 +55,6 @@ export class ExecFileDockerExec implements IDockerExec
 /** Docker lifecycle for one per-tenant pragmatic-idp container, run from the server image with the IdP entrypoint. */
 export class IdpContainerEnv
 {
-    public static readonly NamePrefix = 'pragmatic-idp-'
     private static readonly DataMount = '/idp-data'
     public static readonly ContainerHost = 'host.docker.internal'
     private static readonly HostGateway = 'host-gateway'
@@ -110,7 +110,7 @@ export class IdpContainerEnv
 
     public static ContainerName(tenantId: string): string
     {
-        return `${IdpContainerEnv.NamePrefix}${tenantId}`
+        return `${IdpWorkloadNames.NamePrefix}${tenantId}`
     }
 
     public static BaseUrl(port: number): string

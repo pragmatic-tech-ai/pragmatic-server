@@ -1,11 +1,10 @@
 import { createHash } from 'node:crypto'
 import { UiArtifact } from './ui-artifact.js'
-import { DockerEnv } from '../../environments/seed/docker.js'
+import { EnvConventions } from '../../environments/seed/env-conventions.js'
 import type { EnvironmentWorkload, WorkloadAppDeployment, WorkloadDatabase } from './environment-workload.js'
 import { EnvServerSeedSource } from './env-server-seed.js'
 import { InClusterRegistry } from './in-cluster-registry.js'
-import { IdpContainerEnv } from './idp-container-env.js'
-import type { IdpWorkloadSpec } from './idp-workload-driver.js'
+import { IdpWorkloadNames, type IdpWorkloadSpec } from './idp-workload-driver.js'
 import { TenantAdminEnv } from './tenant-admin-env.js'
 import type { TenantAdminWorkloadSpec } from './tenant-admin-workload.js'
 import { InvalidRecordIdError } from './platform-records.js'
@@ -197,7 +196,7 @@ export class K8sManifestBuilder
     private static readonly EnvIdpCaItemKey = 'ca.crt'
     private static readonly NodeExtraCaCertsVar = 'NODE_EXTRA_CA_CERTS'
     private static readonly HostDotSeparator = '.'
-    private static readonly IdpPrefix = IdpContainerEnv.NamePrefix
+    private static readonly IdpPrefix = IdpWorkloadNames.NamePrefix
     private static readonly IdpContainerName = 'idp'
     private static readonly IdpEntrypoint = ['node', 'dist/bin/pragmatic-idpd.js']
     private static readonly IdpDataMount = '/idp-data'
@@ -878,7 +877,7 @@ export class K8sManifestBuilder
             ],
             [K8sManifestBuilder.ReadinessProbeKey]: {
                 [K8sManifestBuilder.HttpGetKey]: {
-                    [K8sManifestBuilder.PathKey]: DockerEnv.HealthPath,
+                    [K8sManifestBuilder.PathKey]: EnvConventions.HealthPath,
                     [K8sManifestBuilder.PortKey]: spec.port,
                     [K8sManifestBuilder.SchemeKey]: K8sManifestBuilder.HttpsScheme,
                 },
@@ -1745,7 +1744,7 @@ export class K8sManifestBuilder
                             [K8sManifestBuilder.VolumeMountsKey]: volumeMounts,
                             [K8sManifestBuilder.ReadinessProbeKey]: {
                                 [K8sManifestBuilder.HttpGetKey]: {
-                                    [K8sManifestBuilder.PathKey]: DockerEnv.HealthPath,
+                                    [K8sManifestBuilder.PathKey]: EnvConventions.HealthPath,
                                     [K8sManifestBuilder.PortKey]: workload.serverPort,
                                 },
                             },

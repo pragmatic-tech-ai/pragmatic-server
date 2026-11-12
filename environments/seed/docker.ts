@@ -3,6 +3,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { get } from 'node:http'
 import { TenantPurposeName } from './bundle.js'
 import type { EnvDefinition, EnvDatabase } from './bundle.js'
+import { EnvConventions } from './env-conventions.js'
 
 export { EnvKind, TenantPurposeName } from './bundle.js'
 export type { EnvDefinition } from './bundle.js'
@@ -89,13 +90,10 @@ export class DockerEnv
     public static readonly ImageName = 'pragmatic-server:dev'
 
     private static readonly Docker = 'docker'
-    private static readonly NamePrefix = 'pragmatic-env-'
-    private static readonly VolumeSuffix = '-data'
     private static readonly InternalPort = '8080'
     private static readonly DataMount = '/data'
     private static readonly DataSeedMount = '/data-seed'
     private static readonly SeedMount = '/seed'
-    public static readonly HealthPath = '/healthz'
     private static readonly LocalHost = '127.0.0.1'
     private static readonly HealthTimeoutMs = 60000
     private static readonly HealthIntervalMs = 1000
@@ -167,9 +165,6 @@ export class DockerEnv
     private static readonly CreateCmd = 'create'
     private static readonly ExecCmd = 'exec'
     private static readonly NetworkFlag = '--network'
-    private static readonly NetworkSuffix = '-net'
-    private static readonly DbSuffix = '-db'
-    private static readonly DbVolumeSuffix = '-db-data'
     private static readonly PostgresImage = 'postgres:16'
     private static readonly PostgresPort = '5432'
     private static readonly PostgresDataMount = '/var/lib/postgresql/data'
@@ -195,31 +190,6 @@ export class DockerEnv
         return `test -f ${marker} || { cp -a ${DockerEnv.SeedMount}/. ${DockerEnv.DataMount}/ && chmod -R a+rwX ${DockerEnv.DataMount} && touch ${marker}; }`
     }
 
-    public static ContainerName(def: EnvDefinition): string
-    {
-        return `${DockerEnv.NamePrefix}${def.name}`
-    }
-
-    public static VolumeName(def: EnvDefinition): string
-    {
-        return `${DockerEnv.NamePrefix}${def.name}${DockerEnv.VolumeSuffix}`
-    }
-
-    public static NetworkName(def: EnvDefinition): string
-    {
-        return `${DockerEnv.NamePrefix}${def.name}${DockerEnv.NetworkSuffix}`
-    }
-
-    public static DbContainerName(def: EnvDefinition): string
-    {
-        return `${DockerEnv.NamePrefix}${def.name}${DockerEnv.DbSuffix}`
-    }
-
-    public static DbVolumeName(def: EnvDefinition): string
-    {
-        return `${DockerEnv.NamePrefix}${def.name}${DockerEnv.DbVolumeSuffix}`
-    }
-
     /** The Postgres sidecar container; only valid for envs with a database descriptor. */
     public static PostgresRunArgs(def: EnvDefinition): string[]
     {
@@ -229,9 +199,9 @@ export class DockerEnv
             throw new Error(DockerEnv.NoDatabaseMessage)
         }
         return [
-            DockerEnv.Run, DockerEnv.Detach, DockerEnv.NameFlag, DockerEnv.DbContainerName(def),
-            DockerEnv.NetworkFlag, DockerEnv.NetworkName(def),
-            DockerEnv.VolumeFlag, `${DockerEnv.DbVolumeName(def)}:${DockerEnv.PostgresDataMount}`,
+            DockerEnv.Run, DockerEnv.Detach, DockerEnv.NameFlag, EnvConventions.DbContainerName(def),
+            DockerEnv.NetworkFlag, EnvConventions.NetworkName(def),
+            DockerEnv.VolumeFlag, `${EnvConventions.DbVolumeName(def)}:${DockerEnv.PostgresDataMount}`,
             DockerEnv.EnvFlag, `${DockerEnv.EnvPostgresPassword}=${db.password}`,
             DockerEnv.EnvFlag, `${DockerEnv.EnvPostgresUser}=${db.user}`,
             DockerEnv.EnvFlag, `${DockerEnv.EnvPostgresDb}=${db.database}`,
@@ -243,9 +213,9 @@ export class DockerEnv
     public static RunArgs(def: EnvDefinition, bundleDir: string, caHostPath?: string): string[]
     {
         const args = [
-            DockerEnv.Run, DockerEnv.Detach, DockerEnv.NameFlag, DockerEnv.ContainerName(def),
+            DockerEnv.Run, DockerEnv.Detach, DockerEnv.NameFlag, EnvConventions.ContainerName(def),
             DockerEnv.PortFlag, `${def.hostPort}:${DockerEnv.InternalPort}`,
-            DockerEnv.VolumeFlag, `${DockerEnv.VolumeName(def)}:${DockerEnv.DataMount}`,
+            DockerEnv.VolumeFlag, `${EnvConventions.VolumeName(def)}:${DockerEnv.DataMount}`,
             DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.TenantsFile}:${DockerEnv.TenantsMount}${DockerEnv.ReadOnly}`,
             DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.SecretsFile}:${DockerEnv.SecretsMount}${DockerEnv.ReadOnly}`,
             DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.MasterKeyFile}:${DockerEnv.MasterKeyMount}${DockerEnv.ReadOnly}`,
@@ -266,7 +236,7 @@ export class DockerEnv
         }
         if (def.database !== undefined)
         {
-            args.push(DockerEnv.NetworkFlag, DockerEnv.NetworkName(def))
+            args.push(DockerEnv.NetworkFlag, EnvConventions.NetworkName(def))
         }
         if (def.purpose === TenantPurposeName.Runtime)
         {
@@ -300,7 +270,7 @@ export class DockerEnv
     {
         try
         {
-            await this.Exec([DockerEnv.VolumeCmd, DockerEnv.RmCmd, DockerEnv.VolumeName(def)])
+            await this.Exec([DockerEnv.VolumeCmd, DockerEnv.RmCmd, EnvConventions.VolumeName(def)])
         }
         catch
         {
@@ -345,7 +315,7 @@ export class DockerEnv
         if (def.database !== undefined)
         {
             // the network survives Stop (data is kept), so creation must tolerate an existing one
-            await this.Tolerate([DockerEnv.NetworkCmd, DockerEnv.CreateCmd, DockerEnv.NetworkName(def)])
+            await this.Tolerate([DockerEnv.NetworkCmd, DockerEnv.CreateCmd, EnvConventions.NetworkName(def)])
             await this.Exec(DockerEnv.PostgresRunArgs(def))
             await this.WaitDbReady(def, def.database)
         }
@@ -360,7 +330,7 @@ export class DockerEnv
         {
             try
             {
-                await this.Exec([DockerEnv.ExecCmd, DockerEnv.DbContainerName(def), DockerEnv.PgIsReady, DockerEnv.PgUserFlag, db.user, DockerEnv.PgDbFlag, db.database])
+                await this.Exec([DockerEnv.ExecCmd, EnvConventions.DbContainerName(def), DockerEnv.PgIsReady, DockerEnv.PgUserFlag, db.user, DockerEnv.PgDbFlag, db.database])
                 return
             }
             catch
@@ -369,7 +339,7 @@ export class DockerEnv
             }
             await new Promise<void>(resolve => setTimeout(resolve, DockerEnv.DbIntervalMs))
         }
-        throw new Error(`${DockerEnv.DbTimeoutMessage}${DockerEnv.DbContainerName(def)}`)
+        throw new Error(`${DockerEnv.DbTimeoutMessage}${EnvConventions.DbContainerName(def)}`)
     }
 
     /**
@@ -378,18 +348,18 @@ export class DockerEnv
      */
     public async Down(def: EnvDefinition, removeData: boolean = false): Promise<void>
     {
-        await this.Tolerate([DockerEnv.RmCmd, DockerEnv.ForceFlag, DockerEnv.ContainerName(def)])
+        await this.Tolerate([DockerEnv.RmCmd, DockerEnv.ForceFlag, EnvConventions.ContainerName(def)])
         if (def.database === undefined)
         {
             return
         }
-        await this.Tolerate([DockerEnv.RmCmd, DockerEnv.ForceFlag, DockerEnv.DbContainerName(def)])
+        await this.Tolerate([DockerEnv.RmCmd, DockerEnv.ForceFlag, EnvConventions.DbContainerName(def)])
         if (!removeData)
         {
             return
         }
-        await this.Tolerate([DockerEnv.VolumeCmd, DockerEnv.RmCmd, DockerEnv.DbVolumeName(def)])
-        await this.Tolerate([DockerEnv.NetworkCmd, DockerEnv.RmCmd, DockerEnv.NetworkName(def)])
+        await this.Tolerate([DockerEnv.VolumeCmd, DockerEnv.RmCmd, EnvConventions.DbVolumeName(def)])
+        await this.Tolerate([DockerEnv.NetworkCmd, DockerEnv.RmCmd, EnvConventions.NetworkName(def)])
     }
 
     private async Tolerate(args: string[]): Promise<void>
@@ -408,21 +378,21 @@ export class DockerEnv
     {
         return this.Exec([
             DockerEnv.PsCmd, DockerEnv.AllFlag,
-            DockerEnv.FilterFlag, `${DockerEnv.NameFilter}${DockerEnv.NamePrefix}`,
+            DockerEnv.FilterFlag, `${DockerEnv.NameFilter}${EnvConventions.NamePrefix}`,
             DockerEnv.FormatFlag, DockerEnv.PsFormat
         ])
     }
 
     public async Logs(def: EnvDefinition): Promise<string>
     {
-        return this.Exec([DockerEnv.LogsCommand, DockerEnv.ContainerName(def)])
+        return this.Exec([DockerEnv.LogsCommand, EnvConventions.ContainerName(def)])
     }
 
     /** Follows the container's logs (`docker logs -f --tail N`); the caller Kill()s the returned process to stop. */
     public LogStream(def: EnvDefinition, onData: (chunk: string) => void): ILogProcess
     {
         const proc = this.spawner.Spawn(DockerEnv.Docker, [
-            DockerEnv.LogsCommand, DockerEnv.ForceFlag, DockerEnv.TailFlag, DockerEnv.LogTailLines, DockerEnv.ContainerName(def)
+            DockerEnv.LogsCommand, DockerEnv.ForceFlag, DockerEnv.TailFlag, DockerEnv.LogTailLines, EnvConventions.ContainerName(def)
         ])
         proc.OnData(onData)
         return proc
@@ -440,7 +410,7 @@ export class DockerEnv
             }
             if (def && !(await this.IsRunning(def)))
             {
-                throw new Error(`${DockerEnv.ContainerExitedMessage}${DockerEnv.ContainerName(def)}`)
+                throw new Error(`${DockerEnv.ContainerExitedMessage}${EnvConventions.ContainerName(def)}`)
             }
             await new Promise<void>(resolve => setTimeout(resolve, DockerEnv.HealthIntervalMs))
         }
@@ -458,7 +428,7 @@ export class DockerEnv
     {
         await this.Exec([
             DockerEnv.Run, DockerEnv.Rm, DockerEnv.UserFlag, DockerEnv.RootUser,
-            DockerEnv.VolumeFlag, `${DockerEnv.VolumeName(def)}:${DockerEnv.DataMount}`,
+            DockerEnv.VolumeFlag, `${EnvConventions.VolumeName(def)}:${DockerEnv.DataMount}`,
             DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.DataSubdir}:${DockerEnv.SeedMount}${DockerEnv.ReadOnly}`,
             DockerEnv.EntrypointFlag, DockerEnv.Sh,
             DockerEnv.ImageName,
@@ -468,14 +438,14 @@ export class DockerEnv
 
     private IsRunning(def: EnvDefinition): Promise<boolean>
     {
-        return this.RunningByName(DockerEnv.ContainerName(def))
+        return this.RunningByName(EnvConventions.ContainerName(def))
     }
 
     private Probe(port: number): Promise<boolean>
     {
         return new Promise<boolean>(resolve =>
         {
-            const req = get({ host: DockerEnv.LocalHost, port, path: DockerEnv.HealthPath, timeout: DockerEnv.HealthRequestTimeoutMs }, res =>
+            const req = get({ host: DockerEnv.LocalHost, port, path: EnvConventions.HealthPath, timeout: DockerEnv.HealthRequestTimeoutMs }, res =>
             {
                 res.resume()
                 resolve(res.statusCode === 200)

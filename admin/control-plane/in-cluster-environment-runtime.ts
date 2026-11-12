@@ -1,4 +1,4 @@
-import type { IBundleBuilder } from './docker-env-port.js'
+import type { IBundleBuilder } from './environment-seed-port.js'
 import { EnvServerSeedSource } from './env-server-seed.js'
 import type { EnvDefinition } from '../../environments/seed/bundle.js'
 import type { ILogProcess } from '../../environments/seed/docker.js'

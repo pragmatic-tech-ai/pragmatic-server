@@ -3,7 +3,7 @@ import { rmSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { BundleBuilder, EnvKind, type EnvDatabase, type EnvDefinition, type EnvOidc } from '../../environments/seed/bundle.js'
-import { DockerEnv } from '../../environments/seed/docker.js'
+import { EnvConventions } from '../../environments/seed/env-conventions.js'
 import type { UserSeed } from '../../environments/seed/users.js'
 import { EnvStatus, EnvType, EnvironmentChangeKind, type Template, type EnvironmentChange, type EnvironmentRecord } from './environment-record.js'
 import type { EnvironmentRegistry } from './environment-registry.js'
@@ -18,7 +18,7 @@ import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import type { IIdpService, IdpConnection } from './idp-service.js'
 import type { IdpAdminClient } from './idp-admin-client.js'
 import type { ILogProcess } from '../../environments/seed/docker.js'
-import type { IUserSeeder } from './docker-env-port.js'
+import type { IUserSeeder } from './environment-seed-port.js'
 import type { EnvEndpoint, EnvRuntimeContext } from './environment-runtime.js'
 import type { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
 import type { IUiDeployActuator, UiDeployBundle } from './ui-deploy-actuator.js'
@@ -320,8 +320,8 @@ export class EnvironmentService implements IAdminAccess
             {
                 // Docker-shaped fields: a host-port backend owns a published port, container, volume and local bundle.
                 record.hostPort = port
-                record.containerName = DockerEnv.ContainerName(def)
-                record.volumeName = DockerEnv.VolumeName(def)
+                record.containerName = EnvConventions.ContainerName(def)
+                record.volumeName = EnvConventions.VolumeName(def)
                 record.bundleDir = bundleDir
             }
             if (idpBaseDomain !== undefined)

@@ -14,7 +14,7 @@ import { AccessLevel, BaseRole, PresentedSecret, Principal, PrincipalKind, Privi
 import { LocalSourceTokenProvider } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminProxy, WsAdminConnection, WsAdminConnector } from '../../../admin/control-plane/admin-proxy.js'
 import { ClientRegistry } from '../../../admin/control-plane/client-registry.js'
-import { BundleBuilderAdapter, UserSeederAdapter } from '../../../admin/control-plane/docker-env-port.js'
+import { BundleBuilderAdapter, UserSeederAdapter } from '../../../admin/control-plane/environment-seed-port.js'
 import type { IDockerEnv } from '../../../admin/control-plane/docker-env-port.js'
 import { EnvironmentEndpoints } from '../../../admin/control-plane/environment-endpoints.js'
 import { EnvType, Template } from '../../../admin/control-plane/environment-record.js'
