@@ -38,7 +38,7 @@ export interface IEnvironmentFixtureOptions
 {
     /** Boot the identity subsystem (master key, tenant config); absent = no identity (Default Allow). */
     readonly Identity?: boolean
-    /** With identity: the tenant security model saved into the tenant config after boot. */
+    /** With identity: the environment security setting saved into the tenant config after boot. */
     readonly SecurityModel?: ISecurityModelConfig
 }
 
@@ -248,12 +248,13 @@ export class EnvironmentFixture
         return new PromoteRecordStore(new NodeFsStorage(this.GraphsDir))
     }
 
-    /** Saves `model` as the tenant security model (the server reloads it on its next Invalidate). */
+    /** Saves `model` as the environment security setting and invalidates the server's cached one. */
     public async SaveSecurityModel(model: ISecurityModelConfig): Promise<void>
     {
         const store = await this.Server.TenantConfigStore()
         const seeded = await store.Get(EnvironmentFixture.TenantId)
         assert.ok(seeded !== null, EnvironmentFixture.NotSeededMessage)
         await store.Save(EnvironmentFixture.TenantId, new IdentityConfig(seeded.PackId, seeded.DelegationDepth, seeded.ProviderSettings, seeded.GroupRoleMap, seeded.ClaimsMapping, model))
+        ;(await this.Server.SecuritySetting()).Invalidate()
     }
 }

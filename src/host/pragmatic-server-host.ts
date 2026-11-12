@@ -474,7 +474,7 @@ export class PragmaticServerHost
                 AllowScripts: name => server.AllowAdapterPackScripts(name),
                 DenyScripts: name => server.DenyAdapterPackScripts(name),
                 ListScriptAllowlist: () => server.ListAdapterPackScripts(),
-            }, await server.SecurityModelReload(), this.principalConnections, pack.Sessions)
+            }, await server.SecurityAdmin(), this.principalConnections, pack.Sessions)
             if (this.disposed)
             {
                 this.RejectRetryable(socket)

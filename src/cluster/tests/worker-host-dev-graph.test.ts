@@ -5,7 +5,7 @@ import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
-import { AccessLevel, DelegationDepth, Grant, IdentityConfig, PrivilegeAction, ResourceKind, ResourceRef, Role } from '@pragmatic-tech-ai/todl-identity'
+import { DelegationDepth, Grant, IdentityConfig, ResourceKind, ResourceRef, Role } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { ErrorCodes, PragmaticClient, WsMessageSocket } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { MachineTls } from '../machine-tls.js'
@@ -32,8 +32,6 @@ class DevWorkerFx
     public static readonly PackId = 'local'
     private static readonly RootUnit = 'root'
     private static readonly RootUnitName = 'Root'
-    private static readonly ReaderRole = 'reader'
-    private static readonly ReaderRoleName = 'Reader'
     public static readonly EnvironmentHeader = 'x-pragmatic-environment'
     public static readonly Column = 'label'
     public static readonly LocalHost = '127.0.0.1'
@@ -81,17 +79,22 @@ class DevWorkerFx
         return (await pack.Tokens.Issue(server.Tenant(), DevWorkerFx.Tenant, [], null)).Token
     }
 
-    /** A security model granting the token principal Read on widgets at Organization level. */
+    /**
+     * A structurally-valid tenant setting placing the token principal. The dev graph is governed by RBAC at the
+     * PolicyGate only (PR13) and never reads the security setting, so this only marks identity as configured; the dev
+     * cypher read returns every row regardless.
+     */
     public static ReadingModel(): ISecurityModelConfig
     {
         return {
             businessUnits: [{ id: DevWorkerFx.RootUnit, name: DevWorkerFx.RootUnitName }],
+            users: [{ principalId: DevWorkerFx.Tenant, businessUnitId: DevWorkerFx.RootUnit }],
             teams: [],
-            membership: { claimsMapping: [], overrides: [{ principalId: DevWorkerFx.Tenant, homeBusinessUnit: DevWorkerFx.RootUnit, teams: [] }] },
-            ownershipRules: [],
-            roles: [{ id: DevWorkerFx.ReaderRole, name: DevWorkerFx.ReaderRoleName, privileges: [{ action: PrivilegeAction.Read, concept: DevWorkerFx.Widget, level: AccessLevel.Organization }] }],
-            roleAssignment: { claimsMapping: [], overrides: [{ principalId: DevWorkerFx.Tenant, roles: [DevWorkerFx.ReaderRole] }], teamRoles: [] },
-        } as unknown as ISecurityModelConfig
+            roleAssignments: [],
+            profileAssignments: [],
+            roleOverrides: [],
+            profileOverrides: [],
+        }
     }
 
     /** Stores the reading security model in the tenant's identity config (kept fields: the stored ones, if any). */

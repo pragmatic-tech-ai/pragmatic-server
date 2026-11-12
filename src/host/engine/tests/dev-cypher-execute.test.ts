@@ -9,9 +9,8 @@ import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, AppWriteStatus, Cyp
 import type { CypherExecuteParams, CypherExecuteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
-import { AccessLevel, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable, IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import type { AccessContext, IFieldSecurityConfig, IPrivilegeConfig, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
+import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { CypherLimits } from '../../../config/cypher-limits.js'
 import { PagingLimits } from '../../../config/paging-limits.js'
 import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
@@ -189,21 +188,6 @@ class ExecFixture
         return PpSecurityHarness.Context(principalId)
     }
 
-    /** Read-only role plus a secured field the principal cannot read: reads are visible, writes are denied. */
-    public static Model(): ISecurityModelConfig
-    {
-        const base = PpSecurityHarness.BuSecurityModel(ExecFixture.Plain)
-        const reader = base.roles![0].id
-        return {
-            ...base,
-            ownershipRules: base.ownershipRules.map(r => ({ ...r, concept: ExecFixture.Qualified })),
-            roles: (base.roles ?? []).map(r => ({ ...r, privileges: r.privileges.map(p => ({ ...p, concept: ExecFixture.Qualified })) })),
-            membership: { claimsMapping: [], overrides: [{ principalId: ExecFixture.Plain, homeBusinessUnit: PpSecurityHarness.SalesBu, teams: [] }] },
-            roleAssignment: { claimsMapping: [], teamRoles: [], overrides: [{ principalId: ExecFixture.Plain, roles: [reader] }] },
-            fieldSecurity: { securedFields: [{ concept: ExecFixture.Qualified, field: ExecFixture.SecretField }], profiles: [], profileAssignment: { claimsMapping: [], teamProfiles: [], overrides: [] } },
-        }
-    }
-
     public static CoLocatedConcept(): string
     {
         return `concept ${PpSecurityHarness.Concept} { ${PpSecurityHarness.OwningBuField} : string?; secret : string?; }`
@@ -241,10 +225,6 @@ class ExecFixture
             : new PragmaticServer({ packagesRoot: packages })
         await server.Start()
         await server.OpenSolution(solution)
-        if (identityOn)
-        {
-            await PpSecurityHarness.Seed(server, ExecFixture.Model())
-        }
         const language = await server.LanguageService() as SolutionLanguageService
         await language.WhenIdle()
         const manager = await server.Manager()
@@ -298,37 +278,6 @@ describe('dev cypher/execute over the connection (ported from host/tests/cypher-
         })
     })
 
-    test('CREATE persists to the member .todl, bumps revision, and a follow-up cypher/query sees the new node', async () =>
-    {
-        await ExecFixture.With(false, async world =>
-        {
-            const handler = world.Connect(ExecFixture.Context(ExecFixture.Plain))
-            const before = world.GraphRevision
-            const result = await handler.RunCypherExecute(ExecFixture.P(world.Shop, ExecFixture.Create))
-            assert.equal(result.status, AppWriteStatus.Applied)
-            assert.equal(result.counts.nodesCreated, 1)
-            assert.ok(result.revision > before)
-            assert.ok(world.Source().includes('zeta'))
-            const page = await handler.RunCypherQuery({ cypher: ExecFixture.Find })
-            assert.deepEqual(page.items, [['zeta']])
-        })
-    })
-
-    test('a denied op => status Denied, nothing persisted (source text unchanged)', async () =>
-    {
-        await ExecFixture.With(true, async world =>
-        {
-            const handler = world.Connect(ExecFixture.Context(ExecFixture.Plain))
-            const source = world.Source()
-            const revision = world.GraphRevision
-            const result = await handler.RunCypherExecute(ExecFixture.P(world.Shop, ExecFixture.Create))
-            assert.equal(result.status, AppWriteStatus.Denied)
-            assert.equal(world.Source(), source)
-            assert.equal(world.GraphRevision, revision)
-            assert.ok(!JSON.stringify(result).includes(ExecFixture.Secret))
-        })
-    })
-
     test('expectedRevision mismatch => status Conflict, nothing applied', async () =>
     {
         await ExecFixture.With(false, async world =>
@@ -339,36 +288,6 @@ describe('dev cypher/execute over the connection (ported from host/tests/cypher-
             assert.equal(result.status, AppWriteStatus.Conflict)
             assert.equal(result.reason, 'graph revision has advanced')
             assert.equal(world.Source(), source)
-        })
-    })
-
-    test('a no-op MERGE (only matched) => Applied, counts all zero, revision unchanged', async () =>
-    {
-        await ExecFixture.With(false, async world =>
-        {
-            const handler = world.Connect(ExecFixture.Context(ExecFixture.Plain))
-            const source = world.Source()
-            const revision = world.GraphRevision
-            const result = await handler.RunCypherExecute(ExecFixture.P(world.Shop, "MERGE (:Widget {label: 'alpha'})"))
-            assert.equal(result.status, AppWriteStatus.Applied)
-            assert.deepEqual(result.counts, { nodesCreated: 0, nodesDeleted: 0, relationshipsCreated: 0, relationshipsDeleted: 0, propertiesSet: 0 })
-            assert.equal(result.revision, revision)
-            assert.equal(world.Source(), source)
-        })
-    })
-
-    test('RETURN rows come back as masked CypherNodeCellDto cells', async () =>
-    {
-        await ExecFixture.With(true, async world =>
-        {
-            const handler = world.Connect(ExecFixture.Context(ExecFixture.Plain))
-            const result = await handler.RunCypherExecute(ExecFixture.P(world.Shop, 'MATCH (w:Widget) RETURN w'))
-            assert.equal(result.status, AppWriteStatus.Applied)
-            assert.equal(result.rows.length, 1)
-            const cell = CypherCells.AsNode(result.rows[0]![0])!
-            assert.equal(typeof cell.id, 'string')
-            assert.ok(cell.fields['label'] !== undefined)
-            assert.ok(!JSON.stringify(result).includes(ExecFixture.Secret))
         })
     })
 
@@ -781,7 +700,6 @@ class ScriptedHost implements IDevGraphEngine
 /** What one fixture opens with. */
 interface IExecOptions
 {
-    readonly model?: ISecurityModelConfig
     readonly lock?: IWriteLock
     readonly files?: Readonly<Record<string, string>>
     readonly host?: IHostScript
@@ -850,12 +768,11 @@ class ExecFx
         this.Host = new DevGraphEngineHost(() => Promise.resolve(solution), () => Promise.resolve(this.Lang), undefined, this.EngineDiagnostics, this.WriteDiagnostics, prepareTimeoutMs)
     }
 
-    /** Opens the fixture: no identity when `model` is absent, else the DevScopeFx tenant holding `model`. */
+    /** Opens the fixture over the dev scope rules (unrestricted for every principal, PR13). */
     public static async Open(options: IExecOptions = {}): Promise<ExecFx>
     {
         const fx = new ExecFx(options.files ?? { [ExecFx.ModelFile]: ExecFx.Shop }, options.prepareTimeoutMs)
-        const auth = options.model === undefined ? undefined : (await DevScopeFx.Authorization(options.model)).Auth
-        fx.scopes = new AccessScopeSource(fx.Host, new DevScopeRules(fx.Host, auth, options.model !== undefined, () => Promise.resolve(ExecFx.SolutionName)), { ScopeDiagnostics: () => undefined })
+        fx.scopes = new AccessScopeSource(fx.Host, new DevScopeRules(() => Promise.resolve(ExecFx.SolutionName)), { ScopeDiagnostics: () => undefined })
         const scopes = fx.scopes
         fx.Scripted = options.host === undefined ? undefined : new ScriptedHost(fx.Host, options.host)
         fx.Execute = new DevCypherExecute(fx.Scripted ?? fx.Host, () => Promise.resolve(scopes), () => Promise.resolve(fx.Lang.GraphRevision), options.lock, fx.ExecuteDiagnostics, options.settleTimer)
@@ -875,12 +792,6 @@ class ExecFx
             fx.scopes?.dispose()
             await fx.Host.dispose()
         }
-    }
-
-    public static Security(privileges: readonly [PrivilegeAction, AccessLevel][], fields?: IFieldSecurityConfig): ISecurityModelConfig
-    {
-        const granted: IPrivilegeConfig[] = privileges.map(([action, level]) => DevScopeFx.Privilege(action, level))
-        return DevScopeFx.Model(granted, fields)
     }
 
     public Run(cypher: string, modelId: string = ExecFx.Model, expectedRevision?: number): Promise<CypherExecuteResultDto>
@@ -1363,9 +1274,8 @@ describe('DevCypherExecute outcomes', () =>
     test('DETACH DELETE of an own node with an incoming edge from another model: visible or hidden source, Applied; that file loses only the reference (ruling F-a)', async () =>
     {
         const files = { [ExecFx.ModelFile]: ExecFx.Shop, [ExecFx.OtherFile]: ExecFx.OtherReferencing }
-        // visible source (no identity: every node visible), then a source the caller cannot see (User-level read: o1 has no owner)
-        const user: [PrivilegeAction, AccessLevel][] = [[PrivilegeAction.Read, AccessLevel.User], [PrivilegeAction.Delete, AccessLevel.User]]
-        for (const options of [{ files }, { files, model: ExecFx.Security(user) }])
+        // the dev scope is unrestricted (PR13): every source is visible
+        for (const options of [{ files }])
         {
             await ExecFx.With(options, async fx =>
             {
@@ -1384,175 +1294,8 @@ describe('DevCypherExecute outcomes', () =>
     })
 })
 
-describe('DevCypherExecute scope (ported from host/cypher/tests/authorizing-cypher-writer.test.ts as scope cases)', () =>
+describe('DevCypherExecute scope (dev is unrestricted, PR13)', () =>
 {
-    const Read = [PrivilegeAction.Read, AccessLevel.Organization] as [PrivilegeAction, AccessLevel]
-
-    test('a denied Create is Denied and nothing is written', async () =>
-    {
-        await ExecFx.With({ model: ExecFx.Security([Read]) }, async fx =>
-        {
-            const source = fx.Source()
-            const result = await fx.Run(ExecFx.Create)
-            assert.equal(result.status, AppWriteStatus.Denied)
-            assert.deepEqual(result.counts, ExecFx.ZeroCounts)
-            assert.equal(fx.Source(), source)
-        })
-    })
-
-    test('read-only field write is Denied, source unchanged', async () =>
-    {
-        const all: [PrivilegeAction, AccessLevel][] = [Read, [PrivilegeAction.Create, AccessLevel.Organization], [PrivilegeAction.Update, AccessLevel.Organization]]
-        await ExecFx.With({ model: ExecFx.Security(all, DevScopeFx.Fields([DevScopeFx.Secret], [{ field: DevScopeFx.Secret, read: true }])) }, async fx =>
-        {
-            const source = fx.Source()
-            for (const write of ["CREATE (:Widget {label: 'fresh', secret: 'x'})", "MATCH (w:Widget {label: 'mine'}) SET w.secret = 'x'", "MATCH (w:Widget {label: 'mine'}) REMOVE w.secret"])
-            {
-                const result = await fx.Run(write)
-                assert.equal(result.status, AppWriteStatus.Denied, write)
-                assert.equal(fx.Source(), source, write)
-            }
-            assert.equal((await fx.Run("MATCH (w:Widget {label: 'mine'}) SET w.code = 'x'")).status, AppWriteStatus.Applied, 'an unsecured member stays writable')
-        })
-    })
-
-    test('write to an instance outside the scope is Denied', async () =>
-    {
-        // w2 (root) is readable at Organization level but updatable only at BusinessUnit level (p1 reaches sales, north)
-        const update: [PrivilegeAction, AccessLevel][] = [Read, [PrivilegeAction.Update, AccessLevel.BusinessUnit]]
-        await ExecFx.With({ model: ExecFx.Security(update) }, async fx =>
-        {
-            const source = fx.Source()
-            const result = await fx.Run("MATCH (w:Widget {label: 'theirs'}) SET w.code = 'x'")
-            assert.equal(result.status, AppWriteStatus.Denied)
-            assert.equal(fx.Source(), source)
-            assert.equal((await fx.Run("MATCH (w:Widget {label: 'mine'}) SET w.code = 'x'")).status, AppWriteStatus.Applied, 'an instance inside the scope is writable')
-        })
-    })
-
-    test('a SET on a read-hidden node writes nothing and leaks no value (writes see only visible nodes)', async () =>
-    {
-        const bu: [PrivilegeAction, AccessLevel][] = [[PrivilegeAction.Read, AccessLevel.BusinessUnit], [PrivilegeAction.Update, AccessLevel.Organization]]
-        await ExecFx.With({ model: ExecFx.Security(bu) }, async fx =>
-        {
-            const source = fx.Source()
-            const result = await fx.Run("MATCH (w:Widget {label: 'theirs'}) SET w.secret = 'TOPSECRET'")
-            assert.equal(result.status, AppWriteStatus.Applied)
-            assert.deepEqual(result.counts, ExecFx.ZeroCounts)
-            assert.ok(!JSON.stringify(result).includes('TOPSECRET'))
-            assert.equal(fx.Source(), source)
-        })
-    })
-
-    test('a relationship to a hidden target is not made; to a visible target it is', async () =>
-    {
-        const bu: [PrivilegeAction, AccessLevel][] = [[PrivilegeAction.Read, AccessLevel.BusinessUnit], [PrivilegeAction.Create, AccessLevel.BusinessUnit], [PrivilegeAction.Update, AccessLevel.BusinessUnit]]
-        await ExecFx.With({ model: ExecFx.Security(bu) }, async fx =>
-        {
-            const source = fx.Source()
-            const hidden = await fx.Run("MATCH (a:Widget {label: 'mine'}), (b:Widget {label: 'theirs'}) CREATE (a)-[:buddy]->(b)")
-            assert.deepEqual(hidden.counts, ExecFx.ZeroCounts)
-            assert.equal(fx.Source(), source)
-            const visible = await fx.Run("MATCH (a:Widget {label: 'mine'}) CREATE (a)-[:buddy]->(:Widget {label: 'fresh'})")
-            assert.equal(visible.status, AppWriteStatus.Applied)
-            assert.equal(visible.counts.relationshipsCreated, 1)
-        })
-    })
-
-    // Ruling T7-a: every write to a node created in the same query is judged at its create (Create rules on the
-    // end-of-batch values, ReadOnly.Create), so `CREATE (w) SET w.f = v` ends as `CREATE (w {f: v})` would.
-    test('writes to a node created in the same query are judged at its create: no Update privilege is needed', async () =>
-    {
-        const create: [PrivilegeAction, AccessLevel][] = [Read, [PrivilegeAction.Create, AccessLevel.BusinessUnit]]
-        await ExecFx.With({ model: ExecFx.Security(create) }, async fx =>
-        {
-            const result = await fx.Run("CREATE (w:Widget {label: 'fresh'}) SET w.code = 'X'")
-            assert.equal(result.status, AppWriteStatus.Applied)
-            assert.match(fx.File(), /code = "X"/)
-        })
-    })
-
-    test('a member read-only on update only is writable on a node created in the same query (judged at its create)', async () =>
-    {
-        const all: [PrivilegeAction, AccessLevel][] = [Read, [PrivilegeAction.Create, AccessLevel.Organization], [PrivilegeAction.Update, AccessLevel.Organization]]
-        const fields = DevScopeFx.Fields([DevScopeFx.Secret], [{ field: DevScopeFx.Secret, read: true, create: true }])
-        await ExecFx.With({ model: ExecFx.Security(all, fields) }, async fx =>
-        {
-            const source = fx.Source()
-            assert.equal((await fx.Run("CREATE (:Widget {label: 'fresh', secret: 'x'})")).status, AppWriteStatus.Applied, 'create-writable on create')
-            assert.notEqual(fx.Source(), source)
-            const result = await fx.Run("CREATE (w:Widget {label: 'later'}) SET w.secret = 'x'")
-            assert.equal(result.status, AppWriteStatus.Applied)
-            assert.match(fx.File(), /label = "later"/)
-            const update = await fx.Run("MATCH (w:Widget {label: 'later'}) SET w.secret = 'y'")
-            assert.equal(update.status, AppWriteStatus.Denied, 'an update of an existing node is refused')
-            assert.doesNotMatch(fx.File(), /secret = "y"/)
-        })
-    })
-
-    test('a member read-only on create and update stays refused when set on a node created in the same query', async () =>
-    {
-        const all: [PrivilegeAction, AccessLevel][] = [Read, [PrivilegeAction.Create, AccessLevel.Organization], [PrivilegeAction.Update, AccessLevel.Organization]]
-        await ExecFx.With({ model: ExecFx.Security(all, DevScopeFx.Fields([DevScopeFx.Secret], [{ field: DevScopeFx.Secret, read: true }])) }, async fx =>
-        {
-            const source = fx.Source()
-            const result = await fx.Run("CREATE (w:Widget {label: 'later'}) SET w.secret = 'x'")
-            assert.equal(result.status, AppWriteStatus.Denied)
-            assert.equal(fx.Source(), source)
-        })
-    })
-
-    test('a SET on a node created in the same query is refused when the concept\'s Create is denied', async () =>
-    {
-        const update: [PrivilegeAction, AccessLevel][] = [Read, [PrivilegeAction.Update, AccessLevel.Organization]]
-        await ExecFx.With({ model: ExecFx.Security(update) }, async fx =>
-        {
-            const source = fx.Source()
-            const result = await fx.Run("CREATE (w:Widget {label: 'later'}) SET w.secret = 'x'")
-            assert.equal(result.status, AppWriteStatus.Denied)
-            assert.equal(fx.Source(), source)
-        })
-    })
-
-    test('a relationship whose source the scope may not update is Denied', async () =>
-    {
-        await ExecFx.With({ model: ExecFx.Security([Read]) }, async fx =>
-        {
-            const source = fx.Source()
-            const result = await fx.Run("MATCH (a:Widget {label: 'mine'}), (b:Widget {label: 'theirs'}) CREATE (a)-[:buddy]->(b)")
-            assert.equal(result.status, AppWriteStatus.Denied)
-            assert.equal(fx.Source(), source)
-        })
-    })
-
-    test('a delete the scope does not allow is Denied', async () =>
-    {
-        const update: [PrivilegeAction, AccessLevel][] = [Read, [PrivilegeAction.Update, AccessLevel.Organization]]
-        await ExecFx.With({ model: ExecFx.Security(update) }, async fx =>
-        {
-            const source = fx.Source()
-            const result = await fx.Run("MATCH (w:Widget {label: 'mine'}) DETACH DELETE w")
-            assert.equal(result.status, AppWriteStatus.Denied)
-            assert.equal(fx.Source(), source)
-        })
-    })
-
-    test('create stamps owner defaults', async () =>
-    {
-        // Create at BusinessUnit level holds only through the stamped owning unit (p1's home unit, sales)
-        const create: [PrivilegeAction, AccessLevel][] = [Read, [PrivilegeAction.Create, AccessLevel.BusinessUnit]]
-        await ExecFx.With({ model: ExecFx.Security(create) }, async fx =>
-        {
-            const result = await fx.Run("CREATE (w:Widget {label: 'fresh'}) RETURN w")
-            assert.equal(result.status, AppWriteStatus.Applied)
-            const cell = CypherCells.AsNode(result.rows[0]![0])!
-            assert.equal(cell.fields[DevScopeFx.OwningBu]!.value, DevScopeFx.Sales)
-            assert.equal(cell.fields[DevScopeFx.Owner]!.value, DevScopeFx.P1)
-            assert.match(fx.File(), /owningBu = "sales"/)
-            assert.match(fx.File(), /owner = "p1"/)
-        })
-    })
-
     test('no identity: every write is open (create, set, remove, delete)', async () =>
     {
         await ExecFx.With({}, async fx =>
@@ -1564,27 +1307,6 @@ describe('DevCypherExecute scope (ported from host/cypher/tests/authorizing-cyph
             assert.doesNotMatch(fx.File(), /fresh/)
             assert.doesNotMatch(fx.File(), new RegExp(ExecFx.Secret))
             assert.match(fx.File(), /code = "x"/)
-        })
-    })
-
-    test('a read-only reference member is blocked for edge CREATE and DELETE, matching SET', async () =>
-    {
-        const all: [PrivilegeAction, AccessLevel][] = [Read, [PrivilegeAction.Create, AccessLevel.Organization], [PrivilegeAction.Update, AccessLevel.Organization]]
-        await ExecFx.With({ model: ExecFx.Security(all, DevScopeFx.Fields(['peer'], [{ field: 'peer', read: true }])) }, async fx =>
-        {
-            const source = fx.Source()
-            for (const write of [
-                "MATCH (a:Widget {label: 'theirs'}), (b:Widget {label: 'mine'}) SET a.peer = b",
-                "MATCH (a:Widget {label: 'theirs'}), (b:Widget {label: 'mine'}) CREATE (a)-[:peer]->(b)",
-                // the engine deletes an edge through its member (a relationship variable is no write target)
-                "MATCH (a:Widget {label: 'mine'}) REMOVE a.peer",
-            ])
-            {
-                assert.equal((await fx.Run(write)).status, AppWriteStatus.Denied, write)
-                assert.equal(fx.Source(), source, write)
-            }
-            const other = await fx.Run("MATCH (a:Widget {label: 'mine'}), (b:Widget {label: 'theirs'}) CREATE (a)-[:buddy]->(b)")
-            assert.equal(other.status, AppWriteStatus.Applied, 'another member stays linkable')
         })
     })
 })

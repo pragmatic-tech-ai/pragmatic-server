@@ -97,7 +97,8 @@ class WriteRulesDraft
  * The AND of two access scopes over one engine schema, deny-wins: a node is visible (a write allowed) iff both scopes
  * admit it. Rows on the same key are ANDed, write rules are ANDed per operation, Hidden / HiddenExact and ReadOnly /
  * ReadOnlyExact (per operation) are unioned key by key (inherited sets stay inherited, exact sets exact), the
- * Endpoints entries of both are kept (both scopes describe the same schema, so a shared key has the same members), and
+ * Endpoints are the union of both scopes' entries (two entries for one edge concept with different members throw: a host
+ * bug, never a narrowing), and
  * the Default is Allow only when both are.
  *
  * A scope's Default only decides a node none of whose keys has an entry in that scope, but the combined scope sees
@@ -107,6 +108,8 @@ class WriteRulesDraft
  */
 export class AccessScopeConjunction
 {
+    private static readonly ConflictingEndpointsMessage = 'the conjoined scopes give different endpoints to edge concept '
+
     public static readonly Rules: readonly WriteRule[] = [WriteRule.Create, WriteRule.Update, WriteRule.Delete, WriteRule.Append, WriteRule.AppendTo]
 
     public static And(left: AccessScope, right: AccessScope, catalog: EngineSchemaCatalog): AccessScope
@@ -118,7 +121,7 @@ export class AccessScopeConjunction
         const endpoints = new Map<string, IEndpointMembers>()
         for (const scope of [left, right])
         {
-            for (const [key, members] of scope.Endpoints) endpoints.set(key, members)
+            for (const [key, members] of scope.Endpoints) AccessScopeConjunction.Endpoint(endpoints, key, members)
             for (const [key, predicate] of scope.Rows) rows.set(key, PredicateFold.And(rows.get(key), predicate))
             for (const [key, rules] of scope.Writes) AccessScopeConjunction.Draft(writes, key).Add(rules)
             AccessScopeConjunction.Union(hidden, scope.Hidden)
@@ -145,6 +148,17 @@ export class AccessScopeConjunction
         const rules = new Map<string, IWriteRules>()
         for (const [key, draft] of writes) rules.set(key, draft.Rules())
         return AccessScope.Build({ Default: fallback, Rows: rows, Writes: rules, Hidden: hidden, HiddenExact: hiddenExact, Endpoints: endpoints })
+    }
+
+    /** Keeps one entry per edge concept; two different endpoint pairs for one concept are a host bug, never a narrowing. */
+    private static Endpoint(into: Map<string, IEndpointMembers>, key: string, members: IEndpointMembers): void
+    {
+        const existing = into.get(key)
+        if (existing !== undefined && (existing.From !== members.From || existing.To !== members.To))
+        {
+            throw new Error(AccessScopeConjunction.ConflictingEndpointsMessage + key)
+        }
+        into.set(key, members)
     }
 
     private static Union(into: Map<string, Set<string>>, from: ReadonlyMap<string, ReadonlySet<string>>): void

@@ -1,9 +1,6 @@
 import { AccessDefault, And, ConceptIs, FalsePredicate, MemberKind, NodeEvaluator, Not, Or, TruePredicate, ValueType } from '@pragmatic-tech-ai/graph'
 import type { AccessScope, CellValue, IDefinitionDescription, ISchemaDescription, MemberInput, Predicate } from '@pragmatic-tech-ai/graph'
-import { AccessContext, AccessLevel, DelegationDepth, Grant, IdentityConfig, OwnershipSourceKind, Principal, PrincipalKind, PrivilegeAction, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
-import type { IFieldSecurityConfig, IPrivilegeConfig, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
-import { InMemoryTenantConfigStore } from '@pragmatic-tech-ai/todl-identity-host'
-import { TenantReadAuthorization } from '../../cypher/read-filter-source.js'
+import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
 import { EngineSchemaCatalog } from '../engine-schema-catalog.js'
 
 /** Which rule of a scope a check reads. */
@@ -16,9 +13,8 @@ export enum ScopeAxis
 }
 
 /**
- * A tenant security model over acme.Widget / acme.Gizmo (a Widget subconcept) / acme.Gadget, a business-unit tree
- * root > sales > east > east1 and root > north, team-a (owned by north) and team-b (no unit). p1 lives in sales and
- * is in team-a; p2 lives in sales with no team. Every privilege goes to p1 through one role.
+ * A hand-written engine schema over acme.Widget / acme.Gizmo (a Widget subconcept) / acme.Gear / acme.Gadget /
+ * acme.Counter, principals p1 and p2 with an Owner grant on tenant t1, and an in-process judge of a scope's rules.
  */
 export class DevScopeFx
 {
@@ -51,51 +47,6 @@ export class DevScopeFx
     public static readonly Code = 'code'
     public static readonly Role = 'role'
     public static readonly Profile = 'profile'
-    private static readonly PackId = 'local'
-
-    public static Model(privileges: readonly IPrivilegeConfig[], fieldSecurity?: IFieldSecurityConfig, gizmoOwnership = true): ISecurityModelConfig
-    {
-        const fromField = (value: string): { kind: OwnershipSourceKind; value: string } => ({ kind: OwnershipSourceKind.FromField, value })
-        return {
-            businessUnits: [
-                { id: DevScopeFx.Root, name: 'Root' },
-                { id: DevScopeFx.Sales, name: 'Sales', parent: DevScopeFx.Root },
-                { id: DevScopeFx.East, name: 'East', parent: DevScopeFx.Sales },
-                { id: DevScopeFx.East1, name: 'East 1', parent: DevScopeFx.East },
-                { id: DevScopeFx.North, name: 'North', parent: DevScopeFx.Root },
-            ],
-            teams: [{ id: DevScopeFx.TeamA, name: 'A', owningBusinessUnit: DevScopeFx.North }, { id: DevScopeFx.TeamB, name: 'B' }],
-            membership: { claimsMapping: [], overrides: [
-                { principalId: DevScopeFx.P1, homeBusinessUnit: DevScopeFx.Sales, teams: [DevScopeFx.TeamA] },
-                { principalId: DevScopeFx.P2, homeBusinessUnit: DevScopeFx.Sales, teams: [] },
-            ] },
-            ownershipRules: [
-                { concept: DevScopeFx.Widget, owner: fromField(DevScopeFx.Owner), owningBusinessUnit: fromField(DevScopeFx.OwningBu) },
-                ...(gizmoOwnership ? [{ concept: DevScopeFx.Gizmo, owner: fromField(DevScopeFx.Owner), owningBusinessUnit: fromField(DevScopeFx.OwningBu) }] : []),
-                { concept: DevScopeFx.Gadget, owningBusinessUnit: { kind: OwnershipSourceKind.Fixed, value: DevScopeFx.North } },
-                { concept: DevScopeFx.Gear, owner: fromField(DevScopeFx.Owner), owningBusinessUnit: fromField(DevScopeFx.OwningBu) },
-                { concept: DevScopeFx.Counter, owner: fromField(DevScopeFx.Owner), owningBusinessUnit: fromField(DevScopeFx.OwningBu) },
-            ],
-            roles: [{ id: DevScopeFx.Role, name: 'Role', privileges: [...privileges] }],
-            roleAssignment: { claimsMapping: [], teamRoles: [], overrides: [{ principalId: DevScopeFx.P1, roles: [DevScopeFx.Role] }] },
-            ...(fieldSecurity === undefined ? {} : { fieldSecurity }),
-        }
-    }
-
-    public static Privilege(action: PrivilegeAction, level: AccessLevel, concept: string = DevScopeFx.Widget): IPrivilegeConfig
-    {
-        return { action, level, concept }
-    }
-
-    /** Field security: `secured` fields, and p1's profile granting `grants`. */
-    public static Fields(secured: readonly string[], grants: readonly { field: string; read?: boolean; create?: boolean; update?: boolean }[], concept: string = DevScopeFx.Widget): IFieldSecurityConfig
-    {
-        return {
-            securedFields: secured.map(field => ({ concept, field })),
-            profiles: [{ id: DevScopeFx.Profile, name: 'Profile', grants: grants.map(grant => ({ concept, ...grant })) }],
-            profileAssignment: { claimsMapping: [], teamProfiles: [], overrides: [{ principalId: DevScopeFx.P1, profiles: [DevScopeFx.Profile] }] },
-        }
-    }
 
     public static Context(principalId: string, claims: ReadonlyMap<string, string> = new Map(), groups: readonly string[] = []): AccessContext
     {
@@ -103,19 +54,6 @@ export class DevScopeFx
         const principal = new Principal(principalId, DevScopeFx.TenantId, PrincipalKind.User, claims, groups)
         const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Tenant, DevScopeFx.TenantId, []))]
         return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
-    }
-
-    /** A TenantReadAuthorization over a store holding `model` (none: the tenant has no security model). */
-    public static async Authorization(model?: ISecurityModelConfig): Promise<{ Auth: TenantReadAuthorization; Store: InMemoryTenantConfigStore }>
-    {
-        const store = new InMemoryTenantConfigStore()
-        if (model !== undefined) await DevScopeFx.Save(store, model)
-        return { Auth: new TenantReadAuthorization(store), Store: store }
-    }
-
-    public static async Save(store: InMemoryTenantConfigStore, model: ISecurityModelConfig): Promise<void>
-    {
-        await store.Save(DevScopeFx.TenantId, new IdentityConfig(DevScopeFx.PackId, DelegationDepth.FullAuthz, new Map(), new Map(), new Map(), model))
     }
 
     /** The engine schema the describer would emit for the fixture concepts (hand-written, unit tests only). */

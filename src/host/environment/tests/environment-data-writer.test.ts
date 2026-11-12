@@ -6,7 +6,7 @@ import { WriteFailureKind, WriteOperationKind } from '@pragmatic-tech-ai/todl'
 import { ShareRight, ShareSubject, SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import { AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppWriteOpDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AccessLevel, OwnershipSourceKind, Principal, PrincipalKind, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
+import { Principal, PrincipalKind } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { RuntimeWritePayloadValidator } from '../../runtime-write-payload-validator.js'
 import { EnvironmentDataWriter } from '../environment-data-writer.js'
@@ -26,7 +26,10 @@ class WriterFx
     public static readonly AppVersion = '1.0.0'
     public static readonly Crm = { id: 'crm', version: '1.0.0' }
     public static readonly Ext = { id: 'ext', version: '1.0.0' }
-    public static readonly CrmTodl = 'namespace crm {\n  concept Account { name : string?; owner : string?; size : integer?; relationship parent -> Account?; }\n  concept Contact { name : string; }\n  model Crm : crm { Account seeded1 { } }\n}\n'
+    public static readonly CrmTodl = 'namespace crm {\n  concept Account : todl.system.Owned { name : string?; size : integer?; relationship parent -> Account?; }\n  concept Contact { name : string; }\n'
+        + '  role Writer { Account { read = organization; create = user; update = user; delete = user; append = user; appendTo = user; } }\n'
+        + '  role Keeper { Account { read = organization; create = user; update = user; append = user; appendTo = user; } }\n'
+        + '  model Crm : crm { Account seeded1 { } }\n}\n'
     public static readonly ExtTodl = 'namespace ext {\n  concept Customer { id : string?; name : string?; }\n  concept Vendor { name : string?; }\n  concept Ledger { id : integer?; name : string?; }\n  concept Note { text : string?; }\n  datasource src { kind = sql; connection = "ext-db"; }\n'
         + '  model Ext : ext { connect src; populate Customer key cust_id { name = "nm"; } populate Vendor key vend_id { name = "nm"; read-only; } populate Ledger key led_id { name = "nm"; } populate Note key note_id { text = "tx"; } }\n}\n'
     public static readonly Account = 'crm.Account'
@@ -67,8 +70,8 @@ class WriterFx
     public static readonly Changed = 'changed'
     public static readonly Root = 'root'
     public static readonly RootName = 'Root'
-    public static readonly Role = 'writer'
-    public static readonly RoleName = 'Writer'
+    public static readonly Role = 'crm.Writer'
+    public static readonly KeeperRole = 'crm.Keeper'
     public static readonly RolledBack = 'atomic batch rolled back'
     public static readonly RecordDenied = 'not authorized for this record'
     public static readonly WriteConflict = 'write conflict'
@@ -77,24 +80,17 @@ class WriterFx
     public static readonly ReadOnlyBinding = 'binding is read-only'
     public static readonly UuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
-    /** Read every account; create, update and (unless `deletes` is false) delete own ones only. */
+    /** Tier 1: read every account; create, update and (unless `deletes` is false: crm.Keeper) delete own ones only. */
     public static Model(deletes: boolean = true): ISecurityModelConfig
     {
-        const actions = deletes ? [PrivilegeAction.Create, PrivilegeAction.Update, PrivilegeAction.Delete] : [PrivilegeAction.Create, PrivilegeAction.Update]
-        const own = actions.map(action => ({ action, level: AccessLevel.User, concept: WriterFx.Account }))
         return {
             businessUnits: [{ id: WriterFx.Root, name: WriterFx.RootName }],
+            users: [{ principalId: WriterFx.P1, businessUnitId: WriterFx.Root }, { principalId: WriterFx.P2, businessUnitId: WriterFx.Root }],
             teams: [],
-            membership: { claimsMapping: [], overrides: [
-                { principalId: WriterFx.P1, homeBusinessUnit: WriterFx.Root, teams: [] },
-                { principalId: WriterFx.P2, homeBusinessUnit: WriterFx.Root, teams: [] },
-            ] },
-            ownershipRules: [{ concept: WriterFx.Account, owner: { kind: OwnershipSourceKind.FromField, value: WriterFx.Owner }, owningBusinessUnit: { kind: OwnershipSourceKind.Fixed, value: WriterFx.Root } }],
-            roles: [{ id: WriterFx.Role, name: WriterFx.RoleName, privileges: [{ action: PrivilegeAction.Read, level: AccessLevel.Organization, concept: WriterFx.Account }, ...own] }],
-            roleAssignment: { claimsMapping: [], teamRoles: [], overrides: [
-                { principalId: WriterFx.P1, roles: [WriterFx.Role] },
-                { principalId: WriterFx.P2, roles: [WriterFx.Role] },
-            ] },
+            roleAssignments: [{ role: deletes ? WriterFx.Role : WriterFx.KeeperRole, principalIds: [WriterFx.P1, WriterFx.P2], teamIds: [] }],
+            profileAssignments: [],
+            roleOverrides: [],
+            profileOverrides: [],
         }
     }
 
@@ -260,7 +256,7 @@ describe('data/write on the environment engine', () =>
             const result = await WriterFx.Write(fx, [
                 { op: AppWriteOpKind.Update, concept: WriterFx.Account, id: WriterFx.R1, fields: { [WriterFx.Name]: WriterFx.Changed } },
                 { op: AppWriteOpKind.Update, concept: WriterFx.Account, id: WriterFx.R2, fields: { [WriterFx.Name]: WriterFx.Changed } },
-                { op: AppWriteOpKind.Create, concept: WriterFx.Account, fields: { [WriterFx.Name]: WriterFx.A, [WriterFx.Owner]: WriterFx.P1 } },
+                { op: AppWriteOpKind.Create, concept: WriterFx.Account, fields: { [WriterFx.Name]: WriterFx.A } },
             ])
             assert.deepEqual(WriterFx.Statuses(result), [
                 [AppWriteStatus.Failed, WriterFx.RolledBack],

@@ -4,7 +4,7 @@ import { AccessScope } from '@pragmatic-tech-ai/graph'
 import { WriteOperationKind } from '@pragmatic-tech-ai/todl'
 import { AppWriteStatus, CypherCells, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherQueryPageDto, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AccessLevel, OwnershipSourceKind, Principal, PrincipalKind, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
+import { Principal, PrincipalKind } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { CypherLimits } from '../../../config/cypher-limits.js'
 import type { IGraphScopeSource } from '../../engine/access-scope-source.js'
@@ -26,7 +26,9 @@ class CypherFx
     public static readonly AppVersion = '1.0.0'
     public static readonly Crm = { id: 'crm', version: '1.0.0' }
     public static readonly Ext = { id: 'ext', version: '1.0.0' }
-    public static readonly CrmTodl = 'namespace crm {\n  concept Account { name : string?; owner : string?; secret : string?; }\n}\n'
+    public static readonly CrmTodl = 'namespace crm {\n  concept Account : todl.system.Owned { name : string?; secured secret : string?; }\n'
+        + '  role User { Account { read = user; create = user; update = user; delete = user; append = user; appendTo = user; } }\n'
+        + '  profile SecretReaders { Account.secret : read; }\n}\n'
     public static readonly ExtTodl = 'namespace ext {\n  concept Customer { id : string?; name : string?; }\n  concept Vendor { name : string?; }\n  datasource src { kind = sql; connection = "ext-db"; }\n'
         + '  model Ext : ext { connect src; populate Customer key cust_id { name = "nm"; } populate Vendor key vend_id { name = "nm"; read-only; } }\n}\n'
     public static readonly Account = 'crm.Account'
@@ -35,8 +37,7 @@ class CypherFx
     public static readonly P1 = 'p1'
     public static readonly P2 = 'p2'
     public static readonly Root = 'root'
-    public static readonly UserRole = 'user-role'
-    public static readonly UserRoleName = 'User'
+    public static readonly UserRole = 'crm.User'
     public static readonly RootName = 'Root'
     public static readonly CustomerSource = 'Customer'
     public static readonly CustomerKey = 'cust_id'
@@ -62,8 +63,7 @@ class CypherFx
     public static readonly CustomerColumn = 'customer'
     public static readonly Secret = 'secret'
     public static readonly Hush = 'hush'
-    public static readonly Profile = 'secret-readers'
-    public static readonly ProfileName = 'Secret readers'
+    public static readonly Profile = 'crm.SecretReaders'
     public static readonly System = 'todl.system'
     public static readonly UuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
     public static readonly ModelNotFound = /model not found/
@@ -80,26 +80,17 @@ class CypherFx
     /** The id member is inline (a literal): placement mints the public id from it (R112). */
     public static readonly CreateCustomer = `CREATE (c:\`ext.Customer\` {id: '${CypherFx.NewKey}', name: '${CypherFx.NewCustomer}'})`
 
+    /** Tier 1: p1 and p2 hold crm.User (User depth on their own accounts); p2 holds the SecretReaders profile. */
     public static Model(): ISecurityModelConfig
     {
         return {
             businessUnits: [{ id: CypherFx.Root, name: CypherFx.RootName }],
+            users: [{ principalId: CypherFx.P1, businessUnitId: CypherFx.Root }, { principalId: CypherFx.P2, businessUnitId: CypherFx.Root }],
             teams: [],
-            membership: { claimsMapping: [], overrides: [
-                { principalId: CypherFx.P1, homeBusinessUnit: CypherFx.Root, teams: [] },
-                { principalId: CypherFx.P2, homeBusinessUnit: CypherFx.Root, teams: [] },
-            ] },
-            ownershipRules: [{ concept: CypherFx.Account, owner: { kind: OwnershipSourceKind.FromField, value: CypherFx.Owner }, owningBusinessUnit: { kind: OwnershipSourceKind.Fixed, value: CypherFx.Root } }],
-            roles: [{ id: CypherFx.UserRole, name: CypherFx.UserRoleName, privileges: [PrivilegeAction.Read, PrivilegeAction.Create, PrivilegeAction.Update, PrivilegeAction.Delete].map(action => ({ action, level: AccessLevel.User, concept: CypherFx.Account })) }],
-            roleAssignment: { claimsMapping: [], teamRoles: [], overrides: [
-                { principalId: CypherFx.P1, roles: [CypherFx.UserRole] },
-                { principalId: CypherFx.P2, roles: [CypherFx.UserRole] },
-            ] },
-            fieldSecurity: {
-                securedFields: [{ concept: CypherFx.Account, field: CypherFx.Secret }],
-                profiles: [{ id: CypherFx.Profile, name: CypherFx.ProfileName, grants: [{ concept: CypherFx.Account, field: CypherFx.Secret, read: true }] }],
-                profileAssignment: { claimsMapping: [], teamProfiles: [], overrides: [{ principalId: CypherFx.P2, profiles: [CypherFx.Profile] }] },
-            },
+            roleAssignments: [{ role: CypherFx.UserRole, principalIds: [CypherFx.P1, CypherFx.P2], teamIds: [] }],
+            profileAssignments: [{ profile: CypherFx.Profile, principalIds: [CypherFx.P2], teamIds: [] }],
+            roleOverrides: [],
+            profileOverrides: [],
         }
     }
 

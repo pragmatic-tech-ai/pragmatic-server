@@ -1,7 +1,7 @@
 import type { IStorage, IPromptService } from '@pragmatic-tech-ai/todl-runtime'
 import type { ISqlSession, IStorageProviderRegistry } from '@pragmatic-tech-ai/todl'
 import type { IdentityStoreSet, ISecretStore, ITenantConfigStore, IAuditSink } from '@pragmatic-tech-ai/todl-identity'
-import { SqlLocalAccountStore, SqlServiceTokenStore, SqlSessionStore, SqlRoleGrantStore, SqlAuditStore, SqlAuditCheckpointStore, SqlTenantConfigStore } from '@pragmatic-tech-ai/todl-platform-cloud'
+import { SqlLocalAccountStore, SqlServiceTokenStore, SqlSessionStore, SqlRoleGrantStore, SqlAuditStore, SqlAuditCheckpointStore, SqlTenantConfigStore, SqlIdpDirectoryStore } from '@pragmatic-tech-ai/todl-platform-cloud'
 import { AuditAnchor, AuditAnchoring, HmacAuditCheckpointSigner } from '@pragmatic-tech-ai/todl-identity-host'
 import { FileEncryptedSecretStore } from '@pragmatic-tech-ai/todl-identity-node'
 import { HeadlessPromptService } from '@pragmatic-tech-ai/todl-platform-node'
@@ -17,6 +17,7 @@ interface SqlIdentityStores
     readonly Sessions: SqlSessionStore
     readonly Grants: SqlRoleGrantStore
     readonly Audit: SqlAuditStore
+    readonly IdpDirectory: SqlIdpDirectoryStore
 }
 
 export interface CloudPlatformOptions
@@ -123,7 +124,7 @@ export class CloudPlatform implements PlatformServices
     {
         const sql = await this.sqlStores()
         const secrets = await FileEncryptedSecretStore.Open(this.storage.CreateStorage(identityRoot), masterKey)
-        return { Secrets: secrets, Accounts: sql.Accounts, Tokens: sql.Tokens, Sessions: sql.Sessions, Grants: sql.Grants, Audit: sql.Audit }
+        return { Secrets: secrets, Accounts: sql.Accounts, Tokens: sql.Tokens, Sessions: sql.Sessions, Grants: sql.Grants, Audit: sql.Audit, IdpDirectory: sql.IdpDirectory }
     }
 
     public CreateTenantConfigStore(_configRoot: string): Promise<ITenantConfigStore>
@@ -148,6 +149,7 @@ export class CloudPlatform implements PlatformServices
             Sessions: await SqlSessionStore.Open(this.session),
             Grants: await SqlRoleGrantStore.Open(this.session),
             Audit: await this.OpenAudit(),
+            IdpDirectory: await SqlIdpDirectoryStore.Open(this.session),
         }
     }
 

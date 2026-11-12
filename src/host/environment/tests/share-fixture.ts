@@ -3,16 +3,18 @@ import type { CellValue, INodeView } from '@pragmatic-tech-ai/graph'
 import { SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import { ShareSubjectKind } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ShareParams } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AccessLevel, OwnershipSourceKind, Principal, PrincipalKind, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
+import { Principal, PrincipalKind } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import type { IGraphScope } from '../../engine/access-scope-source.js'
 import { EnvironmentFixture } from './environment-fixture.js'
 
 /**
- * A runtime tenant with identity delivering `crm` (crm.Account, engine-stored, owned through its `owner` field) through
+ * A runtime tenant with identity delivering `crm` (crm.Account, engine-stored and owned; crm.Memo, not owned) through
  * `crm-app` and `ext` (ext.Customer bound over the fixture's MemorySourceAdapter, one row k1) through `ext-app`;
- * accounts r1 and r2 are owned by p1. Security: p1 holds Read / Update / Delete / Share / Assign on its own accounts
- * (User level); p2 and p3 hold Read and Update on their own only (no Share, no Assign); p3 is a member of team t1.
+ * accounts r1 and r2 are owned by p1 in root. Units root > sales, root > marketing; p1 and p3 sit at root, p2 in
+ * sales; p3 is a manual member of team t1 (marketing). Tier 1: p1 holds crm.AccountOwner (Read / Update / Delete /
+ * Share / Assign / Append / AppendTo at User depth) and crm.MemoOwner; p2 and p3 hold crm.AccountEditor (Read /
+ * Update / Append / AppendTo at User depth; no Share, no Assign).
  */
 export class ShareFx
 {
@@ -21,10 +23,14 @@ export class ShareFx
     public static readonly AppVersion = '1.0.0'
     public static readonly Crm = { id: 'crm', version: '1.0.0' }
     public static readonly Ext = { id: 'ext', version: '1.0.0' }
-    public static readonly CrmTodl = 'namespace crm {\n  concept Account { name : string?; owner : string?; }\n}\n'
+    public static readonly CrmTodl = 'namespace crm {\n  concept Account : todl.system.Owned { name : string?; }\n  concept Memo { name : string?; }\n'
+        + '  role AccountOwner { Account { read = user; update = user; delete = user; share = user; assign = user; append = user; appendTo = user; } }\n'
+        + '  role AccountEditor { Account { read = user; update = user; append = user; appendTo = user; } }\n'
+        + '  role MemoOwner { Memo { read = organization; assign = organization; } }\n}\n'
     public static readonly ExtTodl = 'namespace ext {\n  concept Customer { id : string?; name : string?; }\n  datasource src { kind = sql; connection = "ext-db"; }\n'
         + '  model Ext : ext { connect src; populate Customer key cust_id { name = "nm"; } }\n}\n'
     public static readonly Account = 'crm.Account'
+    public static readonly Memo = 'crm.Memo'
     public static readonly Customer = 'ext.Customer'
     public static readonly CustomerSource = 'Customer'
     public static readonly CustomerKey = 'cust_id'
@@ -32,7 +38,8 @@ export class ShareFx
     public static readonly K1 = 'k1'
     public static readonly Acme = 'Acme'
     public static readonly Name = 'name'
-    public static readonly Owner = 'owner'
+    public static readonly Owner = SystemNames.Owner
+    public static readonly OwningBusinessUnit = SystemNames.OwningBusinessUnit
     public static readonly R1 = 'r1'
     public static readonly R2 = 'r2'
     public static readonly P1 = 'p1'
@@ -41,29 +48,36 @@ export class ShareFx
     public static readonly T1 = 't1'
     public static readonly Root = 'root'
     public static readonly RootName = 'Root'
-    public static readonly OwnerRole = 'owner-role'
-    public static readonly ReaderRole = 'reader-role'
+    public static readonly Sales = 'sales'
+    public static readonly Marketing = 'marketing'
+    public static readonly OwnerRole = 'crm.AccountOwner'
+    public static readonly ReaderRole = 'crm.AccountEditor'
+    public static readonly MemoRole = 'crm.MemoOwner'
     public static readonly Accounts = 'MATCH (a:`crm.Account`) RETURN a.name AS name ORDER BY name'
     public static readonly ExternalReason = 'external records are outside platform security'
 
     public static Model(): ISecurityModelConfig
     {
-        const privileges = (actions: readonly PrivilegeAction[]) => actions.map(action => ({ action, level: AccessLevel.User, concept: ShareFx.Account }))
-        const member = (principalId: string, teams: string[] = []) => ({ principalId, homeBusinessUnit: ShareFx.Root, teams })
         return {
-            businessUnits: [{ id: ShareFx.Root, name: ShareFx.RootName }],
-            teams: [{ id: ShareFx.T1, name: ShareFx.T1, owningBusinessUnit: ShareFx.Root }],
-            membership: { claimsMapping: [], overrides: [member(ShareFx.P1), member(ShareFx.P2), member(ShareFx.P3, [ShareFx.T1])] },
-            ownershipRules: [{ concept: ShareFx.Account, owner: { kind: OwnershipSourceKind.FromField, value: ShareFx.Owner }, owningBusinessUnit: { kind: OwnershipSourceKind.Fixed, value: ShareFx.Root } }],
-            roles: [
-                { id: ShareFx.OwnerRole, name: ShareFx.OwnerRole, privileges: privileges([PrivilegeAction.Read, PrivilegeAction.Update, PrivilegeAction.Delete, PrivilegeAction.Share, PrivilegeAction.Assign]) },
-                { id: ShareFx.ReaderRole, name: ShareFx.ReaderRole, privileges: privileges([PrivilegeAction.Read, PrivilegeAction.Update]) },
+            businessUnits: [
+                { id: ShareFx.Root, name: ShareFx.RootName },
+                { id: ShareFx.Sales, name: ShareFx.Sales, parent: ShareFx.Root },
+                { id: ShareFx.Marketing, name: ShareFx.Marketing, parent: ShareFx.Root },
             ],
-            roleAssignment: { claimsMapping: [], teamRoles: [], overrides: [
-                { principalId: ShareFx.P1, roles: [ShareFx.OwnerRole] },
-                { principalId: ShareFx.P2, roles: [ShareFx.ReaderRole] },
-                { principalId: ShareFx.P3, roles: [ShareFx.ReaderRole] },
-            ] },
+            users: [
+                { principalId: ShareFx.P1, businessUnitId: ShareFx.Root },
+                { principalId: ShareFx.P2, businessUnitId: ShareFx.Sales },
+                { principalId: ShareFx.P3, businessUnitId: ShareFx.Root },
+            ],
+            teams: [{ id: ShareFx.T1, name: ShareFx.T1, businessUnitId: ShareFx.Marketing, idpGroups: [], manualMembers: [ShareFx.P3] }],
+            roleAssignments: [
+                { role: ShareFx.OwnerRole, principalIds: [ShareFx.P1], teamIds: [] },
+                { role: ShareFx.MemoRole, principalIds: [ShareFx.P1], teamIds: [] },
+                { role: ShareFx.ReaderRole, principalIds: [ShareFx.P2, ShareFx.P3], teamIds: [] },
+            ],
+            profileAssignments: [],
+            roleOverrides: [],
+            profileOverrides: [],
         }
     }
 
@@ -98,10 +112,10 @@ export class ShareFx
         }
     }
 
-    /** One account per id, owned by p1 and named by its id (System transaction). */
-    public static SeedAccounts(fx: EnvironmentFixture, ids: readonly string[]): Promise<bigint>
+    /** One account per id, owned by `owner` (default p1) at root and named by its id (System transaction). */
+    public static SeedAccounts(fx: EnvironmentFixture, ids: readonly string[], owner: string = ShareFx.P1): Promise<bigint>
     {
-        return fx.Seed(ids.map(id => ({ Concept: ShareFx.Account, Id: id, Properties: { [ShareFx.Name]: id, [ShareFx.Owner]: ShareFx.P1 } })))
+        return fx.Seed(ids.map(id => ({ Concept: ShareFx.Account, Id: id, Properties: { [ShareFx.Name]: id, [ShareFx.Owner]: owner, [ShareFx.OwningBusinessUnit]: ShareFx.Root } })))
     }
 
     /** Share params of account `id` to principal `subject` (or a team) with `rights`. */

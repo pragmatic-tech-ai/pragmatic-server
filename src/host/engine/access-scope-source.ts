@@ -1,16 +1,15 @@
 import { createHash } from 'node:crypto'
 import type { AccessScope } from '@pragmatic-tech-ai/graph'
-import type { CellValue, Cypher, GraphEngine, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
+import type { Cypher, GraphEngine, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import type { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
-import type { IPlacementDefaults } from './depth-scope-compiler.js'
 import { EngineSchemaCatalog } from './engine-schema-catalog.js'
 import type { IGraphEngineHost } from './graph-engine-host.js'
 import { ConnectorPrincipalDigest } from './principal-digest.js'
+import type { PrincipalFacts } from './principal-facts.js'
 
 /** What one caller may see and write on a graph engine: the only place its access is decided. */
 export interface IGraphScope
@@ -18,7 +17,7 @@ export interface IGraphScope
     /** Passed to every read and write the caller runs on the engine; endpoints never filter or mask on their own. */
     readonly Scope: AccessScope
     /**
-     * Where the caller's CREATEs go, stamped with the scope's create defaults. `modelId` is the model the write is
+     * Where the caller's CREATEs go, stamped from the acting principal's facts (owned concepts, C3). `modelId` is the model the write is
      * confined to; a host whose placement needs one (dev) refuses its absence with InvalidArgument.
      */
     Placement(modelId?: string): Cypher.INodePlacement
@@ -34,20 +33,10 @@ export interface IGraphScopeSource
 {
     ScopeFor(context: AccessContext): Promise<IGraphScope>
     /**
-     * Raised after the source drops its compiled scopes (the security model was invalidated, the engine upgraded, or
+     * Raised after the source drops its compiled scopes (the security setting was invalidated, the engine upgraded, or
      * the rules changed): every digest handed out before may be superseded, so caches keyed by a digest can drop too.
      */
     readonly Dropped: ISignal<void>
-}
-
-/** The tenant security the scope source reads (TenantReadAuthorization): the cached evaluator and its reload signal. */
-export interface ITenantSecuritySource
-{
-    EvaluatorForContext(context: AccessContext): Promise<AccessDepthEvaluator>
-    /** False when the tenant has no security model (its evaluator is DenyAll). */
-    HasSecurityModelFor(context: AccessContext): Promise<boolean>
-    /** Raised after a tenant's security model is invalidated (reloaded on next use). */
-    readonly Invalidated: ISignal<string>
 }
 
 /** Where the scope compiler's diagnostics go (rules compiled to False, names the schema lacks). */
@@ -75,8 +64,8 @@ export enum AccessScopeErrorCode
 {
     /** The engine kept upgrading while the scope was compiled; a later call compiles against the settled version. */
     SchemaUnsettled = 1,
-    /** Identity is configured but no tenant security source was given (DevScopeRules). */
-    MissingSecuritySource,
+    /** A tier-1 decision (share, assign) was asked of rules built without an environment security setting (no identity). */
+    NoSecuritySetting = 3,
 }
 
 export class AccessScopeError extends Error
@@ -84,7 +73,7 @@ export class AccessScopeError extends Error
     private static readonly ErrorName = 'AccessScopeError'
     private static readonly Messages: Readonly<Record<AccessScopeErrorCode, string>> = {
         [AccessScopeErrorCode.SchemaUnsettled]: 'the graph engine kept upgrading while its access scope was compiled',
-        [AccessScopeErrorCode.MissingSecuritySource]: 'identity is configured but no tenant security source was given',
+        [AccessScopeErrorCode.NoSecuritySetting]: 'the environment has no security setting: identity is not configured',
     }
 
     public constructor(public readonly Code: AccessScopeErrorCode)
@@ -107,12 +96,12 @@ export class ScopeSchema
     }
 }
 
-/** The record/field part of one principal's scope, with the create defaults its placement stamps. */
+/** The record/field part of one principal's scope, with the principal facts its placement stamps. */
 export interface IScopeRecords
 {
     readonly Scope: AccessScope
     readonly Diagnostics: readonly string[]
-    readonly Defaults: IPlacementDefaults
+    readonly Principal: PrincipalFacts
 }
 
 /** A purpose's scope rules, prepared against one engine schema (IScopeRules.Prepare). */
@@ -122,8 +111,8 @@ export interface IPreparedRules
     Records(context: AccessContext): Promise<IScopeRecords>
     /** Applied last, to the record part, before the engine validates the scope. */
     Finish(scope: AccessScope, context: AccessContext): Promise<AccessScope>
-    /** Where the caller's creates go, stamped with `defaults` (the record part's). */
-    Placement(defaults: IPlacementDefaults, modelId: string | undefined): Cypher.INodePlacement
+    /** Where the caller's creates go, stamped from `principal` (the record part's). */
+    Placement(principal: PrincipalFacts, modelId: string | undefined): Cypher.INodePlacement
     /** Folded into every scope digest (and so the cache key): whatever else the rules compiled from. */
     readonly Digest: string
 }
@@ -138,20 +127,8 @@ export interface IScopeRules extends IDisposable
     readonly Changed: ISignal<void>
 }
 
-/** Nothing is stamped on a create (no identity). */
-export class NoPlacementDefaults implements IPlacementDefaults
-{
-    public static readonly Instance = new NoPlacementDefaults()
-    private static readonly None: ReadonlyMap<string, CellValue> = new Map()
-
-    public Defaults(): ReadonlyMap<string, CellValue>
-    {
-        return NoPlacementDefaults.None
-    }
-}
-
-/** The subscribe side of the scope source's drop signal. */
-class ScopesDropped implements ISignal<void>
+/** A void change signal: the subscribe side, raised by its owner (the scope source's drop, the rules' change). */
+export class VoidSignal implements ISignal<void>
 {
     private readonly signal = new Signal<void>()
 
@@ -169,7 +146,7 @@ class ScopesDropped implements ISignal<void>
 /** A principal's compiled scope for one schema version and rules digest (cached; placement is per call). */
 class CompiledScope
 {
-    public constructor(public readonly Scope: AccessScope, public readonly Digest: string, public readonly Defaults: IPlacementDefaults)
+    public constructor(public readonly Scope: AccessScope, public readonly Digest: string, public readonly Principal: PrincipalFacts)
     {
     }
 }
@@ -187,20 +164,20 @@ class GraphScope implements IGraphScope
 
     public Placement(modelId?: string): Cypher.INodePlacement
     {
-        return this.rules.Placement(this.compiled.Defaults, modelId)
+        return this.rules.Placement(this.compiled.Principal, modelId)
     }
 }
 
 /**
  * Decides each caller's access to a graph engine as one engine {@link AccessScope}, for every purpose (ruling S1); the
  * engine then enforces it on every read and write. What differs per purpose comes from {@link IScopeRules}: the
- * record part is the prepared rules' `Records` (dev: Default Allow without identity, else the tenant security
- * model's depth scope), the rules' `Finish` is applied last (amendment A2: the source composes no policy or depth and
+ * record part is the prepared rules' `Records` (dev: unrestricted; runtime: the tier-1 scope of the environment
+ * security setting), the rules' `Finish` is applied last (amendment A2: the source composes no policy or depth and
  * holds no identity state itself), and the rules place creates.
  *
  * Scopes are cached per Digest (principal digest, tenant, claims hash, engine schema version, prepared rules' digest:
- * dev folds the security generation into it); the cache is dropped when the engine upgrades (host Changed) or the
- * rules change (rules Changed: dev raises it when the security model is invalidated). The rules are prepared on every
+ * the runtime folds the setting generation into it); the cache is dropped when the engine upgrades (host Changed) or
+ * the rules change (rules Changed: the runtime raises it when the security setting is invalidated). The rules are prepared on every
  * call against the settled schema. Every compiled scope is checked by the engine itself (a read opened under it)
  * before it is handed out; record diagnostics go to {@link IScopeDiagnostics}, each message once until the cache is
  * dropped. The source owns its rules and disposes them.
@@ -215,7 +192,7 @@ export class AccessScopeSource implements IGraphScopeSource, IDisposable
 
     public readonly Dropped: ISignal<void>
 
-    private readonly dropped = new ScopesDropped()
+    private readonly dropped = new VoidSignal()
     private readonly scopes = new Map<string, Promise<CompiledScope>>()
     private readonly subscriptions: ISubscription[] = []
     private readonly reported = new Set<string>()
@@ -294,7 +271,7 @@ export class AccessScopeSource implements IGraphScopeSource, IDisposable
         const reader = await schema.Engine.BeginRead(scope)
         reader.dispose()
         this.Report(records.Diagnostics)
-        return new CompiledScope(scope, digest, records.Defaults)
+        return new CompiledScope(scope, digest, records.Principal)
     }
 
     private Report(messages: readonly string[]): void

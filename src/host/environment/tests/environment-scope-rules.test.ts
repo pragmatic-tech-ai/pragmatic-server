@@ -1,232 +1,60 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { AccessError, AccessErrorCode, AccessScope, ConceptIs, Cypher, FalsePredicate, Not, OwnerIs, TruePredicate } from '@pragmatic-tech-ai/graph'
-import type { CellValue, GraphEngine } from '@pragmatic-tech-ai/graph'
-import { ShareRight, ShareSubject, SystemNames, TodlNames } from '@pragmatic-tech-ai/todl/engine'
+import { AccessErrorCode, AccessScope, BindingTable, Cypher, Not, OwnerIs } from '@pragmatic-tech-ai/graph'
+import type { CellValue } from '@pragmatic-tech-ai/graph'
+import { SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import { CursorStaleError } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AccessContext, AccessLevel, Grant, OwnershipSourceKind, Principal, PrincipalKind, PrivilegeAction, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
-import type { IPrivilegeConfig, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
+import { AccessLevel, BaseRole, IdpDirectorySnapshot, IdpUserState, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import { CypherLimits } from '../../../config/cypher-limits.js'
 import { PagingLimits } from '../../../config/paging-limits.js'
 import type { PragmaticServer } from '../../../pragmatic-server.js'
-import type { IGraphScope } from '../../engine/access-scope-source.js'
 import { EngineCypherQuery } from '../../engine/engine-cypher-query.js'
-import { EngineInstanceView } from '../../engine/engine-instance-view.js'
 import { EnvironmentFixture } from './environment-fixture.js'
-import type { IEnvironmentFixtureOptions } from './environment-fixture.js'
+import { Tier1Fx } from './tier1-fixture.js'
 
-/**
- * A runtime tenant delivering `crm` (crm.Account with an owner field, a seeded `crm.seeded1`, and crm.Fake, a concept
- * shaped like a share grant) and `ext` (ext.Customer bound writable with a text id member, ext.Vendor bound
- * read-only). The security model gives p1 and p2 User-level access to crm.Account and p2 Organization reads of
- * crm.Fake; p2 is in team-a; p3 holds nothing.
- */
-class ScopeFx
+class RulesFx
 {
-    public static readonly CrmApp = 'crm-app'
-    public static readonly ExtApp = 'ext-app'
-    public static readonly AppVersion = '1.0.0'
-    public static readonly Crm = { id: 'crm', version: '1.0.0' }
-    public static readonly Ext = { id: 'ext', version: '1.0.0' }
-    public static readonly CrmTodl = 'namespace crm {\n  concept Account { name : string?; owner : string?; }\n  concept Fake { record : todl.Element?; subjectKind : string?; subjectId : string?; read : boolean?; }\n  taxonomy Kinds : represents Account { term Big { } }\n  model Crm : crm { Account seeded1 { } }\n}\n'
-    public static readonly ExtTodl = 'namespace ext {\n  concept Customer { id : string?; name : string?; }\n  concept Vendor { name : string?; }\n  datasource src { kind = sql; connection = "ext-db"; }\n'
-        + '  model Ext : ext { connect src; populate Customer key cust_id { name = "nm"; } populate Vendor key vend_id { name = "nm"; read-only; } }\n}\n'
-    public static readonly Account = 'crm.Account'
-    public static readonly Fake = 'crm.Fake'
-    public static readonly Customer = 'ext.Customer'
-    public static readonly Vendor = 'ext.Vendor'
-    public static readonly Seeded = 'crm.seeded1'
-    public static readonly Name = 'name'
-    public static readonly Label = 'label'
-    public static readonly Owner = 'owner'
-    public static readonly IdMember = 'id'
-    public static readonly P1 = 'p1'
-    public static readonly P2 = 'p2'
-    public static readonly P3 = 'p3'
-    public static readonly TeamA = 'team-a'
-    public static readonly Root = 'root'
-    public static readonly UserRole = 'user-role'
-    public static readonly FakeRole = 'fake-role'
-    public static readonly Acme = 'Acme'
-    public static readonly VendorName = 'Vend'
-    public static readonly Changed = 'changed'
-    public static readonly Accounts = 'MATCH (a:`crm.Account`) RETURN a.name AS name ORDER BY name'
-    public static readonly Customers = 'MATCH (c:`ext.Customer`) RETURN c.name AS name ORDER BY name'
-    public static readonly Grants = 'MATCH (g:`todl.system.ShareGrant`) RETURN g.subjectId AS subject ORDER BY subject'
-    public static readonly CustomerSource = 'Customer'
-    public static readonly CustomerRow = 'k1'
-    public static readonly R1 = 'r1'
-    public static readonly R2 = 'r2'
-    public static readonly R3 = 'r3'
-    public static readonly R4 = 'r4'
-    public static readonly G1 = 'g1'
-    public static readonly G2 = 'g2'
-    public static readonly G3 = 'g3'
-    public static readonly G4 = 'g4'
-    public static readonly G5 = 'g5'
-    public static readonly FakeGrant = 'fake1'
-    public static readonly NewAccount = 'mine'
-    public static readonly NewCustomer = 'New'
-    public static readonly RootName = 'Root'
-    public static readonly UserRoleName = 'User'
-    public static readonly FakeRoleName = 'Fake'
-    public static readonly TeamAName = 'A'
-    public static readonly TenantName = 'Environment One'
+    public static readonly E1 = 'E1'
+    public static readonly E2 = 'E2'
+    public static readonly P1 = 'P1'
+    public static readonly P2 = 'P2'
+    public static readonly T1 = 'T1'
+    public static readonly A1 = 'A1'
+    public static readonly A2 = 'A2'
+    public static readonly N1 = 'N1'
+    public static readonly HighSalary = 150000
+    public static readonly Moved = 'bob'
+    public static readonly NewEmployee = 'new'
     public static readonly NoParameters = ''
-    public static readonly Fakes = 'MATCH (f:`crm.Fake`) RETURN f.subjectId AS s'
-    public static readonly Terms = 'MATCH (t:`todl.Term`) RETURN t.taxonomy AS t'
-    public static readonly PolicyFile = 'access-policy.json'
-    public static readonly DenyEffect = 'deny'
-    public static readonly ReadAction = 'read'
-    public static readonly CustomerKey = 'cust_id'
-    public static readonly NameField = 'nm'
+    public static readonly RichEmployees = 'MATCH (e:`hr.Employee`) WHERE e.Salary > 100000 RETURN e.name AS name'
+    public static readonly AbsentProperty = 'MATCH (e:`hr.Employee`) WHERE e.Absent > 100000 RETURN e.name AS name'
+    public static readonly Salaries = 'MATCH (e:`hr.Employee`) RETURN e.Salary AS s ORDER BY s'
+    public static readonly AssignmentCount = 'MATCH (a:`projects.Assignment`) RETURN count(a) AS c'
+    public static readonly Employees = 'MATCH (e:`hr.Employee`) RETURN e.name AS name ORDER BY name'
 
-    public static Model(privileges: readonly IPrivilegeConfig[] = ScopeFx.UserPrivileges()): ISecurityModelConfig
+    /** E1 alice/sales and E2 bob/marketing, both paid well. */
+    public static async SeedEmployees(fx: EnvironmentFixture): Promise<void>
     {
-        return {
-            businessUnits: [{ id: ScopeFx.Root, name: ScopeFx.RootName }],
-            teams: [{ id: ScopeFx.TeamA, name: ScopeFx.TeamAName }],
-            membership: { claimsMapping: [], overrides: [
-                { principalId: ScopeFx.P1, homeBusinessUnit: ScopeFx.Root, teams: [] },
-                { principalId: ScopeFx.P2, homeBusinessUnit: ScopeFx.Root, teams: [ScopeFx.TeamA] },
-                { principalId: ScopeFx.P3, homeBusinessUnit: ScopeFx.Root, teams: [] },
-            ] },
-            ownershipRules: [{ concept: ScopeFx.Account, owner: { kind: OwnershipSourceKind.FromField, value: ScopeFx.Owner }, owningBusinessUnit: { kind: OwnershipSourceKind.Fixed, value: ScopeFx.Root } }],
-            roles: [
-                { id: ScopeFx.UserRole, name: ScopeFx.UserRoleName, privileges: [...privileges] },
-                { id: ScopeFx.FakeRole, name: ScopeFx.FakeRoleName, privileges: [{ action: PrivilegeAction.Read, level: AccessLevel.Organization, concept: ScopeFx.Fake }] },
-            ],
-            roleAssignment: { claimsMapping: [], teamRoles: [], overrides: [
-                { principalId: ScopeFx.P1, roles: [ScopeFx.UserRole] },
-                { principalId: ScopeFx.P2, roles: [ScopeFx.UserRole, ScopeFx.FakeRole] },
-            ] },
-        }
+        await fx.Seed([
+            Tier1Fx.Owned(Tier1Fx.Employee, RulesFx.E1, Tier1Fx.Alice, Tier1Fx.Sales, { [Tier1Fx.Salary]: RulesFx.HighSalary }),
+            Tier1Fx.Owned(Tier1Fx.Employee, RulesFx.E2, Tier1Fx.Bob, Tier1Fx.Marketing, { [Tier1Fx.Salary]: RulesFx.HighSalary }),
+        ])
     }
 
-    public static UserPrivileges(level: AccessLevel = AccessLevel.User): IPrivilegeConfig[]
+    /** P1 pm/sales and P2 bob/marketing. */
+    public static async SeedProjects(fx: EnvironmentFixture): Promise<void>
     {
-        return [PrivilegeAction.Read, PrivilegeAction.Create, PrivilegeAction.Update, PrivilegeAction.Delete].map(action => ({ action, level, concept: ScopeFx.Account }))
-    }
-
-    public static Context(principalId: string): AccessContext
-    {
-        const tenant = new Tenant(EnvironmentFixture.TenantId, TenantKind.SelfHosted, ScopeFx.TenantName)
-        const principal = new Principal(principalId, EnvironmentFixture.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Tenant, EnvironmentFixture.TenantId, []))]
-        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
-    }
-
-    /** crm and ext live, the ext Customer source holding one row, the server started with `options`. */
-    public static async Run(options: IEnvironmentFixtureOptions, body: (fx: EnvironmentFixture, server: PragmaticServer) => Promise<void>): Promise<void>
-    {
-        const fx = new EnvironmentFixture()
-        try
-        {
-            await fx.Package(ScopeFx.Crm.id, ScopeFx.Crm.version, ScopeFx.CrmTodl)
-            await fx.Package(ScopeFx.Ext.id, ScopeFx.Ext.version, ScopeFx.ExtTodl)
-            fx.Live(ScopeFx.CrmApp, ScopeFx.AppVersion, [ScopeFx.Crm])
-            fx.Live(ScopeFx.ExtApp, ScopeFx.AppVersion, [ScopeFx.Ext])
-            fx.Source.Adapter.Seed(ScopeFx.CustomerSource, [{ [ScopeFx.CustomerKey]: ScopeFx.CustomerRow, [ScopeFx.NameField]: ScopeFx.Acme }])
-            const server = await fx.Start(options)
-            await body(fx, server)
-        }
-        finally
-        {
-            await fx.Dispose()
-        }
-    }
-
-    public static async Scope(server: PragmaticServer, principalId: string): Promise<IGraphScope>
-    {
-        return (await server.EnvironmentScopes()).ScopeFor(ScopeFx.Context(principalId))
-    }
-
-    /** The first column of `query` under `scope`. */
-    public static async Column(server: PragmaticServer, scope: AccessScope, query: string): Promise<unknown[]>
-    {
-        const result = await new Cypher.CypherEngine(await server.EnvironmentEngine().Engine()).Execute(scope, query)
-        return result.Rows.map(row => (row[0] as Cypher.ScalarValue).Value)
-    }
-
-    /** One account per row, `[name, owner]`. */
-    public static SeedAccounts(fx: EnvironmentFixture, rows: readonly (readonly [string, string])[]): Promise<bigint>
-    {
-        return fx.Seed(rows.map(([name, owner]) => ({ Concept: ScopeFx.Account, Id: name, Properties: { [ScopeFx.Name]: name, [ScopeFx.Owner]: owner } })))
-    }
-
-    /** A share grant of `record` to `subject`, holding `rights` (System transaction). */
-    public static async Grant(server: PragmaticServer, id: string, record: string, kind: ShareSubject, subject: string, rights: readonly ShareRight[], concept: string = SystemNames.ShareGrant): Promise<void>
-    {
-        const engine = await server.EnvironmentEngine().Engine()
-        const transaction = await engine.Begin(AccessScope.System)
-        transaction.CreateNode(id, concept, { Owner: concept === SystemNames.ShareGrant ? SystemNames.Model : ScopeFx.Crm.id })
-        transaction.SetProperty(id, SystemNames.SubjectKind, kind)
-        transaction.SetProperty(id, SystemNames.SubjectId, subject)
-        for (const right of rights) transaction.SetProperty(id, right, true)
-        transaction.Link(id, SystemNames.Record, record)
-        await transaction.Commit()
-    }
-
-    /** A create of `concept` through the scope's placement, committed under the scope. */
-    public static async Create(engine: GraphEngine, scope: IGraphScope, concept: string, properties: Readonly<Record<string, CellValue>>): Promise<Cypher.INodePlace>
-    {
-        const values = new Map<string, CellValue>(Object.entries(properties))
-        const place = scope.Placement().Place(concept, values)
-        const transaction = await engine.Begin(scope.Scope)
-        transaction.CreateNode(place.PublicId, concept, { Owner: place.Owner })
-        for (const [member, value] of values) transaction.SetProperty(place.PublicId, member, value)
-        for (const [member, value] of place.Defaults ?? new Map<string, CellValue>()) transaction.SetDefault(place.PublicId, member, value)
-        await transaction.Commit()
-        return place
-    }
-
-    public static async Update(engine: GraphEngine, scope: AccessScope, id: string, member: string, value: CellValue): Promise<void>
-    {
-        const transaction = await engine.Begin(scope)
-        transaction.SetProperty(id, member, value)
-        await transaction.Commit()
-    }
-
-    /** The public id of the one seeded taxonomy term. */
-    public static async TermId(server: PragmaticServer): Promise<string>
-    {
-        const seed = (await server.EnvironmentEngine().Snapshot()).Description.Seed
-        return seed.find(node => node.Concept === TodlNames.Term)!.PublicId
-    }
-
-    /** A retired tier-2 policy file denying every crm.Account read, in the crm app's directory. */
-    public static WritePolicyFile(fx: EnvironmentFixture): void
-    {
-        const rules = [{ effect: ScopeFx.DenyEffect, action: ScopeFx.ReadAction, predicate: {} }]
-        writeFileSync(join(fx.AppsDir, ScopeFx.CrmApp, ScopeFx.PolicyFile), JSON.stringify({ [ScopeFx.Account]: rules }))
-    }
-
-    /** A grant create under `scope` (not through a service scope). */
-    public static async CreateGrant(engine: GraphEngine, scope: AccessScope, id: string, record: string): Promise<void>
-    {
-        const transaction = await engine.Begin(scope)
-        transaction.CreateNode(id, SystemNames.ShareGrant, { Owner: SystemNames.Model })
-        transaction.SetProperty(id, SystemNames.SubjectKind, ShareSubject.Principal)
-        transaction.SetProperty(id, SystemNames.SubjectId, ScopeFx.P1)
-        transaction.Link(id, SystemNames.Record, record)
-        await transaction.Commit()
-    }
-
-    public static Denied(code: AccessErrorCode): (error: unknown) => boolean
-    {
-        return error => error instanceof AccessError && error.Code === code
+        await fx.Seed([Tier1Fx.Owned(Tier1Fx.Project, RulesFx.P1, Tier1Fx.Pm, Tier1Fx.Sales), Tier1Fx.Owned(Tier1Fx.Project, RulesFx.P2, Tier1Fx.Bob, Tier1Fx.Marketing)])
     }
 
     public static async Page(server: PragmaticServer, principalId: string, cursor?: string): Promise<{ nextCursor?: string }>
     {
         const limits = new CypherLimits()
         const query = new EngineCypherQuery(server.EnvironmentEngine(), () => server.EnvironmentScopes())
-        return query.Run(ScopeFx.Context(principalId), {
-            Source: ScopeFx.Accounts,
+        return query.Run(Tier1Fx.Context(principalId), {
+            Source: RulesFx.Employees,
             Parameters: new Map(),
-            CanonicalParameters: ScopeFx.NoParameters,
+            CanonicalParameters: RulesFx.NoParameters,
             Page: { Params: { pageSize: 1, cursor }, Limits: new PagingLimits(), RowCap: limits.RowCap },
             TimeoutMs: limits.TimeoutMs,
             MaxVarLength: limits.MaxVarLength,
@@ -247,215 +75,222 @@ class ScopeFx
     }
 }
 
-describe('environment scope rules', () =>
+describe('environment scope rules (tier 1)', () =>
 {
-    test('governed concept gets depth', async () =>
+    test('role grants rows at its depth', async () =>
     {
-        await ScopeFx.Run({ Identity: true, SecurityModel: ScopeFx.Model() }, async (fx, server) =>
+        await Tier1Fx.Run({ Identity: true, SecurityModel: Tier1Fx.Setting() }, async (fx, server) =>
         {
-            await ScopeFx.SeedAccounts(fx, [[ScopeFx.R1, ScopeFx.P1], [ScopeFx.R2, ScopeFx.P2]])
-            assert.deepEqual(await ScopeFx.Column(server, (await ScopeFx.Scope(server, ScopeFx.P1)).Scope, ScopeFx.Accounts), [ScopeFx.R1], 'User level: own rows only')
-            assert.deepEqual(await ScopeFx.Column(server, (await ScopeFx.Scope(server, ScopeFx.P3)).Scope, ScopeFx.Accounts), [], 'no privilege: nothing')
+            await RulesFx.SeedEmployees(fx)
+            assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Alice, Tier1Fx.Employee), [RulesFx.E1], 'hr\'s BasicUser contribution reads at BU: Sales rows only')
+            assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Bob, Tier1Fx.Employee), [RulesFx.E2])
+            assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Carol, Tier1Fx.Employee), [], 'no role: nothing')
         })
     })
 
-    test('placement stamps defaults', async () =>
+    test('override narrows a package role', async () =>
     {
-        await ScopeFx.Run({ Identity: true, SecurityModel: ScopeFx.Model() }, async (_fx, server) =>
+        const assigned = [{ role: Tier1Fx.ProjectManager, principalIds: [Tier1Fx.Pm], teamIds: [] }]
+        await Tier1Fx.Run({ Identity: true, SecurityModel: Tier1Fx.Setting({ RoleAssignments: assigned }) }, async (fx, server) =>
         {
-            const engine = await server.EnvironmentEngine().Engine()
-            const scope = await ScopeFx.Scope(server, ScopeFx.P1)
-            const place = await ScopeFx.Create(engine, scope, ScopeFx.Account, { [ScopeFx.Name]: ScopeFx.NewAccount })
-            assert.equal(place.Owner, ScopeFx.Crm.id, 'the node is owned by the home package')
-            assert.equal(place.Defaults?.get(ScopeFx.Owner), ScopeFx.P1, 'the owner member is the principal')
-            const reader = await engine.BeginRead(scope.Scope)
-            try
-            {
-                const node = await reader.ReadNode(place.PublicId)
-                assert.equal(node?.Owner, ScopeFx.Crm.id)
-                assert.equal(node?.Properties.get(ScopeFx.Owner), ScopeFx.P1)
-                const view = await EngineInstanceView.Of(reader, place.PublicId)
-                assert.equal(view?.Concept, ScopeFx.Account)
-                assert.equal(view?.Field(ScopeFx.Owner), ScopeFx.P1, 'the evaluator view reads the stamped owner')
-            }
-            finally
-            {
-                reader.dispose()
-            }
+            await RulesFx.SeedProjects(fx)
+            assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Pm, Tier1Fx.Project), [RulesFx.P1, RulesFx.P2], 'the package default reads organisation-wide')
+            const narrowed = Tier1Fx.Override(Tier1Fx.ProjectManager, Tier1Fx.Project, PrivilegeAction.Read, AccessLevel.BusinessUnit)
+            await fx.SaveSecurityModel(Tier1Fx.Setting({ RoleAssignments: assigned, RoleOverrides: [narrowed] }))
+            assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Pm, Tier1Fx.Project), [RulesFx.P1], 'the override reads at BU (spec §9.2)')
+        })
+    })
+
+    test('uncovered concept is system administrator only', async () =>
+    {
+        await Tier1Fx.Run({ Identity: true, SecurityModel: Tier1Fx.Setting() }, async (fx, server) =>
+        {
+            await fx.Seed([Tier1Fx.Owned(Tier1Fx.Note, RulesFx.N1, Tier1Fx.Alice, Tier1Fx.Sales)])
+            assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Alice, Tier1Fx.Note), [], 'no role covers projects.Note, not even its owner\'s')
+            assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Admin, Tier1Fx.Note), [RulesFx.N1])
+        })
+    })
+
+    test('system administrator is unrestricted', async () =>
+    {
+        await Tier1Fx.Run({ Identity: true, SecurityModel: Tier1Fx.Setting() }, async (fx, server) =>
+        {
+            await RulesFx.SeedEmployees(fx)
+            await RulesFx.SeedProjects(fx)
+            assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Admin, Tier1Fx.Employee), [RulesFx.E1, RulesFx.E2])
+            assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Admin, Tier1Fx.Project), [RulesFx.P1, RulesFx.P2])
+            const scope = (await Tier1Fx.Scope(server, Tier1Fx.Admin)).Scope
+            assert.deepEqual(await Tier1Fx.Column(server, scope, RulesFx.Salaries), [RulesFx.HighSalary, RulesFx.HighSalary], 'every secured field too')
+        })
+    })
+
+    test('secured field without read is nonexistent', async () =>
+    {
+        await Tier1Fx.Run({ Identity: true, SecurityModel: Tier1Fx.Setting() }, async (fx, server) =>
+        {
+            await RulesFx.SeedEmployees(fx)
+            const alice = (await Tier1Fx.Scope(server, Tier1Fx.Alice)).Scope
+            assert.deepEqual(await Tier1Fx.Column(server, alice, RulesFx.RichEmployees), [], 'Salary is hidden: the predicate matches nothing')
+            assert.deepEqual(await Tier1Fx.Column(server, alice, RulesFx.RichEmployees), await Tier1Fx.Column(server, alice, RulesFx.AbsentProperty), 'the same answer as an absent property')
+            assert.ok(alice.Hidden.get(Tier1Fx.Employee)?.has(Tier1Fx.Salary))
+            const profiled = Tier1Fx.Setting({ ProfileAssignments: [{ profile: Tier1Fx.Compensation, principalIds: [Tier1Fx.Alice], teamIds: [] }] })
+            await fx.SaveSecurityModel(profiled)
+            const withProfile = (await Tier1Fx.Scope(server, Tier1Fx.Alice)).Scope
+            assert.deepEqual(await Tier1Fx.Column(server, withProfile, RulesFx.RichEmployees), [RulesFx.E1], 'the Compensation profile reads it')
         })
     })
 
     test('external concept is outside the scope', async () =>
     {
-        await ScopeFx.Run({ Identity: true, SecurityModel: ScopeFx.Model() }, async (fx, server) =>
+        await Tier1Fx.Run({ Identity: true, SecurityModel: Tier1Fx.Setting() }, async (_fx, server) =>
         {
-            const engine = await server.EnvironmentEngine().Engine()
-            const scope = await ScopeFx.Scope(server, ScopeFx.P3)
-            assert.equal(scope.Scope.Rows.get(ScopeFx.Customer), TruePredicate.Instance, 'no row restriction on the bound concept')
-            assert.equal(scope.Scope.Writes.get(ScopeFx.Customer)?.Create, TruePredicate.Instance, 'no write restriction on the writable binding')
-            assert.deepEqual(await ScopeFx.Column(server, scope.Scope, ScopeFx.Customers), [ScopeFx.Acme], 'a principal holding nothing reads the rows')
-            const place = await ScopeFx.Create(engine, scope, ScopeFx.Customer, { [ScopeFx.Name]: ScopeFx.NewCustomer })
-            const key = place.Defaults?.get(ScopeFx.IdMember)
-            assert.equal(typeof key, 'string', 'the text id member defaults to the placed key (R112)')
-            assert.ok(fx.Source.Adapter.Batches.length > 0, 'the create wrote through to the source')
-            assert.deepEqual(await ScopeFx.Column(server, scope.Scope, ScopeFx.Customers), [ScopeFx.Acme, ScopeFx.NewCustomer])
-        })
-    })
-
-    test('read-only binding refuses writes', async () =>
-    {
-        await ScopeFx.Run({ Identity: true, SecurityModel: ScopeFx.Model() }, async (_fx, server) =>
-        {
-            const engine = await server.EnvironmentEngine().Engine()
+            const scope = (await Tier1Fx.Scope(server, Tier1Fx.Carol)).Scope
+            assert.equal(scope.Rows.get(Tier1Fx.Customer), undefined, 'no tier-1 entry on the connector concept')
+            assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Carol, Tier1Fx.Customer), [Tier1Fx.Acme], 'a principal holding nothing reads connector rows')
             const identity = (await server.EnvironmentEngine().Snapshot()).Catalog.Identity
-            const vendor = identity.ReadOnly().find(binding => binding.Binding.Concept === ScopeFx.Vendor)!
-            const scope = await ScopeFx.Scope(server, ScopeFx.P3)
-            const create = scope.Scope.Writes.get(ScopeFx.Vendor)?.Create
-            assert.deepEqual(create, new Not(new OwnerIs(new Set([vendor.Model]))), 'the guard names the read-only binding model only')
-            await assert.rejects(ScopeFx.Create(engine, scope, ScopeFx.Vendor, { [ScopeFx.Name]: ScopeFx.VendorName }), ScopeFx.Denied(AccessErrorCode.CreateDenied))
+            const vendor = identity.ReadOnly()[0]!
+            assert.deepEqual(scope.Writes.get(vendor.Binding.Concept)?.Create, new Not(new OwnerIs(new Set([vendor.Model]))), 'the read-only binding guard still applies')
         })
     })
 
-    test('seeded node is read-only (no identity allows reads)', async () =>
+    // R28 regression (relocated from the deleted tier1-engine-catalog suite): TODL composes every environment with an
+    // engine-storage default connector; the tier-1 compiler must still govern engine-stored concepts over the real
+    // catalog (guarding the fail-open the retired Tier1EngineCatalog adapter covered).
+    test('an engine-stored concept is governed over a real environment catalog', async () =>
     {
-        await ScopeFx.Run({}, async (fx, server) =>
+        await Tier1Fx.Run({ Identity: true, SecurityModel: Tier1Fx.Setting() }, async (fx, server) =>
         {
-            await ScopeFx.SeedAccounts(fx, [[ScopeFx.R1, ScopeFx.P1], [ScopeFx.R2, ScopeFx.P2]])
-            const engine = await server.EnvironmentEngine().Engine()
-            const scope = (await ScopeFx.Scope(server, ScopeFx.P1)).Scope
-            assert.equal((await ScopeFx.Column(server, scope, ScopeFx.Accounts)).length, 3, 'no identity: every row, the seeded one too')
-            await assert.rejects(ScopeFx.Update(engine, scope, ScopeFx.Seeded, ScopeFx.Name, ScopeFx.Changed), ScopeFx.Denied(AccessErrorCode.UpdateDenied))
-            await ScopeFx.Update(engine, scope, ScopeFx.R2, ScopeFx.Name, ScopeFx.Changed)
-            await ScopeFx.Grant(server, ScopeFx.G1, ScopeFx.R1, ShareSubject.Principal, ScopeFx.P1, [ShareRight.Read])
-            await assert.rejects(ScopeFx.CreateGrant(engine, scope, ScopeFx.G2, ScopeFx.R1), ScopeFx.Denied(AccessErrorCode.CreateDenied), 'R31: no grant is created through a caller scope')
-            await assert.rejects(ScopeFx.Update(engine, scope, ScopeFx.G1, ShareRight.Update, true), ScopeFx.Denied(AccessErrorCode.UpdateDenied), 'R31: nor updated')
+            const catalog = (await server.EnvironmentEngine().Snapshot()).Catalog
+            assert.equal(catalog.Description.DefaultConnector, BindingTable.EngineStorage, 'TODL composes with an engine-storage default')
+            await fx.Seed([{ Concept: Tier1Fx.Account, Id: Tier1Fx.Acme, Properties: { [Tier1Fx.Name]: Tier1Fx.Acme } }])
+            assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Carol, Tier1Fx.Account), [], 'a principal with no role cannot read crm.Account')
+            assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Admin, Tier1Fx.Account), [Tier1Fx.Acme])
         })
     })
 
-    test('shared record is visible through a grant', async () =>
+    test('no setting stored is deny all', async () =>
     {
-        await ScopeFx.Run({ Identity: true, SecurityModel: ScopeFx.Model() }, async (fx, server) =>
+        await Tier1Fx.Run({ Identity: true }, async (fx, server) =>
         {
-            await ScopeFx.SeedAccounts(fx, [[ScopeFx.R1, ScopeFx.P1], [ScopeFx.R2, ScopeFx.P1], [ScopeFx.R3, ScopeFx.P1], [ScopeFx.R4, ScopeFx.P1]])
-            await ScopeFx.Grant(server, ScopeFx.G1, ScopeFx.R1, ShareSubject.Principal, ScopeFx.P2, [ShareRight.Read])
-            await ScopeFx.Grant(server, ScopeFx.G2, ScopeFx.R2, ShareSubject.Team, ScopeFx.TeamA, [ShareRight.Read])
-            await ScopeFx.Grant(server, ScopeFx.G3, ScopeFx.R3, ShareSubject.Principal, ScopeFx.P2, [ShareRight.Update])
-            await ScopeFx.Grant(server, ScopeFx.G4, ScopeFx.R4, ShareSubject.Principal, ScopeFx.P3, [ShareRight.Read])
-            const scope = (await ScopeFx.Scope(server, ScopeFx.P2)).Scope
-            assert.deepEqual(await ScopeFx.Column(server, scope, ScopeFx.Accounts), [ScopeFx.R1, ScopeFx.R2], 'principal and team grants with read widen; a grant without read does not')
-            assert.deepEqual(await ScopeFx.Column(server, scope, ScopeFx.Grants), [ScopeFx.P2, ScopeFx.P2, ScopeFx.TeamA], 'grant rows are the principal\'s own')
-            const engine = await server.EnvironmentEngine().Engine()
-            await assert.rejects(ScopeFx.Update(engine, scope, ScopeFx.G1, ShareRight.Delete, true), ScopeFx.Denied(AccessErrorCode.UpdateDenied), 'grants are not writable through the caller scope')
-        })
-    })
-
-    test('lookalike grant concept does not widen', async () =>
-    {
-        await ScopeFx.Run({ Identity: true, SecurityModel: ScopeFx.Model() }, async (fx, server) =>
-        {
-            await ScopeFx.SeedAccounts(fx, [[ScopeFx.R1, ScopeFx.P1]])
-            await ScopeFx.Grant(server, ScopeFx.FakeGrant, ScopeFx.R1, ShareSubject.Principal, ScopeFx.P2, [ShareRight.Read], ScopeFx.Fake)
-            const scope = (await ScopeFx.Scope(server, ScopeFx.P2)).Scope
-            assert.equal((await ScopeFx.Column(server, scope, ScopeFx.Fakes)).length, 1, 'the lookalike is visible to p2')
-            assert.deepEqual(await ScopeFx.Column(server, scope, ScopeFx.Accounts), [], 'but it widens nothing (R114 ConceptIs guard)')
-        })
-    })
-
-    test('no security model is deny all', async () =>
-    {
-        await ScopeFx.Run({ Identity: true }, async (fx, server) =>
-        {
-            await ScopeFx.SeedAccounts(fx, [[ScopeFx.R1, ScopeFx.P1], [ScopeFx.R2, ScopeFx.P1]])
-            await ScopeFx.Grant(server, ScopeFx.G1, ScopeFx.R2, ShareSubject.Principal, ScopeFx.P1, [ShareRight.Read])
-            const engine = await server.EnvironmentEngine().Engine()
-            const scope = await ScopeFx.Scope(server, ScopeFx.P1)
-            assert.deepEqual(await ScopeFx.Column(server, scope.Scope, ScopeFx.Accounts), [ScopeFx.R2], 'only the shared record: a grant under DenyAll still widens (parity)')
-            await assert.rejects(ScopeFx.Create(engine, scope, ScopeFx.Account, { [ScopeFx.Name]: ScopeFx.NewAccount }), ScopeFx.Denied(AccessErrorCode.CreateDenied))
-            assert.deepEqual(await ScopeFx.Column(server, scope.Scope, ScopeFx.Customers), [ScopeFx.Acme], 'connector concepts stay outside platform security')
-        })
-    })
-
-    test('binding an app does not change the scope', async () =>
-    {
-        await ScopeFx.Run({ Identity: true, SecurityModel: ScopeFx.Model() }, async (fx, server) =>
-        {
-            await ScopeFx.SeedAccounts(fx, [[ScopeFx.R1, ScopeFx.P1], [ScopeFx.R2, ScopeFx.P2]])
-            for (const principal of [ScopeFx.P1, ScopeFx.P2])
+            await RulesFx.SeedEmployees(fx)
+            for (const principal of [Tier1Fx.Alice, Tier1Fx.Admin])
             {
-                const before = await ScopeFx.Scope(server, principal)
-                const visible = await ScopeFx.Column(server, before.Scope, ScopeFx.Accounts)
-                for (const app of [ScopeFx.CrmApp, ScopeFx.ExtApp])
-                {
-                    const client = await fx.Connect(ScopeFx.Context(principal).Principal)
-                    await client.OpenApplication(app)
-                    const after = await ScopeFx.Scope(server, principal)
-                    assert.equal(after.Digest, before.Digest, app)
-                    assert.deepEqual(await ScopeFx.Column(server, after.Scope, ScopeFx.Accounts), visible, app)
-                    assert.deepEqual(after.Scope.Writes.get(ScopeFx.Account), before.Scope.Writes.get(ScopeFx.Account), app)
-                }
+                assert.deepEqual(await Tier1Fx.Names(server, principal, Tier1Fx.Employee), [], principal)
+                assert.deepEqual(await Tier1Fx.Names(server, principal, Tier1Fx.Account), [], principal)
             }
         })
     })
 
-    test('security-model edit stales the cursor', async () =>
+    test('disabled identity has no access', async () =>
     {
-        await ScopeFx.Run({ Identity: true, SecurityModel: ScopeFx.Model() }, async (fx, server) =>
+        await Tier1Fx.Run({ Identity: true, SecurityModel: Tier1Fx.Setting() }, async (fx, server) =>
         {
-            await ScopeFx.SeedAccounts(fx, [[ScopeFx.R1, ScopeFx.P1], [ScopeFx.R2, ScopeFx.P1], [ScopeFx.R3, ScopeFx.P1]])
-            const first = await ScopeFx.Page(server, ScopeFx.P1)
+            await RulesFx.SeedEmployees(fx)
+            assert.equal((await Tier1Fx.Names(server, Tier1Fx.Admin, Tier1Fx.Employee)).length, 2)
+            const snapshot = new IdpDirectorySnapshot(new Date(), true, new Map([[Tier1Fx.Admin, IdpUserState.Disabled]]), new Map())
+            await (await server.Pack()).IdpDirectory.Save(EnvironmentFixture.TenantId, snapshot)
+            ;(await server.SecuritySetting()).Invalidate()
+            assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Admin, Tier1Fx.Employee), [], 'a disabled System Administrator holds nothing')
+            assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Admin, Tier1Fx.Account), [])
+        })
+    })
+
+    test('security edit stales the cursor', async () =>
+    {
+        await Tier1Fx.Run({ Identity: true, SecurityModel: Tier1Fx.Setting() }, async (fx, server) =>
+        {
+            await fx.Seed([1, 2, 3].map(i => Tier1Fx.Owned(Tier1Fx.Employee, RulesFx.E1 + i, Tier1Fx.Admin, Tier1Fx.Contoso)))
+            const first = await RulesFx.Page(server, Tier1Fx.Admin)
             assert.ok(first.nextCursor !== undefined)
-            const second = await ScopeFx.Page(server, ScopeFx.P1, first.nextCursor)
+            const second = await RulesFx.Page(server, Tier1Fx.Admin, first.nextCursor)
             assert.ok(second.nextCursor !== undefined, 'without an edit the chain continues')
-            await fx.SaveSecurityModel(ScopeFx.Model(ScopeFx.UserPrivileges(AccessLevel.Organization)))
-            ;(await server.SecurityModelReload()).Invalidate(EnvironmentFixture.TenantId)
-            assert.equal(await ScopeFx.CodeOf(ScopeFx.Page(server, ScopeFx.P1, second.nextCursor)), CursorStaleError.Code)
+            await fx.SaveSecurityModel(Tier1Fx.Setting({ RoleOverrides: [Tier1Fx.Override(BaseRole.Reader, Tier1Fx.Employee, PrivilegeAction.Read, AccessLevel.User)] }))
+            assert.equal(await RulesFx.CodeOf(RulesFx.Page(server, Tier1Fx.Admin, second.nextCursor)), CursorStaleError.Code, 'the next page under the edited setting is stale')
         })
     })
 
-    test('widening needs grant rows', async () =>
+    test('placement stamps owner and home unit', async () =>
     {
-        await ScopeFx.Run({ Identity: true, SecurityModel: ScopeFx.Model() }, async (fx, server) =>
+        await Tier1Fx.Run({ Identity: true, SecurityModel: Tier1Fx.Setting() }, async (_fx, server) =>
         {
-            await ScopeFx.SeedAccounts(fx, [[ScopeFx.R1, ScopeFx.P1]])
-            await ScopeFx.Grant(server, ScopeFx.G1, ScopeFx.R1, ShareSubject.Principal, ScopeFx.P2, [ShareRight.Read])
-            const scope = (await ScopeFx.Scope(server, ScopeFx.P2)).Scope
-            assert.deepEqual(await ScopeFx.Column(server, scope, ScopeFx.Accounts), [ScopeFx.R1])
-            const rows = new Map(scope.Rows)
-            rows.set(SystemNames.ShareGrant, FalsePredicate.Instance)
-            const blind = AccessScope.Build({ Default: scope.Default, Rows: rows, Writes: scope.Writes, Hidden: scope.Hidden, HiddenExact: scope.HiddenExact })
-            assert.deepEqual(await ScopeFx.Column(server, blind, ScopeFx.Accounts), [], 'a scope that cannot see the grant widens nothing (S5 (b), R66/R114)')
+            const engine = await Tier1Fx.Engine(server)
+            const scope = await Tier1Fx.Scope(server, Tier1Fx.Alice)
+            const place = scope.Placement().Place(Tier1Fx.Employee, new Map<string, CellValue>([[Tier1Fx.Name, RulesFx.NewEmployee]]))
+            assert.equal(place.Defaults?.get(SystemNames.Owner), Tier1Fx.Alice)
+            assert.equal(place.Defaults?.get(SystemNames.OwningBusinessUnit), Tier1Fx.Sales, 'the home unit of the acting principal (C3)')
+            const transaction = await engine.Begin(scope.Scope)
+            transaction.CreateNode(place.PublicId, Tier1Fx.Employee, { Owner: place.Owner })
+            transaction.SetProperty(place.PublicId, Tier1Fx.Name, RulesFx.NewEmployee)
+            for (const [member, value] of place.Defaults ?? []) transaction.SetDefault(place.PublicId, member, value)
+            await transaction.Commit()
+            assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Alice, Tier1Fx.Employee), [RulesFx.NewEmployee], 'the stamped record is in alice\'s BU')
         })
     })
 
-    test('a granted term is not widened', async () =>
+    test('system fields are read-only for a system administrator', async () =>
     {
-        await ScopeFx.Run({ Identity: true }, async (_fx, server) =>
+        await Tier1Fx.Run({ Identity: true, SecurityModel: Tier1Fx.Setting() }, async (fx, server) =>
         {
-            const term = await ScopeFx.TermId(server)
-            await ScopeFx.Grant(server, ScopeFx.G5, term, ShareSubject.Principal, ScopeFx.P1, [ShareRight.Read, ShareRight.Update, ShareRight.Delete])
-            const engine = await server.EnvironmentEngine().Engine()
-            const scope = (await ScopeFx.Scope(server, ScopeFx.P1)).Scope
-            assert.deepEqual(await ScopeFx.Column(server, scope, ScopeFx.Terms), [], 'DenyAll: the term stays invisible, grant or not')
-            assert.deepEqual(scope.Rows.get(TodlNames.Term), FalsePredicate.Instance, 'built-ins get no widening')
-            assert.deepEqual(scope.Rows.get(TodlNames.Element), new Not(new ConceptIs(TodlNames.Element)), 'the root entry carries no grant check')
-            await assert.rejects(ScopeFx.Update(engine, scope, term, ScopeFx.Label, ScopeFx.Changed), ScopeFx.Denied(AccessErrorCode.InvisibleNode))
+            await RulesFx.SeedEmployees(fx)
+            const scope = (await Tier1Fx.Scope(server, Tier1Fx.Admin)).Scope
+            const set = new Cypher.CypherEngine(await Tier1Fx.Engine(server)).Execute(scope, 'MATCH (e:`hr.Employee` {name: \'E1\'}) SET e.owner = \'bob\'')
+            await assert.rejects(set, (error: unknown) => Tier1Fx.Denied(AccessErrorCode.MemberReadOnly)((error as Error).cause), 'PR1: only assign writes the system fields')
+            await Tier1Fx.Update(await Tier1Fx.Engine(server), scope, RulesFx.E1, Tier1Fx.Name, RulesFx.Moved)
         })
     })
 
-    test('policy files are not read', async () =>
+    test('a team-held role judges business-unit depth at the team\'s unit', async () =>
     {
-        await ScopeFx.Run({ Identity: true, SecurityModel: ScopeFx.Model() }, async (fx, server) =>
+        const setting = Tier1Fx.Setting({
+            Teams: [Tier1Fx.MarketingTeamOf(Tier1Fx.Alice)],
+            RoleAssignments: [{ role: Tier1Fx.ProjectManager, principalIds: [], teamIds: [Tier1Fx.MarketingTeam] }],
+            RoleOverrides: [Tier1Fx.Override(Tier1Fx.ProjectManager, Tier1Fx.Project, PrivilegeAction.Read, AccessLevel.BusinessUnit)],
+        })
+        await Tier1Fx.Run({ Identity: true, SecurityModel: setting }, async (fx, server) =>
         {
-            await ScopeFx.SeedAccounts(fx, [[ScopeFx.R1, ScopeFx.P1]])
-            // written before the first scope build, so the build that follows would be the one to read it
-            ScopeFx.WritePolicyFile(fx)
-            const first = await ScopeFx.Scope(server, ScopeFx.P1)
-            assert.deepEqual(await ScopeFx.Column(server, first.Scope, ScopeFx.Accounts), [ScopeFx.R1], 'a retired access-policy.json denies nothing (A1)')
-            // and a rebuild after an invalidation does not pick it up either
-            ;(await server.SecurityModelReload()).Invalidate(EnvironmentFixture.TenantId)
-            const rebuilt = await ScopeFx.Scope(server, ScopeFx.P1)
-            assert.notEqual(rebuilt, first, 'the scope was compiled again (a new security-model generation)')
-            assert.deepEqual(await ScopeFx.Column(server, rebuilt.Scope, ScopeFx.Accounts), [ScopeFx.R1])
+            await RulesFx.SeedProjects(fx)
+            assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Alice, Tier1Fx.Project), [RulesFx.P2], 'a Sales user reads Marketing\'s projects through the Marketing team (PR5)')
+        })
+    })
+
+    test('an edge to a hidden record is invisible', async () =>
+    {
+        await Tier1Fx.Run({ Identity: true, SecurityModel: Tier1Fx.Setting() }, async (fx, server) =>
+        {
+            await fx.Seed([
+                Tier1Fx.Owned(Tier1Fx.Project, RulesFx.P1, Tier1Fx.Alice, Tier1Fx.Sales),
+                Tier1Fx.Owned(Tier1Fx.Project, RulesFx.P2, Tier1Fx.Bob, Tier1Fx.Marketing),
+                Tier1Fx.Owned(Tier1Fx.Task, RulesFx.T1, Tier1Fx.Alice, Tier1Fx.Sales),
+                { Concept: Tier1Fx.Assignment, Id: RulesFx.A1 },
+                { Concept: Tier1Fx.Assignment, Id: RulesFx.A2 },
+            ])
+            const engine = await Tier1Fx.Engine(server)
+            for (const [edge, project] of [[RulesFx.A1, RulesFx.P1], [RulesFx.A2, RulesFx.P2]])
+            {
+                await Tier1Fx.Link(engine, AccessScope.System, edge, Tier1Fx.From, RulesFx.T1)
+                await Tier1Fx.Link(engine, AccessScope.System, edge, Tier1Fx.To, project)
+            }
+            const alice = (await Tier1Fx.Scope(server, Tier1Fx.Alice)).Scope
+            assert.deepEqual(await Tier1Fx.Column(server, alice, RulesFx.AssignmentCount), [1n], 'the assignment to bob\'s project is not counted (PR4)')
+            const admin = (await Tier1Fx.Scope(server, Tier1Fx.Admin)).Scope
+            assert.deepEqual(await Tier1Fx.Column(server, admin, RulesFx.AssignmentCount), [2n])
+        })
+    })
+
+    test('linking needs append and appendTo', async () =>
+    {
+        const setting = Tier1Fx.Setting({ RoleAssignments: [
+            { role: Tier1Fx.TaskEditor, principalIds: [Tier1Fx.Carol], teamIds: [] },
+            { role: Tier1Fx.TaskLinker, principalIds: [Tier1Fx.Pm], teamIds: [] },
+        ] })
+        await Tier1Fx.Run({ Identity: true, SecurityModel: setting }, async (fx, server) =>
+        {
+            await fx.Seed([Tier1Fx.Owned(Tier1Fx.Project, RulesFx.P1, Tier1Fx.Bob, Tier1Fx.Marketing), Tier1Fx.Owned(Tier1Fx.Task, RulesFx.T1, Tier1Fx.Bob, Tier1Fx.Marketing)])
+            const engine = await Tier1Fx.Engine(server)
+            const editor = (await Tier1Fx.Scope(server, Tier1Fx.Carol)).Scope
+            await Tier1Fx.Update(engine, editor, RulesFx.T1, Tier1Fx.Name, RulesFx.Moved)
+            await assert.rejects(Tier1Fx.Link(engine, editor, RulesFx.T1, Tier1Fx.ProjectMember, RulesFx.P1), Tier1Fx.Denied(AccessErrorCode.AppendDenied), 'an Update-only grant no longer links (PR3)')
+            await Tier1Fx.Link(engine, (await Tier1Fx.Scope(server, Tier1Fx.Pm)).Scope, RulesFx.T1, Tier1Fx.ProjectMember, RulesFx.P1)
         })
     })
 })

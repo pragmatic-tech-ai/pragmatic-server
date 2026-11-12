@@ -4,20 +4,33 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { TenantSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
+import { IdpDirectorySnapshot } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 
-const ModelPath = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'demo', 'seed', 'security-model.json')
+/** The demo Contoso tier-1 setting and the values it is expected to carry. */
+class ContosoSeed
+{
+    public static readonly ModelPath = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'demo', 'seed', 'security-model.json')
+    public static readonly BusinessUnitCount = 6
+    public static readonly ExpectedRoles: readonly string[] = ['reader', 'salesManager', 'salesRep']
+    public static readonly CreditProfile = 'credit-readers'
+    public static readonly CreditReaders: readonly string[] = ['manager-north', 'finance']
+
+    public static Config(): ISecurityModelConfig
+    {
+        return JSON.parse(readFileSync(ContosoSeed.ModelPath, 'utf8')) as ISecurityModelConfig
+    }
+}
 
 test('Contoso security model loads (fail-closed validation passes)', () =>
 {
-    const config = JSON.parse(readFileSync(ModelPath, 'utf8')) as ISecurityModelConfig
-    assert.doesNotThrow(() => TenantSecurityModel.FromConfig(config))
-    assert.equal(config.businessUnits.length, 6)
-    assert.equal(config.roles!.length, 3)
-    assert.deepEqual(config.roles!.map(r => r.id).sort(), ['reader', 'salesManager', 'salesRep'])
-    const overrides = config.fieldSecurity!.profileAssignment!.overrides
-    for (const principalId of ['manager-north', 'finance'])
+    const config = ContosoSeed.Config()
+    assert.doesNotThrow(() => TenantSecurityModel.FromConfig(config, IdpDirectorySnapshot.NonAuthoritative(new Date())))
+    assert.equal(config.businessUnits.length, ContosoSeed.BusinessUnitCount)
+    assert.deepEqual([...config.roleAssignments].map(a => a.role).sort(), [...ContosoSeed.ExpectedRoles])
+    const credit = config.profileAssignments.find(p => p.profile === ContosoSeed.CreditProfile)!
+    for (const principalId of ContosoSeed.CreditReaders)
     {
-        assert.ok(overrides.some(o => o.principalId === principalId && o.profiles.includes('credit-readers')))
+        assert.ok(credit.principalIds.includes(principalId))
     }
 })

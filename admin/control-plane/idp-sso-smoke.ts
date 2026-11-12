@@ -32,7 +32,7 @@ import {
 import type { ISecretStore } from '@pragmatic-tech-ai/todl-identity'
 import {
     AuthorizationRequest, ClaimArrayGroupStrategy, ClaimsMapper, InMemoryOidcFlowStateStore,
-    JwksCache, OidcAuthenticator, OidcDiscovery, OidcResolvedConfig, PkceChallenge,
+    JwksCache, OidcAuthenticator, OidcDiscovery, OidcProviderProfile, OidcResolvedConfig, PkceChallenge,
 } from '@pragmatic-tech-ai/todl-identity-cloud'
 import type { IHttpClient } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { InMemoryAuthorizationCodeStore } from '../../src/idp/authorization-code-store.js'
@@ -713,7 +713,7 @@ export class IdpSsoSmoke
             Jwks: new JwksCache(http),
             FlowStates: new InMemoryOidcFlowStateStore(),
             Secrets: secrets,
-            Claims: new ClaimsMapper(new Map([[S.EmailClaim, S.EmailClaim]]), new ClaimArrayGroupStrategy(S.GroupsClaim)),
+            Claims: new ClaimsMapper(new OidcProviderProfile(S.Scopes, new Map([[S.EmailClaim, S.EmailClaim]]), new ClaimArrayGroupStrategy(S.GroupsClaim), S.ClientSecretParam)),
             Config: new IdentityConfig(S.PackId, DelegationDepth.AuthnDirectory, new Map(), new Map(), new Map()),
             Resolved: new OidcResolvedConfig(
                 this.Issuer() + S.PathSeparator + S.DiscoveryRest, this.Issuer(), clientId, redirectUri,

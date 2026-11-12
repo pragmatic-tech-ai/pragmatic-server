@@ -5,29 +5,27 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AccessDefault, AccessScope, ConceptIs, Or, OwnerIs } from '@pragmatic-tech-ai/graph'
 import type { AccessScope as EngineScope, CellValue, GraphEngine } from '@pragmatic-tech-ai/graph'
-import { AppWriteStatus, CypherCells, InMemoryMessageSocket, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { AppWriteStatus, CypherCells, InMemoryMessageSocket, PragmaticClient, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherCellDto, CypherNodeCellDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { SystemNames } from '@pragmatic-tech-ai/todl/engine'
-import { AccessLevel, OwnershipSourceKind, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
-import type { AccessContext, IPrivilegeConfig, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
-import type { FieldSecurityEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
+import { AccessContext, BaseRole, Principal, PrincipalKind, ResourceAuthorizationPolicy, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
+import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../../pragmatic-server.js'
-import { TenantReadAuthorization } from '../../cypher/read-filter-source.js'
 import { PpSecurityHarness } from '../../cypher/tests/pp-security-harness.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
 import { Coverage, Invariant, InvariantText } from './scope-invariant-assertions.js'
 import type { IExpectedVisibility } from './scope-invariant-assertions.js'
 
 /**
- * Spec §12: no endpoint returns a row or member outside its AccessScope. One dev tenant, three principals (one the
- * security model does not know, a BusinessUnit-level reader/writer, an Organization-level reader/writer holding the
- * secured-field profile); every dev read endpoint, and cypher/execute RETURN after writes, is asked over the wire.
- * Every instance id an answer holds must be in the set the ENGINE shows that principal (GraphReader.ScanNodes under
- * AccessScopeSource.ScopeFor(ctx).Scope, intersected for a model-scoped read with an independently built
- * Or(ConceptIs todl.Term, ConceptIs todl.system.ShareGrant, OwnerIs model) scope, R58), every attribute readable under the tenant's FieldSecurityEvaluator.
- * The expected sets are computed from the engine and the identity evaluator directly, never through endpoint code.
+ * Spec §12 and §5.1 (PR13), dev half: authoring data is governed by the identity RBAC at the PolicyGate only, so every
+ * principal the gate admits gets the same unrestricted scope, whatever security setting the tenant config holds, and the
+ * model confinement of a model-scoped read (`OwnerIs(modelId)`) is unchanged. One dev tenant, two principals; every dev
+ * read endpoint, and cypher/execute RETURN after writes, is asked over the wire. Every instance id an answer holds must
+ * be in the set the ENGINE shows that principal (GraphReader.ScanNodes under AccessScopeSource.ScopeFor(ctx).Scope,
+ * intersected for a model-scoped read with an independently built Or(ConceptIs todl.Term, ConceptIs
+ * todl.system.ShareGrant, OwnerIs model) scope, R58), every attribute readable under the scope's Hidden.
  */
 
 /** The fixture: names, model text, the security model and the statements every principal runs. */
@@ -63,9 +61,10 @@ class InvariantFx
     public static readonly PremiumLabel = 'premium'
     public static readonly PremiumSecret = 'c0'
     public static readonly IconPath = 'resources/big.svg'
-    public static readonly NoProfile = 'p-none'
-    public static readonly BuReader = 'p-bu'
-    public static readonly OrgReader = 'p-org'
+    public static readonly First = 'p-one'
+    public static readonly Second = 'p-two'
+    public static readonly Outsider = 'p-outsider'
+    public static readonly TenantName = 'Tenant One'
     public static readonly ModelsDir = 'models'
     public static readonly ModelFileName = 'model.todl'
     public static readonly NoConnectors = 'no connectors'
@@ -73,11 +72,6 @@ class InvariantFx
     public static readonly SolutionPrefix = 'inv-sol-'
     public static readonly PackagesPrefix = 'inv-pkgs-'
     public static readonly IdentityPrefix = 'inv-id-'
-    private static readonly BuRole = 'bu-reader'
-    private static readonly OrgRole = 'org-reader'
-    private static readonly RoleName = 'Reader'
-    private static readonly ProfileId = 'secret-readers'
-    private static readonly ProfileName = 'Secret readers'
     private static readonly RootName = 'Root'
     private static readonly SalesName = 'Sales'
 
@@ -123,36 +117,28 @@ class InvariantFx
             + `Gizmo z1 { ${bu} = "${sales}"; label = "gizmo"; secret = "s5"; code = "k1"; } } }`
     }
 
-    /** BuReader reads/writes Widget, Gadget and Gizmo at BusinessUnit level from sales; OrgReader org-wide with the `secret` profile; NoProfile is unknown. */
+    /** A stored setting assigning nothing to anyone (and only a System Administrator elsewhere): the dev scope ignores it. */
     public static SecurityModel(): ISecurityModelConfig
     {
-        const fromField = { kind: OwnershipSourceKind.FromField, value: InvariantFx.OwningBu }
-        const actions = [PrivilegeAction.Read, PrivilegeAction.Create, PrivilegeAction.Update]
-        // privileges are exact per concept (DepthScopeCompiler), so each subconcept is granted alongside Widget
-        const privileges = (level: AccessLevel): IPrivilegeConfig[] => InvariantFx.Concepts.flatMap(concept => actions.map(action => ({ action, concept, level })))
-        const member = (principalId: string) => ({ principalId, homeBusinessUnit: PpSecurityHarness.SalesBu, teams: [] })
         return {
             businessUnits: [
                 { id: PpSecurityHarness.RootBu, name: InvariantFx.RootName },
                 { id: PpSecurityHarness.SalesBu, name: InvariantFx.SalesName, parent: PpSecurityHarness.RootBu },
             ],
+            users: [{ principalId: InvariantFx.Outsider, businessUnitId: PpSecurityHarness.SalesBu }],
             teams: [],
-            membership: { claimsMapping: [], overrides: [member(InvariantFx.BuReader), member(InvariantFx.OrgReader)] },
-            ownershipRules: InvariantFx.Concepts.map(concept => ({ concept, owningBusinessUnit: fromField })),
-            roles: [
-                { id: InvariantFx.BuRole, name: InvariantFx.RoleName, privileges: privileges(AccessLevel.BusinessUnit) },
-                { id: InvariantFx.OrgRole, name: InvariantFx.RoleName, privileges: privileges(AccessLevel.Organization) },
-            ],
-            roleAssignment: { claimsMapping: [], teamRoles: [], overrides: [
-                { principalId: InvariantFx.BuReader, roles: [InvariantFx.BuRole] },
-                { principalId: InvariantFx.OrgReader, roles: [InvariantFx.OrgRole] },
-            ] },
-            fieldSecurity: {
-                securedFields: [{ concept: InvariantFx.Widget, field: InvariantFx.Secret }, { concept: InvariantFx.Gizmo, field: InvariantFx.Code }],
-                profiles: [{ id: InvariantFx.ProfileId, name: InvariantFx.ProfileName, grants: [{ concept: InvariantFx.Widget, field: InvariantFx.Secret, read: true }] }],
-                profileAssignment: { claimsMapping: [], teamProfiles: [], overrides: [{ principalId: InvariantFx.OrgReader, profiles: [InvariantFx.ProfileId] }] },
-            },
+            roleAssignments: [{ role: BaseRole.SystemAdministrator, principalIds: [InvariantFx.Outsider], teamIds: [] }],
+            profileAssignments: [],
+            roleOverrides: [],
+            profileOverrides: [],
         }
+    }
+
+    /** A principal with no grant on the tenant: the PolicyGate refuses it. */
+    public static Ungranted(principalId: string): AccessContext
+    {
+        const tenant = new Tenant(PpSecurityHarness.TenantId, TenantKind.SelfHosted, InvariantFx.TenantName)
+        return new AccessContext(new Principal(principalId, PpSecurityHarness.TenantId, PrincipalKind.User, new Map(), []), tenant, [], new ResourceAuthorizationPolicy())
     }
 
     /** The class node Premium as a hypothetical Widget, its property values spelled out from the fixture text. */
@@ -167,7 +153,7 @@ class InvariantFx
 }
 
 /**
- * What one principal may see, computed from the engine and the identity evaluator alone:
+ * What one principal may see, computed from the engine and its compiled scope alone:
  * - `Cypher`: the ids `ScanNodes(todl.Element)` yields under the principal's scope (tenant-wide reads, and every
  *   cypher/execute read, which stays tenant-wide);
  * - `ModelOf(id)`: `Cypher` intersected with the ids a scan under `Or(ConceptIs todl.Term, ConceptIs ShareGrant, OwnerIs id)` alone yields
@@ -183,8 +169,7 @@ class ExpectedVisibility implements IExpectedVisibility
         private readonly models: ReadonlyMap<string, ReadonlySet<string>>,
         public readonly ModelView: ReadonlySet<string>,
         private readonly concepts: ReadonlyMap<string, string>,
-        private readonly fields: FieldSecurityEvaluator,
-        private readonly context: AccessContext)
+        public readonly Scope: EngineScope)
     {
     }
 
@@ -217,10 +202,7 @@ class ExpectedVisibility implements IExpectedVisibility
         {
             reader.dispose()
         }
-        const authorization = await server.SecurityModelReload()
-        assert.ok(authorization instanceof TenantReadAuthorization, InvariantText.NoTenantAuthorization)
-        const fields = (await authorization.EvaluatorForContext(context)).FieldSecurity()
-        return new ExpectedVisibility(cypher, perModel, modelView, concepts, fields, context)
+        return new ExpectedVisibility(cypher, perModel, modelView, concepts, scope)
     }
 
     /** The cypher set for a read scoped to `model` (tenant-wide without one). */
@@ -242,10 +224,10 @@ class ExpectedVisibility implements IExpectedVisibility
         return this.concepts.get(id)
     }
 
-    /** Whether the tenant's field security lets the principal read `field` of `concept`. */
+    /** Whether the compiled scope lets the principal read `field` of `concept` (it hides nothing on dev). */
     public CanRead(concept: string, field: string): boolean
     {
-        return this.fields.CanReadField(this.context.Principal, concept, field)
+        return !(this.Scope.Hidden.get(concept)?.has(field) ?? false) && !(this.Scope.HiddenExact.get(concept)?.has(field) ?? false)
     }
 
     private static ModelScope(model: string): EngineScope
@@ -476,64 +458,41 @@ class PrincipalSweep
     }
 }
 
-describe('scope invariant: no dev endpoint returns a row or member outside its AccessScope (spec §12)', () =>
+describe('scope invariant: the dev scope is unrestricted for every gate-passing principal (spec §12, §5.1)', () =>
 {
-    test('three principals across cypher/query (with and without modelId), cypher/execute RETURN (reads and writes), model/view and model/resources', async () =>
+    test('dev scope ignores the security setting', async () =>
     {
         await InvariantWorld.Run(async world =>
         {
             const models = [...await world.Server.DevCypher().Models()]
             assert.deepEqual([...InvariantFx.Membership.keys()].filter(model => models.includes(model)), [...InvariantFx.Membership.keys()], InvariantText.ModelCount)
-            const sweeps = new Map<string, PrincipalSweep>()
-            for (const principal of [InvariantFx.NoProfile, InvariantFx.BuReader, InvariantFx.OrgReader])
+            const sweeps: PrincipalSweep[] = []
+            for (const principal of [InvariantFx.First, InvariantFx.Second])
             {
                 const context = PpSecurityHarness.Context(principal)
                 const sweep = new PrincipalSweep(world, await world.Connect(context), context, models, true)
                 await sweep.Run()
-                sweeps.set(principal, sweep)
+                sweeps.push(sweep)
             }
-            const none = sweeps.get(InvariantFx.NoProfile)!
-            const bu = sweeps.get(InvariantFx.BuReader)!
-            const org = sweeps.get(InvariantFx.OrgReader)!
             const fixtureIn = (set: ReadonlySet<string>): string[] => InvariantFx.Instances.filter(id => set.has(id))
-
-            // the engine-visible sets: unknown sees no instance, BU the sales ones, org all of them
-            assert.deepEqual(fixtureIn(none.Expected!.Cypher), [])
-            assert.deepEqual(fixtureIn(bu.Expected!.Cypher), [InvariantFx.A1, InvariantFx.G1, InvariantFx.B1, InvariantFx.Z1])
-            assert.deepEqual(fixtureIn(org.Expected!.Cypher), InvariantFx.Instances)
-            // per-model sets match the hard-coded membership, and carry the caller's terms
-            for (const [model, members] of InvariantFx.Membership)
+            for (const sweep of sweeps)
             {
-                const set = org.Expected!.CypherFor(model)
-                assert.deepEqual(fixtureIn(set), members, model)
-                for (const id of org.Expected!.Cypher)
-                {
-                    if (org.Expected!.EngineConcept(id) === InvariantFx.Term) assert.ok(set.has(id), id)
-                }
-            }
-            // a visible node never exposes a hidden target: a1 is BU-visible, its peer a2 is not
-            assert.equal(bu.Rows.Node(undefined, InvariantFx.A1)?.refs[InvariantFx.Peer]?.includes(InvariantFx.A2) ?? false, false)
-            assert.ok(org.Rows.Node(undefined, InvariantFx.A1)!.refs[InvariantFx.Peer]!.includes(InvariantFx.A2))
-            // the cross-model ref a1 -> b1 is there tenant-wide and absent under ShopA
-            assert.ok(org.Rows.Node(undefined, InvariantFx.A1)!.refs[InvariantFx.Link]!.includes(InvariantFx.B1))
-            assert.equal(org.Rows.Node(InvariantFx.ShopA, InvariantFx.A1)!.refs[InvariantFx.Link]?.includes(InvariantFx.B1) ?? false, false)
-            // field security is exact per concept: Gadget's inherited `secret` is readable, Widget's only with the profile
-            assert.ok(bu.Rows.Node(undefined, InvariantFx.G1)!.fields[InvariantFx.Secret] !== undefined)
-            assert.equal(bu.Rows.Node(undefined, InvariantFx.A1)!.fields[InvariantFx.Secret], undefined)
-            assert.equal(org.Rows.Node(undefined, InvariantFx.Z1)!.fields[InvariantFx.Code], undefined)
-            // non-vacuous: readers got nodes, relationships, members and applied writes; the icon only for org
-            for (const sweep of [bu, org])
-            {
-                assert.ok(sweep.Seen.Nodes > 0 && sweep.Seen.Rels > 0 && sweep.Seen.Members > 0, String(sweep.Seen.Nodes))
+                // the setting assigns them nothing, yet both read every instance and every secured value
+                assert.deepEqual(fixtureIn(sweep.Expected!.Cypher), InvariantFx.Instances)
+                assert.equal(sweep.Expected!.Scope.Rows.size, 0, 'no row restriction')
+                assert.equal(sweep.Expected!.Scope.Hidden.size + sweep.Expected!.Scope.HiddenExact.size, 0, 'no hidden member')
+                // model confinement is unchanged: per-model sets match the hard-coded membership
+                for (const [model, members] of InvariantFx.Membership) assert.deepEqual(fixtureIn(sweep.Expected!.CypherFor(model)), members, model)
+                assert.ok(sweep.Rows.Node(undefined, InvariantFx.A1)!.fields[InvariantFx.Secret] !== undefined)
+                assert.equal(sweep.Rows.Node(InvariantFx.ShopA, InvariantFx.A1)!.refs[InvariantFx.Link]?.includes(InvariantFx.B1) ?? false, false, 'a cross-model ref is absent under ShopA')
+                assert.ok(sweep.Seen.Nodes > 0 && sweep.Seen.Rels > 0 && sweep.Seen.Members > 0 && sweep.Seen.Resources > 0, JSON.stringify(sweep.Seen))
                 assert.equal(sweep.Seen.Applied, [...InvariantFx.Writes.values()].flat().length)
             }
-            assert.ok(org.Seen.SecretValues > bu.Seen.SecretValues)
-            assert.ok(org.Seen.Resources > 0)
-            assert.equal(none.Seen.Resources, 0)
-
-            // negative control: p-org's answers judged by p-bu's expected sets must fail the invariant
-            const control = new PrincipalSweep(world, await world.Connect(PpSecurityHarness.Context(InvariantFx.OrgReader)), PpSecurityHarness.Context(InvariantFx.BuReader), models, false)
-            await assert.rejects(() => control.Run(), (error: unknown) => InvariantText.IsViolation(error))
+            // the second sweep ran later (its writes created nodes): it sees everything the first saw
+            assert.ok([...sweeps[0]!.Expected!.Cypher].every(id => sweeps[1]!.Expected!.Cypher.has(id)), 'every gate-passing principal sees the same')
+            // the PolicyGate still refuses a principal without Read on the tenant
+            const outsider = await world.Connect(InvariantFx.Ungranted(InvariantFx.Outsider))
+            await assert.rejects(outsider.CypherQuery(InvariantFx.AllNodes), (error: unknown) => error instanceof ResponseError)
         })
     })
 })

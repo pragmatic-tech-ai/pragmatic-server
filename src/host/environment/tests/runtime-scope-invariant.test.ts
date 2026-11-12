@@ -5,10 +5,8 @@ import type { AccessScope as EngineScope, GraphEngine } from '@pragmatic-tech-ai
 import { ShareRight, SystemNames, TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import { AppWriteStatus, CypherCells, ShareStatus, ShareSubjectKind } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherCellDto, CypherNodeCellDto, EntityDto, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AccessLevel, OwnershipSourceKind, Principal, PrincipalKind, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
-import type { AccessContext, IPrivilegeConfig, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
-import type { FieldSecurityEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
-import { TenantReadAuthorization } from '../../cypher/read-filter-source.js'
+import { BaseRole, Principal, PrincipalKind } from '@pragmatic-tech-ai/todl-identity'
+import type { AccessContext, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { Coverage, Invariant, InvariantText } from '../../engine/tests/scope-invariant-assertions.js'
 import type { IExpectedVisibility } from '../../engine/tests/scope-invariant-assertions.js'
 import { EnvironmentFixture } from './environment-fixture.js'
@@ -17,14 +15,16 @@ import type { SeedRow } from './environment-fixture.js'
 /**
  * Spec §12, runtime half: no endpoint returns a row or member outside its AccessScope. One runtime tenant with identity
  * delivering `crm` (crm.Account) through `crm-app`, `ext` (ext.Customer bound over the fixture's MemorySourceAdapter)
- * through `ext-app` and `notes` (notes.Note) through the promote set; crm.a2 (root) is shared to the BU reader. Three
- * principals: one the security model does not know, a BusinessUnit-level reader, an Organization-level reader holding
- * the secured-field profile. Every runtime read endpoint is asked over the wire; every id an answer holds must be in
+ * through `ext-app` and `notes` (notes.Note) through the promote set, both owned; crm.a2 (root) is shared to the BU
+ * reader by a System Administrator. Three principals on tier 1 (security S4 Task 9): one holding no role, a BasicUser
+ * (the packages contribute BusinessUnit-depth access from sales), a Reader (organisation reads) holding the `Secrets`
+ * profile over the secured `secret` field (and BasicUser, for the one write). Every runtime read endpoint is asked over
+ * the wire; every id an answer holds must be in
  * the set the ENGINE shows that principal (GraphReader.ScanNodes(todl.Element) under
  * EnvironmentScopes.ScopeFor(ctx).Scope, intersected for a model-scoped read with an independently built model-filter
  * scan: OwnerIs plus the terms and the caller's share grants, R58)
  * plus the external binding's rows, which every principal sees (amendment A7: connector data is outside platform
- * security); every member must be readable under the identity FieldSecurityEvaluator for the node's concept.
+ * security); every member must be readable under the compiled scope's Hidden for the node's concept.
  */
 class RuntimeFx
 {
@@ -41,7 +41,9 @@ class RuntimeFx
     public static readonly Note = 'notes.Note'
     public static readonly Customer = 'ext.Customer'
     public static readonly Governed = [RuntimeFx.Account, RuntimeFx.Note]
-    public static readonly Bu = 'bu'
+    public static readonly Bu = SystemNames.OwningBusinessUnit
+    public static readonly Owner = SystemNames.Owner
+    public static readonly Nobody = 'nobody'
     public static readonly Label = 'label'
     public static readonly Secret = 'secret'
     public static readonly Peer = 'peer'
@@ -61,19 +63,20 @@ class RuntimeFx
     public static readonly NoProfile = 'p-none'
     public static readonly BuReader = 'p-bu'
     public static readonly OrgReader = 'p-org'
+    public static readonly Administrator = 'p-admin'
     public static readonly Principals = [RuntimeFx.NoProfile, RuntimeFx.BuReader, RuntimeFx.OrgReader]
     public static readonly PageSize = 2
     public static readonly Alpha = 'alpha'
-    private static readonly BuRole = 'bu-reader'
-    private static readonly OrgRole = 'org-reader'
-    private static readonly RoleName = 'Reader'
-    private static readonly ProfileId = 'secret-readers'
-    private static readonly ProfileName = 'Secret readers'
+    private static readonly Profile = 'crm.Secrets'
     private static readonly RootName = 'Root'
     private static readonly SalesName = 'Sales'
 
-    public static readonly CrmTodl = 'namespace crm {\n  concept Account { bu : string?; secret : string?; relationship peer -> Account?; }\n}\n'
-    public static readonly NotesTodl = 'namespace notes {\n  concept Note { bu : string?; relationship next -> Note?; }\n}\n'
+    public static readonly CrmTodl = 'namespace crm {\n  concept Account : todl.system.Owned { secured secret : string?; relationship peer -> Account?; }\n'
+        + '  contribute BasicUser { Account { read = businessUnit; update = businessUnit; append = businessUnit; appendTo = businessUnit; } }\n'
+        + '  contribute Reader { Account { read = organization; } }\n  profile Secrets { Account.secret : read; }\n}\n'
+    public static readonly NotesTodl = 'namespace notes {\n  concept Note : todl.system.Owned { relationship next -> Note?; }\n'
+        + '  contribute BasicUser { Note { read = businessUnit; update = businessUnit; append = businessUnit; appendTo = businessUnit; } }\n'
+        + '  contribute Reader { Note { read = organization; } }\n}\n'
     public static readonly ExtTodl = 'namespace ext {\n  concept Customer { id : string?; name : string?; }\n  datasource src { kind = sql; connection = "ext-db"; }\n'
         + '  model Ext : ext { connect src; populate Customer key cust_id { name = "nm"; } }\n}\n'
 
@@ -96,41 +99,39 @@ class RuntimeFx
      * account carries a `secret`.
      */
     public static readonly Seeds: readonly SeedRow[] = [
-        { Concept: RuntimeFx.Account, Id: RuntimeFx.A1, Properties: { [RuntimeFx.Bu]: RuntimeFx.SalesBu, [RuntimeFx.Label]: RuntimeFx.Alpha, [RuntimeFx.Secret]: 's1' } },
-        { Concept: RuntimeFx.Account, Id: RuntimeFx.A2, Properties: { [RuntimeFx.Bu]: RuntimeFx.RootBu, [RuntimeFx.Label]: 'beta', [RuntimeFx.Secret]: 's2' } },
-        { Concept: RuntimeFx.Account, Id: RuntimeFx.A3, Properties: { [RuntimeFx.Bu]: RuntimeFx.RootBu, [RuntimeFx.Label]: 'gamma', [RuntimeFx.Secret]: 's3' } },
-        { Concept: RuntimeFx.Note, Id: RuntimeFx.N1, Properties: { [RuntimeFx.Bu]: RuntimeFx.SalesBu, [RuntimeFx.Label]: 'one' } },
-        { Concept: RuntimeFx.Note, Id: RuntimeFx.N2, Properties: { [RuntimeFx.Bu]: RuntimeFx.RootBu, [RuntimeFx.Label]: 'two' } },
+        { Concept: RuntimeFx.Account, Id: RuntimeFx.A1, Properties: { [RuntimeFx.Owner]: RuntimeFx.Nobody, [RuntimeFx.Bu]: RuntimeFx.SalesBu, [RuntimeFx.Label]: RuntimeFx.Alpha, [RuntimeFx.Secret]: 's1' } },
+        { Concept: RuntimeFx.Account, Id: RuntimeFx.A2, Properties: { [RuntimeFx.Owner]: RuntimeFx.Nobody, [RuntimeFx.Bu]: RuntimeFx.RootBu, [RuntimeFx.Label]: 'beta', [RuntimeFx.Secret]: 's2' } },
+        { Concept: RuntimeFx.Account, Id: RuntimeFx.A3, Properties: { [RuntimeFx.Owner]: RuntimeFx.Nobody, [RuntimeFx.Bu]: RuntimeFx.RootBu, [RuntimeFx.Label]: 'gamma', [RuntimeFx.Secret]: 's3' } },
+        { Concept: RuntimeFx.Note, Id: RuntimeFx.N1, Properties: { [RuntimeFx.Owner]: RuntimeFx.Nobody, [RuntimeFx.Bu]: RuntimeFx.SalesBu, [RuntimeFx.Label]: 'one' } },
+        { Concept: RuntimeFx.Note, Id: RuntimeFx.N2, Properties: { [RuntimeFx.Owner]: RuntimeFx.Nobody, [RuntimeFx.Bu]: RuntimeFx.RootBu, [RuntimeFx.Label]: 'two' } },
     ]
     public static readonly Links: readonly (readonly [string, string, string])[] = [[RuntimeFx.A1, RuntimeFx.Peer, RuntimeFx.A3], [RuntimeFx.N1, RuntimeFx.Next, RuntimeFx.N2]]
 
-    /** BuReader reads/updates both governed concepts at BusinessUnit level from sales; OrgReader org-wide, may share, holds the `secret` profile; NoProfile is unknown. */
+    /**
+     * Tier 1: BuReader holds BasicUser (BU depth from sales); OrgReader Reader and BasicUser, with the Secrets profile;
+     * the administrator (not swept) shares a2; NoProfile holds nothing.
+     */
     public static SecurityModel(): ISecurityModelConfig
     {
-        const fromField = { kind: OwnershipSourceKind.FromField, value: RuntimeFx.Bu }
-        const privileges = (level: AccessLevel, actions: readonly PrivilegeAction[]): IPrivilegeConfig[] => RuntimeFx.Governed.flatMap(concept => actions.map(action => ({ action, concept, level })))
-        const member = (principalId: string) => ({ principalId, homeBusinessUnit: RuntimeFx.SalesBu, teams: [] })
         return {
             businessUnits: [
                 { id: RuntimeFx.RootBu, name: RuntimeFx.RootName },
                 { id: RuntimeFx.SalesBu, name: RuntimeFx.SalesName, parent: RuntimeFx.RootBu },
             ],
-            teams: [],
-            membership: { claimsMapping: [], overrides: [member(RuntimeFx.BuReader), member(RuntimeFx.OrgReader)] },
-            ownershipRules: RuntimeFx.Governed.map(concept => ({ concept, owningBusinessUnit: fromField })),
-            roles: [
-                { id: RuntimeFx.BuRole, name: RuntimeFx.RoleName, privileges: privileges(AccessLevel.BusinessUnit, [PrivilegeAction.Read, PrivilegeAction.Update]) },
-                { id: RuntimeFx.OrgRole, name: RuntimeFx.RoleName, privileges: privileges(AccessLevel.Organization, [PrivilegeAction.Read, PrivilegeAction.Update, PrivilegeAction.Share]) },
+            users: [
+                { principalId: RuntimeFx.BuReader, businessUnitId: RuntimeFx.SalesBu },
+                { principalId: RuntimeFx.OrgReader, businessUnitId: RuntimeFx.SalesBu },
+                { principalId: RuntimeFx.Administrator, businessUnitId: RuntimeFx.RootBu },
             ],
-            roleAssignment: { claimsMapping: [], teamRoles: [], overrides: [
-                { principalId: RuntimeFx.BuReader, roles: [RuntimeFx.BuRole] },
-                { principalId: RuntimeFx.OrgReader, roles: [RuntimeFx.OrgRole] },
-            ] },
-            fieldSecurity: {
-                securedFields: [{ concept: RuntimeFx.Account, field: RuntimeFx.Secret }],
-                profiles: [{ id: RuntimeFx.ProfileId, name: RuntimeFx.ProfileName, grants: [{ concept: RuntimeFx.Account, field: RuntimeFx.Secret, read: true }] }],
-                profileAssignment: { claimsMapping: [], teamProfiles: [], overrides: [{ principalId: RuntimeFx.OrgReader, profiles: [RuntimeFx.ProfileId] }] },
-            },
+            teams: [],
+            roleAssignments: [
+                { role: BaseRole.BasicUser, principalIds: [RuntimeFx.BuReader, RuntimeFx.OrgReader], teamIds: [] },
+                { role: BaseRole.Reader, principalIds: [RuntimeFx.OrgReader], teamIds: [] },
+                { role: BaseRole.SystemAdministrator, principalIds: [RuntimeFx.Administrator], teamIds: [] },
+            ],
+            profileAssignments: [{ profile: RuntimeFx.Profile, principalIds: [RuntimeFx.OrgReader], teamIds: [] }],
+            roleOverrides: [],
+            profileOverrides: [],
         }
     }
 
@@ -139,7 +140,7 @@ class RuntimeFx
         return fx.ContextFor(new Principal(id, EnvironmentFixture.TenantId, PrincipalKind.User, new Map(), []))
     }
 
-    /** The tenant on disk and started, nodes and links seeded, a2 shared to the BU reader by the Org reader. */
+    /** The tenant on disk and started, nodes and links seeded, a2 shared to the BU reader by the administrator. */
     public static async Run(body: (fx: EnvironmentFixture) => Promise<void>): Promise<void>
     {
         const fx = new EnvironmentFixture()
@@ -157,7 +158,7 @@ class RuntimeFx
             const transaction = await (await fx.Server.EnvironmentEngine().Engine()).Begin(AccessScope.System)
             for (const [from, relationship, to] of RuntimeFx.Links) transaction.Link(from, relationship, to)
             await transaction.Commit()
-            const shared = await fx.Server.ShareForPragmaticApp(RuntimeFx.Context(fx, RuntimeFx.OrgReader), RuntimeFx.CrmApp,
+            const shared = await fx.Server.ShareForPragmaticApp(RuntimeFx.Context(fx, RuntimeFx.Administrator), RuntimeFx.CrmApp,
                 { concept: RuntimeFx.Account, id: RuntimeFx.A2, subject: { kind: ShareSubjectKind.Principal, id: RuntimeFx.BuReader }, rights: [ShareRight.Read] })
             assert.equal(shared.status, ShareStatus.Applied, JSON.stringify(shared))
             await body(fx)
@@ -184,8 +185,7 @@ class RuntimeVisibility implements IExpectedVisibility
         public readonly External: readonly string[],
         private readonly models: ReadonlyMap<string, ReadonlySet<string>>,
         private readonly concepts: ReadonlyMap<string, string>,
-        private readonly fields: FieldSecurityEvaluator,
-        private readonly context: AccessContext)
+        private readonly scope: EngineScope)
     {
     }
 
@@ -205,10 +205,7 @@ class RuntimeVisibility implements IExpectedVisibility
         }
         const concepts = await RuntimeVisibility.Concepts(engine)
         for (const id of external) concepts.set(id, RuntimeFx.Customer)
-        const authorization = await fx.Server.SecurityModelReload()
-        assert.ok(authorization instanceof TenantReadAuthorization, InvariantText.NoTenantAuthorization)
-        const fields = (await authorization.EvaluatorForContext(context)).FieldSecurity()
-        return new RuntimeVisibility(new Set([...stored, ...external]), external, perModel, concepts, fields, context)
+        return new RuntimeVisibility(new Set([...stored, ...external]), external, perModel, concepts, scope)
     }
 
     /** The set for a read scoped to `model` (tenant-wide without one). */
@@ -222,9 +219,10 @@ class RuntimeVisibility implements IExpectedVisibility
         return this.concepts.get(id)
     }
 
+    /** Field readability as the compiled scope decides it: a hidden member is unreadable (tier 1 hides on the declaring concept). */
     public CanRead(concept: string, field: string): boolean
     {
-        return this.fields.CanReadField(this.context.Principal, concept, field)
+        return !(this.scope.Hidden.get(concept)?.has(field) ?? false) && !(this.scope.HiddenExact.get(concept)?.has(field) ?? false)
     }
 
     /**

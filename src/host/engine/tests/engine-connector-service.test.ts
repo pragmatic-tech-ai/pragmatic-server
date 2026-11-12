@@ -8,7 +8,7 @@ import { ShareRight, ShareSubject, SystemNames } from '@pragmatic-tech-ai/todl/e
 import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { AppWriteStatus, ConnectorFilterOp, ConnectorWriteOp, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ConnectorPagedWriteResultDto, ConnectorWriteOpDto, EntityDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AccessLevel, OwnershipSourceKind, Principal, PrincipalKind, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
+import { Principal, PrincipalKind } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { PagingLimits } from '../../../config/paging-limits.js'
 import { EnvironmentFixture } from '../../environment/tests/environment-fixture.js'
@@ -35,7 +35,9 @@ class ConnectorFx
     public static readonly CrmApp = 'crm-app'
     public static readonly ExtApp = 'ext-app'
     public static readonly AppVersion = '1.0.0'
-    public static readonly CrmTodl = 'namespace crm {\n  concept Account { name : string?; owner : string?; }\n  model Crm : crm { }\n}\n'
+    public static readonly CrmTodl = 'namespace crm {\n  concept Account : todl.system.Owned { name : string?; }\n'
+        + '  role AccountWriter { Account { read = organization; create = user; update = user; delete = user; append = user; appendTo = user; } }\n'
+        + '  role OwnReader { Account { read = user; } }\n  model Crm : crm { }\n}\n'
     public static readonly ExtTodl = 'namespace ext {\n  concept Customer { id : string?; name : string?; amount : integer?; score : number?; }\n  concept Vendor { id : string?; name : string?; }\n'
         + '  concept Order { id : string?; total : integer?; ver : integer?; }\n  concept Ledger { id : integer?; }\n  datasource src { kind = sql; connection = "ext-db"; }\n'
         + '  model Ext : ext { connect src; populate Customer key cust_id { id = "cust_id"; name = "nm"; amount = "amt"; score = "sc"; } populate Vendor key vend_id { id = "vend_id"; name = "nm"; read-only; }'
@@ -76,8 +78,8 @@ class ConnectorFx
     public static readonly R1 = 'r1'
     public static readonly R2 = 'r2'
     public static readonly Root = 'root'
-    public static readonly Reader = 'reader'
-    public static readonly OwnReader = 'own-reader'
+    public static readonly Reader = 'crm.AccountWriter'
+    public static readonly OwnReader = 'crm.OwnReader'
     public static readonly WriteConflict = 'write conflict'
     public static readonly RecordDenied = 'not authorized for this record'
     public static readonly NoVersionField = 'expectedVersion needs a binding with a version field'
@@ -88,25 +90,20 @@ class ConnectorFx
     public static readonly ReadWhere = /where is supported on connector\/readPage only/
     public static readonly Missing = 'nope'
 
-    /** p1 reads every account and creates, updates, deletes its own; p3 reads its own. */
+    /** Tier 1: p1 and p2 read every account and create, update, delete their own (crm.Reader); p3 reads its own. */
     public static Model(): ISecurityModelConfig
     {
-        const own = [PrivilegeAction.Create, PrivilegeAction.Update, PrivilegeAction.Delete].map(action => ({ action, level: AccessLevel.User, concept: ConnectorFx.Account }))
-        const members = [ConnectorFx.P1, ConnectorFx.P2, ConnectorFx.P3].map(principalId => ({ principalId, homeBusinessUnit: ConnectorFx.Root, teams: [] }))
         return {
             businessUnits: [{ id: ConnectorFx.Root, name: ConnectorFx.Root }],
+            users: [ConnectorFx.P1, ConnectorFx.P2, ConnectorFx.P3].map(principalId => ({ principalId, businessUnitId: ConnectorFx.Root })),
             teams: [],
-            membership: { claimsMapping: [], overrides: members },
-            ownershipRules: [{ concept: ConnectorFx.Account, owner: { kind: OwnershipSourceKind.FromField, value: ConnectorFx.Owner }, owningBusinessUnit: { kind: OwnershipSourceKind.Fixed, value: ConnectorFx.Root } }],
-            roles: [
-                { id: ConnectorFx.Reader, name: ConnectorFx.Reader, privileges: [{ action: PrivilegeAction.Read, level: AccessLevel.Organization, concept: ConnectorFx.Account }, ...own] },
-                { id: ConnectorFx.OwnReader, name: ConnectorFx.OwnReader, privileges: [{ action: PrivilegeAction.Read, level: AccessLevel.User, concept: ConnectorFx.Account }] },
+            roleAssignments: [
+                { role: ConnectorFx.Reader, principalIds: [ConnectorFx.P1, ConnectorFx.P2], teamIds: [] },
+                { role: ConnectorFx.OwnReader, principalIds: [ConnectorFx.P3], teamIds: [] },
             ],
-            roleAssignment: { claimsMapping: [], teamRoles: [], overrides: [
-                { principalId: ConnectorFx.P1, roles: [ConnectorFx.Reader] },
-                { principalId: ConnectorFx.P2, roles: [ConnectorFx.Reader] },
-                { principalId: ConnectorFx.P3, roles: [ConnectorFx.OwnReader] },
-            ] },
+            profileAssignments: [],
+            roleOverrides: [],
+            profileOverrides: [],
         }
     }
 
@@ -258,7 +255,7 @@ class DevConnectorFx
         services.registerInstance(DataSourceAdapterCatalog.ServiceKey, adapters)
         this.Host = new DevGraphEngineHost(this.Fx.Source, () => Promise.resolve(this.Fx.Lang), new ManualTimer(), undefined, undefined, undefined, undefined, () => services)
         this.Host.InstallWriteFence(HeldFence.Instance)
-        const scopes = new AccessScopeSource(this.Host, new DevScopeRules(this.Host, undefined, false))
+        const scopes = new AccessScopeSource(this.Host, new DevScopeRules())
         this.Service = new EngineConnectorService(this.Host, () => Promise.resolve(scopes), adapters, services)
     }
 

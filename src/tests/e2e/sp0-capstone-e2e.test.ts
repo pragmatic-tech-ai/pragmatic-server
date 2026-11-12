@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import { chromium } from 'playwright'
 import type { Browser } from 'playwright'
 import { PragmaticClient, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { PrivilegeAction, AccessLevel } from '@pragmatic-tech-ai/todl-identity'
+import { BaseRole } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { BundleBuilder, EnvKind, TenantPurposeName } from '../../../environments/seed/bundle.js'
 import { HelloAppBuilder } from './hello-app-builder.js'
@@ -49,31 +49,28 @@ class FreePort
 }
 
 /**
- * The runtime tenant's security model. An identity-configured tenant with NO security model fails closed
- * (AccessDepthEvaluator.DenyAll), so its access-depth read filter strips EVERY instance — the authenticated admin
- * would see nothing. This seeds the minimum that lets the bootstrapped admin read the deployed app: organization-level
- * Read on the fixture's one concept. A general mechanism that grants a tenant admin/owner read over ANY deployed app's
- * concepts without hand-authoring per-concept privileges (a deploy-time grant or a wildcard privilege) is a deferred v1
- * Feature; the skeleton seeds the single concept its own fixture authors.
+ * The runtime tenant's security model (tier 1). An identity-configured tenant with NO security setting fails closed
+ * (the empty model: every runtime scope is deny-all), so the authenticated admin would see nothing. This seeds the
+ * minimum that lets the bootstrapped admin read the deployed app: the admin holds the SystemAdministrator base role,
+ * which reads every concept unrestricted. A narrower, per-concept admin-read mechanism for non-administrators without
+ * hand-authoring package roles remains a deferred v1 Feature.
  */
 class RuntimeSecurityModel
 {
     private static readonly AdminPrincipalId = 'admin'
-    private static readonly AppConcept = 'hello.greeting'
     private static readonly OrgUnitId = 'org'
     private static readonly OrgUnitName = 'Organization'
-    private static readonly ReaderRoleId = 'app-reader'
-    private static readonly ReaderRoleName = 'App Reader'
 
     public static Config(): ISecurityModelConfig
     {
         return {
             businessUnits: [{ id: RuntimeSecurityModel.OrgUnitId, name: RuntimeSecurityModel.OrgUnitName }],
+            users: [{ principalId: RuntimeSecurityModel.AdminPrincipalId, businessUnitId: RuntimeSecurityModel.OrgUnitId }],
             teams: [],
-            membership: { claimsMapping: [], overrides: [{ principalId: RuntimeSecurityModel.AdminPrincipalId, homeBusinessUnit: RuntimeSecurityModel.OrgUnitId, teams: [] }] },
-            ownershipRules: [],
-            roles: [{ id: RuntimeSecurityModel.ReaderRoleId, name: RuntimeSecurityModel.ReaderRoleName, privileges: [{ action: PrivilegeAction.Read, concept: RuntimeSecurityModel.AppConcept, level: AccessLevel.Organization }] }],
-            roleAssignment: { claimsMapping: [], overrides: [{ principalId: RuntimeSecurityModel.AdminPrincipalId, roles: [RuntimeSecurityModel.ReaderRoleId] }], teamRoles: [] },
+            roleAssignments: [{ role: BaseRole.SystemAdministrator, principalIds: [RuntimeSecurityModel.AdminPrincipalId], teamIds: [] }],
+            profileAssignments: [],
+            roleOverrides: [],
+            profileOverrides: [],
         }
     }
 }

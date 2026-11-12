@@ -12,7 +12,6 @@ import { CursorStaleError, CypherCells, ErrorCodes, PageCursorCodec, ResponseErr
 import type { CypherCellDto, CypherParamValue, CypherQueryPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
-import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { CypherLimits } from '../../../config/cypher-limits.js'
 import { PagingLimits } from '../../../config/paging-limits.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
@@ -139,9 +138,7 @@ class DevCypherFx
     public static readonly Plain = 'p1'
     public static readonly ViewerId = 'u1'
     public static readonly TenantName = 'Tenant One'
-    public static readonly Granted = 'p2'
     public static readonly Secret = 'hush'
-    public static readonly SecretField = 'secret'
     public static readonly UnknownModel = 'acme.Nope'
     /** The sample solution's name: its package owns what lies outside every model. */
     public static readonly SolutionName = 'Sample'
@@ -167,41 +164,32 @@ class DevCypherFx
     public static readonly KeySeparator = '\u0000'
     private static readonly SolutionPrefix = 'dcq-sol-'
     private static readonly PackagesPrefix = 'dcq-pkgs-'
-    private static readonly IdentityPrefix = 'dcq-id-'
-    private static readonly ProfileId = 'secret-readers'
-    private static readonly ProfileName = 'Secret readers'
 
     /** Opens a solution holding `modelTodl` (none: no solution is opened), with identity and `model` seeded when given. */
-    public static async With(modelTodl: string | undefined, model: ISecurityModelConfig | undefined, body: (world: DevCypherWorld) => Promise<void>): Promise<void>
+    /** A dev server over a solution holding `modelTodl` (none: no solution open); the dev scope is unrestricted (PR13). */
+    public static async With(modelTodl: string | undefined, body: (world: DevCypherWorld) => Promise<void>): Promise<void>
     {
         const solution = modelTodl === undefined ? undefined : mkdtempSync(join(tmpdir(), DevCypherFx.SolutionPrefix))
         const packages = mkdtempSync(join(tmpdir(), DevCypherFx.PackagesPrefix))
-        const identityRoot = mkdtempSync(join(tmpdir(), DevCypherFx.IdentityPrefix))
         if (solution !== undefined)
         {
             cpSync(join(import.meta.dirname, '..', '..', '..', 'tests', 'fixtures', 'sample-solution'), solution, { recursive: true })
             writeFileSync(join(solution, DevCypherFx.ModelsDir, DevCypherFx.ModelFileName), modelTodl!)
         }
-        PpSecurityHarness.SetKey()
-        const server = model === undefined
-            ? new PragmaticServer({ packagesRoot: packages })
-            : new PragmaticServer({ packagesRoot: packages, identity: PpSecurityHarness.Identity(identityRoot) })
+        const server = new PragmaticServer({ packagesRoot: packages })
         const world = new DevCypherWorld(server, solution)
         try
         {
             await server.Start()
             if (solution !== undefined) await server.OpenSolution(solution)
-            if (model !== undefined) await PpSecurityHarness.Seed(server, model)
             if (solution !== undefined) await (await server.LanguageService() as SolutionLanguageService).WhenIdle()
             await body(world)
         }
         finally
         {
             await world.Dispose()
-            PpSecurityHarness.ClearKey()
             if (solution !== undefined) rmSync(solution, { recursive: true, force: true })
             rmSync(packages, { recursive: true, force: true })
-            rmSync(identityRoot, { recursive: true, force: true })
         }
     }
 
@@ -253,39 +241,6 @@ class DevCypherFx
 
     public static readonly ThreeEdited = 'namespace acme { concept Widget { } model Shop : acme { Widget w0 { label = "0"; } Widget w1 { label = "a"; } Widget w2 { label = "b"; } Widget w3 { label = "c"; } } }'
 
-    /** The harness model with its concept namespace-qualified (dev-graph concepts are acme.Widget). */
-    public static Qualify(model: ISecurityModelConfig): ISecurityModelConfig
-    {
-        return {
-            ...model,
-            ownershipRules: model.ownershipRules.map(r => ({ ...r, concept: DevCypherFx.Widget })),
-            roles: (model.roles ?? []).map(r => ({ ...r, privileges: r.privileges.map(p => ({ ...p, concept: DevCypherFx.Widget })) })),
-        }
-    }
-
-    /** Org-level Read for Plain and Granted; `secret` is secured and only Granted holds a profile reading it. */
-    public static FieldSecured(): ISecurityModelConfig
-    {
-        const base = DevCypherFx.Qualify(PpSecurityHarness.OrgSecurityModel(DevCypherFx.Plain))
-        const reader = base.roles![0]!.id
-        return {
-            ...base,
-            membership: { claimsMapping: [], overrides: [
-                { principalId: DevCypherFx.Plain, homeBusinessUnit: PpSecurityHarness.SalesBu, teams: [] },
-                { principalId: DevCypherFx.Granted, homeBusinessUnit: PpSecurityHarness.SalesBu, teams: [] },
-            ] },
-            roleAssignment: { claimsMapping: [], teamRoles: [], overrides: [
-                { principalId: DevCypherFx.Plain, roles: [reader] },
-                { principalId: DevCypherFx.Granted, roles: [reader] },
-            ] },
-            fieldSecurity: {
-                securedFields: [{ concept: DevCypherFx.Widget, field: DevCypherFx.SecretField }],
-                profiles: [{ id: DevCypherFx.ProfileId, name: DevCypherFx.ProfileName, grants: [{ concept: DevCypherFx.Widget, field: DevCypherFx.SecretField, read: true }] }],
-                profileAssignment: { claimsMapping: [], teamProfiles: [], overrides: [{ principalId: DevCypherFx.Granted, profiles: [DevCypherFx.ProfileId] }] },
-            },
-        }
-    }
-
     public static Nodes(page: CypherQueryPageDto): NonNullable<ReturnType<typeof CypherCells.AsNode>>[]
     {
         return page.items.map(row => CypherCells.AsNode(row[0] as CypherCellDto)!)
@@ -322,20 +277,12 @@ class DepthPortFx
         return `namespace ${DevCypherFx.Namespace} { concept ${concept} { ${field} : string?; } model Shop : ${DevCypherFx.Namespace} { ${instances} } }`
     }
 
-    public static Bu(): ISecurityModelConfig
-    {
-        return DevCypherFx.Qualify(PpSecurityHarness.BuSecurityModel(DevCypherFx.Plain))
-    }
-
     public static get All(): string[]
     {
         return [DepthPortFx.SalesLabelA, DepthPortFx.SalesLabelB, DepthPortFx.RootLabel].sort()
     }
 
-    public static get SalesOnly(): string[]
-    {
-        return [DepthPortFx.SalesLabelA, DepthPortFx.SalesLabelB].sort()
-    }
+
 }
 
 /** A subscribe-only signal that never fires: the fixed-schema host never upgrades. */
@@ -427,7 +374,7 @@ class FixedSchemaWorld implements IGraphEngineHost
 
 test('the dev graph with no solution open is an empty graph, not an error', async () =>
 {
-    await DevCypherFx.With(undefined, undefined, async world =>
+    await DevCypherFx.With(undefined, async world =>
     {
         assert.equal(await world.Count(DevCypherFx.Permissive(), DevCypherFx.CountAll), 0)
     })
@@ -435,7 +382,7 @@ test('the dev graph with no solution open is an empty graph, not an error', asyn
 
 test('the dev graph composes the open solution into a queryable graph', async () =>
 {
-    await DevCypherFx.With(DevCypherFx.TwoWidgets, undefined, async world =>
+    await DevCypherFx.With(DevCypherFx.TwoWidgets, async world =>
     {
         assert.equal(await world.Count(DevCypherFx.Permissive(), DevCypherFx.CountAll), 2)
     })
@@ -443,25 +390,9 @@ test('the dev graph composes the open solution into a queryable graph', async ()
 
 // ── ported from host/cypher/tests/server-graph-depth.test.ts ───────────────────────────────────────
 
-test('state 1: BusinessUnit depth keeps only sales-owned widgets on the dev graph', async () =>
-{
-    await DevCypherFx.With(DepthPortFx.Model(), DepthPortFx.Bu(), async world =>
-    {
-        assert.deepEqual(await world.Column(PpSecurityHarness.Context(DevCypherFx.Plain), DevCypherFx.WidgetLabels), DepthPortFx.SalesOnly)
-    })
-})
-
-test('depth leaves no extra nodes: the all-node count equals the surviving widgets (structural nodes are not graph-visible)', async () =>
-{
-    await DevCypherFx.With(DepthPortFx.Model(), DepthPortFx.Bu(), async world =>
-    {
-        assert.equal(await world.Count(PpSecurityHarness.Context(DevCypherFx.Plain), DevCypherFx.CountAll), DepthPortFx.SalesOnly.length)
-    })
-})
-
 test('state 3: an identity-less dev server returns every widget (depth inactive)', async () =>
 {
-    await DevCypherFx.With(DepthPortFx.Model(), undefined, async world =>
+    await DevCypherFx.With(DepthPortFx.Model(), async world =>
     {
         assert.deepEqual(await world.Column(PpSecurityHarness.Context(DevCypherFx.Plain), DevCypherFx.WidgetLabels), DepthPortFx.All)
     })
@@ -471,7 +402,7 @@ test('state 3: an identity-less dev server returns every widget (depth inactive)
 
 test('modelId scopes to that model\'s instances', async () =>
 {
-    await DevCypherFx.With(DevCypherFx.TwoModels(), undefined, async world =>
+    await DevCypherFx.With(DevCypherFx.TwoModels(), async world =>
     {
         const context = DevCypherFx.Permissive()
         assert.deepEqual(await world.Server.DevCypher().Models(), [DevCypherFx.ModelA, DevCypherFx.ModelB])
@@ -489,7 +420,7 @@ test('modelId scopes to that model\'s instances', async () =>
 
 test('upgrade between pages stales the cursor', async () =>
 {
-    await DevCypherFx.With(DevCypherFx.Three, undefined, async world =>
+    await DevCypherFx.With(DevCypherFx.Three, async world =>
     {
         const context = DevCypherFx.Permissive()
         const first = await world.Run(context, DevCypherFx.OrderedLabels, { pageSize: 1 })
@@ -507,7 +438,7 @@ test('upgrade between pages stales the cursor', async () =>
 
 test('pages concatenate to the full result', async () =>
 {
-    await DevCypherFx.With(DevCypherFx.Many(), undefined, async world =>
+    await DevCypherFx.With(DevCypherFx.Many(), async world =>
     {
         const context = DevCypherFx.Permissive()
         const pages = await world.Walk(context, DevCypherFx.OrderedLabels, DevCypherFx.PageSize)
@@ -518,7 +449,7 @@ test('pages concatenate to the full result', async () =>
 
 test('order by a non-returned expression pages by offset', async () =>
 {
-    await DevCypherFx.With(DevCypherFx.Many(), undefined, async world =>
+    await DevCypherFx.With(DevCypherFx.Many(), async world =>
     {
         const context = DevCypherFx.Permissive()
         const first = await world.Run(context, DevCypherFx.RankOrdered, { pageSize: DevCypherFx.PageSize })
@@ -558,38 +489,9 @@ test('commit between pages neither repeats nor skips', async () =>
     })
 })
 
-test('depth applies with and without modelId', async () =>
-{
-    await DevCypherFx.With(DevCypherFx.TwoModels(), DevCypherFx.Qualify(PpSecurityHarness.BuSecurityModel(DevCypherFx.Plain)), async world =>
-    {
-        const plain = PpSecurityHarness.Context(DevCypherFx.Plain)
-        assert.deepEqual(await world.Column(plain, DevCypherFx.WidgetLabels), ['alpha', 'gamma'])
-        assert.deepEqual(await world.Column(plain, DevCypherFx.WidgetLabels, { modelId: DevCypherFx.ModelA }), ['alpha'])
-        assert.deepEqual(await world.Column(plain, DevCypherFx.WidgetLabels, { modelId: DevCypherFx.ModelB }), ['gamma'])
-        assert.equal(await world.Count(plain, DevCypherFx.CountAll, { modelId: DevCypherFx.ModelA }), 1)
-    })
-})
-
-test('field-secured member absent from node cells', async () =>
-{
-    await DevCypherFx.With(DevCypherFx.TwoModels(), DevCypherFx.FieldSecured(), async world =>
-    {
-        const plain = PpSecurityHarness.Context(DevCypherFx.Plain)
-        const granted = PpSecurityHarness.Context(DevCypherFx.Granted)
-        const alpha = DevCypherFx.Nodes(await world.Run(plain, DevCypherFx.WidgetNodes)).find(node => node.label === DevCypherFx.Alpha)!
-        assert.ok(!(DevCypherFx.SecretField in alpha.fields), 'the hidden member is absent from the node cell')
-        assert.ok(!JSON.stringify(alpha).includes(DevCypherFx.Secret))
-        assert.deepEqual((await world.Run(plain, DevCypherFx.SecretColumn)).items.map(row => row[0]), [null, null, null])
-        assert.deepEqual(await world.Column(plain, DevCypherFx.SecretWhere), [], 'a hidden member cannot be filtered on')
-        const open = DevCypherFx.Nodes(await world.Run(granted, DevCypherFx.WidgetNodes)).find(node => node.label === DevCypherFx.Alpha)!
-        assert.equal(open.fields[DevCypherFx.SecretField]!.value, DevCypherFx.Secret)
-        assert.deepEqual(await world.Column(granted, DevCypherFx.SecretWhere), [DevCypherFx.Alpha])
-    })
-})
-
 test('no solution open returns no rows', async () =>
 {
-    await DevCypherFx.With(undefined, undefined, async world =>
+    await DevCypherFx.With(undefined, async world =>
     {
         const page = await world.Run(DevCypherFx.Permissive(), DevCypherFx.NodeAll)
         assert.deepEqual(page.items, [])
@@ -602,7 +504,7 @@ test('no solution open returns no rows', async () =>
 
 test('an empty model is listed and a query scoped to it returns an empty page', async () =>
 {
-    await DevCypherFx.With(DevCypherFx.Taxonomy, undefined, async world =>
+    await DevCypherFx.With(DevCypherFx.Taxonomy, async world =>
     {
         assert.deepEqual(await world.Server.DevCypher().Models(), [DevCypherFx.ModelA, DevCypherFx.ModelB, DevCypherFx.ModelC])
         const page = await world.Run(DevCypherFx.Permissive(), DevCypherFx.WidgetLabels, { modelId: DevCypherFx.ModelC })
@@ -613,7 +515,7 @@ test('an empty model is listed and a query scoped to it returns an empty page', 
 
 test('model-scoped node cells keep many-valued taxonomy refs', async () =>
 {
-    await DevCypherFx.With(DevCypherFx.Taxonomy, undefined, async world =>
+    await DevCypherFx.With(DevCypherFx.Taxonomy, async world =>
     {
         const context = DevCypherFx.Permissive()
         const wide = DevCypherFx.Nodes(await world.Run(context, DevCypherFx.AlphaNode))[0]!
@@ -625,7 +527,7 @@ test('model-scoped node cells keep many-valued taxonomy refs', async () =>
 
 test('tenant-wide MATCH (n) also returns the taxonomy terms as todl.Term nodes (ruling T6-c)', async () =>
 {
-    await DevCypherFx.With(DevCypherFx.Taxonomy, undefined, async world =>
+    await DevCypherFx.With(DevCypherFx.Taxonomy, async world =>
     {
         const context = DevCypherFx.Permissive()
         const terms = DevCypherFx.Nodes(await world.Run(context, DevCypherFx.NodeAll)).filter(node => node.concept === DevCypherFx.Term)
@@ -637,7 +539,7 @@ test('tenant-wide MATCH (n) also returns the taxonomy terms as todl.Term nodes (
 
 test('a tenant-wide cursor is stale for another principal', async () =>
 {
-    await DevCypherFx.With(DevCypherFx.Three, undefined, async world =>
+    await DevCypherFx.With(DevCypherFx.Three, async world =>
     {
         const first = await world.Run(DevCypherFx.Permissive(), DevCypherFx.OrderedLabels, { pageSize: 1 })
         assert.ok(first.nextCursor !== undefined)
@@ -647,7 +549,7 @@ test('a tenant-wide cursor is stale for another principal', async () =>
 
 test('an integer overflow is InvalidParams', async () =>
 {
-    await DevCypherFx.With(DevCypherFx.Three, undefined, async world =>
+    await DevCypherFx.With(DevCypherFx.Three, async world =>
     {
         assert.equal(await DevCypherFx.CodeOf(world.Run(DevCypherFx.Permissive(), DevCypherFx.Overflow)), ErrorCodes.InvalidParams)
     })

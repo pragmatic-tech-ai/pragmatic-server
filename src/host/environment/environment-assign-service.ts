@@ -1,51 +1,55 @@
 import type { AccessScope, GraphEngine, GraphTransaction } from '@pragmatic-tech-ai/graph'
-import { ShareRight } from '@pragmatic-tech-ai/todl/engine'
+import { OwnershipAssignment, ShareRight, SystemNames } from '@pragmatic-tech-ai/todl/engine'
+import type { IOwnerAssignment } from '@pragmatic-tech-ai/todl/engine'
 import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { AssignOutcome } from '@pragmatic-tech-ai/todl-identity-engine'
+import { AccessDepthEvaluator, AssignOutcome, Tier1Catalog } from '@pragmatic-tech-ai/todl-identity-engine'
 import { AppWriteStatus, AssignStatus, ShareSubjectKind } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AssignParams, AssignResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { IGraphScopeSource, ITenantSecuritySource } from '../engine/access-scope-source.js'
+import type { IGraphScopeSource } from '../engine/access-scope-source.js'
 import type { EngineSchemaCatalog } from '../engine/engine-schema-catalog.js'
 import { EngineWriteFailure } from '../engine/engine-write-failure.js'
 import type { EnvironmentEngineHost } from './environment-engine-host.js'
+import type { IEnvironmentTier1 } from './environment-scope-rules.js'
 import { RecordGrants } from './record-grants.js'
 import { AssignScope } from './service-scopes.js'
 
 /**
- * Record assign on the environment engine (ruling S9, amendment A4): changes a record's ownership members under the
- * Assign right, bypassing the Update gate (as before) and writing nothing else.
+ * Record assign on the environment engine (ruling S9, amendment A4, program rulings PR2 and C3): moves a record to a
+ * new owner, writing only its system fields `owner` and `owningBusinessUnit`, through TODL's `OwnershipAssignment`.
  *
  * - The record's concept is read under the caller's scope first (absent, invisible or not `params.concept` or a
- *   subconcept: `not-found`); `evaluator.AssignWrites(concept, owner, isTeam, owningBu)` gives the ownership writes
- *   (only those that are properties of the concept are kept).
- * - Then ONE transaction under `AssignScope.For(callerScope, concept, id, ownership members)` reads the record again
- *   (recorded, so a concurrent change conflicts) and authorizes: `Allows(principal, Assign, view)` or one of the
- *   caller's grants on the record holds `assign`, else `denied` (`not-found` if the record is no longer visible). The
- *   AssignWrites outcome then maps as before (`unsupported`, `invalid` unknown team / business unit / owning BU
- *   required); no ownership member left: `invalid` "no ownership columns to write". The writes are `SetProperty` on
- *   the record; the engine refuses any other member (AssignScope's ReadOnlyExact).
- * - Commit: a conflict (ConflictError, or an external conflict) is `denied` "write conflict"; any other mapped failure
- *   `denied` "write failed"; an error outside EngineWriteFailure propagates (InternalError).
+ *   subconcept: `not-found`). A concept that is not owned is `invalid` "the record is organisation-owned and has no
+ *   owner" (`AssignOutcome.Unsupported`).
+ * - Then ONE transaction under `AssignScope.For(<the caller's assign scope>, concept, id, system fields)`: the assign
+ *   scope is `Tier1ScopeCompiler.CompileAssign` with the runtime Finish (EnvironmentScopeRules.AssignRecords, not
+ *   under SystemFieldGuard), confined by AssignScope to the one record and its system fields. It reads the record again
+ *   (recorded, so a concurrent change conflicts) and authorizes: the caller's tier-1 Assign privilege covers the record
+ *   (`RecordGrants.Covers`) or one of its visible grants on the record holds `assign`, else `denied`.
+ * - The values come from `AccessDepthEvaluator.AssignWrites(environment, concept, owner, isTeam, owningBu)`: a team
+ *   owner takes the team's unit, a placed user its placement, the environment's system principal the root, an unplaced
+ *   user the given `owningBu` (unknown: `invalid`; none: `invalid` "an owning business unit is required"); an unknown
+ *   team is `invalid`. `OwnershipAssignment.Assign` records them.
+ * - Commit: a conflict is `denied` "write conflict"; any other mapped failure `denied` "write failed"; an error outside
+ *   EngineWriteFailure propagates (InternalError).
  * - An external record (A4) is `invalid` "external records are outside platform security".
- *
- * Narrowing (as R41 for data/write): an Assign-only share on a record the caller cannot read no longer authorizes; the
- * record must be visible to the caller.
  */
 export class EnvironmentAssignService
 {
+    /** AssignOutcome.Unsupported: the concept does not take the ownership aspect. */
+    public static readonly OrganizationOwnedReason = 'the record is organisation-owned and has no owner'
     private static readonly RecordNotFound = 'record not found or not visible'
     private static readonly NotAuthorized = 'not authorized to assign this record'
-    private static readonly NotAssignable = 'concept is not assignable'
     private static readonly OwningBuRequired = 'an owning business unit is required'
     private static readonly UnknownBusinessUnit = 'unknown owning business unit'
     private static readonly UnknownTeam = 'unknown team owner'
-    private static readonly NoOwnershipColumns = 'no ownership columns to write'
+    private static readonly NoValue = ''
+    private static readonly SystemFields: ReadonlySet<string> = new Set<string>([SystemNames.Owner, SystemNames.OwningBusinessUnit])
 
     public constructor(
         private readonly host: Pick<EnvironmentEngineHost, 'Settled'>,
         private readonly scopes: () => Promise<IGraphScopeSource>,
-        private readonly security: () => Promise<ITenantSecuritySource>)
+        private readonly tier1: () => Promise<IEnvironmentTier1>)
     {
     }
 
@@ -54,30 +58,41 @@ export class EnvironmentAssignService
         const [engine, snapshot] = await this.host.Settled()
         const catalog = snapshot.SchemaCatalog
         if (RecordGrants.IsExternal(snapshot.Catalog.Identity, params.id)) return { status: AssignStatus.Invalid, reason: RecordGrants.ExternalRecordReason }
-        const evaluator = await (await this.security()).EvaluatorForContext(context)
+        const tier1 = await this.tier1()
+        const model = await tier1.Model()
         const scope = await (await this.scopes()).ScopeFor(context)
         const concept = await EnvironmentAssignService.ConceptOf(engine, scope.Scope, params, catalog)
         if (concept === undefined) return { status: AssignStatus.NotFound, reason: EnvironmentAssignService.RecordNotFound }
-        const computed = evaluator.AssignWrites(concept, params.owner.id, params.owner.kind === ShareSubjectKind.Team, params.owningBu)
-        const writes = computed.writes.filter(write => catalog.IsProperty(concept, write.field))
-        const transaction = await engine.Begin(AssignScope.For(scope.Scope, concept, params.id, new Set(writes.map(write => write.field)), catalog))
+        const security = snapshot.Catalog.Security
+        const evaluator = AccessDepthEvaluator.For(security, model, Tier1Catalog.EngineStoredConcepts(snapshot.Catalog))
+        const computed = evaluator.AssignWrites(context.Tenant.Id, concept, params.owner.id, params.owner.kind === ShareSubjectKind.Team, params.owningBu)
+        if (computed.outcome === AssignOutcome.Unsupported) return { status: AssignStatus.Invalid, reason: EnvironmentAssignService.OrganizationOwnedReason }
+        const grants = await tier1.Grants(context, snapshot)
+        const base = await tier1.AssignRecords(context, snapshot)
+        const transaction = await engine.Begin(AssignScope.For(base, concept, params.id, EnvironmentAssignService.SystemFields, catalog))
         try
         {
             const view = await RecordGrants.View(transaction, params.id, concept, catalog)
             if (view === undefined || view.Concept !== concept) return { status: AssignStatus.NotFound, reason: EnvironmentAssignService.RecordNotFound }
-            const allowed = evaluator.Allows(context.Principal, PrivilegeAction.Assign, view)
-                || await RecordGrants.Holds(transaction, params.id, RecordGrants.Subjects(context, evaluator), ShareRight.Assign)
+            const allowed = await RecordGrants.Covers(engine, grants, PrivilegeAction.Assign, concept, params.id)
+                || await RecordGrants.Holds(transaction, params.id, RecordGrants.Subjects(context, model), ShareRight.Assign)
             if (!allowed) return { status: AssignStatus.Denied, reason: EnvironmentAssignService.NotAuthorized }
             const rejection = EnvironmentAssignService.StatusFor(computed.outcome)
             if (rejection !== undefined) return rejection
-            if (writes.length === 0) return { status: AssignStatus.Invalid, reason: EnvironmentAssignService.NoOwnershipColumns }
-            for (const write of writes) transaction.SetProperty(params.id, write.field, write.value)
+            await new OwnershipAssignment(security.OwnedConcepts()).Assign(transaction, params.id, EnvironmentAssignService.OwnerOf(computed.writes))
             return await EnvironmentAssignService.Commit(transaction)
         }
         finally
         {
             transaction.dispose()
         }
+    }
+
+    /** The owner AssignWrites gives (its two system-field writes) as OwnershipAssignment takes it. */
+    private static OwnerOf(writes: readonly { field: string; value: string }[]): IOwnerAssignment
+    {
+        const value = (field: string): string => writes.find(write => write.field === field)?.value ?? EnvironmentAssignService.NoValue
+        return { OwnerId: value(SystemNames.Owner), BusinessUnitId: value(SystemNames.OwningBusinessUnit) }
     }
 
     /** The record's concept as the caller's scope sees it, when it is `params.concept` or a subconcept. */
@@ -98,8 +113,6 @@ export class EnvironmentAssignService
     {
         switch (outcome)
         {
-            case AssignOutcome.Unsupported:
-                return { status: AssignStatus.Unsupported, reason: EnvironmentAssignService.NotAssignable }
             case AssignOutcome.UnknownTeam:
                 return { status: AssignStatus.Invalid, reason: EnvironmentAssignService.UnknownTeam }
             case AssignOutcome.UnknownBusinessUnit:

@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessError, AccessErrorCode } from '@pragmatic-tech-ai/graph'
-import type { AccessScope, GraphEngine } from '@pragmatic-tech-ai/graph'
+import { AccessError, AccessErrorCode, AccessScope } from '@pragmatic-tech-ai/graph'
+import type { GraphEngine } from '@pragmatic-tech-ai/graph'
 import { ShareGrants, ShareRight, ShareSubject, SystemNames, SystemPackage } from '@pragmatic-tech-ai/todl/engine'
 import { AppWriteOpKind, AppWriteStatus, ErrorCodes, ShareStatus, ShareSubjectKind } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ShareServiceScope } from '../service-scopes.js'
@@ -17,6 +17,28 @@ class SharingFx
     public static readonly SubjectIdRequired = 'subject id is required'
     public static readonly DetachDeleteR1 = "MATCH (a:`crm.Account`) WHERE a.name = 'r1' DETACH DELETE a"
     public static readonly CreateGrantCypher = "CREATE (g:`todl.system.ShareGrant` {subjectKind: 'principal', subjectId: 'p2', read: true}) RETURN g"
+
+    public static readonly R3 = 'r3'
+    public static readonly G3 = 'g3'
+
+    /** A read grant of `record` to principal `subject`, written under the System scope. */
+    public static async SystemGrant(engine: GraphEngine, record: string, subject: string): Promise<void>
+    {
+        const transaction = await engine.Begin(AccessScope.System)
+        try
+        {
+            transaction.CreateNode(SharingFx.G3, SystemNames.ShareGrant, { Owner: SystemPackage.Ref.model })
+            transaction.SetProperty(SharingFx.G3, SystemNames.SubjectKind, ShareSubject.Principal)
+            transaction.SetProperty(SharingFx.G3, SystemNames.SubjectId, subject)
+            transaction.SetProperty(SharingFx.G3, ShareRight.Read, true)
+            transaction.Link(SharingFx.G3, SystemNames.Record, record)
+            await transaction.Commit()
+        }
+        finally
+        {
+            transaction.dispose()
+        }
+    }
 
     /** A grant of `record` (default r1) to p2 created as `id` under `scope`; resolves with the commit. */
     public static async CreateGrant(engine: GraphEngine, scope: AccessScope, id: string, record: string = ShareFx.R1): Promise<bigint>
@@ -117,7 +139,7 @@ describe('record shares as graph data', () =>
         })
     })
 
-    test('share without the right is denied', async () =>
+    test('share via grant still allows resharing', async () =>
     {
         await ShareFx.Run(async fx =>
         {
@@ -134,6 +156,21 @@ describe('record shares as graph data', () =>
             assert.deepEqual(await ShareFx.Names(fx, ShareFx.P3), [ShareFx.R1])
             const team = await fx.Server.ShareForPragmaticApp(p1, ShareFx.App, ShareFx.Params(ShareFx.R1, SharingFx.UnknownTeam, [ShareRight.Read], ShareSubjectKind.Team))
             assert.equal(team.status, ShareStatus.Invalid, 'unknown team')
+        })
+    })
+
+    test('share needs the share privilege at a covering depth', async () =>
+    {
+        await ShareFx.Run(async fx =>
+        {
+            await ShareFx.SeedAccounts(fx, [SharingFx.R3], ShareFx.P2)
+            const engine = await fx.Server.EnvironmentEngine().Engine()
+            await SharingFx.SystemGrant(engine, SharingFx.R3, ShareFx.P1)
+            assert.deepEqual(await ShareFx.Names(fx, ShareFx.P1), [ShareFx.R1, ShareFx.R2, SharingFx.R3], 'p1 reads r3 of p2 through a read grant')
+            const p1 = ShareFx.Context(fx, ShareFx.P1)
+            const denied = await fx.Server.ShareForPragmaticApp(p1, ShareFx.App, ShareFx.Params(SharingFx.R3, ShareFx.P3, [ShareRight.Read]))
+            assert.equal(denied.status, ShareStatus.Denied, 'the Share privilege of p1 is User depth: it covers its own accounts, not r3')
+            assert.equal((await fx.Server.ShareForPragmaticApp(p1, ShareFx.App, ShareFx.Params(ShareFx.R1, ShareFx.P3, [ShareRight.Read]))).status, ShareStatus.Applied)
         })
     })
 

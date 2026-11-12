@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto'
 import { Tenant, TenantKind, IdentityConfig, DelegationDepth } from '@pragmatic-tech-ai/todl-identity'
 import { FakeStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
-import { OidcAuthenticator, OidcResolvedConfig, OidcDiscovery, JwksCache, ClaimsMapper, ClaimArrayGroupStrategy, InMemoryOidcFlowStateStore, FakeOidcIdp, FakeOidcHttpClient } from '@pragmatic-tech-ai/todl-identity-cloud'
+import { OidcAuthenticator, OidcResolvedConfig, OidcDiscovery, JwksCache, ClaimsMapper, ClaimArrayGroupStrategy, OidcProviderProfile, InMemoryOidcFlowStateStore, FakeOidcIdp, FakeOidcHttpClient } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { AuthMethod } from '@pragmatic-tech-ai/todl-identity'
 import type { IAuthenticator } from '@pragmatic-tech-ai/todl-identity'
 import { AuthHttpEndpoint } from '../auth-http-endpoint.js'
@@ -59,7 +59,7 @@ class OidcFixture
             Jwks: new JwksCache(http),
             FlowStates: store,
             Secrets: pack.Secrets,
-            Claims: new ClaimsMapper(new Map([['email', 'email']]), new ClaimArrayGroupStrategy('groups')),
+            Claims: new ClaimsMapper(new OidcProviderProfile(['openid', 'email'], new Map([['email', 'email']]), new ClaimArrayGroupStrategy('groups'), 'client_secret')),
             Config: new IdentityConfig('server-pack', DelegationDepth.AuthnDirectory, new Map(), new Map(), new Map()),
             Resolved: resolved,
         })

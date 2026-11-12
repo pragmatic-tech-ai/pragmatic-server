@@ -5,10 +5,11 @@ import { PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { AppWriteStatus, ErrorCodes, ResponseError, ShareStatus, ShareSubjectKind } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ListSharesParams, ListSharesResultDto, ShareGrantDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { IGraphScopeSource, ITenantSecuritySource } from '../engine/access-scope-source.js'
+import type { IGraphScopeSource } from '../engine/access-scope-source.js'
 import { EngineWriteFailure } from '../engine/engine-write-failure.js'
 import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
 import type { EnvironmentEngineHost } from './environment-engine-host.js'
+import type { IEnvironmentTier1 } from './environment-scope-rules.js'
 import { RecordGrants } from './record-grants.js'
 import { ShareServiceScope } from './service-scopes.js'
 
@@ -30,9 +31,10 @@ enum GrantWrite
  * - Share / Unshare run in ONE transaction under `ShareServiceScope.For(callerScope, {grant id}, record)`, the only scope that
  *   writes grants: the engine confines the transaction's grant writes to that one grant. Inside it the record is read
  *   under the caller's rules (`reader.ConceptOf(id)` must be `params.concept` or a subconcept, else `not-found`); the
- *   caller may share when the tenant security model allows Share on the record (`Allows(principal, Share, view)`) or
- *   one of its own grants on the record holds `share`, else `denied`. Rights are the known ShareRights given (none:
- *   `invalid`); a team subject must be a known team (`invalid`). A re-share replaces the rights and restores the
+ *   caller may share when its tier-1 Share privilege covers the record at its depth (`RecordGrants.Covers`: a read under
+ *   `And(Tier1Grants.Covers(Share, concept), IdIn{record})` returns it) or one of its own visible grants on the record
+ *   holds `share`, else `denied`. Rights are the known ShareRights given (none: `invalid`); a team subject must be a
+ *   team of the environment setting (`invalid`). A re-share replaces the rights and restores the
  *   `record` link of a grant whose record was deleted and recreated. Unshare deletes the grant; no grant linking that
  *   record: `not-found`. Every read is recorded, so a commit racing a change to the record or the grant conflicts.
  * - List reads under `ShareServiceScope.Listing(callerScope, record)`: a record the caller cannot see lists nothing;
@@ -60,7 +62,7 @@ export class EnvironmentShareService
     public constructor(
         private readonly host: Pick<EnvironmentEngineHost, 'Settled'>,
         private readonly scopes: () => Promise<IGraphScopeSource>,
-        private readonly security: () => Promise<ITenantSecuritySource>)
+        private readonly tier1: () => Promise<IEnvironmentTier1>)
     {
     }
 
@@ -115,7 +117,9 @@ export class EnvironmentShareService
         const kind = EnvironmentShareService.KindOf(params.subject?.kind)
         if (kind === undefined) return { status: ShareStatus.Invalid, reason: EnvironmentShareService.UnknownSubjectKind }
         if (typeof params.subject.id !== 'string' || params.subject.id.length === 0) return { status: ShareStatus.Invalid, reason: EnvironmentShareService.SubjectIdRequired }
-        const evaluator = await (await this.security()).EvaluatorForContext(context)
+        const tier1 = await this.tier1()
+        const model = await tier1.Model()
+        const grants = await tier1.Grants(context, snapshot)
         const scope = await (await this.scopes()).ScopeFor(context)
         const grant = ShareGrants.PublicId(params.id, kind, params.subject.id)
         const transaction = await engine.Begin(ShareServiceScope.For(scope.Scope, new Set([grant]), params.id, snapshot.SchemaCatalog))
@@ -123,13 +127,13 @@ export class EnvironmentShareService
         {
             const view = await RecordGrants.View(transaction, params.id, params.concept, snapshot.SchemaCatalog)
             if (view === undefined) return { status: ShareStatus.NotFound, reason: EnvironmentShareService.RecordNotFound }
-            const allowed = evaluator.Allows(context.Principal, PrivilegeAction.Share, view)
-                || await RecordGrants.Holds(transaction, params.id, RecordGrants.Subjects(context, evaluator), ShareRight.Share)
+            const allowed = await RecordGrants.Covers(engine, grants, PrivilegeAction.Share, view.Concept, params.id)
+                || await RecordGrants.Holds(transaction, params.id, RecordGrants.Subjects(context, model), ShareRight.Share)
             if (!allowed) return { status: ShareStatus.Denied, reason: EnvironmentShareService.NotAuthorized }
             if (write === GrantWrite.Put)
             {
                 if (rights.length === 0) return { status: ShareStatus.Invalid, reason: EnvironmentShareService.NoRights }
-                if (kind === ShareSubject.Team && !evaluator.IsKnownTeam(params.subject.id)) return { status: ShareStatus.Invalid, reason: EnvironmentShareService.UnknownTeam }
+                if (kind === ShareSubject.Team && model.TeamBusinessUnit(params.subject.id) === undefined) return { status: ShareStatus.Invalid, reason: EnvironmentShareService.UnknownTeam }
             }
             const existing = await transaction.ConceptOf(grant)
             // a node of another concept under a grant id is no grant: never written over

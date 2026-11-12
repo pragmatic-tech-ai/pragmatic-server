@@ -7,7 +7,8 @@ import type { ISessionManager } from '@pragmatic-tech-ai/todl-identity'
 import type { IAuditSink, AuditEvent, ITenantConfigStore, IRoleGrantStore, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminService, AdminTokenNotFoundError, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, ForeignTenantResourceError } from '../admin-service.js'
-import type { ISecurityModelReload } from '../cypher/read-filter-source.js'
+import type { ISecuritySettingAdmin } from '../admin-service.js'
+import type { SecuritySettingIssue } from '../environment/security-setting-catalog-check.js'
 import { AdminEnums, AdminEnumError } from '../admin-enums.js'
 import type { IAdapterPackAdmin } from '../adapter-pack-admin.js'
 import type { IPrincipalInvalidator } from '../principal-connection-registry.js'
@@ -30,13 +31,18 @@ class FailingAuditSink implements IAuditSink
     }
 }
 
-class RecordingReload implements ISecurityModelReload
+class RecordingReload implements ISecuritySettingAdmin
 {
-    public readonly Invalidated: string[] = []
+    public Invalidations = 0
 
-    public Invalidate(tenantId: string): void
+    public async Issues(_config: ISecurityModelConfig): Promise<readonly SecuritySettingIssue[]>
     {
-        this.Invalidated.push(tenantId)
+        return []
+    }
+
+    public Invalidate(): void
+    {
+        this.Invalidations++
     }
 }
 
@@ -583,11 +589,11 @@ test('SetSecurityModel rejects a malformed model directly: store unchanged, no r
 {
     const f = new AdminFixture()
     f.Config.Stored = new IdentityConfig('local', DelegationDepth.AuthnDirectory, new Map([['k', 'v']]), new Map(), new Map())
-    const bad = { businessUnits: [{ id: 'root', name: 'Root' }], teams: [{ id: 't', name: 'T', owningBusinessUnit: 'nope' }], membership: { claimsMapping: [], overrides: [] }, ownershipRules: [] } as unknown as ISecurityModelConfig
+    const bad = { businessUnits: [{ id: 'root', name: 'Root' }], users: [], teams: [{ id: 't', name: 'T' }], roleAssignments: [], profileAssignments: [], roleOverrides: [], profileOverrides: [] } as unknown as ISecurityModelConfig
     await assert.rejects(f.Service.SetSecurityModel('actor-1', bad))
     assert.deepEqual(f.Config.Calls, [])
     assert.equal(f.Config.Stored?.SecurityModel, undefined)
-    assert.deepEqual(f.Reload.Invalidated, [])
+    assert.equal(f.Reload.Invalidations, 0)
     assert.equal(f.Audit.Events.length, 0)
 })
 
@@ -595,12 +601,12 @@ test('SetSecurityModel persists a valid model, preserves other fields and fires 
 {
     const f = new AdminFixture()
     f.Config.Stored = new IdentityConfig('local', DelegationDepth.AuthnDirectory, new Map([['k', 'v']]), new Map(), new Map())
-    const model: ISecurityModelConfig = { businessUnits: [{ id: 'root', name: 'Root' }], teams: [], membership: { claimsMapping: [], overrides: [] }, ownershipRules: [] }
+    const model: ISecurityModelConfig = { businessUnits: [{ id: 'root', name: 'Root' }], users: [], teams: [], roleAssignments: [], profileAssignments: [], roleOverrides: [], profileOverrides: [] }
     await f.Service.SetSecurityModel('actor-1', model)
     assert.deepEqual(f.Config.Stored?.SecurityModel, model)
     assert.equal(f.Config.Stored?.PackId, 'local')
     assert.equal(f.Config.Stored?.ProviderSettings.get('k'), 'v')
-    assert.deepEqual(f.Reload.Invalidated, ['t1'])
+    assert.equal(f.Reload.Invalidations, 1)
     assert.equal(f.Audit.Events.length, 1)
 })
 

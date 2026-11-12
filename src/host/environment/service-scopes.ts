@@ -11,9 +11,10 @@ import { ScopeDraft } from '../engine/scope-draft.js'
  * - `For(scope, grantIds, record)`: the caller scope with `Rows[ShareGrant] = Or(<the caller's grant rows>,
  *   IdIn(grantIds))` (the addressed grant is visible whoever it is to) and `Writes[ShareGrant]` Create / Update /
  *   Delete / Append = `IdIn(grantIds)`, so the engine confines the transaction's grant writes and links to exactly
- *   those grants; `IdIn({record})` is ANDed into the root `todl.Element` AppendTo rule, so the one node they may link
- *   to is the shared record. Every other key is the caller's: the shared record is still read, and linked to, under
- *   the caller's rules.
+ *   those grants; every other AppendTo rule becomes `IdIn({record})` and `IdIn({record})` is ANDed into the root
+ *   `todl.Element` AppendTo rule, so the one node they may link to is the shared record, whatever AppendTo the caller
+ *   holds on it (the service authorized the share; a reshare through a grant holds no AppendTo, tier 1 widens none).
+ *   Rows are the caller's: the shared record must be visible to the caller.
  * - `Listing(scope, record)`: the caller scope with `Rows[ShareGrant]` ORed with `Related(record, Out, IdIn{record})`,
  *   so every grant of that one record is visible (and no other grant beyond the caller's own); it writes nothing more
  *   than the caller scope.
@@ -28,7 +29,11 @@ export class ShareServiceScope
         const grants = new IdIn(grantIds)
         draft.OrRow(SystemNames.ShareGrant, grants)
         for (const rule of ShareServiceScope.GrantRules) draft.SetRule(SystemNames.ShareGrant, rule, grants)
-        if (catalog.IsConcept(TodlNames.Element)) draft.AndRule(TodlNames.Element, WriteRule.AppendTo, new IdIn(new Set([record])))
+        // the grant's `record` link is the service's, authorized by the share itself: the shared record is the one node
+        // it may link to, whatever AppendTo the caller holds on it (a reshare through a grant holds none)
+        const shared = new IdIn(new Set([record]))
+        for (const key of draft.RuleKeys(WriteRule.AppendTo).filter(key => key !== SystemNames.ShareGrant)) draft.SetRule(key, WriteRule.AppendTo, shared)
+        if (catalog.IsConcept(TodlNames.Element)) draft.AndRule(TodlNames.Element, WriteRule.AppendTo, shared)
         return draft.Build()
     }
 

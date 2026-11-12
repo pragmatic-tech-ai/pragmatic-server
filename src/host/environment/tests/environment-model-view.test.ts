@@ -5,7 +5,7 @@ import { EdgeKind, Tier } from '@pragmatic-tech-ai/todl'
 import { DeliveryChannel } from '@pragmatic-tech-ai/todl/engine'
 import { CursorStaleError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ModelMemberDto, ModelViewPageDto, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AccessLevel, OwnershipSourceKind, Principal, PrincipalKind, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
+import { Principal, PrincipalKind } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { EnvironmentFixture } from './environment-fixture.js'
 import type { IEnvironmentFixtureOptions } from './environment-fixture.js'
@@ -24,7 +24,8 @@ class ViewFx
     public static readonly NotesTodl = 'namespace notes {\n  concept Note { name : string?; }\n}\n'
     public static readonly Note = 'notes.Note'
     public static readonly N1 = 'notes.n1'
-    public static readonly CrmTodl = 'namespace crm {\n  concept Account { name : string?; owner : string?; secret : string?; relationship peer -> Account?; relationship boss -> Account?; }\n}\n'
+    public static readonly CrmTodl = 'namespace crm {\n  concept Account : todl.system.Owned { name : string?; secured secret : string?; relationship peer -> Account?; relationship boss -> Account?; }\n'
+        + '  role User { Account { read = user; } }\n  profile SecretReaders { Account.secret : read; }\n}\n'
     public static readonly Account = 'crm.Account'
     public static readonly Namespace = 'crm'
     public static readonly Name = 'name'
@@ -37,10 +38,8 @@ class ViewFx
     public static readonly P2 = 'p2'
     public static readonly Root = 'root'
     public static readonly RootName = 'Root'
-    public static readonly UserRole = 'user-role'
-    public static readonly UserRoleName = 'User'
-    public static readonly Profile = 'secret-readers'
-    public static readonly ProfileName = 'Secret readers'
+    public static readonly UserRole = 'crm.User'
+    public static readonly Profile = 'crm.SecretReaders'
     public static readonly System = 'todl.system'
     public static readonly Unknown = 'nope'
     public static readonly A1 = 'crm.a1'
@@ -60,29 +59,17 @@ class ViewFx
     public static readonly Relationship = EdgeKind[EdgeKind.Relationship]
     public static readonly Instance = Tier[Tier.Instance]
 
+    /** Tier 1: p1 and p2 read their own accounts (crm.User); p2 holds the SecretReaders profile. */
     public static Model(): ISecurityModelConfig
     {
         return {
             businessUnits: [{ id: ViewFx.Root, name: ViewFx.RootName }],
+            users: [{ principalId: ViewFx.P1, businessUnitId: ViewFx.Root }, { principalId: ViewFx.P2, businessUnitId: ViewFx.Root }],
             teams: [],
-            membership: { claimsMapping: [], overrides: [
-                { principalId: ViewFx.P1, homeBusinessUnit: ViewFx.Root, teams: [] },
-                { principalId: ViewFx.P2, homeBusinessUnit: ViewFx.Root, teams: [] },
-            ] },
-            ownershipRules: [{ concept: ViewFx.Account, owner: { kind: OwnershipSourceKind.FromField, value: ViewFx.Owner }, owningBusinessUnit: { kind: OwnershipSourceKind.Fixed, value: ViewFx.Root } }],
-            roles: [{ id: ViewFx.UserRole, name: ViewFx.UserRoleName, privileges: [{ action: PrivilegeAction.Read, level: AccessLevel.User, concept: ViewFx.Account }] }],
-            roleAssignment: { claimsMapping: [], teamRoles: [], overrides: [
-                { principalId: ViewFx.P1, roles: [ViewFx.UserRole] },
-                { principalId: ViewFx.P2, roles: [ViewFx.UserRole] },
-            ] },
-            fieldSecurity: {
-                securedFields: [{ concept: ViewFx.Account, field: ViewFx.Secret }, { concept: ViewFx.Account, field: ViewFx.Boss }],
-                profiles: [{ id: ViewFx.Profile, name: ViewFx.ProfileName, grants: [
-                    { concept: ViewFx.Account, field: ViewFx.Secret, read: true },
-                    { concept: ViewFx.Account, field: ViewFx.Boss, read: true },
-                ] }],
-                profileAssignment: { claimsMapping: [], teamProfiles: [], overrides: [{ principalId: ViewFx.P2, profiles: [ViewFx.Profile] }] },
-            },
+            roleAssignments: [{ role: ViewFx.UserRole, principalIds: [ViewFx.P1, ViewFx.P2], teamIds: [] }],
+            profileAssignments: [{ profile: ViewFx.Profile, principalIds: [ViewFx.P2], teamIds: [] }],
+            roleOverrides: [],
+            profileOverrides: [],
         }
     }
 
@@ -196,17 +183,18 @@ describe('runtime model/view on the environment engine', () =>
         })
     })
 
-    test('hidden member is absent from attrs and edges', async () =>
+    test('hidden member is absent from attrs', async () =>
     {
         await ViewFx.Run({ Identity: true, SecurityModel: ViewFx.Model() }, async fx =>
         {
             await ViewFx.SeedAccounts(fx)
             const plain = ViewFx.Member(await (await fx.Connect(ViewFx.Principal(ViewFx.P1))).ModelView(ViewFx.Crm.id), ViewFx.A1)
             assert.ok(!(ViewFx.Secret in plain.attrs), JSON.stringify(plain.attrs))
-            assert.deepEqual(plain.edges, [{ kind: ViewFx.Relationship, via: ViewFx.Peer, to: ViewFx.A3 }], 'the secured boss link is absent')
+            // tier 1 secures fields only (S1: a relationship is never secured), so every visible link is listed
+            assert.deepEqual(plain.edges, [{ kind: ViewFx.Relationship, via: ViewFx.Peer, to: ViewFx.A3 }, { kind: ViewFx.Relationship, via: ViewFx.Boss, to: ViewFx.A3 }])
             const granted = ViewFx.Member(await (await fx.Connect(ViewFx.Principal(ViewFx.P2))).ModelView(ViewFx.Crm.id), ViewFx.A2)
             assert.equal(granted.attrs[ViewFx.Secret], ViewFx.Hush, 'with the profile the secured field reads')
-            assert.deepEqual(granted.edges, [{ kind: ViewFx.Relationship, via: ViewFx.Boss, to: ViewFx.A4 }], 'and the secured link is present')
+            assert.deepEqual(granted.edges, [{ kind: ViewFx.Relationship, via: ViewFx.Boss, to: ViewFx.A4 }])
         })
     })
 

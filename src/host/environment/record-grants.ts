@@ -1,9 +1,9 @@
-import { EdgeDirection } from '@pragmatic-tech-ai/graph'
-import type { GraphReader } from '@pragmatic-tech-ai/graph'
+import { AccessDefault, AccessScope, And, EdgeDirection, IdIn } from '@pragmatic-tech-ai/graph'
+import type { GraphEngine, GraphReader } from '@pragmatic-tech-ai/graph'
 import { ShareGrants, ShareSubject, SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import type { ExternalIdentity, IShareSubjects, ShareRight } from '@pragmatic-tech-ai/todl/engine'
-import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import type { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
+import type { AccessContext, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
+import type { TenantSecurityModel, Tier1Grants } from '@pragmatic-tech-ai/todl-identity-engine'
 import { EngineInstanceView } from '../engine/engine-instance-view.js'
 import type { EngineSchemaCatalog } from '../engine/engine-schema-catalog.js'
 
@@ -22,10 +22,29 @@ export class RecordGrants
         return identity.Parse(id) !== undefined
     }
 
-    /** Who the caller is for share purposes: its principal and its teams. */
-    public static Subjects(context: AccessContext, evaluator: AccessDepthEvaluator): IShareSubjects
+    /** Who the caller is for share purposes: its principal and its active teams in the environment setting. */
+    public static Subjects(context: AccessContext, model: TenantSecurityModel): IShareSubjects
     {
-        return { PrincipalId: context.Principal.Id, Teams: evaluator.MembershipOf(context.Principal).teams }
+        return { PrincipalId: context.Principal.Id, Teams: model.Membership().Resolve(context.Principal).teams }
+    }
+
+    /**
+     * True when the caller's tier-1 privilege `action` covers record `id` of `concept` at the caller's depth: a read under
+     * `Rows[concept] = And(grants.Covers(action, concept), IdIn{id})` (Default Deny) returns it. `concept` is the record's
+     * own concept, so the privilege is judged on it as the scope compiler judges each record (a share does not count).
+     */
+    public static async Covers(engine: GraphEngine, grants: Tier1Grants, action: PrivilegeAction, concept: string, id: string): Promise<boolean>
+    {
+        const rows = new Map([[concept, new And([grants.Covers(action, concept), new IdIn(new Set([id]))])]])
+        const reader = await engine.BeginRead(AccessScope.Build({ Default: AccessDefault.Deny, Rows: rows }))
+        try
+        {
+            return (await reader.ConceptOf(id)) === concept
+        }
+        finally
+        {
+            reader.dispose()
+        }
     }
 
     /**

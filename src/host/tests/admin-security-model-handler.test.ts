@@ -1,183 +1,135 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { randomBytes } from 'node:crypto'
 import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, createMessageConnection, NullLogger, AdminProtocol, ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
-import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy, IdentityConfig, DelegationDepth } from '@pragmatic-tech-ai/todl-identity'
-import type { IAuditSink, AuditEvent } from '@pragmatic-tech-ai/todl-identity'
-import { LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher, InMemoryRoleGrantStore } from '@pragmatic-tech-ai/todl-identity-local'
-import { InMemoryTenantConfigStore } from '@pragmatic-tech-ai/todl-identity-host'
-import { ServerConnectionHandler } from '../server-connection-handler.js'
+import { AccessLevel, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
+import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
+import type { PragmaticServer } from '../../pragmatic-server.js'
 import { AdminService } from '../admin-service.js'
-import type { ISecurityModelReload } from '../cypher/read-filter-source.js'
+import type { ISecuritySettingAdmin } from '../admin-service.js'
+import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
+import { SecurityModelWire } from '../security-model-wire.js'
+import { ServerConnectionHandler } from '../server-connection-handler.js'
+import { SecuritySettingIssue, SecuritySettingIssueCode } from '../environment/security-setting-catalog-check.js'
+import { EnvironmentFixture } from '../environment/tests/environment-fixture.js'
+import { Tier1Fx } from '../environment/tests/tier1-fixture.js'
 
-class NullAuditSink implements IAuditSink
+/** An admin client over `server`'s admin service (`security` as the server gives it, unless overridden). */
+class AdminClient
 {
-    public async Record(_event: AuditEvent): Promise<void>
+    private static readonly NoPacks = { Invalidate: async () => undefined, AllowScripts: async () => undefined, DenyScripts: async () => undefined, ListScriptAllowlist: async () => [] }
+
+    private constructor(public readonly Client: MessageConnection, private readonly handler: ServerConnectionHandler)
     {
     }
-}
 
-/** Records the tenant ids whose cached evaluator was dropped, so a test can prove the live reload fired. */
-class RecordingReload implements ISecurityModelReload
-{
-    public readonly Invalidated: string[] = []
-
-    public Invalidate(tenantId: string): void
+    public static async Open(server: PragmaticServer, context: AccessContext, security: ISecuritySettingAdmin | undefined): Promise<AdminClient>
     {
-        this.Invalidated.push(tenantId)
-    }
-}
-
-class SecurityModelHandlerFixture
-{
-    public static readonly TenantId = 't1'
-    public static readonly PrincipalId = 'p1'
-    public static readonly TenantName = 'Tenant One'
-    public static readonly PackId = 'local'
-    public static readonly RootUnitId = 'root'
-    public static readonly RootUnitName = 'Root'
-    public static readonly MalformedField = /securityModel/
-    public static readonly NoneMessage = 'none'
-    public static readonly NoGraphMessage = 'no graph'
-    private static readonly SharedTenant = new Tenant(SecurityModelHandlerFixture.TenantId, TenantKind.SelfHosted, SecurityModelHandlerFixture.TenantName)
-
-    public readonly Configs = new InMemoryTenantConfigStore()
-    public readonly Reload = new RecordingReload()
-    public readonly Client: MessageConnection
-    private readonly role: Role
-    private readonly handler: ServerConnectionHandler
-
-    public constructor(role: Role = Role.Owner)
-    {
-        this.role = role
-        const tenant = SecurityModelHandlerFixture.SharedTenant
-        const audit = new NullAuditSink()
-        const accounts = new LocalAccountStore()
-        const registrar = new LocalAccountRegistrar(accounts, new EncryptedSecretStore(randomBytes(32)), new Argon2PasswordHasher(), audit)
-        const admin = new AdminService(new InMemoryRoleGrantStore(), audit, this.Configs, tenant, async () => undefined, accounts, registrar, new ServiceTokenStore(), { Invalidate: async () => undefined, AllowScripts: async () => undefined, DenyScripts: async () => undefined, ListScriptAllowlist: async () => [] }, this.Reload)
+        const pack = await server.Pack()
+        const admin = new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), async () => undefined, pack.Accounts, pack.Registrar, pack.Tokens, AdminClient.NoPacks, security)
         const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) }, BuildStateChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
-        const manager = {} as unknown as SolutionManagerService
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        this.handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, this.Context(), undefined, undefined, undefined, undefined, undefined, undefined, admin)
-        this.Client = createMessageConnection(new WebSocketMessageReader(clientSocket), new WebSocketMessageWriter(clientSocket), NullLogger)
-        this.Client.listen()
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, {} as unknown as SolutionManagerService, context, undefined, undefined, undefined, undefined, undefined, undefined, admin)
+        const client = createMessageConnection(new WebSocketMessageReader(clientSocket), new WebSocketMessageWriter(clientSocket), NullLogger)
+        client.listen()
+        return new AdminClient(client, handler)
     }
 
-    public Context(): AccessContext
+    public static async Run(body: (server: PragmaticServer, admin: AdminClient, fx: EnvironmentFixture) => Promise<void>, security?: ISecuritySettingAdmin | null): Promise<void>
     {
-        const tenant = SecurityModelHandlerFixture.SharedTenant
-        const principal = new Principal(SecurityModelHandlerFixture.PrincipalId, SecurityModelHandlerFixture.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant(SecurityModelHandlerFixture.PrincipalId, this.role, new ResourceRef(ResourceKind.Tenant, SecurityModelHandlerFixture.TenantId, []))]
-        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+        await Tier1Fx.Run({ Identity: true, SecurityModel: Tier1Fx.Setting() }, async (fx, server) =>
+        {
+            const admin = await AdminClient.Open(server, Tier1Fx.Context(Tier1Fx.Admin), security === null ? undefined : security ?? await server.SecurityAdmin())
+            try
+            {
+                await body(server, admin, fx)
+            }
+            finally
+            {
+                admin.Client.dispose()
+                admin.handler.Dispose()
+            }
+        })
     }
 
-    /** Seeds a base config whose providerSettings must survive a security-model-only replacement. */
-    public async SeedBaseConfig(): Promise<void>
+    public Set(model: SecurityModelDto): Promise<unknown>
     {
-        await this.Configs.Save(SecurityModelHandlerFixture.TenantId, new IdentityConfig(SecurityModelHandlerFixture.PackId, DelegationDepth.AuthnDirectory, new Map([['k', 'v']]), new Map(), new Map()))
+        return this.Client.sendRequest(AdminProtocol.SetSecurityModel, { securityModel: model })
     }
 
-    public static MinimalModel(): SecurityModelDto
+    public static async Stored(server: PragmaticServer): Promise<string>
     {
-        return { businessUnits: [{ id: SecurityModelHandlerFixture.RootUnitId, name: SecurityModelHandlerFixture.RootUnitName }], teams: [], membership: { claimsMapping: [], overrides: [] }, ownershipRules: [] } as unknown as SecurityModelDto
+        return JSON.stringify((await (await server.TenantConfigStore()).Get(EnvironmentFixture.TenantId))?.SecurityModel)
     }
 
-    public static MalformedModel(): SecurityModelDto
+    public static Refused(code: number, message: string): (error: unknown) => boolean
     {
-        return { ...(SecurityModelHandlerFixture.MinimalModel() as object), teams: [{ id: 't', name: 'T', owningBusinessUnit: 'nope' }] } as unknown as SecurityModelDto
-    }
-
-    public Dispose(): void
-    {
-        this.Client.dispose()
-        this.handler.Dispose()
+        return error => error instanceof ResponseError && error.code === code && error.message === message
     }
 }
 
-class Case
+class HandlerFx
 {
-    public static async Run(body: (fx: SecurityModelHandlerFixture) => Promise<void>): Promise<void>
+    public static readonly UnknownUnit = 'nope'
+    public static readonly UnknownUnitReason = 'unknown business unit: nope'
+
+    public static Narrowed(): SecurityModelDto
     {
-        const fx = new SecurityModelHandlerFixture()
-        try
-        {
-            await body(fx)
-        }
-        finally
-        {
-            fx.Dispose()
-        }
+        const override = Tier1Fx.Override(Tier1Fx.ProjectManager, Tier1Fx.Project, PrivilegeAction.Read, AccessLevel.BusinessUnit)
+        return SecurityModelWire.ToDto(Tier1Fx.Setting({ RoleAssignments: [{ role: Tier1Fx.ProjectManager, principalIds: [Tier1Fx.Pm], teamIds: [] }], RoleOverrides: [override] }))
     }
 }
 
-test('a malformed securityModel is rejected, the store is unchanged and no reload fires', async () =>
+test('set then get returns the setting', async () =>
 {
-    await Case.Run(async fx =>
+    await AdminClient.Run(async (_server, admin) =>
     {
-        await fx.SeedBaseConfig()
-        await assert.rejects(
-            fx.Client.sendRequest(AdminProtocol.SetSecurityModel, { securityModel: SecurityModelHandlerFixture.MalformedModel() }),
-            (e: unknown) => e instanceof ResponseError && e.code === ErrorCodes.InvalidParams && SecurityModelHandlerFixture.MalformedField.test(e.message))
-        const stored = await fx.Configs.Get(SecurityModelHandlerFixture.TenantId)
-        assert.equal(stored?.SecurityModel, undefined)
-        assert.deepEqual(fx.Reload.Invalidated, [])
+        const model = HandlerFx.Narrowed()
+        assert.deepEqual(await admin.Set(model), { ok: true })
+        assert.deepEqual(await admin.Client.sendRequest(AdminProtocol.GetSecurityModel), model)
     })
 })
 
-test('a valid securityModel persists, preserves other config fields and fires the live reload', async () =>
+test('refused set leaves the setting unchanged', async () =>
 {
-    await Case.Run(async fx =>
+    await AdminClient.Run(async (server, admin) =>
     {
-        await fx.SeedBaseConfig()
-        // JSON-RPC carries a top-level absent value as null on the wire.
-        assert.equal(await fx.Client.sendRequest(AdminProtocol.GetSecurityModel), null)
-        const model = SecurityModelHandlerFixture.MinimalModel()
-        const ack = await fx.Client.sendRequest(AdminProtocol.SetSecurityModel, { securityModel: model })
-        assert.deepEqual(ack, { ok: true })
-        const stored = await fx.Configs.Get(SecurityModelHandlerFixture.TenantId)
-        assert.deepEqual(stored?.SecurityModel, model)
-        // only the SecurityModel is replaced: the rest of the config is intact
-        assert.equal(stored?.PackId, SecurityModelHandlerFixture.PackId)
-        assert.equal(stored?.ProviderSettings.get('k'), 'v')
-        assert.deepEqual(await fx.Client.sendRequest(AdminProtocol.GetSecurityModel), model)
-        assert.deepEqual(fx.Reload.Invalidated, [SecurityModelHandlerFixture.TenantId])
+        const before = await AdminClient.Stored(server)
+        const catalogIssue = SecurityModelWire.ToDto(Tier1Fx.Setting({ RoleOverrides: [Tier1Fx.Override(Tier1Fx.AccountReader, Tier1Fx.Account, PrivilegeAction.Read, AccessLevel.BusinessUnit)] }))
+        const reason = InvalidParamsPrefix.Text + new SecuritySettingIssue(SecuritySettingIssueCode.OrganizationOwnedDepth, Tier1Fx.Account).Message
+        await assert.rejects(admin.Set(catalogIssue), AdminClient.Refused(ErrorCodes.InvalidParams, reason), 'a catalog issue names its fixed reason')
+        assert.equal(await AdminClient.Stored(server), before, 'the stored setting is byte-equal')
+        const valid = SecurityModelWire.ToDto(Tier1Fx.Setting())
+        const structural: SecurityModelDto = { ...valid, users: [{ principalId: Tier1Fx.Alice, businessUnitId: HandlerFx.UnknownUnit }] }
+        await assert.rejects(admin.Set(structural), AdminClient.Refused(ErrorCodes.InvalidParams, InvalidParamsPrefix.Text + HandlerFx.UnknownUnitReason), 'an S3 InvalidSecurityModelError names its issue')
+        assert.equal(await AdminClient.Stored(server), before)
     })
 })
 
-test('setting a securityModel with no stored config is InvalidRequest and fires no reload', async () =>
+test('development tenant refuses the setting', async () =>
 {
-    await Case.Run(async fx =>
+    // a Development tenant's server gives the admin service no security setting (PragmaticServer.SecurityAdmin, PR13)
+    await AdminClient.Run(async (server, admin) =>
     {
-        await assert.rejects(
-            fx.Client.sendRequest(AdminProtocol.SetSecurityModel, { securityModel: SecurityModelHandlerFixture.MinimalModel() }),
-            (e: unknown) => e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest)
-        assert.deepEqual(fx.Reload.Invalidated, [])
-    })
+        const before = await AdminClient.Stored(server)
+        await assert.rejects(admin.Set(HandlerFx.Narrowed()), (error: unknown) => error instanceof ResponseError && error.code === ErrorCodes.InvalidRequest)
+        assert.equal(await AdminClient.Stored(server), before)
+    }, null)
 })
 
-test('a Viewer is rejected on both security-model methods and fires no reload', async () =>
+test('set invalidates the scope', async () =>
 {
-    const fx = new SecurityModelHandlerFixture(Role.Viewer)
-    try
+    await AdminClient.Run(async (server, admin, fx) =>
     {
-        await fx.SeedBaseConfig()
-        const calls: Promise<unknown>[] = [
-            fx.Client.sendRequest(AdminProtocol.GetSecurityModel),
-            fx.Client.sendRequest(AdminProtocol.SetSecurityModel, { securityModel: SecurityModelHandlerFixture.MinimalModel() }),
-        ]
-        for (const call of calls)
-        {
-            await assert.rejects(call, (e: unknown) => e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest)
-        }
-        const stored = await fx.Configs.Get(SecurityModelHandlerFixture.TenantId)
-        assert.equal(stored?.SecurityModel, undefined)
-        assert.deepEqual(fx.Reload.Invalidated, [])
-    }
-    finally
-    {
-        fx.Dispose()
-    }
+        await admin.Set(SecurityModelWire.ToDto(Tier1Fx.Setting({ RoleAssignments: [{ role: Tier1Fx.ProjectManager, principalIds: [Tier1Fx.Pm], teamIds: [] }] })))
+        await fx.Seed([Tier1Fx.Owned(Tier1Fx.Project, Tier1Fx.Sales, Tier1Fx.Pm, Tier1Fx.Sales), Tier1Fx.Owned(Tier1Fx.Project, Tier1Fx.Marketing, Tier1Fx.Bob, Tier1Fx.Marketing)])
+        const before = await Tier1Fx.Scope(server, Tier1Fx.Pm)
+        assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Pm, Tier1Fx.Project), [Tier1Fx.Marketing, Tier1Fx.Sales])
+        await admin.Set(HandlerFx.Narrowed())
+        const after = await Tier1Fx.Scope(server, Tier1Fx.Pm)
+        assert.notEqual(after.Digest, before.Digest)
+        assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Pm, Tier1Fx.Project), [Tier1Fx.Sales], 'the new override applies')
+    })
 })

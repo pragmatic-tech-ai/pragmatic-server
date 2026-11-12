@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { WebSocket } from 'ws'
 import { BlobPackageStore, compilePackage, StoragePackageSink } from '@pragmatic-tech-ai/todl'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
-import { AccessLevel, DelegationDepth, Grant, IdentityConfig, PrivilegeAction, ResourceKind, ResourceRef, Role } from '@pragmatic-tech-ai/todl-identity'
+import { BaseRole, DelegationDepth, Grant, IdentityConfig, ResourceKind, ResourceRef, Role } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticClient, WsMessageSocket } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { WorkerHost } from '../worker-host.js'
@@ -117,8 +117,6 @@ class RuntimeWorkerFx
     private static readonly ApplicationsDir = 'applications'
     private static readonly RootUnit = 'root'
     private static readonly RootUnitName = 'Root'
-    private static readonly ReaderRole = 'reader'
-    private static readonly ReaderRoleName = 'Reader'
 
     /** The tenant directory with `crm` compiled into `packages/` and `crm-app` live on it. */
     public static async Start(): Promise<string>
@@ -159,15 +157,17 @@ class RuntimeWorkerFx
         return (await pack.Tokens.Issue(server.Tenant(), RuntimeWorkerFx.Tenant, [], null)).Token
     }
 
+    /** The token's principal is the environment's System Administrator: it reads every row (tier 1). */
     public static ReadingModel(): ISecurityModelConfig
     {
         return {
             businessUnits: [{ id: RuntimeWorkerFx.RootUnit, name: RuntimeWorkerFx.RootUnitName }],
+            users: [{ principalId: RuntimeWorkerFx.Tenant, businessUnitId: RuntimeWorkerFx.RootUnit }],
             teams: [],
-            membership: { claimsMapping: [], overrides: [{ principalId: RuntimeWorkerFx.Tenant, homeBusinessUnit: RuntimeWorkerFx.RootUnit, teams: [] }] },
-            ownershipRules: [],
-            roles: [{ id: RuntimeWorkerFx.ReaderRole, name: RuntimeWorkerFx.ReaderRoleName, privileges: [{ action: PrivilegeAction.Read, concept: RuntimeWorkerFx.Account, level: AccessLevel.Organization }] }],
-            roleAssignment: { claimsMapping: [], overrides: [{ principalId: RuntimeWorkerFx.Tenant, roles: [RuntimeWorkerFx.ReaderRole] }], teamRoles: [] },
+            roleAssignments: [{ role: BaseRole.SystemAdministrator, principalIds: [RuntimeWorkerFx.Tenant], teamIds: [] }],
+            profileAssignments: [],
+            roleOverrides: [],
+            profileOverrides: [],
         }
     }
 

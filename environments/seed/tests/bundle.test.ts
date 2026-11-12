@@ -28,7 +28,7 @@ test('explicit seedDir overrides the name-derived seed path', async () =>
         const seedDir = join(root, 'seed')
         const bundleDir = join(root, 'bundle')
         mkdirSync(seedDir, { recursive: true })
-        const model = { businessUnits: [{ id: 'acme', name: 'Acme' }], teams: [], membership: { claimsMapping: [], overrides: [] }, ownershipRules: [] }
+        const model = { businessUnits: [{ id: 'acme', name: 'Acme' }], users: [], teams: [], roleAssignments: [], profileAssignments: [], roleOverrides: [], profileOverrides: [] }
         writeFileSync(join(seedDir, 'security-model.json'), JSON.stringify(model))
         writeFileSync(join(seedDir, 'users.json'), JSON.stringify([{ principalId: 'u1', email: 'u1@x.test', passwordRef: 'u1-pw', coarseRole: 'Editor' }]))
         await BundleBuilder.Generate({ name: 'custom-name', kind: EnvKind.Demo, environmentId: 'acme', purpose: TenantPurposeName.Runtime, hostPort: 8082 }, bundleDir, seedDir)

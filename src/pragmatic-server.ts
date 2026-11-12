@@ -29,8 +29,6 @@ import type { ConnectorsHostOptions } from '@pragmatic-tech-ai/todl-connectors-h
 import { PolicyConnectionResolver } from './host/policy-connection-resolver.js'
 import type { ConnectorsPolicy } from './host/connector-policy.js'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { TenantReadAuthorization } from './host/cypher/read-filter-source.js'
-import type { ISecurityModelReload } from './host/cypher/read-filter-source.js'
 import { EngineConnectorService } from './host/engine/engine-connector-service.js'
 import { RuntimeWritePayloadValidator } from './host/runtime-write-payload-validator.js'
 import type { AppWriteOpDto, AppWriteResultDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -67,6 +65,10 @@ import { DataChangedPush, LoggerDataChangedDiagnostics } from './host/environmen
 import { EnvironmentShareService } from './host/environment/environment-share-service.js'
 import { EnvironmentAssignService } from './host/environment/environment-assign-service.js'
 import { EnvironmentScopeRules } from './host/environment/environment-scope-rules.js'
+import type { IEnvironmentTier1 } from './host/environment/environment-scope-rules.js'
+import { EnvironmentSecuritySetting, LoggerSecuritySettingDiagnostics } from './host/environment/environment-security-setting.js'
+import { EnvironmentSecurityAdmin } from './host/environment/environment-security-admin.js'
+import type { ISecuritySettingAdmin } from './host/admin-service.js'
 import { InvalidParamsPrefix } from './host/invalid-params-prefix.js'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
@@ -175,7 +177,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private dataChanges: DataChangedPush | undefined
     private environmentShares: EnvironmentShareService | undefined
     private environmentAssign: EnvironmentAssignService | undefined
-    private readAuth: Promise<TenantReadAuthorization> | undefined
+    private securitySetting: Promise<EnvironmentSecuritySetting> | undefined
+    private environmentRules: EnvironmentScopeRules | undefined
     private devExecute: DevCypherExecute | undefined
 
     public constructor(options: PragmaticServerOptions)
@@ -278,33 +281,51 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.root.Resolve(TenantConfigStoreKey)
     }
 
-    /** The live authorizer-reload seam: an admin SecurityModel change invalidates the cached per-tenant evaluator so the next request re-reads it. Requires identity. */
-    public SecurityModelReload(): Promise<ISecurityModelReload>
+    /**
+     * The environment's security setting (contract C5; EnvironmentSecuritySetting over the tenant config store and the
+     * IdP directory store), memoized for this tenant (a failed build is retried) and disposed with the server after the
+     * environment scopes. Runtime tenants with identity only: a Development tenant has no setting (PR13).
+     */
+    public SecuritySetting(): Promise<EnvironmentSecuritySetting>
     {
-        return this.ReadAuthorization()
-    }
-
-    private ReadAuthorization(): Promise<TenantReadAuthorization>
-    {
-        if (this.readAuth === undefined)
+        if (this.disposing !== undefined)
         {
-            const built = this.BuildReadAuth()
-            this.readAuth = built
-            // Evict a failed build so a later call retries (concurrent callers still share the in-flight promise).
+            return Promise.reject(new Error(PragmaticServer.DisposedMessage))
+        }
+        this.AssertRuntimePurpose()
+        if (this.securitySetting === undefined)
+        {
+            const built = this.BuildSecuritySetting()
+            this.securitySetting = built
             built.catch(() =>
             {
-                if (this.readAuth === built)
+                if (this.securitySetting === built)
                 {
-                    this.readAuth = undefined
+                    this.securitySetting = undefined
                 }
             })
         }
-        return this.readAuth
+        return this.securitySetting
     }
 
-    private async BuildReadAuth(): Promise<TenantReadAuthorization>
+    /**
+     * What the admin save checks a security setting against and reloads (EnvironmentSecurityAdmin); undefined on a
+     * Development tenant, which refuses the setting (PR13). Requires identity.
+     */
+    public async SecurityAdmin(): Promise<ISecuritySettingAdmin | undefined>
     {
-        return new TenantReadAuthorization(await this.TenantConfigStore())
+        if (this.Purpose() !== TenantPurpose.Runtime)
+        {
+            return undefined
+        }
+        return new EnvironmentSecurityAdmin(await this.SecuritySetting(), this.EnvironmentEngine())
+    }
+
+    private async BuildSecuritySetting(): Promise<EnvironmentSecuritySetting>
+    {
+        const store = await this.TenantConfigStore()
+        const pack = await this.Pack()
+        return new EnvironmentSecuritySetting(store, pack.IdpDirectory, this.Tenant(), new LoggerSecuritySettingDiagnostics(this.options.logger ?? StructuredLogger.ToStdout()))
     }
 
     public Purpose(): TenantPurpose
@@ -419,9 +440,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
 
     /**
      * The runtime environment's access scopes over {@link PragmaticServer.EnvironmentEngine} (AccessScopeSource under
-     * EnvironmentScopeRules, ruling S5 as amended by A3, placement S6): with identity, the tenant security model's depth
-     * (connector-bound concepts outside it), share widening, read-only bindings and seeded nodes; without identity
-     * Default Allow with the read-only guards. Built on first use (a failed build is retried), disposed with the server
+     * EnvironmentScopeRules, ruling S5 as amended by A3, placement S6): with identity, the tier-1 scope of the
+     * environment security setting (connector-bound concepts outside it), read-only bindings and seeded nodes; without
+     * identity Default Allow with the read-only guards. Built on first use (a failed build is retried), disposed with the server
      * before the engine host. Runtime tenants only.
      */
     public EnvironmentScopes(): Promise<AccessScopeSource>
@@ -516,8 +537,17 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private async BuildEnvironmentScopes(): Promise<AccessScopeSource>
     {
         const host = this.EnvironmentEngine()
-        const authorization = this.identity === undefined ? undefined : await this.ReadAuthorization()
-        return new AccessScopeSource(host, new EnvironmentScopeRules(host, authorization, this.identity !== undefined), new LoggerScopeDiagnostics(this.options.logger ?? new NullLogger()))
+        const setting = this.identity === undefined ? undefined : await this.SecuritySetting()
+        const rules = new EnvironmentScopeRules(host, setting)
+        this.environmentRules = rules
+        return new AccessScopeSource(host, rules, new LoggerScopeDiagnostics(this.options.logger ?? new NullLogger()))
+    }
+
+    /** The tier-1 decisions of the environment's scope rules, for the share and assign services. */
+    private async EnvironmentTier1(): Promise<IEnvironmentTier1>
+    {
+        await this.EnvironmentScopes()
+        return this.environmentRules!
     }
 
     /** The environment's promote record (`graphs/loaded-graph.json`, ruling S3). */
@@ -591,7 +621,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
 
     /**
      * The runtime share service (ruling S8) on the environment engine under each caller's environment scope, with the
-     * tenant security model's evaluator. Memoized; runtime tenants with identity only (else the error is unchanged:
+     * caller's tier-1 grants (EnvironmentScopeRules). Memoized; runtime tenants with identity only (else the error is unchanged:
      * "record sharing requires an identity subsystem").
      */
     public EnvironmentShares(): EnvironmentShareService
@@ -601,7 +631,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         {
             throw new Error(PragmaticServer.SharingRequiresIdentityError)
         }
-        this.environmentShares ??= new EnvironmentShareService(this.EnvironmentEngine(), () => this.EnvironmentScopes(), () => this.ReadAuthorization())
+        this.environmentShares ??= new EnvironmentShareService(this.EnvironmentEngine(), () => this.EnvironmentScopes(), () => this.EnvironmentTier1())
         return this.environmentShares
     }
 
@@ -613,7 +643,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         {
             throw new Error(PragmaticServer.AssignRequiresIdentityError)
         }
-        this.environmentAssign ??= new EnvironmentAssignService(this.EnvironmentEngine(), () => this.EnvironmentScopes(), () => this.ReadAuthorization())
+        this.environmentAssign ??= new EnvironmentAssignService(this.EnvironmentEngine(), () => this.EnvironmentScopes(), () => this.EnvironmentTier1())
         return this.environmentAssign
     }
 
@@ -677,8 +707,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * The dev tenant's access scopes over {@link PragmaticServer.DevEngine}: with identity, the tenant security model
-     * (AccessScopeSource under DevScopeRules), diagnostics on the configured logger. Built on first use, disposed
+     * The dev tenant's access scopes over {@link PragmaticServer.DevEngine}: unrestricted for every principal the
+     * PolicyGate admits (AccessScopeSource under DevScopeRules, PR13), diagnostics on the configured logger. Built on first use, disposed
      * with the server.
      */
     public DevScopes(): Promise<AccessScopeSource>
@@ -691,7 +721,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         {
             const built = this.BuildDevScopes()
             this.devScopes = built
-            // a failed build (the security source did not load) is retried by the next call
+            // a failed build is retried by the next call
             built.catch(() =>
             {
                 if (this.devScopes === built)
@@ -739,8 +769,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private async BuildDevScopes(): Promise<AccessScopeSource>
     {
         const engine = this.DevEngine()
-        const authorization = this.identity === undefined ? undefined : await this.ReadAuthorization()
-        return new AccessScopeSource(engine, new DevScopeRules(engine, authorization, this.identity !== undefined, () => this.ActiveSolutionName()), new LoggerScopeDiagnostics(this.options.logger ?? new NullLogger()))
+        return new AccessScopeSource(engine, new DevScopeRules(() => this.ActiveSolutionName()), new LoggerScopeDiagnostics(this.options.logger ?? new NullLogger()))
     }
 
     private async ActiveSolutionName(): Promise<string | undefined>
@@ -807,9 +836,11 @@ export class PragmaticServer implements IEnvironmentGraphHost
         try
         {
             this.dataChanges?.dispose()
-            // the scope source unsubscribes from the engine host and the security source before the host goes
+            // the scope source unsubscribes from the engine host and the security setting before either goes
             const environmentScopes = await this.environmentScopes?.catch(() => undefined)
             environmentScopes?.dispose()
+            const setting = await this.securitySetting?.catch(() => undefined)
+            setting?.dispose()
             // the environment engine's connectors borrow adapters from the connectors host's catalog: it closes first
             await this.environmentEngine?.dispose()
         }
@@ -833,7 +864,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
                 {
                     try
                     {
-                        // the model view and the scope source unsubscribe from the engine host and the security source before the engine goes
+                        // the model view and the scope source unsubscribe from the engine host before the engine goes
                         this.devModelView?.dispose()
                         const scopes = await this.devScopes?.catch(() => undefined)
                         scopes?.dispose()

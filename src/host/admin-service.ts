@@ -1,10 +1,9 @@
-import { Action, AuditEvent, AuditEventKind, Grant, ResourceRef, Role, RoleCapabilities, ResourceKind, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
+import { Action, AuditEvent, AuditEventKind, Grant, ResourceRef, Role, RoleCapabilities, ResourceKind, IdentityConfig, SecurityModelValidator } from '@pragmatic-tech-ai/todl-identity'
 import type { LocalAccount, ServiceTokenSummary, PresentedSecret, IRoleGrantStore, IAuditSink, ITenantConfigStore, ILocalAccountStore, IServiceTokenStore, ServiceTokenGrant, Tenant, ISecurityModelConfig, ISessionManager } from '@pragmatic-tech-ai/todl-identity'
 import type { LocalAccountRegistrar } from '@pragmatic-tech-ai/todl-identity-local'
-import { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
 import { AdminEnums } from './admin-enums.js'
 import type { IAdapterPackAdmin } from './adapter-pack-admin.js'
-import type { ISecurityModelReload } from './cypher/read-filter-source.js'
+import type { SecuritySettingIssue } from './environment/security-setting-catalog-check.js'
 import type { IPrincipalInvalidator } from './principal-connection-registry.js'
 
 /** Raised when a caller tries to revoke their own tenant-Owner grant. */
@@ -45,6 +44,37 @@ export class AdminConfigMissingError extends Error
         super('tenant identity config is missing')
         this.name = 'AdminConfigMissingError'
     }
+}
+
+/** Raised when the tenant takes no security setting: a Development tenant (program ruling PR13). */
+export class AdminSecurityModelUnavailableError extends Error
+{
+    private static readonly Message = 'a development tenant has no security setting; its access is the tenant role grants'
+
+    public constructor()
+    {
+        super(AdminSecurityModelUnavailableError.Message)
+        this.name = 'AdminSecurityModelUnavailableError'
+    }
+}
+
+/** Raised when a security setting names something the deployed packages cannot mean; the first issue is the reason. */
+export class AdminSecuritySettingRefusedError extends Error
+{
+    public constructor(public readonly Issues: readonly SecuritySettingIssue[])
+    {
+        super(Issues[0].Message)
+        this.name = 'AdminSecuritySettingRefusedError'
+    }
+}
+
+/** What the admin save needs of a Runtime environment's security (EnvironmentSecurityAdmin); absent on a Development tenant. */
+export interface ISecuritySettingAdmin
+{
+    /** The catalog issues of `config` against the deployed packages; throws InvalidSecurityModelError when it is structurally invalid. */
+    Issues(config: ISecurityModelConfig): Promise<readonly SecuritySettingIssue[]>
+    /** Drops the cached setting, so every scope compiled after it reads the stored one. */
+    Invalidate(): void
 }
 
 /** Raised when a grant mutation targets a resource that belongs to a different tenant. */
@@ -100,11 +130,11 @@ export class AdminService
     private readonly registrar: LocalAccountRegistrar
     private readonly tokens: IServiceTokenStore
     private readonly packs: IAdapterPackAdmin
-    private readonly securityModelReload: ISecurityModelReload
+    private readonly security: ISecuritySettingAdmin | undefined
     private readonly invalidator?: IPrincipalInvalidator
     private readonly sessions?: ISessionManager
 
-    public constructor(grants: IRoleGrantStore, audit: IAuditSink, configStore: ITenantConfigStore, tenant: Tenant, evict: () => Promise<void>, accounts: ILocalAccountStore, registrar: LocalAccountRegistrar, tokens: IServiceTokenStore, packs: IAdapterPackAdmin, securityModelReload: ISecurityModelReload, invalidator?: IPrincipalInvalidator, sessions?: ISessionManager)
+    public constructor(grants: IRoleGrantStore, audit: IAuditSink, configStore: ITenantConfigStore, tenant: Tenant, evict: () => Promise<void>, accounts: ILocalAccountStore, registrar: LocalAccountRegistrar, tokens: IServiceTokenStore, packs: IAdapterPackAdmin, security: ISecuritySettingAdmin | undefined, invalidator?: IPrincipalInvalidator, sessions?: ISessionManager)
     {
         this.packs = packs
         this.grants = grants
@@ -115,7 +145,7 @@ export class AdminService
         this.accounts = accounts
         this.registrar = registrar
         this.tokens = tokens
-        this.securityModelReload = securityModelReload
+        this.security = security
         this.invalidator = invalidator
         this.sessions = sessions
     }
@@ -170,9 +200,15 @@ export class AdminService
         return config
     }
 
+    /** Replaces the whole config; a carried security setting is checked as SetSecurityModel checks it. */
     public async SetConfig(actor: string, config: IdentityConfig): Promise<void>
     {
+        if (config.SecurityModel !== undefined)
+        {
+            await this.CheckSecurityModel(config.SecurityModel)
+        }
         await this.configStore.Save(this.tenant.Id, config)
+        this.security?.Invalidate()
         const detail = new Map<string, string>([
             [AdminService.ActorKey, actor],
             [AdminService.ActionKey, AdminService.SetConfigAction],
@@ -191,14 +227,15 @@ export class AdminService
     }
 
     /**
-     * Replaces ONLY the tenant's SecurityModel (every other config field is preserved), persists it, then
-     * invalidates the live authorizer so the change takes effect on the next request without a restart.
-     * The model is validated by the caller; the tenant must already have a stored config.
+     * Replaces ONLY the tenant's security setting (every other config field is preserved), persists it, then invalidates
+     * the cached setting so the change takes effect on the next scope without a restart. Refused before any write: on a
+     * Development tenant (AdminSecurityModelUnavailableError, PR13), a structurally invalid setting
+     * (InvalidSecurityModelError) and one the deployed packages cannot mean (AdminSecuritySettingRefusedError); the
+     * tenant must already have a stored config.
      */
     public async SetSecurityModel(actor: string, model: ISecurityModelConfig): Promise<void>
     {
-        // Defense-in-depth: reject a malformed model before any read/write, even though the RPC handler already validates.
-        AccessDepthEvaluator.FromConfig(model)
+        await this.CheckSecurityModel(model)
         const config = await this.configStore.Get(this.tenant.Id)
         if (config === null)
         {
@@ -212,7 +249,21 @@ export class AdminService
             [AdminService.PackIdKey, config.PackId],
         ])
         await this.Audit(null, detail)
-        this.securityModelReload.Invalidate(this.tenant.Id)
+        this.security?.Invalidate()
+    }
+
+    private async CheckSecurityModel(model: ISecurityModelConfig): Promise<void>
+    {
+        if (this.security === undefined)
+        {
+            throw new AdminSecurityModelUnavailableError()
+        }
+        SecurityModelValidator.AssertValid(model)
+        const issues = await this.security.Issues(model)
+        if (issues.length > 0)
+        {
+            throw new AdminSecuritySettingRefusedError(issues)
+        }
     }
 
     public async ListAccounts(): Promise<readonly LocalAccount[]>

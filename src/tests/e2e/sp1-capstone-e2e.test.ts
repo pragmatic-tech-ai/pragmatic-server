@@ -21,8 +21,8 @@ import {
     createMessageConnection,
     NullLogger,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { MessageConnection, SecurityModelDto, PrivilegeDto, AppWriteOpDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { PrivilegeAction, AccessLevel } from '@pragmatic-tech-ai/todl-identity'
+import type { MessageConnection, SecurityModelDto, AppWriteOpDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { BaseRole, PrivilegeAction, AccessLevel } from '@pragmatic-tech-ai/todl-identity'
 import { BundleBuilder, EnvKind, TenantPurposeName } from '../../../environments/seed/bundle.js'
 import { Sp1AppBuilder } from './sp1-app-builder.js'
 import type { BuiltSp1App } from './sp1-app-builder.js'
@@ -88,47 +88,32 @@ class Sp1SecurityModel
     private static readonly OrgUnitId = 'org'
     private static readonly OrgUnitName = 'Organization'
     private static readonly AdminPrincipalId = 'admin'
-    private static readonly AdminRoleId = 'app-admin'
-    private static readonly AdminRoleName = 'App Admin'
-    private static readonly ReaderRoleId = 'app-reader'
-    private static readonly ReaderRoleName = 'App Reader'
 
+    /**
+     * Tier 1: the admin holds SystemAdministrator (unrestricted CRUD on every concept); the reader holds the Reader base
+     * role widened by a role override to organization-level Read on the deployed concept only. The reader's coarse Write
+     * (granted at the PolicyGate, step d) is therefore narrowed by the per-concept rule to read-only — every reader write
+     * is denied at the scope, which is exactly what step (f) proves.
+     */
     public static Config(): SecurityModelDto
     {
         return {
             businessUnits: [{ id: Sp1SecurityModel.OrgUnitId, name: Sp1SecurityModel.OrgUnitName }],
-            teams: [],
-            membership: {
-                claimsMapping: [],
-                overrides: [
-                    { principalId: Sp1SecurityModel.AdminPrincipalId, homeBusinessUnit: Sp1SecurityModel.OrgUnitId, teams: [] },
-                    { principalId: Sp1Accounts.ReaderPrincipalId, homeBusinessUnit: Sp1SecurityModel.OrgUnitId, teams: [] },
-                ],
-            },
-            ownershipRules: [],
-            roles: [
-                { id: Sp1SecurityModel.AdminRoleId, name: Sp1SecurityModel.AdminRoleName, privileges: Sp1SecurityModel.Crud() },
-                { id: Sp1SecurityModel.ReaderRoleId, name: Sp1SecurityModel.ReaderRoleName, privileges: [Sp1SecurityModel.Privilege(PrivilegeAction.Read)] },
+            users: [
+                { principalId: Sp1SecurityModel.AdminPrincipalId, businessUnitId: Sp1SecurityModel.OrgUnitId },
+                { principalId: Sp1Accounts.ReaderPrincipalId, businessUnitId: Sp1SecurityModel.OrgUnitId },
             ],
-            roleAssignment: {
-                claimsMapping: [],
-                overrides: [
-                    { principalId: Sp1SecurityModel.AdminPrincipalId, roles: [Sp1SecurityModel.AdminRoleId] },
-                    { principalId: Sp1Accounts.ReaderPrincipalId, roles: [Sp1SecurityModel.ReaderRoleId] },
-                ],
-                teamRoles: [],
-            },
+            teams: [],
+            roleAssignments: [
+                { role: BaseRole.SystemAdministrator, principalIds: [Sp1SecurityModel.AdminPrincipalId], teamIds: [] },
+                { role: BaseRole.Reader, principalIds: [Sp1Accounts.ReaderPrincipalId], teamIds: [] },
+            ],
+            profileAssignments: [],
+            roleOverrides: [
+                { role: BaseRole.Reader, concept: Sp1AppBuilder.Concept, action: PrivilegeAction.Read, level: AccessLevel.Organization },
+            ],
+            profileOverrides: [],
         }
-    }
-
-    private static Crud(): PrivilegeDto[]
-    {
-        return [PrivilegeAction.Create, PrivilegeAction.Read, PrivilegeAction.Update, PrivilegeAction.Delete].map(a => Sp1SecurityModel.Privilege(a))
-    }
-
-    private static Privilege(action: PrivilegeAction): PrivilegeDto
-    {
-        return { action, concept: Sp1AppBuilder.Concept, level: AccessLevel.Organization }
     }
 }
 

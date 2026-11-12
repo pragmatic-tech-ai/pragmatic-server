@@ -78,16 +78,13 @@ class ModelScopedFixture
     public static readonly OtherUnknown = 'another-missing-model'
     public static readonly Secret = 'hush'
     public static readonly LabelQuery = 'MATCH (w:Widget) RETURN w.label AS label ORDER BY label'
-    public static readonly SecretQuery = 'MATCH (w:Widget) RETURN w.secret AS secret'
     private static readonly SolutionPrefix = 'cms-sol-'
     private static readonly PackagesPrefix = 'cms-pkgs-'
     private static readonly IdentityPrefix = 'cms-id-'
     private static readonly ModelFile = join('models', 'model.todl')
     private static readonly Namespace = 'acme'
-    private static readonly Qualified = 'acme.Widget'
-    private static readonly SecretField = 'secret'
-    private static readonly Profile = 'secret-readers'
-    private static readonly ProfileName = 'Secret readers'
+    private static readonly RootUnitName = 'Root'
+    private static readonly SalesUnitName = 'Sales'
     private static readonly ExpectedRejection = 'expected rejection'
 
     /** A: two sales rows + one root row. B: one sales row. C: root rows only. */
@@ -110,28 +107,27 @@ class ModelScopedFixture
         return PpSecurityHarness.Context(principalId)
     }
 
-    /** BusinessUnit-level Read on Widget for both principals (home BU sales); `secret` is secured, only Granted holds a profile reading it. */
+    /**
+     * A structurally-valid tenant setting placing both principals in sales. The dev graph is governed by RBAC at the
+     * PolicyGate only (PR13): the security setting is never read for dev reads, so this only marks identity as configured
+     * for the model-scoping and cursor behaviour the kept tests pin.
+     */
     public static Model(): ISecurityModelConfig
     {
-        const base = PpSecurityHarness.BuSecurityModel(ModelScopedFixture.Plain)
-        const reader = base.roles![0].id
         return {
-            ...base,
-            ownershipRules: base.ownershipRules.map(r => ({ ...r, concept: ModelScopedFixture.Qualified })),
-            roles: (base.roles ?? []).map(r => ({ ...r, privileges: r.privileges.map(p => ({ ...p, concept: ModelScopedFixture.Qualified })) })),
-            membership: { claimsMapping: [], overrides: [
-                { principalId: ModelScopedFixture.Plain, homeBusinessUnit: PpSecurityHarness.SalesBu, teams: [] },
-                { principalId: ModelScopedFixture.Granted, homeBusinessUnit: PpSecurityHarness.SalesBu, teams: [] },
-            ] },
-            roleAssignment: { claimsMapping: [], teamRoles: [], overrides: [
-                { principalId: ModelScopedFixture.Plain, roles: [reader] },
-                { principalId: ModelScopedFixture.Granted, roles: [reader] },
-            ] },
-            fieldSecurity: {
-                securedFields: [{ concept: ModelScopedFixture.Qualified, field: ModelScopedFixture.SecretField }],
-                profiles: [{ id: ModelScopedFixture.Profile, name: ModelScopedFixture.ProfileName, grants: [{ concept: ModelScopedFixture.Qualified, field: ModelScopedFixture.SecretField, read: true }] }],
-                profileAssignment: { claimsMapping: [], teamProfiles: [], overrides: [{ principalId: ModelScopedFixture.Granted, profiles: [ModelScopedFixture.Profile] }] },
-            },
+            businessUnits: [
+                { id: PpSecurityHarness.RootBu, name: ModelScopedFixture.RootUnitName },
+                { id: PpSecurityHarness.SalesBu, name: ModelScopedFixture.SalesUnitName, parent: PpSecurityHarness.RootBu },
+            ],
+            users: [
+                { principalId: ModelScopedFixture.Plain, businessUnitId: PpSecurityHarness.SalesBu },
+                { principalId: ModelScopedFixture.Granted, businessUnitId: PpSecurityHarness.SalesBu },
+            ],
+            teams: [],
+            roleAssignments: [],
+            profileAssignments: [],
+            roleOverrides: [],
+            profileOverrides: [],
         }
     }
 
@@ -221,33 +217,6 @@ test('a model-scoped query runs only against the named shard', async () =>
     })
 })
 
-test('model-scoped respects the SAME row filter as tenant-wide', async () =>
-{
-    await ModelScopedFixture.With(true, async world =>
-    {
-        const handler = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Plain))
-        const tenant = ModelScopedFixture.Text(await handler.RunCypherQuery(ModelScopedFixture.Params(undefined)))
-        const scoped = ModelScopedFixture.Text(await handler.RunCypherQuery(ModelScopedFixture.Params(world.ModelIds[0])))
-        assert.ok(!tenant.includes('beta'), 'tenant-wide hides the root-owned row')
-        assert.ok(!scoped.includes('beta'), 'model-scoped hides the same row')
-        assert.ok(scoped.includes('alpha'))
-    })
-})
-
-test('a secured field is masked in model-scoped results', async () =>
-{
-    await ModelScopedFixture.With(true, async world =>
-    {
-        const plain = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Plain))
-        const granted = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Granted))
-        const id = world.ModelIds[0]
-        const masked = ModelScopedFixture.Text(await plain.RunCypherQuery(ModelScopedFixture.Params(id, ModelScopedFixture.SecretQuery)))
-        const open = ModelScopedFixture.Text(await granted.RunCypherQuery(ModelScopedFixture.Params(id, ModelScopedFixture.SecretQuery)))
-        assert.ok(!masked.includes(ModelScopedFixture.Secret))
-        assert.ok(open.includes(ModelScopedFixture.Secret))
-    })
-})
-
 test('an UNKNOWN modelId is InvalidParams', async () =>
 {
     await ModelScopedFixture.With(true, async world =>
@@ -271,30 +240,6 @@ test('any non-member modelId is InvalidParams with an identical error', async ()
     })
 })
 
-test('a member shard where the principal sees no rows returns an empty page', async () =>
-{
-    await ModelScopedFixture.With(true, async world =>
-    {
-        const handler = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Plain))
-        const page = await handler.RunCypherQuery(ModelScopedFixture.Params(world.ModelIds[2]))
-        assert.deepEqual(page.items, [])
-        assert.equal(page.nextCursor, undefined)
-    })
-})
-
-test('a secured field is masked in a tenant-wide (no modelId) result', async () =>
-{
-    await ModelScopedFixture.With(true, async world =>
-    {
-        const plain = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Plain))
-        const granted = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Granted))
-        const masked = ModelScopedFixture.Text(await plain.RunCypherQuery(ModelScopedFixture.Params(undefined, ModelScopedFixture.SecretQuery)))
-        const open = ModelScopedFixture.Text(await granted.RunCypherQuery(ModelScopedFixture.Params(undefined, ModelScopedFixture.SecretQuery)))
-        assert.ok(!masked.includes(ModelScopedFixture.Secret))
-        assert.ok(open.includes(ModelScopedFixture.Secret))
-    })
-})
-
 test('a cursor minted for modelId A is stale for modelId B', async () =>
 {
     await ModelScopedFixture.With(true, async world =>
@@ -305,18 +250,6 @@ test('a cursor minted for modelId A is stale for modelId B', async () =>
         const second = await handler.RunCypherQuery(ModelScopedFixture.Params(world.ModelIds[0], ModelScopedFixture.LabelQuery, { pageSize: 1, cursor: first.nextCursor }))
         assert.ok(ModelScopedFixture.Text(second).includes('alpha2'))
         const stale = await ModelScopedFixture.CodeOf(handler.RunCypherQuery(ModelScopedFixture.Params(world.ModelIds[1], ModelScopedFixture.LabelQuery, { pageSize: 1, cursor: first.nextCursor })))
-        assert.equal(stale.code, CursorStaleError.Code)
-    })
-})
-
-test('a model-scoped cursor is stale across principals when identity-backed', async () =>
-{
-    await ModelScopedFixture.With(true, async world =>
-    {
-        const one = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Plain))
-        const two = world.Connect(ModelScopedFixture.Context(ModelScopedFixture.Granted))
-        const first = await one.RunCypherQuery(ModelScopedFixture.Params(world.ModelIds[0], ModelScopedFixture.LabelQuery, { pageSize: 1 }))
-        const stale = await ModelScopedFixture.CodeOf(two.RunCypherQuery(ModelScopedFixture.Params(world.ModelIds[0], ModelScopedFixture.LabelQuery, { pageSize: 1, cursor: first.nextCursor })))
         assert.equal(stale.code, CursorStaleError.Code)
     })
 })

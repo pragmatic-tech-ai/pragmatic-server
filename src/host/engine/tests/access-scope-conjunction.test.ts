@@ -1,71 +1,70 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessDefault, AccessScope, IsNull } from '@pragmatic-tech-ai/graph'
-import type { CellValue } from '@pragmatic-tech-ai/graph'
-import { AccessLevel, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
+import { AccessDefault, AccessScope, And, IsNull } from '@pragmatic-tech-ai/graph'
+import type { IEndpointMembers, IWriteRules } from '@pragmatic-tech-ai/graph'
 import { AccessScopeConjunction } from '../access-scope-conjunction.js'
-import { DepthScopeCompiler } from '../depth-scope-compiler.js'
 import { EngineSchemaCatalog } from '../engine-schema-catalog.js'
-import { DevScopeFx, ScopeAxis } from './dev-scope-fixture.js'
+import { DevScopeFx } from './dev-scope-fixture.js'
 
 class ConjunctionFx
 {
     public static readonly Class = 'class'
-    public static readonly Axes: readonly ScopeAxis[] = [ScopeAxis.Read, ScopeAxis.Create, ScopeAxis.Update, ScopeAxis.Delete]
-    public static readonly Concepts: readonly string[] = [DevScopeFx.Widget, DevScopeFx.Gizmo, DevScopeFx.Gadget, DevScopeFx.Term, DevScopeFx.Element]
-    public static readonly Nodes: readonly Readonly<Record<string, CellValue>>[] = [
-        { owner: DevScopeFx.P1, owningBu: DevScopeFx.Sales },
-        { owner: DevScopeFx.P2, owningBu: DevScopeFx.North },
-        {},
-    ]
+    public static readonly Label = 'label'
+    public static readonly From = 'from'
+    public static readonly To = 'to'
+    public static readonly Other = 'other'
 
-    /** A Default Allow scope with one always-true entry keyed on the reserved root, for reads and writes. */
-    public static RootScope(): AccessScope
+    public static Writes(key: string, rules: IWriteRules): AccessScope
     {
-        const always = new IsNull(ConjunctionFx.Class)
-        return AccessScope.Build({
-            Default: AccessDefault.Allow,
-            Rows: new Map([[DevScopeFx.Element, always]]),
-            Writes: new Map([[DevScopeFx.Element, { Create: always, Update: always, Delete: always }]]),
-        })
+        return AccessScope.Build({ Default: AccessDefault.Allow, Writes: new Map([[key, rules]]) })
+    }
+
+    public static Edges(members: IEndpointMembers): AccessScope
+    {
+        return AccessScope.Build({ Default: AccessDefault.Allow, Endpoints: new Map([[DevScopeFx.Gadget, members]]) })
+    }
+
+    public static Catalog(): EngineSchemaCatalog
+    {
+        return new EngineSchemaCatalog(DevScopeFx.Description())
     }
 }
 
 describe('AccessScopeConjunction', () =>
 {
-    test('an always-true scope on todl.Element keeps the Widget and Term decisions unchanged', async () =>
+    test('conjunction keeps Append and AppendTo', () =>
     {
-        const { Auth } = await DevScopeFx.Authorization(DevScopeFx.Model([
-            DevScopeFx.Privilege(PrivilegeAction.Read, AccessLevel.User),
-            DevScopeFx.Privilege(PrivilegeAction.Create, AccessLevel.Organization),
-        ]))
-        const context = DevScopeFx.Context(DevScopeFx.P1)
-        const description = DevScopeFx.Description()
-        const depth = DepthScopeCompiler.Compile(await Auth.EvaluatorForContext(context), context.Principal, description, await Auth.HasSecurityModelFor(context)).Scope()
-        const combined = AccessScopeConjunction.And(ConjunctionFx.RootScope(), depth, new EngineSchemaCatalog(description))
-        for (const concept of ConjunctionFx.Concepts)
-        {
-            for (const axis of ConjunctionFx.Axes)
-            {
-                for (const node of ConjunctionFx.Nodes)
-                {
-                    assert.equal(DevScopeFx.Admits(combined, concept, axis, node), DevScopeFx.Admits(depth, concept, axis, node), `${concept} ${axis} ${JSON.stringify(node)}`)
-                }
-            }
-        }
-        assert.equal(DevScopeFx.Admits(combined, DevScopeFx.Term, ScopeAxis.Read, {}), true, 'terms stay readable')
-        assert.equal(DevScopeFx.Admits(combined, DevScopeFx.Widget, ScopeAxis.Read, ConjunctionFx.Nodes[0]!), true, 'p1\'s own Widget stays visible')
+        const left = new IsNull(ConjunctionFx.Class)
+        const right = new IsNull(ConjunctionFx.Label)
+        const combined = AccessScopeConjunction.And(
+            ConjunctionFx.Writes(DevScopeFx.Widget, { Append: left, AppendTo: left }),
+            ConjunctionFx.Writes(DevScopeFx.Widget, { Append: right }),
+            ConjunctionFx.Catalog())
+        const rules = combined.Writes.get(DevScopeFx.Widget)
+        assert.ok(rules?.Append instanceof And, 'both scopes\' Append predicates are ANDed')
+        assert.deepEqual((rules.Append as And).Terms, [left, right])
+        assert.equal(rules.AppendTo, left, 'a one-sided AppendTo is kept')
     })
 
-    test('exact member sets are unioned and stay exact', async () =>
+    test('conjunction carries Endpoints', () =>
     {
-        const description = DevScopeFx.Description()
+        const members = { From: ConjunctionFx.From, To: ConjunctionFx.To }
+        const combined = AccessScopeConjunction.And(ConjunctionFx.Edges(members), AccessScope.Build({ Default: AccessDefault.Allow }), ConjunctionFx.Catalog())
+        assert.deepEqual(combined.Endpoints.get(DevScopeFx.Gadget), members, 'a one-sided entry is kept (the union)')
+        const same = AccessScopeConjunction.And(ConjunctionFx.Edges(members), ConjunctionFx.Edges({ ...members }), ConjunctionFx.Catalog())
+        assert.deepEqual(same.Endpoints.get(DevScopeFx.Gadget), members)
+        assert.throws(() => AccessScopeConjunction.And(ConjunctionFx.Edges(members), ConjunctionFx.Edges({ From: ConjunctionFx.Other, To: ConjunctionFx.To }), ConjunctionFx.Catalog()),
+            'two endpoint pairs for one edge concept are a host bug')
+    })
+
+    test('exact member sets are unioned and stay exact', () =>
+    {
         const exact = (members: readonly string[]): AccessScope => AccessScope.Build({
             Default: AccessDefault.Allow,
             HiddenExact: new Map([[DevScopeFx.Widget, new Set(members)]]),
             Writes: new Map([[DevScopeFx.Widget, { ReadOnlyExact: { Update: new Set(members) } }]]),
         })
-        const combined = AccessScopeConjunction.And(exact([DevScopeFx.Secret]), exact([DevScopeFx.Code]), new EngineSchemaCatalog(description))
+        const combined = AccessScopeConjunction.And(exact([DevScopeFx.Secret]), exact([DevScopeFx.Code]), ConjunctionFx.Catalog())
         assert.deepEqual([...combined.HiddenExact.get(DevScopeFx.Widget) ?? []].sort(), [DevScopeFx.Code, DevScopeFx.Secret])
         assert.deepEqual([...combined.Writes.get(DevScopeFx.Widget)?.ReadOnlyExact?.Update ?? []].sort(), [DevScopeFx.Code, DevScopeFx.Secret])
         assert.equal(combined.Hidden.size, 0)

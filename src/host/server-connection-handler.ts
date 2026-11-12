@@ -5,8 +5,7 @@ import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelVie
 import { ResponseError, ErrorCodes, DrainingError, ApplicationDeployProtocol, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherAppDeployParamsDto, AppDeployResultDto, AppWriteParams, AppWriteResultDto, AppWriteOpDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto, DataChangedPayload } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { RequestType, NotificationType } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { ResourceRef, IdentityConfig, PresentedSecret, LocalAccountNotFoundError } from '@pragmatic-tech-ai/todl-identity'
-import { AccessDepthEvaluator } from '@pragmatic-tech-ai/todl-identity-engine'
+import { ResourceRef, IdentityConfig, PresentedSecret, LocalAccountNotFoundError, InvalidSecurityModelError } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext, ISecurityModelConfig, Grant, Role, LocalAccount, ServiceTokenSummary, ServiceTokenGrant } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { Cypher } from '@pragmatic-tech-ai/graph'
@@ -22,7 +21,8 @@ import { TokenScopeGate } from './token-scope.js'
 import type { IEnvironmentDataService } from './environment/environment-data-service.js'
 import type { IEnvironmentDataChanges } from './environment/data-changed-push.js'
 import type { IGraphScope, IGraphScopeSource } from './engine/access-scope-source.js'
-import { AdminService, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, AdminTokenNotFoundError, ForeignTenantResourceError } from './admin-service.js'
+import { AdminService, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, AdminTokenNotFoundError, ForeignTenantResourceError, AdminSecurityModelUnavailableError, AdminSecuritySettingRefusedError } from './admin-service.js'
+import { SecurityModelWire } from './security-model-wire.js'
 import { AdminEnums, AdminEnumError } from './admin-enums.js'
 import { TenantPurpose } from '../tenancy/tenant-purpose.js'
 import type { IDevGraphService } from './graphs/dev-graph-service.js'
@@ -57,7 +57,6 @@ export class ServerConnectionHandler
     private static readonly ProviderSettingsField = 'providerSettings'
     private static readonly GroupRoleMapField = 'groupRoleMap'
     private static readonly ClaimsMappingField = 'claimsMapping'
-    private static readonly SecurityModelField = 'securityModel'
     private static readonly PrincipalIdField = 'principalId'
     private static readonly OutsideScopeMessage = "method is outside this credential's scope"
     private static readonly EmailField = 'email'
@@ -821,8 +820,8 @@ export class ServerConnectionHandler
         {
             this.EnforceRate(AdminProtocol.GetSecurityModel.method)
             this.authorize(AdminProtocol.GetSecurityModel.method)
-            // ISecurityModelConfig and SecurityModelDto are field-identical, JSON-safe shapes.
-            return await this.AdminCall(() => admin.GetSecurityModel()) as SecurityModelDto | undefined
+            const model = await this.AdminCall(() => admin.GetSecurityModel())
+            return model === undefined ? undefined : SecurityModelWire.ToDto(model)
         }))
         this.guarded(AdminProtocol.SetSecurityModel, async p =>
         {
@@ -924,6 +923,19 @@ export class ServerConnectionHandler
             if (error instanceof AdapterPackError && error.Kind === AdapterPackErrorKind.ProviderNotConfigured)
             {
                 throw new ResponseError(ErrorCodes.InvalidRequest, error.message)
+            }
+            if (error instanceof AdminSecurityModelUnavailableError)
+            {
+                throw new ResponseError(ErrorCodes.InvalidRequest, error.message)
+            }
+            // a refused setting names its fixed reason (the first issue); nothing was stored
+            if (error instanceof AdminSecuritySettingRefusedError)
+            {
+                throw new ResponseError(ErrorCodes.InvalidParams, InvalidParamsPrefix.Text + error.Issues[0].Message)
+            }
+            if (error instanceof InvalidSecurityModelError)
+            {
+                throw new ResponseError(ErrorCodes.InvalidParams, InvalidParamsPrefix.Text + error.Issues[0].Message)
             }
             throw error
         }
@@ -1129,8 +1141,7 @@ export class ServerConnectionHandler
             providerSettings: Object.fromEntries(config.ProviderSettings),
             groupRoleMap,
             claimsMapping: Object.fromEntries(config.ClaimsMapping),
-            // ISecurityModelConfig and SecurityModelDto are field-identical, JSON-safe shapes.
-            securityModel: config.SecurityModel as SecurityModelDto | undefined,
+            ...(config.SecurityModel === undefined ? {} : { securityModel: SecurityModelWire.ToDto(config.SecurityModel) }),
         }
     }
 
@@ -1155,20 +1166,8 @@ export class ServerConnectionHandler
                     throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.GroupRoleMapField))
                 }
             }
-            let securityModel: ISecurityModelConfig | undefined
-            if (dto.securityModel !== undefined)
-            {
-                const candidate = dto.securityModel as unknown as ISecurityModelConfig
-                try
-                {
-                    AccessDepthEvaluator.FromConfig(candidate)
-                }
-                catch
-                {
-                    throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.SecurityModelField))
-                }
-                securityModel = candidate
-            }
+            // the setting's semantic checks are the admin service's (SetConfig checks it as SetSecurityModel does)
+            const securityModel = dto.securityModel === undefined ? undefined : SecurityModelWire.FromDto(dto.securityModel)
             return new IdentityConfig(packId, depth, providerSettings, groupRoles, claimsMapping, securityModel)
         }
         catch (error)
@@ -1177,20 +1176,17 @@ export class ServerConnectionHandler
         }
     }
 
-    /** Validates the incoming model via the evaluator (as ParseConfigDto does) and rejects a malformed one before any write. */
+    /** The wire setting as the identity config (unknown action or level, or a non-array section: InvalidParams); the admin service validates it. */
     private ParseSecurityModel(dto: SetSecurityModelParams): ISecurityModelConfig
     {
-        // ISecurityModelConfig and SecurityModelDto are field-identical, JSON-safe shapes.
-        const candidate = dto?.securityModel as unknown as ISecurityModelConfig
         try
         {
-            AccessDepthEvaluator.FromConfig(candidate)
+            return SecurityModelWire.FromDto(dto?.securityModel)
         }
-        catch
+        catch (error)
         {
-            throw this.InvalidParams(new AdminEnumError(ServerConnectionHandler.SecurityModelField))
+            throw this.InvalidParams(error)
         }
-        return candidate
     }
 
     /** Both purposes: the attached IGraphModelView (dev structure + engine visibility, or the runtime engine projection). */
