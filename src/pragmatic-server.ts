@@ -77,7 +77,8 @@ import type { IEnvironmentTier1 } from './host/environment/environment-scope-rul
 import { EnvironmentSecuritySetting, LoggerSecuritySettingDiagnostics } from './host/environment/environment-security-setting.js'
 import { EnvironmentSecurityAdmin } from './host/environment/environment-security-admin.js'
 import { DeliverySecurity } from './host/environment/delivery-security.js'
-import { SecurityChangeLog } from './host/environment/security-change-log.js'
+import { LoggerSecurityChangeLogDiagnostics, SecurityChangeLog } from './host/environment/security-change-log.js'
+import { PendingBackfillStore } from './host/environment/pending-backfill-store.js'
 import { TimeoutUpgradeTimer } from './host/engine/bounded-wait.js'
 import { IdpDirectorySyncHost } from './host/environment/idp-directory-sync-host.js'
 import { IdpDirectorySync } from '@pragmatic-tech-ai/todl-identity'
@@ -670,7 +671,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     public SecurityChangeLog(): SecurityChangeLog
     {
         this.AssertRuntimePurpose()
-        this.securityChangeLog ??= new SecurityChangeLog(this.GraphsStorage())
+        this.securityChangeLog ??= new SecurityChangeLog(this.GraphsStorage(), new LoggerSecurityChangeLogDiagnostics(this.options.logger ?? StructuredLogger.ToStdout()))
         return this.securityChangeLog
     }
 
@@ -697,7 +698,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
 
     private async BuildDeliverySecurity(): Promise<DeliverySecurity>
     {
-        return new DeliverySecurity(await this.SecuritySetting(), this.SecurityChangeLog(), () => this.SystemPrincipal())
+        return new DeliverySecurity(await this.SecuritySetting(), this.SecurityChangeLog(), () => this.SystemPrincipal(), new PendingBackfillStore(this.GraphsStorage()))
     }
 
     /** Revokes a principal's per-user source credentials (R27): the auth endpoint calls it on sign-out. */

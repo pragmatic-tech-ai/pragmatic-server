@@ -3,6 +3,7 @@ import type { ConnectorError, IGraphEngineOptions, ISchemaDescription, ISignal, 
 import { StoragePackageSource } from '@pragmatic-tech-ai/todl'
 import { EngineCellMapper, EnvironmentCatalogComposer, SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import type { IEnvironmentCatalog, IPackageDelivery } from '@pragmatic-tech-ai/todl/engine'
+import type { PackageRef } from '@pragmatic-tech-ai/todl/domain'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable, IServiceProvider, IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { GraphLoadParamsDto, GraphLoadedDto, SecurityChangesDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -182,7 +183,7 @@ class EngineOpened implements ISignal<GraphEngine>
     }
 }
 
-/** A delivery's security diff waiting to be committed (prune, store, log) or backfilled, with what it runs on. */
+/** A delivery's security diff waiting to be committed (prune, store, log), with what it runs on. */
 class PendingSecurity
 {
     public constructor(
@@ -260,8 +261,11 @@ class OpenedEnvironment implements IDisposable
  * what the new packages cannot mean, stored and logged; fail closed, it only narrows access a moment early), then
  * redeliver (the catalog and its `Security` swap as one snapshot; scope caches drop on `Changed`, readers already
  * open keep the old snapshot and the scope they began with), then `Backfill` outside the mutex. A commit that fails is
- * reported (`UpgradeFailed`), leaves the host stale and is retried before the next redelivery or open applies; a
- * backfill that fails is reported and retried after the next `Deliver` or `Redeliver`. The delivery answers the
+ * reported (`UpgradeFailed`), leaves the host stale and is retried before the next delivery, redelivery or open
+ * applies; every first open (and recovery) first reconciles the stored setting against the catalog it launches, so a
+ * prune a crash or a lost lease kept from committing lands before anything is served. The owed backfill is recorded
+ * durably (PendingBackfillStore) before `persist`, resumed in the background after every open and run after every
+ * `Deliver` / `Redeliver`; a failure is reported (`UpgradeFailed`) and stays owed. The delivery answers the
  * logged change-log entry (`IDelivered.SecurityChanges`) when the diff is non-empty. An incompatible delivery is
  * rejected before anything is committed: the setting is untouched.
  */
@@ -294,10 +298,11 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
     /** True once an engine was launched: a later first-open branch replaces one, so it raises Changed. */
     private launched = false
     private disposing: Promise<void> | undefined
-    /** The last delivery's security diff, until its Commit lands (retried before the next redelivery or open applies). */
+    /**
+     * The last delivery's security diff, until its Commit lands (retried before the next delivery, redelivery or open
+     * applies; a process that dies first leaves it to the next open's reconcile).
+     */
     private uncommitted: PendingSecurity | undefined
-    /** Committed diffs whose newly owned concepts still wait for their ownership backfill. */
-    private readonly backfills: PendingSecurity[] = []
 
     public constructor(
         private readonly deliveries: EnvironmentDeliveries,
@@ -370,9 +375,13 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
     {
         const delivered = await this.Serialized(async (): Promise<IDelivered<T>> =>
         {
+            // an earlier delivery's diff that did not commit is committed (and logged) first; failing, nothing persists
+            await this.CommitSecurity()
             const prospective = await this.Compose(await this.deliveries.With(change))
             const security = this.security === undefined ? undefined : await this.security()
             const diff = security === undefined ? undefined : await security.Diff(await this.CurrentCatalog(), prospective)
+            // the owed backfill is durable before the delivery is: a crash after persist cannot lose it
+            if (security !== undefined && diff !== undefined) await security.Expect(diff)
             const result = await persist()
             if (security !== undefined && diff !== undefined) this.uncommitted = new PendingSecurity(security, diff, change.Name, EnvironmentEngineHost.VersionOf(change))
             let changes: SecurityChangesDto | undefined
@@ -417,6 +426,12 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
         await this.Backfill()
     }
 
+    /** Waits for the ownership backfills owed now (the ones every open resumes in the background) to run once. */
+    public BackfillNow(): Promise<void>
+    {
+        return this.Backfill()
+    }
+
     /**
      * Forgets every opened external connector of the running engine, so the next use of each opens it again (R23:
      * after the adapter catalog disposed and dropped its adapters, e.g. a connector refresh).
@@ -441,7 +456,8 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
         if (this.disposing !== undefined) throw new Error(EnvironmentEngineHost.DisposedMessage)
         const opened = this.opened
         if (opened !== undefined && !this.stale) return opened
-        return this.Serialized(async () =>
+        let launched = false
+        const current = await this.Serialized(async () =>
         {
             if (this.opened === undefined)
             {
@@ -449,8 +465,12 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
                 const replacing = this.launched
                 await this.CommitSecurity()
                 const deliveries = await this.deliveries.Current()
-                this.opened = await this.Launch(EnvironmentEngineHost.SnapshotOf(await this.Compose(deliveries), deliveries))
+                const catalog = await this.Compose(deliveries)
+                // a prune a crash or a lost lease kept from committing lands before anything is served (Review Focus 1)
+                if (this.security !== undefined) await (await this.security()).Reconcile(catalog, EnvironmentEngineHost.RefList(catalog.Packages))
+                this.opened = await this.Launch(EnvironmentEngineHost.SnapshotOf(catalog, deliveries))
                 this.stale = false
+                launched = true
                 if (replacing) this.RaiseChanged()
             }
             else if (this.stale)
@@ -459,6 +479,9 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
             }
             return this.opened!
         })
+        // an opened engine resumes the backfills a crash or a lost lease left owed (in the background, outside the mutex)
+        if (launched) void this.Backfill()
+        return current
     }
 
     /** Runs `section` under the host mutex, refusing once the host is disposing. */
@@ -518,8 +541,8 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
     }
 
     /**
-     * Commits the uncommitted delivery's security diff (prune, store, log) and queues its ownership backfill; the logged
-     * entry, undefined when nothing is uncommitted or the diff was empty. Under the mutex; a failure keeps it uncommitted.
+     * Commits the uncommitted delivery's security diff (prune, store, log); the logged entry, undefined when nothing is
+     * uncommitted or the diff was empty. Under the mutex; a failure keeps it uncommitted.
      */
     private async CommitSecurity(): Promise<SecurityChangesDto | undefined>
     {
@@ -527,27 +550,25 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
         if (pending === undefined) return undefined
         const entry = await pending.Security.Commit(pending.Diff, pending.Delivery, pending.Version)
         this.uncommitted = undefined
-        if (pending.Diff.NewlyOwned.length > 0) this.backfills.push(pending)
         return entry
     }
 
-    /** Runs the waiting ownership backfills on the settled engine (outside the mutex); a failure is reported and kept for the next try. */
+    /**
+     * Runs the owed ownership backfills (the durable PendingBackfillStore) on the settled engine, outside the mutex; a
+     * failure is reported (`UpgradeFailed`) and the concepts stay owed for the next delivery, redelivery or open.
+     */
     private async Backfill(): Promise<void>
     {
-        const pending = this.backfills.splice(0)
-        for (let index = 0; index < pending.length; index++)
+        if (this.security === undefined || this.disposing !== undefined) return
+        try
         {
-            try
-            {
-                const [engine, snapshot] = await this.Settled()
-                await pending[index].Security.Backfill(pending[index].Diff, engine, snapshot)
-            }
-            catch (error)
-            {
-                this.backfills.push(...pending.slice(index))
-                if (this.disposing === undefined) this.diagnostics.UpgradeFailed(error)
-                return
-            }
+            const security = await this.security()
+            const [engine, snapshot] = await this.Settled()
+            await security.Backfill(engine, snapshot)
+        }
+        catch (error)
+        {
+            if (this.disposing === undefined) this.diagnostics.UpgradeFailed(error)
         }
     }
 
@@ -662,7 +683,13 @@ export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, I
     /** The version a change-log entry names: the app version of a Deploy, the `model@version` list of a Promote. */
     private static VersionOf(change: DeliveryChange): string
     {
-        return change.Version ?? change.Packages.map(ref => ref.model + EnvironmentEngineHost.RefSeparator + ref.version).join(EnvironmentEngineHost.ListSeparator)
+        return change.Version ?? EnvironmentEngineHost.RefList(change.Packages)
+    }
+
+    /** `model@version, ...` of `refs`. */
+    private static RefList(refs: readonly Required<PackageRef>[]): string
+    {
+        return refs.map(ref => ref.model + EnvironmentEngineHost.RefSeparator + ref.version).join(EnvironmentEngineHost.ListSeparator)
     }
 
     private static KeyOf(snapshot: EnvironmentSnapshot): string

@@ -138,6 +138,24 @@ export class EnvironmentFixture
     public async Start(options: IEnvironmentFixtureOptions = {}): Promise<PragmaticServer>
     {
         if (options.Identity === true) this.MasterKey()
+        await this.Boot(options)
+        if (options.SecurityModel !== undefined) await this.SaveSecurityModel(options.SecurityModel)
+        return this.server!
+    }
+
+    /**
+     * Disposes the running server and starts a fresh one over the same directories and master key (a restart, or the
+     * next lease holder after a crash): nothing held in the old server's memory survives.
+     */
+    public async Restart(options: IEnvironmentFixtureOptions = {}): Promise<PragmaticServer>
+    {
+        await this.server?.Dispose()
+        await this.Boot(options)
+        return this.server!
+    }
+
+    private async Boot(options: IEnvironmentFixtureOptions): Promise<void>
+    {
         this.server = new PragmaticServer({
             purpose: TenantPurpose.Runtime,
             packagesRoot: this.PackagesDir,
@@ -149,8 +167,6 @@ export class EnvironmentFixture
                 : {}),
         })
         await this.server.Start()
-        if (options.SecurityModel !== undefined) await this.SaveSecurityModel(options.SecurityModel)
-        return this.server
     }
 
     /**

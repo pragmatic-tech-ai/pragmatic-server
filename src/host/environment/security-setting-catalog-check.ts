@@ -1,6 +1,6 @@
 import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import { AccessLevel, BaseRole } from '@pragmatic-tech-ai/todl-identity'
-import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
+import type { IProfileAssignmentConfig, IProfileOverrideConfig, IRoleAssignmentConfig, IRoleOverrideConfig, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { Tier1Catalog, Tier1DiagnosticCode, Tier1ScopeCompiler } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { TenantSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
 
@@ -36,6 +36,18 @@ export class SecuritySettingIssue
     public get Message(): string
     {
         return SecuritySettingIssue.Messages[this.Code]
+    }
+}
+
+/** The entries of a setting one issue names (what a deploy prunes for it, S4 Task 13). */
+export class SecuritySettingEntries
+{
+    public constructor(
+        public readonly RoleOverrides: readonly IRoleOverrideConfig[],
+        public readonly ProfileOverrides: readonly IProfileOverrideConfig[],
+        public readonly RoleAssignments: readonly IRoleAssignmentConfig[],
+        public readonly ProfileAssignments: readonly IProfileAssignmentConfig[])
+    {
     }
 }
 
@@ -89,6 +101,36 @@ export class SecuritySettingCatalogCheck
         return issues
     }
 
+    /**
+     * The entries of `config` that `issue` names, from its subject (the one home of the subject formats): UnknownRole →
+     * the role's overrides and assignments; UnknownProfile → the profile's overrides and assignments; UnknownConcept →
+     * the role overrides on the concept; ExternalConcept → the role and profile overrides on it; OrganizationOwnedDepth →
+     * the `role/concept/action` override at a depth other than none or organization; UnsecuredField → the profile
+     * overrides on `concept.field`. SystemAdministratorOverride names none (the admin save refuses it; never stored).
+     */
+    public static EntriesOf(issue: SecuritySettingIssue, config: ISecurityModelConfig): SecuritySettingEntries
+    {
+        const subject = issue.Subject
+        const none: never[] = []
+        switch (issue.Code)
+        {
+            case SecuritySettingIssueCode.UnknownRole:
+                return new SecuritySettingEntries(config.roleOverrides.filter(o => o.role === subject), none, config.roleAssignments.filter(a => a.role === subject), none)
+            case SecuritySettingIssueCode.UnknownProfile:
+                return new SecuritySettingEntries(none, config.profileOverrides.filter(o => o.profile === subject), none, config.profileAssignments.filter(a => a.profile === subject))
+            case SecuritySettingIssueCode.UnknownConcept:
+                return new SecuritySettingEntries(config.roleOverrides.filter(o => o.concept === subject), none, none, none)
+            case SecuritySettingIssueCode.ExternalConcept:
+                return new SecuritySettingEntries(config.roleOverrides.filter(o => o.concept === subject), config.profileOverrides.filter(o => o.concept === subject), none, none)
+            case SecuritySettingIssueCode.OrganizationOwnedDepth:
+                return new SecuritySettingEntries(config.roleOverrides.filter(o => SecuritySettingCatalogCheck.IsDepthOverride(o, subject)), none, none, none)
+            case SecuritySettingIssueCode.UnsecuredField:
+                return new SecuritySettingEntries(none, config.profileOverrides.filter(o => SecuritySettingCatalogCheck.FieldSubject(o.concept, o.field) === subject), none, none)
+            default:
+                return new SecuritySettingEntries(none, none, none, none)
+        }
+    }
+
     /** A concept the environment describes but does not store: a connector holds it. */
     private IsExternal(concept: string): boolean
     {
@@ -98,14 +140,26 @@ export class SecuritySettingCatalogCheck
     /** A profile-override subject (`concept.field`) on an external concept, already reported as ExternalConcept. */
     private IsExternalField(subject: string): boolean
     {
-        return this.config.profileOverrides.some(o => this.IsExternal(o.concept) && o.concept + SecuritySettingCatalogCheck.FieldSeparator + o.field === subject)
+        return this.config.profileOverrides.some(o => this.IsExternal(o.concept) && SecuritySettingCatalogCheck.FieldSubject(o.concept, o.field) === subject)
     }
 
     /** True when `subject` (`role/concept/action`) is a role override row (a package default is never refused here). */
     private IsOverride(subject: string): boolean
     {
-        return this.config.roleOverrides.some(o => [o.role, o.concept, o.action].join(SecuritySettingCatalogCheck.SubjectSeparator) === subject
-            && o.level !== AccessLevel.None && o.level !== AccessLevel.Organization)
+        return this.config.roleOverrides.some(o => SecuritySettingCatalogCheck.IsDepthOverride(o, subject))
+    }
+
+    /** `override` is the `role/concept/action` row of `subject` at a depth an unowned concept refuses. */
+    private static IsDepthOverride(override: IRoleOverrideConfig, subject: string): boolean
+    {
+        return [override.role, override.concept, override.action].join(SecuritySettingCatalogCheck.SubjectSeparator) === subject
+            && override.level !== AccessLevel.None && override.level !== AccessLevel.Organization
+    }
+
+    /** The `concept.field` subject of a field diagnostic. */
+    private static FieldSubject(concept: string, field: string): string
+    {
+        return concept + SecuritySettingCatalogCheck.FieldSeparator + field
     }
 
     private External(): SecuritySettingIssue[]

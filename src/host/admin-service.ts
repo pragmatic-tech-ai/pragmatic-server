@@ -75,6 +75,11 @@ export interface ISecuritySettingAdmin
 {
     /** The catalog issues of `config` against the deployed packages; throws InvalidSecurityModelError when it is structurally invalid. */
     Issues(config: ISecurityModelConfig): Promise<readonly SecuritySettingIssue[]>
+    /**
+     * Runs `write` (a store of the tenant config) under the setting's write lock, after re-checking `config` (when
+     * given) against the catalog the setting was last reconciled to; the issues found, `write` not run when any.
+     */
+    Locked(config: ISecurityModelConfig | undefined, write: () => Promise<void>): Promise<readonly SecuritySettingIssue[]>
     /** Drops the cached setting, so every scope compiled after it reads the stored one. */
     Invalidate(): void
     /** The environment's security catalog: the vocabulary the admin edits the setting against (S4 Task 10). */
@@ -229,7 +234,7 @@ export class AdminService
         {
             await this.CheckSecurityModel(config.SecurityModel)
         }
-        await this.configStore.Save(this.tenant.Id, config)
+        await this.Locked(config.SecurityModel, () => this.configStore.Save(this.tenant.Id, config))
         this.security?.Invalidate()
         const detail = new Map<string, string>([
             [AdminService.ActorKey, actor],
@@ -288,22 +293,45 @@ export class AdminService
     public async SetSecurityModel(actor: string, model: ISecurityModelConfig): Promise<void>
     {
         await this.CheckSecurityModel(model)
-        const config = await this.configStore.Get(this.tenant.Id)
-        if (config === null)
+        let stored: IdentityConfig | undefined
+        await this.Locked(model, async () =>
         {
-            throw new AdminConfigMissingError()
-        }
-        const next = new IdentityConfig(config.PackId, config.DelegationDepth, config.ProviderSettings, config.GroupRoleMap, config.ClaimsMapping, model)
-        await this.configStore.Save(this.tenant.Id, next)
+            const config = await this.configStore.Get(this.tenant.Id)
+            if (config === null)
+            {
+                throw new AdminConfigMissingError()
+            }
+            stored = config
+            await this.configStore.Save(this.tenant.Id, new IdentityConfig(config.PackId, config.DelegationDepth, config.ProviderSettings, config.GroupRoleMap, config.ClaimsMapping, model))
+        })
         const detail = new Map<string, string>([
             [AdminService.ActorKey, actor],
             [AdminService.ActionKey, AdminService.SetSecurityModelAction],
-            [AdminService.PackIdKey, config.PackId],
+            [AdminService.PackIdKey, stored!.PackId],
         ])
         await this.Audit(null, detail)
         this.security?.Invalidate()
         // Pull the directory for the groups and principals the new setting names (S4 Task 10); the run re-invalidates when it lands.
         this.security?.RequestSync()
+    }
+
+    /**
+     * Stores through `write` under the security setting's write lock (S4 Task 13: a deploy's prune and an admin save
+     * never interleave), re-checking `model` against the catalog a deploy reconciled the setting to meanwhile; without a
+     * security setting (Development) `write` runs as is.
+     */
+    private async Locked(model: ISecurityModelConfig | undefined, write: () => Promise<void>): Promise<void>
+    {
+        if (this.security === undefined)
+        {
+            await write()
+            return
+        }
+        const issues = await this.security.Locked(model, write)
+        if (issues.length > 0)
+        {
+            throw new AdminSecuritySettingRefusedError(issues)
+        }
     }
 
     private async CheckSecurityModel(model: ISecurityModelConfig): Promise<void>

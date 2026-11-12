@@ -8,6 +8,7 @@ import type { SecurityChangesDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { DeliverySecurity } from '../delivery-security.js'
 import type { EnvironmentSecuritySetting } from '../environment-security-setting.js'
 import { SecurityChangeLog } from '../security-change-log.js'
+import type { PendingBackfillStore } from '../pending-backfill-store.js'
 import type { SecurityDeployDiff } from '../security-deploy-diff.js'
 import type { SystemPrincipalScope } from '../system-principal-scope.js'
 
@@ -39,11 +40,11 @@ class LogFx
         }
     }
 
-    /** A DeliverySecurity whose setting and system principal are never reached (an empty diff prunes and backfills nothing). */
+    /** A DeliverySecurity over no stored setting; its system principal and backfill store are never reached. */
     public static Security(log: SecurityChangeLog): DeliverySecurity
     {
-        const unused = (): never => { throw new Error(LogFx.Unused) }
-        return new DeliverySecurity({ Config: unused } as unknown as EnvironmentSecuritySetting, log, () => Promise.reject(new Error(LogFx.Unused)) as Promise<SystemPrincipalScope>)
+        const setting = { Exclusive: <T>(section: () => Promise<T>): Promise<T> => section(), Config: async () => undefined, Reconcile: () => undefined }
+        return new DeliverySecurity(setting as unknown as EnvironmentSecuritySetting, log, () => Promise.reject(new Error(LogFx.Unused)) as Promise<SystemPrincipalScope>, {} as PendingBackfillStore)
     }
 }
 
@@ -66,7 +67,7 @@ describe('security change log', () =>
     {
         await LogFx.Run(async log =>
         {
-            const empty = { IsEmpty: true, Prunes: false, NewlyOwned: [] } as unknown as SecurityDeployDiff
+            const empty = { IsEmpty: true, Prunes: false, NewlyOwned: [], Prospective: undefined, Rebased: (): unknown => empty } as unknown as SecurityDeployDiff
             assert.equal(await LogFx.Security(log).Commit(empty, LogFx.App, LogFx.App), undefined)
             assert.deepEqual(await log.List(), [])
         })

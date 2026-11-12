@@ -59,6 +59,12 @@ class RecordingReload implements ISecuritySettingAdmin
         return []
     }
 
+    public async Locked(_config: ISecurityModelConfig | undefined, write: () => Promise<void>): Promise<never[]>
+    {
+        await write()
+        return []
+    }
+
     public async SecurityChanges(): Promise<never[]>
     {
         return []

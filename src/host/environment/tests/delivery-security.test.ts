@@ -3,12 +3,13 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { AccessScope } from '@pragmatic-tech-ai/graph'
-import { SystemNames } from '@pragmatic-tech-ai/todl/engine'
+import { DeliveryChannel, SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import { AccessLevel, BaseRole, PrivilegeAction, SystemPrincipal } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { AppWriteStatus, AssignStatus, ShareSubjectKind } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppDeployResultDto, ContributedPackageDto, CypherAppDeployParamsDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { PragmaticServer } from '../../../pragmatic-server.js'
+import { DeliverySecurity } from '../delivery-security.js'
 import { EnvironmentFixture } from './environment-fixture.js'
 import type { FixturePackageRef } from './environment-fixture.js'
 import { Tier1Fx } from './tier1-fixture.js'
@@ -34,6 +35,7 @@ class DeliveryFx
     public static readonly Crm2 = { id: 'crm', version: '2.0.0' }
     public static readonly Extra = { id: 'extra', version: '1.0.0' }
     public static readonly ExtraSet = 'extra-set'
+    public static readonly Crash = 'the process died after the persist step'
     public static readonly Employee = 'hr.Employee'
     public static readonly Review = 'hr.Review'
     public static readonly Reviewer = 'hr.Reviewer'
@@ -281,6 +283,33 @@ describe('delivery security (S4 Task 13)', () =>
             const assigned = await server.EnvironmentAssign().Assign(Tier1Fx.Context(Tier1Fx.Admin), { concept: DeliveryFx.Account, id: DeliveryFx.A1, owner: { kind: ShareSubjectKind.Principal, id: Tier1Fx.Alice } })
             assert.equal(assigned.status, AssignStatus.Applied, assigned.reason)
             assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Alice, DeliveryFx.Account), [DeliveryFx.A1], 'visible once assigned')
+        })
+    })
+
+    test('a crash between persist and commit neither revives a dropped override nor loses the backfill', async () =>
+    {
+        await DeliveryFx.Run(async (fx, server) =>
+        {
+            await fx.Seed([{ Concept: DeliveryFx.Account, Id: DeliveryFx.A1, Properties: { [Tier1Fx.Name]: DeliveryFx.A1 } }])
+            // v2 (drops hr.Review and Reviewer, owns crm.Account) is persisted, then the process dies before the commit
+            const change = { Channel: DeliveryChannel.Deploy, Name: DeliveryFx.App, Packages: [DeliveryFx.Hr2, DeliveryFx.Crm2].map(ref => ({ model: ref.id, version: ref.version })), Version: DeliveryFx.V2 }
+            await assert.rejects(server.EnvironmentEngine().Deliver(change, async () =>
+            {
+                fx.Live(DeliveryFx.App, DeliveryFx.V2, [DeliveryFx.Hr2, DeliveryFx.Crm2])
+                throw new Error(DeliveryFx.Crash)
+            }), new RegExp(DeliveryFx.Crash))
+            const next = await fx.Restart({ Identity: true })
+            const host = next.EnvironmentEngine()
+            await host.Engine()
+            await host.BackfillNow()
+            assert.deepEqual((await DeliveryFx.Stored(next))?.roleOverrides, [], 'the open reconciled the setting against v2')
+            assert.equal(await DeliveryFx.SystemRead(next, DeliveryFx.A1, SystemNames.Owner), SystemPrincipal.IdFor(EnvironmentFixture.TenantId), 'the owed backfill resumed')
+            await DeliveryFx.Applied(fx, DeliveryFx.V3, [DeliveryFx.Hr3, DeliveryFx.Crm2])
+            const stored = await DeliveryFx.Stored(next)
+            assert.deepEqual(stored?.roleOverrides, [], 'the restored concept does not revive the override')
+            assert.equal(stored?.roleAssignments.some(a => a.role === DeliveryFx.Reviewer), false, 'nor the removed role assignments')
+            const reconciled = (await next.SecurityChangeLog().List()).find(entry => entry.delivery === DeliverySecurity.ReconcileDelivery)
+            assert.deepEqual(reconciled?.roleOverridesDropped, [DeliveryFx.ReviewerOverride], 'the drop is in the change log')
         })
     })
 

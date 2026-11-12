@@ -3,6 +3,8 @@ import { IdentityConfig, IdpDirectorySnapshot, InvalidSecurityModelError, Unread
 import type { IIdpDirectoryStore, ISecurityModelConfig, ITenantConfigStore, Tenant } from '@pragmatic-tech-ai/todl-identity'
 import { TenantSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
+import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
+import { AsyncMutex } from '../cypher/async-mutex.js'
 import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
 import { VoidSignal } from '../engine/access-scope-source.js'
@@ -38,12 +40,19 @@ export class LoggerSecuritySettingDiagnostics implements ISecuritySettingDiagnos
  * it cannot trust (`UnreadableIdpDirectoryRecordError`), each reported once per generation. Any other error propagates
  * (a later call retries). The model is built once per generation; `Invalidate` drops it, bumps `Generation` and raises
  * `Changed`, so scopes and cursors compiled before an edit are superseded. The generation is per process.
+ *
+ * Every write of the stored setting (the admin save, a deploy's prune) runs inside `Exclusive`, so a read-modify-write
+ * never loses or reverts another. `Reconciled` is the catalog the stored setting was last checked against inside the
+ * lock (a deploy's prospective catalog at its commit, or the running one at open): an admin save re-checks against it
+ * under the lock, so an entry checked against a catalog a deploy is replacing is refused, not stored.
  */
 export class EnvironmentSecuritySetting implements IDisposable
 {
     public readonly Changed: ISignal<void>
 
     private readonly changed = new VoidSignal()
+    private readonly mutex = new AsyncMutex()
+    private reconciled: IEnvironmentCatalog | undefined
     private model: Promise<TenantSecurityModel> | undefined
     private generation = 0
     private disposed = false
@@ -68,9 +77,28 @@ export class EnvironmentSecuritySetting implements IDisposable
         return (await this.store.Get(this.tenant.Id))?.SecurityModel ?? undefined
     }
 
+    /** The catalog the stored setting was last reconciled against (undefined until a commit or an open reconciled it). */
+    public get Reconciled(): IEnvironmentCatalog | undefined
+    {
+        return this.reconciled
+    }
+
+    /** Runs `section` holding the setting's write lock (not reentrant: `section` must not call `Exclusive`). */
+    public Exclusive<T>(section: () => Promise<T>): Promise<T>
+    {
+        return this.mutex.Run(section)
+    }
+
+    /** Records that the stored setting now holds nothing `catalog` cannot mean; call inside `Exclusive`. */
+    public Reconcile(catalog: IEnvironmentCatalog): void
+    {
+        this.reconciled = catalog
+    }
+
     /**
      * Stores `config` as the setting, keeping the tenant config's other sections (as the admin save does), then
-     * `Invalidate`. Nothing is stored when the tenant has no stored config (it then holds no setting either).
+     * `Invalidate`; call inside `Exclusive`. Nothing is stored when the tenant has no stored config (it then holds no
+     * setting either).
      */
     public async Replace(config: ISecurityModelConfig): Promise<void>
     {

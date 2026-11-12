@@ -41,6 +41,26 @@ export class EnvironmentSecurityAdmin implements ISecuritySettingAdmin
         return SecuritySettingCatalogCheck.Issues(config, catalog, model)
     }
 
+    /**
+     * Runs `write` holding the setting's write lock. With `config`, it is first re-checked against the catalog the stored
+     * setting was last reconciled to (a deploy's prospective catalog once it committed): its issues are returned and
+     * `write` does not run. Without a reconciled catalog nothing committed since the pre-check, which then stands.
+     */
+    public Locked(config: ISecurityModelConfig | undefined, write: () => Promise<void>): Promise<readonly SecuritySettingIssue[]>
+    {
+        return this.setting.Exclusive(async () =>
+        {
+            const catalog = this.setting.Reconciled
+            if (config !== undefined && catalog !== undefined)
+            {
+                const issues = SecuritySettingCatalogCheck.Issues(config, catalog, await this.setting.ModelOf(config))
+                if (issues.length > 0) return issues
+            }
+            await write()
+            return []
+        })
+    }
+
     public Invalidate(): void
     {
         this.setting.Invalidate()
