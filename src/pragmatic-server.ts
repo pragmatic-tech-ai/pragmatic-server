@@ -378,7 +378,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
 
     /**
      * The tenant's IdP directory sync host (S4 Task 10): pulls the directory on start, after each `SetSecurityModel` and
-     * every {@link IdpDirectorySyncHost.IntervalMs}, invalidating {@link SecuritySetting} after each run. Memoized (a
+     * every {@link IdpDirectorySyncHost.IntervalMs}, invalidating {@link SecuritySetting} after a run that changed it. Memoized (a
      * failed build is retried) and disposed with the server before the setting. Runtime tenants with identity only; one
      * `PragmaticServer` holds the tenant lease, so exactly one replica polls.
      */
@@ -632,8 +632,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * The scope of work no user started (connector population, scheduled flows, agents, identity resolution, deploy
-     * backfill): the environment's system principal's (SystemPrincipalScope), memoized per scope-source generation (a
+     * The system principal's read scope (SystemPrincipalScope) for work no user started. Nothing in the server reads
+     * through it yet (the deploy backfill uses `SystemPrincipal()` directly); future background work (connector
+     * population, scheduled flows, agents, identity resolution) must run under it. Memoized per scope-source generation (a
      * security reload or an engine upgrade yields a fresh scope with the same rights). Runtime tenants with identity only.
      */
     public async SystemScope(): Promise<IGraphScope>
@@ -940,7 +941,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
      * The process-wide adapter catalog every external connector borrows its adapters from (ruling S18); every factory
      * registered on it is wrapped in the caller's credentials (PR12).
      */
-    public AdapterCatalog(): DataSourceAdapterCatalog
+    protected AdapterCatalog(): DataSourceAdapterCatalog
     {
         return this.root.Services().getRequired(DataSourceAdapterCatalog.ServiceKey)
     }
@@ -1034,8 +1035,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
             // the directory sync host polls the setting: stop it before the setting goes
             // awaited first: a build still running would otherwise subscribe after the follow below is disposed
             const directorySync = await this.directorySync?.catch(() => undefined)
+            // an in-flight run finishes (stores, revokes, raises Deprovisioned) before the lease can go
+            await directorySync?.Stop()
             this.deprovisioned?.dispose()
-            directorySync?.dispose()
             const setting = await this.securitySetting?.catch(() => undefined)
             setting?.dispose()
             // the environment engine's connectors borrow adapters from the connectors host's catalog: it closes first

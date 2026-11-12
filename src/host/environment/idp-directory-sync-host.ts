@@ -1,7 +1,8 @@
 import type { ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { Disposable, Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
-import type { IdpDirectorySync, Tenant } from '@pragmatic-tech-ai/todl-identity'
+import { UnreadableIdpDirectoryRecordError } from '@pragmatic-tech-ai/todl-identity'
+import type { IdpDirectorySnapshot, IdpDirectorySync, Tenant } from '@pragmatic-tech-ai/todl-identity'
 import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
 import type { EnvironmentSecuritySetting } from './environment-security-setting.js'
@@ -65,10 +66,13 @@ class DeprovisionedSignal implements ISignal<readonly string[]>
  * Drives one tenant's IdP directory sync (S3 `IdpDirectorySync`) on a poll: one run when its server starts serving (the
  * creator calls {@link RunNow}), one after each admin `SetSecurityModel`, then every {@link IntervalMs} while the server
  * lives. A `PragmaticServer` exists only while it holds the tenant lease, so exactly one replica polls. Runs are
- * serialized; a run requested while one is in flight coalesces into one more. After a run the security setting is
- * invalidated so the next scope reads the new snapshot, and the run's deprovisioned principal ids are raised on
- * {@link Deprovisioned} (controller ruling R27: Task 12 drops their stored tokens). A failing run is logged by error
- * name and keeps the previous snapshot (S3's `Run` stores the snapshot only after a successful pull).
+ * serialized; a run requested while one is in flight coalesces into one more. A run whose snapshot differs from the
+ * stored one in what security reads (authority, user states, group members; not the timestamp) or that deprovisions
+ * anyone invalidates the security setting so the next scope reads the new snapshot; an unchanged run leaves it (and
+ * every compiled scope and cursor) alone. The run's deprovisioned principal ids are raised on {@link Deprovisioned}
+ * (controller ruling R27: Task 12 drops their stored tokens). A failing run (including a setting the store cannot
+ * read) is logged by error name and keeps the previous snapshot (S3's `Run` stores the snapshot only after a
+ * successful pull); a run never rejects. {@link Stop} waits for an in-flight run, so none outlives the lease.
  */
 export class IdpDirectorySyncHost implements IDisposable
 {
@@ -115,6 +119,13 @@ export class IdpDirectorySyncHost implements IDisposable
         this.timer.dispose()
     }
 
+    /** Disposes the host and resolves once an in-flight run (if any) has settled; never rejects. */
+    public Stop(): Promise<void>
+    {
+        this.dispose()
+        return this.running ?? Promise.resolve()
+    }
+
     private async Loop(): Promise<void>
     {
         try
@@ -134,21 +145,65 @@ export class IdpDirectorySyncHost implements IDisposable
 
     private async RunOnce(): Promise<void>
     {
-        const config = await this.setting.Config()
-        if (config === undefined)
-        {
-            // Nothing is stored, so the directory has no groups or principals to ask about.
-            return
-        }
         try
         {
+            const config = await this.setting.Config()
+            if (config === undefined || this.disposed)
+            {
+                // Nothing is stored, so the directory has no groups or principals to ask about.
+                return
+            }
+            const before = await this.StoredSnapshot()
             const result = await this.sync.Run(this.tenant, config)
-            this.setting.Invalidate()
+            if (result.Deprovisioned.length > 0 || before === undefined || !IdpDirectorySyncHost.SameSecurity(before, result.Snapshot))
+            {
+                this.setting.Invalidate()
+            }
             this.deprovisioned.Raise(result.Deprovisioned)
         }
         catch (error)
         {
             this.diagnostics.Failed(this.tenant.Id, error instanceof Error ? error : new Error(String(error)))
         }
+    }
+
+    /** The snapshot stored before the run; undefined when it cannot be read (the run then counts as a change). */
+    private async StoredSnapshot(): Promise<IdpDirectorySnapshot | undefined>
+    {
+        try
+        {
+            return await this.setting.Snapshot()
+        }
+        catch (error)
+        {
+            if (error instanceof UnreadableIdpDirectoryRecordError) return undefined
+            throw error
+        }
+    }
+
+    /** Equal in what the security model reads: authority, every user's state and every group's members (order-free). */
+    private static SameSecurity(a: IdpDirectorySnapshot, b: IdpDirectorySnapshot): boolean
+    {
+        if (a.Authoritative !== b.Authoritative || a.Users().size !== b.Users().size || a.Groups().size !== b.Groups().size)
+        {
+            return false
+        }
+        for (const [principalId, state] of a.Users())
+        {
+            if (b.Users().get(principalId) !== state) return false
+        }
+        for (const [groupId, members] of a.Groups())
+        {
+            const other = b.Groups().get(groupId)
+            if (other === undefined) return false
+            const left = new Set(members)
+            const right = new Set(other)
+            if (left.size !== right.size) return false
+            for (const member of left)
+            {
+                if (!right.has(member)) return false
+            }
+        }
+        return true
     }
 }

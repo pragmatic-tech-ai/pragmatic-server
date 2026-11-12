@@ -15,12 +15,15 @@ import { EnvironmentFixture } from './environment-fixture.js'
 /** A config store whose stored security model can be swapped between runs. */
 class MutableConfigStore implements ITenantConfigStore
 {
+    public Fail: Error | undefined
+
     public constructor(public model: ISecurityModelConfig | undefined)
     {
     }
 
     public async Get(_tenantId: string): Promise<IdentityConfig | null>
     {
+        if (this.Fail !== undefined) throw this.Fail
         return this.model === undefined ? null : new IdentityConfig('local', DelegationDepth.FullAuthz, new Map(), new Map(), new Map(), this.model)
     }
 
@@ -234,6 +237,22 @@ describe('idp directory sync host', () =>
         }
     })
 
+    test('a setting the store cannot read resolves the run and is reported', async () =>
+    {
+        const fx = SyncFx.Make()
+        fx.config.Fail = new RangeError('stored setting unreadable')
+        try
+        {
+            await fx.host.RunNow()
+            assert.equal(fx.source.Requests.length, 0, 'nothing was pulled')
+            assert.deepEqual(fx.diagnostics.Failures, ['RangeError'])
+        }
+        finally
+        {
+            fx.host.dispose()
+        }
+    })
+
     test('a successful sync invalidates the setting so the next scope reads the new snapshot', async () =>
     {
         const fx = SyncFx.Make()
@@ -243,6 +262,11 @@ describe('idp directory sync host', () =>
             await fx.host.RunNow()
             assert.equal(fx.setting.Generation, before + 1, 'the setting generation advanced')
             assert.equal(fx.store.saves, 1)
+            // the same directory again (a new timestamp only): no change, so compiled scopes and cursors stay valid
+            fx.source.SetNext(SyncFx.Snapshot())
+            await fx.host.RunNow()
+            assert.equal(fx.store.saves, 2, 'the no-op run still stored its snapshot')
+            assert.equal(fx.setting.Generation, before + 1, 'an unchanged directory does not invalidate')
         }
         finally
         {
