@@ -1,43 +1,9 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { existsSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
-
-/** The slice of esbuild's JS API this test drives. */
-interface IEsbuild
-{
-    build(options: Record<string, unknown>): Promise<{ metafile: { inputs: Record<string, unknown> } }>
-}
-
-/**
- * Finds esbuild without declaring it: the server's own node_modules first (tsx brings it), else the sibling TODL
- * checkout's, and loads it through its JS API.
- */
-class EsbuildLocator
-{
-    private static readonly PackageName = 'esbuild'
-    private static readonly PackageJson = 'package.json'
-    private static readonly NodeModules = 'node_modules'
-    private static readonly TodlSibling = '../TODL'
-    private static readonly NotFoundMessage = 'esbuild not found in the server or ../TODL node_modules'
-
-    public static async Load(serverRoot: string): Promise<IEsbuild>
-    {
-        for (const root of [serverRoot, resolve(serverRoot, EsbuildLocator.TodlSibling)])
-        {
-            if (existsSync(join(root, EsbuildLocator.NodeModules, EsbuildLocator.PackageName)))
-            {
-                const entry = createRequire(join(root, EsbuildLocator.PackageJson)).resolve(EsbuildLocator.PackageName)
-                const loaded = await import(pathToFileURL(entry).href) as IEsbuild & { default?: IEsbuild }
-                return loaded.default ?? loaded
-            }
-        }
-        throw new Error(EsbuildLocator.NotFoundMessage)
-    }
-}
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { EsbuildLocator } from '../../../docker/images/closure-check.js'
 
 /** Bundles one entry point (packages external) and returns every source file esbuild loaded for it. */
 class ClosureProbe
@@ -53,7 +19,7 @@ class ClosureProbe
 
     public static async InputsOf(entry: string): Promise<string[]>
     {
-        const esbuild = await EsbuildLocator.Load(ClosureProbe.ServerRoot)
+        const esbuild = EsbuildLocator.Load(ClosureProbe.ServerRoot)
         const result = await esbuild.build({
             entryPoints: [entry],
             absWorkingDir: ClosureProbe.ServerRoot,

@@ -91,6 +91,7 @@ import type { TenantPlane } from './tenant-auth/tenant-plane.js'
 import type { IEnvironmentService } from './control-plane-host.js'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 import type { IRolloutClient } from './tenant-api/rollout-client.js'
+import { ControlPlaneRoles } from './control-plane-role.js'
 
 export class ControlPlaneServer
 {
@@ -170,6 +171,11 @@ export class ControlPlaneServer
 
     public static async Main(): Promise<void>
     {
+        // The role is read first, so an unknown value (or an edge with no channel port) fails before any state is touched;
+        // `all` starts every listener, as before the role existed.
+        const role = ControlPlaneRoles.Of(process.env)
+        const listeners = ControlPlaneRoles.ListenersOf(role)
+        ControlPlaneRoles.RequireListener(role, ControlPlaneServer.ParseAgentChannelPort(process.env[ControlPlaneServer.AgentChannelPortEnvVar]) !== ControlPlaneServer.AgentChannelDisabled)
         const here = dirname(fileURLToPath(import.meta.url))
         const dataRoot = join(here, ControlPlaneServer.DataDir)
         mkdirSync(dataRoot, { recursive: true })
@@ -257,7 +263,7 @@ export class ControlPlaneServer
         // Resolve (and validate) the tenant port + bind BEFORE binding the operator listener, so a misconfigured
         // tenant port fails fast at startup rather than after the operator socket is already live.
         let tenantStart: { host: TenantPlaneHost; port: number; bind: string; scheme: string; baseDomain: string } | undefined
-        if (tenantPlane !== undefined)
+        if (tenantPlane !== undefined && listeners.TenantPlane)
         {
             const baseDomain = process.env[ControlPlaneServer.TenantBaseDomainEnvVar] as string
             const scheme = TenantPlaneComposer.TenantScheme(process.env[ControlPlaneServer.TenantSchemeEnvVar])
@@ -281,13 +287,17 @@ export class ControlPlaneServer
             tenantStart = { host: tenantHost, port: tenantPort, bind: tenantBind, scheme, baseDomain }
         }
         // The operator listener is structurally loopback-only: no tenant route is mounted on it.
-        await host.Listen(port, ControlPlaneServer.BindHost)
-        console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)
+        if (listeners.OperatorHost)
+        {
+            await host.Listen(port, ControlPlaneServer.BindHost)
+            console.log(ControlPlaneServer.ListeningPrefix + String(port) + ControlPlaneServer.ListeningSuffix)
+        }
         if (agentChannelPort === ControlPlaneServer.AgentChannelDisabled && agentChannelRaw !== undefined && agentChannelRaw !== '')
         {
             console.warn(ControlPlaneServer.AgentChannelInvalidPortWarning + agentChannelRaw)
         }
-        if (agentChannelPort !== ControlPlaneServer.AgentChannelDisabled)
+        // The admin role still derives the channel URL above (hive bundles point at the edge) but does not listen on it.
+        if (agentChannelPort !== ControlPlaneServer.AgentChannelDisabled && listeners.AgentChannel)
         {
             const agentBind = ControlPlaneServer.ParseAgentChannelBind(process.env[ControlPlaneServer.AgentChannelBindEnvVar])
             await new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, ownerResets, emailDomains)).Listen(agentChannelPort, agentBind)

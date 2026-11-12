@@ -38,6 +38,11 @@ jobs:
       - name: Build pragmatic-server
         working-directory: ${{ github.workspace }}/pragmatic-server
         run: npm install --no-audit --no-fund && npm run build
+      # Each app image copies only the siblings its entry reaches: closure.json, the Dockerfile and the code must agree.
+      # Run with the server's locked tsx; the check resolves the workspace root from its own location.
+      - name: Image closure check
+        working-directory: ${{ github.workspace }}/pragmatic-server
+        run: npx tsx docker/images/closure-check.ts
       - name: Test
         working-directory: ${{ github.workspace }}/pragmatic-server
         run: npx tsx --test "src/**/*.test.ts"
@@ -45,12 +50,15 @@ jobs:
         working-directory: ${{ github.workspace }}/pragmatic-server/idp-login
         run: |
           npm install --no-audit --no-fund && npm test && npm run typecheck
+      # One image per app (docker/docker-bake.hcl), built but not pushed; release.yml publishes them.
       - name: Docker build
         working-directory: ${{ github.workspace }}
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
         run: |
-          printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.PACKAGES_TOKEN }}\n' > "$RUNNER_TEMP/npmrc"
-          DOCKER_BUILDKIT=1 docker build --secret id=npmrc,src="$RUNNER_TEMP/npmrc" -f pragmatic-server/docker/Dockerfile -t pragmatic-server .
-          rm -f "$RUNNER_TEMP/npmrc"
+          trap 'rm -f "$RUNNER_TEMP/npmrc"' EXIT
+          (umask 077 && printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$PACKAGES_TOKEN" > "$RUNNER_TEMP/npmrc")
+          NPMRC_FILE="$RUNNER_TEMP/npmrc" VERSION=ci SERVER_SHA="$GITHUB_SHA" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl
       - name: Helm lint + template
         working-directory: ${{ github.workspace }}
         run: |

@@ -1,0 +1,43 @@
+{
+  "pragmatic-platform-admin": {
+    "entrypoint": ["node", "dist-tenant-admin/admin/control-plane/server.js"],
+    "packages": ["Mural", "TODL", "pragmatic-protocol", "todl-identity", "todl-identity-cloud", "todl-identity-host", "todl-identity-local", "todl-identity-node", "todl-runtime"],
+    "files": ["pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist-tenant-admin"]
+  },
+  "pragmatic-platform-edge": {
+    "entrypoint": ["node", "dist-tenant-admin/admin/control-plane/server.js"],
+    "packages": ["Mural", "TODL", "pragmatic-protocol", "todl-identity", "todl-identity-cloud", "todl-identity-host", "todl-identity-local", "todl-identity-node", "todl-runtime"],
+    "files": ["pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist-tenant-admin"]
+  },
+  "pragmatic-env-server": {
+    "entrypoint": ["node", "dist/bin/pragmatic-serverd.js"],
+    "alsoRuns": ["dist/bin/pragmatic-workerd.js"],
+    "packages": ["Mural", "TODL", "pragmatic-graph", "pragmatic-protocol", "todl-connectors-host", "todl-identity", "todl-identity-cloud", "todl-identity-engine", "todl-identity-host", "todl-identity-local", "todl-identity-node", "todl-platform-aws", "todl-platform-azure", "todl-platform-cloud", "todl-platform-gcp", "todl-platform-node", "todl-runtime"],
+    "files": ["pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist"]
+  },
+  "pragmatic-env-gateway": {
+    "entrypoint": ["node", "dist/bin/pragmatic-gatewayd.js"],
+    "packages": ["pragmatic-protocol", "todl-identity", "todl-runtime"],
+    "files": ["pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist"]
+  },
+  "pragmatic-hive-agent": {
+    "entrypoint": ["node", "dist/bin/pragmatic-agentd.js"],
+    "packages": [],
+    "files": ["pragmatic-server/package.json", "pragmatic-server/dist"]
+  },
+  "pragmatic-tenant-admin": {
+    "entrypoint": ["node", "dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-admind.js"],
+    "packages": ["Mural", "TODL", "pragmatic-protocol", "todl-identity", "todl-identity-cloud", "todl-identity-host", "todl-identity-local", "todl-identity-node", "todl-runtime"],
+    "files": ["pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist-tenant-admin"]
+  },
+  "pragmatic-tenant-idp": {
+    "entrypoint": ["node", "dist/bin/pragmatic-idpd.js"],
+    "packages": ["todl-identity", "todl-identity-host", "todl-identity-local", "todl-identity-node", "todl-runtime"],
+    "files": ["pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist", "pragmatic-server/idp-login/dist"]
+  },
+  "pragmatic-ui-unpack": {
+    "entrypoint": ["node", "dist-tenant-admin/admin/control-plane/bin/pragmatic-ui-unpack.js"],
+    "packages": ["todl-runtime"],
+    "files": ["pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist-tenant-admin"]
+  }
+}

@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { parse } from 'yaml'
+import { ClosureCheck } from '../../../docker/images/closure-check.js'
 
 class Workflows
 {
@@ -33,19 +34,40 @@ test('every workflow file is valid YAML', () =>
     }
 })
 
-test('ci workflow runs tests and builds the image', () =>
+test('ci workflow runs tests, checks the image closures and bakes the app images without pushing', () =>
 {
     const text = Workflows.Text('ci.yml')
     assert.match(text, /tsx --test/)
-    assert.match(text, /docker build/)
+    assert.match(text, /npx tsx docker\/images\/closure-check\.ts/)
+    assert.match(text, /docker buildx bake -f pragmatic-server\/docker\/docker-bake\.hcl/)
+    assert.doesNotMatch(text, /--push/)
 })
 
-test('image publish is gated behind an explicit enable flag (inert by default)', () =>
+interface WorkflowStep
 {
-    const doc = parse(Workflows.Text('image.yml')) as { jobs: Record<string, { steps?: { if?: string }[] }> }
+    name?: string
+    if?: string
+    run?: string
+}
+
+test('release workflow publishes on release tags only, and never leaks its credentials', () =>
+{
+    const text = Workflows.Text('release.yml')
+    const doc = parse(text) as { on: { push: { tags: string[] } }; permissions: Record<string, string>; jobs: Record<string, { steps?: WorkflowStep[] }> }
+    assert.deepEqual(doc.on, { push: { tags: ['release/*'] } })
+    assert.deepEqual(doc.permissions, { contents: 'read', packages: 'write' })
     const steps = Object.values(doc.jobs).flatMap(job => job.steps ?? [])
-    const pushStep = steps.find(step => typeof step.if === 'string' && /ENABLE_IMAGE_PUBLISH/.test(step.if))
-    assert.ok(pushStep !== undefined, 'expected a push step gated on ENABLE_IMAGE_PUBLISH')
+    const runs = steps.map(step => step.run ?? '')
+    const check = runs.findIndex(run => /pragmatic-release-publish\.ts check --tag "\$GITHUB_REF"/.test(run))
+    const clone = runs.findIndex(run => /git clone/.test(run))
+    assert.ok(check !== -1 && check < clone, 'the tag is checked before any sibling is cloned')
+    assert.ok(runs.some(run => /docker buildx bake -f pragmatic-server\/docker\/docker-bake\.hcl --push/.test(run)))
+    assert.ok(runs.some(run => /publish --tag .* --key-id release-2026-11/.test(run)))
+    assert.ok(runs.some(run => /umask 077[\s\S]*release\.key/.test(run)), 'the signing key is written under umask 077')
+    const cleanup = steps.find(step => step.if === 'always()' && /rm -f .*release\.key.*npmrc/.test(step.run ?? ''))
+    assert.ok(cleanup !== undefined, 'an always() step removes the key and the npmrc')
+    assert.doesNotMatch(text, /set -x/)
+    assert.doesNotMatch(text, /run:.*\$\{\{ secrets\.(RELEASE_SIGNING_KEY|PACKAGES_TOKEN) \}\}/, 'secrets reach scripts through env, not the script text')
 })
 
 test('ci workflow builds TODL like every other sibling (no DOM workaround)', () =>
@@ -69,18 +91,20 @@ class SiblingLists
         return match[1].trim().split(/\s+/).map(pair => pair.split(':')[1]).sort()
     }
 
-    public static Copied(): readonly string[]
+    public static Copied(...dockerfile: string[]): readonly string[]
     {
-        const text = readFileSync(join(Workflows.Dir(), '..', '..', 'docker', 'Dockerfile'), 'utf8')
+        const text = readFileSync(join(Workflows.Dir(), '..', '..', 'docker', ...dockerfile), 'utf8')
         return [...text.matchAll(SiblingLists.CopyPattern)].map(m => m[1]).filter(name => name !== 'pragmatic-server').sort()
     }
 }
 
-test('ci and image workflows clone exactly the siblings the Dockerfile copies', () =>
+test('ci and release workflows clone exactly the siblings the Dockerfiles copy', () =>
 {
-    const copied = SiblingLists.Copied()
+    const copied = SiblingLists.Copied('images', 'Dockerfile')
+    assert.deepEqual(SiblingLists.Copied('Dockerfile'), copied, 'the per-app images and the legacy dev image build the same siblings')
+    assert.deepEqual([...ClosureCheck.Siblings].sort(), copied, 'the closure check knows every sibling the image build copies')
     assert.deepEqual(SiblingLists.Cloned('ci.yml'), copied)
-    assert.deepEqual(SiblingLists.Cloned('image.yml'), copied)
+    assert.deepEqual(SiblingLists.Cloned('release.yml'), copied)
 })
 
 test('ci workflow clones the graph engine and points TODL at it before the server builds', () =>

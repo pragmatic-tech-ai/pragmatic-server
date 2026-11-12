@@ -1,0 +1,46 @@
+# Allowlist: the build context is the whole workspace root, which also holds
+# large unrelated trees (Rust target/, research data, graph outputs). Exclude
+# everything, then re-include only the sibling dirs the Dockerfile COPYs.
+*
+!pragmatic-graph
+!todl-runtime
+!TODL
+!Mural
+!pragmatic-protocol
+!todl-identity
+!todl-identity-local
+!todl-identity-host
+!todl-identity-cloud
+!todl-identity-engine
+!todl-connectors-host
+!todl-platform-node
+!todl-platform-cloud
+!todl-platform-aws
+!todl-platform-azure
+!todl-platform-gcp
+!todl-identity-node
+!pragmatic-server
+
+# Within the allowed dirs: build outputs and local state the image rebuilds or must never carry.
+**/node_modules
+**/dist
+**/dist-tenant-admin
+**/.git
+**/*.log
+**/tests/**/tmp
+**/.superpowers
+**/coverage
+**/.npmrc
+**/test-results
+**/playwright-report
+**/target
+**/graphify-out
+pragmatic-server/admin/control-plane/data
+# Local secrets the gitignore keeps out of the repo; the environments tree is copied into the control-plane images.
+pragmatic-server/docker/*.key
+pragmatic-server/environments/*/data
+pragmatic-server/environments/*/master.key
+pragmatic-server/environments/*/provisioned-secrets.json
+pragmatic-server/environments/*/tenants.json
+# Vendored native sources (Skia etc.) the TS build never reads.
+Mural/third_party

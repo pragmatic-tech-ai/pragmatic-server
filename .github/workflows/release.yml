@@ -1,0 +1,83 @@
+# Publishes a release from a `release/X.Y.Z` (stable) or `release/X.Y.Z-early.N` (early access) tag on this repo:
+# builds the eight app images (docker/docker-bake.hcl), pushes them to ghcr.io/pragmatic-tech-ai tagged :X.Y.Z and
+# :git-<server sha>, then signs each image digest and pushes the signed release descriptor (pragmatic-release:X.Y.Z).
+# Only this repo is tagged: every sibling builds from its `main` head and its commit is recorded in the descriptor.
+# Secrets: PACKAGES_TOKEN (read:packages, for the build's npm installs) and RELEASE_SIGNING_KEY (the Ed25519 private
+# key PEM whose public half is release-keys/release-2026-11.pub.pem). Neither is echoed, put on a command line or
+# baked into a layer; both files are removed whatever the outcome.
+name: release
+on:
+  push:
+    tags: ['release/*']
+permissions:
+  contents: read
+  packages: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          path: pragmatic-server
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      # Fails fast on a malformed tag or an already-published version, before any clone or build.
+      - name: Check the release tag
+        working-directory: ${{ github.workspace }}
+        env:
+          RELEASE_REGISTRY_USER: ${{ github.actor }}
+          RELEASE_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx --yes tsx@4 pragmatic-server/admin/control-plane/bin/pragmatic-release-publish.ts check --tag "$GITHUB_REF"
+      # The version is the tag's X.Y.Z[-early.N] (already validated above); the server commit is the tagged checkout.
+      - name: Resolve version and server commit
+        working-directory: ${{ github.workspace }}
+        run: |
+          echo "VERSION=${GITHUB_REF#refs/tags/release/}" >> "$GITHUB_ENV"
+          echo "SERVER_SHA=$(git -C pragmatic-server rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Clone siblings at main
+        working-directory: ${{ github.workspace }}
+        run: |
+          siblings='{}'
+          for pair in pragmatic-graph:pragmatic-graph todl-runtime:todl-runtime todl:TODL mural:Mural pragmatic-protocol:pragmatic-protocol todl-identity:todl-identity todl-identity-local:todl-identity-local todl-identity-host:todl-identity-host todl-identity-cloud:todl-identity-cloud todl-identity-engine:todl-identity-engine todl-connectors-host:todl-connectors-host todl-platform-node:todl-platform-node todl-platform-cloud:todl-platform-cloud todl-platform-aws:todl-platform-aws todl-platform-azure:todl-platform-azure todl-platform-gcp:todl-platform-gcp todl-identity-node:todl-identity-node; do
+            repo="${pair%%:*}"
+            dir="${pair#*:}"
+            git clone --depth 1 --branch main "https://github.com/pragmatic-tech-ai/${repo}.git" "$dir"
+            siblings=$(jq -c --arg repo "$repo" --arg sha "$(git -C "$dir" rev-parse HEAD)" '. + {($repo): $sha}' <<< "$siblings")
+          done
+          printf '%s\n' "$siblings" > "$RUNNER_TEMP/siblings.json"
+          cat "$RUNNER_TEMP/siblings.json"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Write the npm registry credentials
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        run: |
+          umask 077
+          printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$PACKAGES_TOKEN" > "$RUNNER_TEMP/npmrc"
+      - name: Build and push the app images
+        working-directory: ${{ github.workspace }}
+        run: |
+          NPMRC_FILE="$RUNNER_TEMP/npmrc" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --push
+          rm -f "$RUNNER_TEMP/npmrc"
+      - name: Write the release signing key
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          umask 077
+          printf '%s\n' "$RELEASE_SIGNING_KEY" > "$RUNNER_TEMP/release.key"
+      - name: Sign and publish the release descriptor
+        working-directory: ${{ github.workspace }}
+        env:
+          RELEASE_SIGNING_KEY_FILE: ${{ runner.temp }}/release.key
+          RELEASE_REGISTRY_USER: ${{ github.actor }}
+          RELEASE_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx --yes tsx@4 pragmatic-server/admin/control-plane/bin/pragmatic-release-publish.ts publish --tag "$GITHUB_REF" --server-commit "$SERVER_SHA" --siblings-file "$RUNNER_TEMP/siblings.json" --key-id release-2026-11
+      - name: Remove credentials
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.key" "$RUNNER_TEMP/npmrc"
