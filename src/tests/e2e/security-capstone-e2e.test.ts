@@ -10,7 +10,7 @@ import type { CellValue } from '@pragmatic-tech-ai/graph'
 import { ShareRight, SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import { AppWriteStatus, createMessageConnection, InMemoryMessageSocket, NullLogger, PragmaticClient, ShareStatus, ShareSubjectKind, TeamMemberOrigin, WebSocketMessageReader, WebSocketMessageWriter } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppDeployResultDto, CypherAppDeployParamsDto, CypherParamValue, SecurityModelDto, ShareResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AccessLevel, BaseRole, PresentedSecret, Principal, PrincipalKind, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
+import { AccessLevel, BaseRole, PresentedSecret, Principal, PrincipalKind, PrivilegeAction, ResourceKind, Role } from '@pragmatic-tech-ai/todl-identity'
 import { LocalSourceTokenProvider } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminProxy, WsAdminConnection, WsAdminConnector } from '../../../admin/control-plane/admin-proxy.js'
 import { ClientRegistry } from '../../../admin/control-plane/client-registry.js'
@@ -32,6 +32,7 @@ import { PlatformDirectory } from '../../../admin/control-plane/platform-directo
 import { PortAllocator } from '../../../admin/control-plane/port-allocator.js'
 import type { IPortProbe } from '../../../admin/control-plane/port-allocator.js'
 import { TenantRegistry } from '../../../admin/control-plane/tenant-registry.js'
+import { TenantPurposeName } from '../../../environments/seed/bundle.js'
 import type { EnvDefinition } from '../../../environments/seed/bundle.js'
 import type { ILogProcess } from '../../../environments/seed/docker.js'
 import { UserSeeder } from '../../../environments/seed/users.js'
@@ -42,6 +43,7 @@ import { TenantProvisioningFactory } from '../../config/tenant-provisioning-fact
 import { PragmaticServerHost } from '../../host/pragmatic-server-host.js'
 import { NullLogger as ServerNullLogger } from '../../observability/logger.js'
 import type { PragmaticServer } from '../../pragmatic-server.js'
+import { AdminEnums } from '../../host/admin-enums.js'
 import { AdminService } from '../../host/admin-service.js'
 import { CallerCredentialAdapterFactory, ConnectionCredentialMode } from '../../host/connectors/caller-credential-adapter-factory.js'
 import { ServerConnectionHandler } from '../../host/server-connection-handler.js'
@@ -249,6 +251,20 @@ class CapstoneText
  */
 class HrFx
 {
+    public static readonly SaysSalesEmployeesOnlyAndNoSalary = 'Sales employees only, and no Salary'
+    public static readonly SaysTheSecuredFieldIsNonexistentTo = 'the secured field is nonexistent to sam inside the filter'
+    public static readonly SaysIdenticalToAFilterOnAn = 'identical to a filter on an absent field'
+    public static readonly SaysTheSameFilterMatchesForA = 'the same filter matches for a Compensation holder'
+    public static readonly SaysDanaHoldsTheManualRowOnly = 'dana holds the manual row only'
+    public static readonly SaysHREmployeesWithSalary = 'HR employees with Salary'
+    public static readonly SaysDanaIsBothASyncedAnd = 'dana is both a synced and a manual member'
+    public static readonly SaysOnlyTheManualRowIsLeft = 'only the manual row is left'
+    public static readonly SaysTheManualRowKeepsTheTeam = 'the manual row keeps the team role and profile'
+    public static readonly SaysHenryAMemberThroughTheGroup = 'henry, a member through the group only, lost the team role'
+    public static readonly SaysADisabledIdentityReadsNothingManual = 'a disabled identity reads nothing, manual team row or not'
+    public static readonly SaysTeamHRsCompensationAssignmentNowCovers = 'team HR\'s Compensation assignment now covers Bonus'
+    public static readonly SaysBonusIsNonexistentWithoutTheProfile = 'Bonus is nonexistent without the profile'
+    public static readonly SaysTheChangeLogShowsTheSame = 'the change log shows the same entry'
     public static readonly Hr1 = { id: 'hr', version: '1.0.0' }
     public static readonly Hr2 = { id: 'hr', version: '2.0.0' }
     public static readonly Hr1Todl = `namespace hr
@@ -356,6 +372,21 @@ class HrFx
  */
 class ProjectsFx
 {
+    public static readonly SaysAliceSeesHerOwnProjectAnd = 'alice sees her own project and bob\'s shared one'
+    public static readonly SaysCarolsTaskIsNotReturned = 'carol\'s task is not returned'
+    public static readonly SaysNorReachedFromP1 = 'nor reached from P1'
+    public static readonly SaysNorCounted = 'nor counted'
+    public static readonly SaysTheEdgeIsThere = 'the edge is there'
+    public static readonly SaysCarolSeesHerTask = 'carol sees her task'
+    public static readonly SaysT3P1YieldsNothingWhileP1 = 'T3 -> P1 yields nothing while P1 is hidden from carol'
+    public static readonly SaysOnceCarolCanSeeP1The = 'once carol can see P1 the traversal reaches it'
+    public static readonly SaysProjectManagerReadsBUChildrenThrough = 'Project Manager reads BU+children through the Managers team'
+    public static readonly SaysTheOverrideNarrowsReadsToThe = 'the override narrows reads to the BU, no redeploy'
+    public static readonly SaysASecurityChangingUpgrade = 'a security-changing upgrade'
+    public static readonly SaysThatDropsNoOverride = 'that drops no override'
+    public static readonly SaysTheStoredOverrideSurvived = 'the stored override survived'
+    public static readonly SaysAndStillAppliesUnderV2 = 'and still applies under v2'
+    public static readonly SaysTheAssignmentToBobsProjectIs = 'the assignment to bob\'s project is not returned (PR4)'
     public static readonly Projects1 = { id: 'projects', version: '1.0.0' }
     public static readonly Projects2 = { id: 'projects', version: '2.0.0' }
     private static readonly Body = `
@@ -473,6 +504,9 @@ class ProjectsFx
  */
 class SalesFx
 {
+    public static readonly SaysAPrincipalWithNoRoleReads = 'a principal with no role reads the dedicated-credential price list'
+    public static readonly SaysTheLocalIdPIssuesThePer = 'the local IdP issues the per-user source tokens'
+    public static readonly SaysEachCallersReadReachedTheSource = 'each caller\'s read reached the source on a connection opened with that caller\'s own token'
     public static readonly Sales = { id: 'sales', version: '1.0.0' }
     public static readonly Resource = 'api://crm'
     public static readonly SalesTodl = 'namespace sales\n{\n'
@@ -532,7 +566,13 @@ class SalesFx
     }
 }
 
-/** The Docker seam served in process: `Up` starts a PragmaticServerHost over the generated bundle, as the container would. */
+/**
+ * The Docker seam served in process: `Up` starts a PragmaticServerHost over the generated bundle with the environment
+ * variables `DockerEnv.RunArgs` gives the container (the bundle's data dir standing in for the seeded volume). §9.5 uses
+ * it with no hive and a creator who is the bundle's bootstrap local admin, so it covers neither the federated nor the
+ * unfederated hive branch of the seed; the control-plane test `a hive-bound runtime create seeds the creator only when
+ * federated` does.
+ */
 class InProcessDocker implements IDockerEnv
 {
     private static readonly DataDir = 'data'
@@ -541,6 +581,8 @@ class InProcessDocker implements IDockerEnv
     private static readonly SecretsFile = 'provisioned-secrets.json'
     private static readonly Utf8 = 'utf8'
     private static readonly NoText = ''
+    private static readonly DeploymentModeLocal = 'local'
+    private static readonly LocalhostOriginPrefix = 'http://localhost:'
 
     private host: PragmaticServerHost | undefined
 
@@ -558,6 +600,8 @@ class InProcessDocker implements IDockerEnv
             PRAGMATIC_MASTER_KEY_FILE: join(bundleDir, InProcessDocker.MasterKeyFile),
             PRAGMATIC_PROVISIONED_SECRETS_FILE: join(bundleDir, InProcessDocker.SecretsFile),
             PRAGMATIC_PORT: String(def.hostPort),
+            PRAGMATIC_DEPLOYMENT_MODE: InProcessDocker.DeploymentModeLocal,
+            ...(def.purpose === TenantPurposeName.Runtime ? { PRAGMATIC_ALLOWED_ORIGINS: InProcessDocker.LocalhostOriginPrefix + String(def.hostPort) } : {}),
         }, read)
         const logger = new ServerNullLogger()
         const audit = ServerBootstrap.AuditSink(config, logger)
@@ -644,11 +688,13 @@ class NoIdp implements IIdpService
  */
 class DevEnvFx
 {
+    public static readonly SaysTheCreateSeededTheCreatorAs = 'the create seeded the creator as System Administrator'
+    public static readonly SaysTheCreatorReadsEveryRow = 'the creator reads every row'
+    public static readonly SaysBasicUserReadsAtBUDepthUnit = 'BasicUser reads at BU depth: unit A\'s records, its peer\'s included, not unit B\'s'
     public static readonly Name = 'dev-ana'
     public static readonly Creator = 'admin'
     public static readonly Tess = 'tess'
-    public static readonly TessEmail = 'tess@dev-ana.test'
-    public static readonly TessPassword = 'tess-password-1'
+    public static readonly UserPassword = 'test-user-password-1'
     public static readonly A = 'a'
     public static readonly B = 'b'
     public static readonly Hr = { id: 'hr', version: '1.0.0' }
@@ -660,9 +706,13 @@ class DevEnvFx
     public static readonly Root1 = 'root-1'
     public static readonly Root2 = 'root-2'
     public static readonly Own = 'tess-1'
+    public static readonly Ulla = 'ulla'
+    public static readonly Vic = 'vic'
+    public static readonly PeerSuffix = '-1'
+    public static readonly EmailDomain = '@dev-ana.test'
     public static readonly Prefix = 'ps-capstone-cp-'
-    public static readonly CoarseRole = 'Editor'
-    public static readonly TenantKind = 'Tenant'
+    public static readonly CoarseRole = AdminEnums.NameOfRole(Role.Editor)
+    public static readonly TenantKind = AdminEnums.NameOfResourceKind(ResourceKind.Tenant)
     private static readonly Create = 'CREATE (e:`hr.Employee`) SET e.name = $name RETURN e.name AS name'
     private static readonly Employees = 'MATCH (e:`hr.Employee`) RETURN e.name AS name ORDER BY name'
     private static readonly Loopback = '127.0.0.1'
@@ -709,6 +759,11 @@ class DevEnvFx
         return PragmaticClient.ConnectAsync(DevEnvFx.WsPrefix + String(port) + DevEnvFx.EnvironmentQuery + DevEnvFx.Name, { bearerToken: token })
     }
 
+    public static EmailOf(principalId: string): string
+    {
+        return principalId + DevEnvFx.EmailDomain
+    }
+
     public static CreatorEmail(): string
     {
         return DevEnvFx.EmailPrefix + DevEnvFx.Name + DevEnvFx.EmailSuffix
@@ -722,8 +777,8 @@ class DevEnvFx
         return {
             ...seed,
             businessUnits: [...seed.businessUnits, { id: DevEnvFx.A, name: DevEnvFx.A, parent: root }, { id: DevEnvFx.B, name: DevEnvFx.B, parent: root }],
-            users: [...seed.users, { principalId: DevEnvFx.Tess, businessUnitId: DevEnvFx.A }],
-            roleAssignments: [...seed.roleAssignments, { role: BaseRole.BasicUser, principalIds: [DevEnvFx.Tess], teamIds: [] }],
+            users: [...seed.users, { principalId: DevEnvFx.Tess, businessUnitId: DevEnvFx.A }, { principalId: DevEnvFx.Ulla, businessUnitId: DevEnvFx.A }, { principalId: DevEnvFx.Vic, businessUnitId: DevEnvFx.B }],
+            roleAssignments: [...seed.roleAssignments, { role: BaseRole.BasicUser, principalIds: [DevEnvFx.Tess, DevEnvFx.Ulla, DevEnvFx.Vic], teamIds: [] }],
         }
     }
 
@@ -747,7 +802,7 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
         {
             await HrFx.Run(async cap =>
             {
-                assert.deepEqual(await HrFx.Salaries(cap, HrFx.Sam), [[HrFx.Ellen, null]], 'Sales employees only, and no Salary')
+                assert.deepEqual(await HrFx.Salaries(cap, HrFx.Sam), [[HrFx.Ellen, null]], HrFx.SaysSalesEmployeesOnlyAndNoSalary)
             })
         })
 
@@ -756,9 +811,9 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
             await HrFx.Run(async cap =>
             {
                 const filtered = await cap.Rows(HrFx.Sam, HrFx.HighSalaries)
-                assert.deepEqual(filtered, [], 'the secured field is nonexistent to sam inside the filter')
-                assert.deepEqual(filtered, await cap.Rows(HrFx.Sam, HrFx.HighMissing), 'identical to a filter on an absent field')
-                assert.deepEqual(await cap.Column(HrFx.Dana, HrFx.HighSalaries), [HrFx.Hank, HrFx.Ivy], 'the same filter matches for a Compensation holder')
+                assert.deepEqual(filtered, [], HrFx.SaysTheSecuredFieldIsNonexistentTo)
+                assert.deepEqual(filtered, await cap.Rows(HrFx.Sam, HrFx.HighMissing), HrFx.SaysIdenticalToAFilterOnAn)
+                assert.deepEqual(await cap.Column(HrFx.Dana, HrFx.HighSalaries), [HrFx.Hank, HrFx.Ivy], HrFx.SaysTheSameFilterMatchesForA)
             })
         })
 
@@ -766,7 +821,11 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
         {
             await HrFx.Run(async cap =>
             {
-                assert.deepEqual(await HrFx.Salaries(cap, HrFx.Dana), [[HrFx.Hank, HrFx.HankSalary], [HrFx.Ivy, HrFx.IvySalary]], 'HR employees with Salary')
+                // dana is left with the manual row only: the read and the update rest on it alone
+                await (await cap.Server.Pack()).Groups.RemoveMember(cap.Server.Tenant(), HrFx.HrStaff, HrFx.Dana)
+                await cap.Sync()
+                assert.deepEqual((await (await cap.Admin(CapstoneText.Admin)).ListTeamMembers(HrFx.HrTeam)).filter(row => row.principalId === HrFx.Dana).map(row => row.origin), [TeamMemberOrigin.Manual], HrFx.SaysDanaHoldsTheManualRowOnly)
+                assert.deepEqual(await HrFx.Salaries(cap, HrFx.Dana), [[HrFx.Hank, HrFx.HankSalary], [HrFx.Ivy, HrFx.IvySalary]], HrFx.SaysHREmployeesWithSalary)
                 const raised = await (await cap.Client(HrFx.Dana)).CypherExecute(HrFx.Raise, { name: HrFx.Hank, salary: HrFx.RaisedSalary })
                 assert.equal(raised.status, AppWriteStatus.Applied, raised.reason)
                 assert.deepEqual(await cap.Column(HrFx.Dana, HrFx.SalaryOf, { name: HrFx.Hank }), [HrFx.RaisedSalary])
@@ -779,12 +838,12 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
             {
                 const admin = await cap.Admin(CapstoneText.Admin)
                 const pack = await cap.Server.Pack()
-                assert.deepEqual((await admin.ListTeamMembers(HrFx.HrTeam)).filter(row => row.principalId === HrFx.Dana).map(row => row.origin).sort(), [TeamMemberOrigin.Manual, TeamMemberOrigin.Synced], 'dana is both a synced and a manual member')
+                assert.deepEqual((await admin.ListTeamMembers(HrFx.HrTeam)).filter(row => row.principalId === HrFx.Dana).map(row => row.origin).sort(), [TeamMemberOrigin.Manual, TeamMemberOrigin.Synced], HrFx.SaysDanaIsBothASyncedAnd)
                 for (const member of [HrFx.Dana, HrFx.Henry]) await pack.Groups.RemoveMember(cap.Server.Tenant(), HrFx.HrStaff, member)
                 await cap.Sync()
-                assert.deepEqual((await admin.ListTeamMembers(HrFx.HrTeam)).map(row => [row.principalId, row.origin]), [[HrFx.Dana, TeamMemberOrigin.Manual]], 'only the manual row is left')
-                assert.deepEqual(await HrFx.Salaries(cap, HrFx.Dana), [[HrFx.Hank, HrFx.HankSalary], [HrFx.Ivy, HrFx.IvySalary]], 'the manual row keeps the team role and profile')
-                assert.deepEqual(await HrFx.Salaries(cap, HrFx.Henry), [], 'henry, a member through the group only, lost the team role')
+                assert.deepEqual((await admin.ListTeamMembers(HrFx.HrTeam)).map(row => [row.principalId, row.origin]), [[HrFx.Dana, TeamMemberOrigin.Manual]], HrFx.SaysOnlyTheManualRowIsLeft)
+                assert.deepEqual(await HrFx.Salaries(cap, HrFx.Dana), [[HrFx.Hank, HrFx.HankSalary], [HrFx.Ivy, HrFx.IvySalary]], HrFx.SaysTheManualRowKeepsTheTeam)
+                assert.deepEqual(await HrFx.Salaries(cap, HrFx.Henry), [], HrFx.SaysHenryAMemberThroughTheGroup)
             })
         })
 
@@ -795,7 +854,7 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
                 assert.notDeepEqual(await HrFx.Salaries(cap, HrFx.Dana), [])
                 await (await cap.Server.Pack()).Accounts.Disable(cap.Server.Tenant(), HrFx.Dana)
                 await cap.Sync()
-                assert.deepEqual(await HrFx.Salaries(cap, HrFx.Dana), [], 'a disabled identity reads nothing, manual team row or not')
+                assert.deepEqual(await HrFx.Salaries(cap, HrFx.Dana), [], HrFx.SaysADisabledIdentityReadsNothingManual)
             })
         })
     })
@@ -809,7 +868,7 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
                 assert.deepEqual(await cap.Column(ProjectsFx.Alice, ProjectsFx.Projects), [ProjectsFx.P1])
                 const shared = await ProjectsFx.ShareAs(cap, ProjectsFx.Bob, ProjectsFx.P2, ProjectsFx.Alice)
                 assert.equal(shared.status, ShareStatus.Applied, shared.reason)
-                assert.deepEqual(await cap.Column(ProjectsFx.Alice, ProjectsFx.Projects), [ProjectsFx.P1, ProjectsFx.P2], 'alice sees her own project and bob\'s shared one')
+                assert.deepEqual(await cap.Column(ProjectsFx.Alice, ProjectsFx.Projects), [ProjectsFx.P1, ProjectsFx.P2], ProjectsFx.SaysAliceSeesHerOwnProjectAnd)
             })
         })
 
@@ -817,10 +876,10 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
         {
             await ProjectsFx.Run(async cap =>
             {
-                assert.deepEqual(await cap.Column(ProjectsFx.Alice, ProjectsFx.Tasks), [], 'carol\'s task is not returned')
-                assert.deepEqual(await cap.Column(ProjectsFx.Alice, ProjectsFx.Incoming, { name: ProjectsFx.P1 }), [], 'nor reached from P1')
-                assert.deepEqual((await cap.Column(ProjectsFx.Alice, ProjectsFx.IncomingCount, { name: ProjectsFx.P1 })).map(Number), [0], 'nor counted')
-                assert.deepEqual((await cap.Column(CapstoneText.Admin, ProjectsFx.IncomingCount, { name: ProjectsFx.P1 })).map(Number), [1], 'the edge is there')
+                assert.deepEqual(await cap.Column(ProjectsFx.Alice, ProjectsFx.Tasks), [], ProjectsFx.SaysCarolsTaskIsNotReturned)
+                assert.deepEqual(await cap.Column(ProjectsFx.Alice, ProjectsFx.Incoming, { name: ProjectsFx.P1 }), [], ProjectsFx.SaysNorReachedFromP1)
+                assert.deepEqual((await cap.Column(ProjectsFx.Alice, ProjectsFx.IncomingCount, { name: ProjectsFx.P1 })).map(Number), [0], ProjectsFx.SaysNorCounted)
+                assert.deepEqual((await cap.Column(CapstoneText.Admin, ProjectsFx.IncomingCount, { name: ProjectsFx.P1 })).map(Number), [1], ProjectsFx.SaysTheEdgeIsThere)
             })
         })
 
@@ -828,11 +887,11 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
         {
             await ProjectsFx.Run(async cap =>
             {
-                assert.deepEqual(await cap.Column(ProjectsFx.Carol, ProjectsFx.Tasks), [ProjectsFx.T3], 'carol sees her task')
-                assert.deepEqual(await cap.Column(ProjectsFx.Carol, ProjectsFx.TaskTargets), [], 'T3 -> P1 yields nothing while P1 is hidden from carol')
+                assert.deepEqual(await cap.Column(ProjectsFx.Carol, ProjectsFx.Tasks), [ProjectsFx.T3], ProjectsFx.SaysCarolSeesHerTask)
+                assert.deepEqual(await cap.Column(ProjectsFx.Carol, ProjectsFx.TaskTargets), [], ProjectsFx.SaysT3P1YieldsNothingWhileP1)
                 const shared = await ProjectsFx.ShareAs(cap, ProjectsFx.Alice, ProjectsFx.P1, ProjectsFx.Carol)
                 assert.equal(shared.status, ShareStatus.Applied, shared.reason)
-                assert.deepEqual(await cap.Column(ProjectsFx.Carol, ProjectsFx.TaskTargets), [ProjectsFx.P1], 'once carol can see P1 the traversal reaches it')
+                assert.deepEqual(await cap.Column(ProjectsFx.Carol, ProjectsFx.TaskTargets), [ProjectsFx.P1], ProjectsFx.SaysOnceCarolCanSeeP1The)
             })
         })
 
@@ -840,15 +899,15 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
         {
             await ProjectsFx.Run(async cap =>
             {
-                assert.deepEqual(await cap.Column(ProjectsFx.Mike, ProjectsFx.Projects), [ProjectsFx.P0, ProjectsFx.P1, ProjectsFx.P2], 'Project Manager reads BU+children through the Managers team')
+                assert.deepEqual(await cap.Column(ProjectsFx.Mike, ProjectsFx.Projects), [ProjectsFx.P0, ProjectsFx.P1, ProjectsFx.P2], ProjectsFx.SaysProjectManagerReadsBUChildrenThrough)
                 const override = { role: ProjectsFx.ProjectManager, concept: ProjectsFx.Project, action: PrivilegeAction.Read, level: AccessLevel.BusinessUnit }
                 await cap.Apply(ProjectsFx.Setting([override]), CapstoneText.Admin)
-                assert.deepEqual(await cap.Column(ProjectsFx.Mike, ProjectsFx.Projects), [ProjectsFx.P0], 'the override narrows reads to the BU, no redeploy')
+                assert.deepEqual(await cap.Column(ProjectsFx.Mike, ProjectsFx.Projects), [ProjectsFx.P0], ProjectsFx.SaysTheOverrideNarrowsReadsToThe)
                 const upgraded = await cap.Deploy(CapstoneText.Admin, CapstoneFx.V2, [ProjectsFx.Projects2])
-                assert.deepEqual(upgraded.securityChanges?.securedFieldsAdded, [{ concept: ProjectsFx.Task, field: ProjectsFx.Estimate }], 'a security-changing upgrade')
-                assert.deepEqual(upgraded.securityChanges?.roleOverridesDropped, [], 'that drops no override')
-                assert.deepEqual((await (await cap.Admin(CapstoneText.Admin)).GetSecurityModel())?.roleOverrides, [override], 'the stored override survived')
-                assert.deepEqual(await cap.Column(ProjectsFx.Mike, ProjectsFx.Projects), [ProjectsFx.P0], 'and still applies under v2')
+                assert.deepEqual(upgraded.securityChanges?.securedFieldsAdded, [{ concept: ProjectsFx.Task, field: ProjectsFx.Estimate }], ProjectsFx.SaysASecurityChangingUpgrade)
+                assert.deepEqual(upgraded.securityChanges?.roleOverridesDropped, [], ProjectsFx.SaysThatDropsNoOverride)
+                assert.deepEqual((await (await cap.Admin(CapstoneText.Admin)).GetSecurityModel())?.roleOverrides, [override], ProjectsFx.SaysTheStoredOverrideSurvived)
+                assert.deepEqual(await cap.Column(ProjectsFx.Mike, ProjectsFx.Projects), [ProjectsFx.P0], ProjectsFx.SaysAndStillAppliesUnderV2)
             })
         })
     })
@@ -869,8 +928,8 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
                     await cap.SystemLink(edge, ProjectsFx.From, ProjectsFx.T5)
                     await cap.SystemLink(edge, ProjectsFx.To, project)
                 }
-                assert.deepEqual(await cap.Column(ProjectsFx.Alice, ProjectsFx.AssignmentTargets), [ProjectsFx.P1], 'the assignment to bob\'s project is not returned (PR4)')
-                assert.deepEqual((await cap.Column(ProjectsFx.Alice, ProjectsFx.AssignmentCount)).map(Number), [1], 'nor counted')
+                assert.deepEqual(await cap.Column(ProjectsFx.Alice, ProjectsFx.AssignmentTargets), [ProjectsFx.P1], ProjectsFx.SaysTheAssignmentToBobsProjectIs)
+                assert.deepEqual((await cap.Column(ProjectsFx.Alice, ProjectsFx.AssignmentCount)).map(Number), [1], ProjectsFx.SaysNorCounted)
                 assert.deepEqual((await cap.Column(CapstoneText.Admin, ProjectsFx.AssignmentCount)).map(Number), [2])
             })
         })
@@ -882,7 +941,7 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
         {
             await SalesFx.Run(async cap =>
             {
-                assert.deepEqual(await cap.Column(SalesFx.Nobody, SalesFx.PriceLists), [SalesFx.Premium, SalesFx.Standard], 'a principal with no role reads the dedicated-credential price list')
+                assert.deepEqual(await cap.Column(SalesFx.Nobody, SalesFx.PriceLists), [SalesFx.Premium, SalesFx.Standard], SalesFx.SaysAPrincipalWithNoRoleReads)
             })
         })
 
@@ -894,10 +953,10 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
                 assert.deepEqual(alice, [SalesFx.Fabrikam])
                 assert.deepEqual(bob, [SalesFx.Fabrikam])
                 const tokens = (await cap.Server.Pack()).SourceTokens
-                assert.ok(tokens instanceof LocalSourceTokenProvider, 'the local IdP issues the per-user source tokens')
+                assert.ok(tokens instanceof LocalSourceTokenProvider, SalesFx.SaysTheLocalIdPIssuesThePer)
                 const opened = cap.Fx.Source.Opened.filter(connection => connection.Config[CallerCredentialAdapterFactory.CredentialsKey] === ConnectionCredentialMode.Caller)
                 const subjects = await Promise.all(opened.map(connection => tokens.Verify(EnvironmentFixture.TenantId, connection.Secret ?? SalesFx.NoSecret, SalesFx.Resource)))
-                assert.deepEqual(subjects.sort(), [SalesFx.Alice, SalesFx.Bob], 'each caller\'s read reached the source on a connection opened with that caller\'s own token')
+                assert.deepEqual(subjects.sort(), [SalesFx.Alice, SalesFx.Bob], SalesFx.SaysEachCallersReadReachedTheSource)
             })
         })
     })
@@ -911,8 +970,8 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
                 await cap.Deploy(CapstoneText.Admin, CapstoneFx.V2, [HrFx.Hr2])
                 await cap.SystemSet(HrFx.Hank, HrFx.Bonus, HrFx.HankBonus)
                 await cap.SystemSet(HrFx.Ellen, HrFx.Bonus, HrFx.EllenBonus)
-                assert.deepEqual(await cap.Column(HrFx.Dana, HrFx.BonusOf, { name: HrFx.Hank }), [HrFx.HankBonus], 'team HR\'s Compensation assignment now covers Bonus')
-                assert.deepEqual(await cap.Column(HrFx.Sam, HrFx.BonusOf, { name: HrFx.Ellen }), [null], 'Bonus is nonexistent without the profile')
+                assert.deepEqual(await cap.Column(HrFx.Dana, HrFx.BonusOf, { name: HrFx.Hank }), [HrFx.HankBonus], HrFx.SaysTeamHRsCompensationAssignmentNowCovers)
+                assert.deepEqual(await cap.Column(HrFx.Sam, HrFx.BonusOf, { name: HrFx.Ellen }), [null], HrFx.SaysBonusIsNonexistentWithoutTheProfile)
             })
         })
 
@@ -932,7 +991,7 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
                 }])
                 assert.deepEqual(changes.roleDefaults, [{ role: BaseRole.BasicUser, concept: HrFx.Review, action: PrivilegeAction.Read, before: AccessLevel.None, after: AccessLevel.User }])
                 assert.deepEqual([changes.roleOverridesDropped, changes.profileOverridesDropped, changes.rolesRemoved, changes.profilesRemoved], [[], [], [], []])
-                assert.deepEqual(await (await cap.Admin(CapstoneText.Admin)).ListSecurityChanges(), [changes], 'the change log shows the same entry')
+                assert.deepEqual(await (await cap.Admin(CapstoneText.Admin)).ListSecurityChanges(), [changes], HrFx.SaysTheChangeLogShowsTheSame)
             })
         })
     })
@@ -949,13 +1008,16 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
                 const port = await DevEnvFx.FreePort()
                 const service = await DevEnvFx.Service(root, docker, port)
                 const record = await service.Create(DevEnvFx.Name, Template.DevBlank, EnvType.Runtime, port, undefined, DevEnvFx.Creator)
-                assert.deepEqual(await service.AdminGetSecurityModel(DevEnvFx.Name), EnvironmentSecuritySeed.For(DevEnvFx.Name, DevEnvFx.Creator), 'the create seeded the creator as System Administrator')
+                assert.deepEqual(await service.AdminGetSecurityModel(DevEnvFx.Name), EnvironmentSecuritySeed.For(DevEnvFx.Name, DevEnvFx.Creator), DevEnvFx.SaysTheCreateSeededTheCreatorAs)
                 const creator = await DevEnvFx.Client(port, DevEnvFx.CreatorEmail(), await EnvironmentEndpoints.LocalAdminPasswordOf(record, root))
                 clients.push(creator)
                 // tenant-admin: a test user in the local IdP, units, BasicUser; Plexus: deploy hr
-                await service.AdminCreateAccount(DevEnvFx.Name, { email: DevEnvFx.TessEmail, principalId: DevEnvFx.Tess, password: DevEnvFx.TessPassword })
-                // the identity RBAC still gates the endpoints (the coarse role); tier 1 decides the rows
-                await service.AdminGrantRole(DevEnvFx.Name, { subject: DevEnvFx.Tess, role: DevEnvFx.CoarseRole, resourceKind: DevEnvFx.TenantKind, resourcePath: [] })
+                for (const user of [DevEnvFx.Tess, DevEnvFx.Ulla, DevEnvFx.Vic])
+                {
+                    await service.AdminCreateAccount(DevEnvFx.Name, { email: DevEnvFx.EmailOf(user), principalId: user, password: DevEnvFx.UserPassword })
+                    // the identity RBAC still gates the endpoints (the coarse role); tier 1 decides the rows
+                    await service.AdminGrantRole(DevEnvFx.Name, { subject: user, role: DevEnvFx.CoarseRole, resourceKind: DevEnvFx.TenantKind, resourcePath: [] })
+                }
                 await service.AdminSetSecurityModel(DevEnvFx.Name, DevEnvFx.Setting())
                 const compiler = new EnvironmentFixture()
                 try
@@ -969,11 +1031,19 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
                 }
                 await DevEnvFx.Insert(creator, DevEnvFx.Root1)
                 await DevEnvFx.Insert(creator, DevEnvFx.Root2)
-                const tess = await DevEnvFx.Client(port, DevEnvFx.TessEmail, DevEnvFx.TessPassword)
+                const tess = await DevEnvFx.Client(port, DevEnvFx.EmailOf(DevEnvFx.Tess), DevEnvFx.UserPassword)
                 clients.push(tess)
                 await DevEnvFx.Insert(tess, DevEnvFx.Own)
-                assert.deepEqual(await DevEnvFx.Names(creator), [DevEnvFx.Root1, DevEnvFx.Root2, DevEnvFx.Own], 'the creator reads every row')
-                assert.deepEqual(await DevEnvFx.Names(tess), [DevEnvFx.Own], 'BasicUser reads at BU depth: only unit A\'s record')
+                for (const peer of [DevEnvFx.Ulla, DevEnvFx.Vic])
+                {
+                    const client = await DevEnvFx.Client(port, DevEnvFx.EmailOf(peer), DevEnvFx.UserPassword)
+                    clients.push(client)
+                    await DevEnvFx.Insert(client, peer + DevEnvFx.PeerSuffix)
+                }
+                const ullas = DevEnvFx.Ulla + DevEnvFx.PeerSuffix
+                const vics = DevEnvFx.Vic + DevEnvFx.PeerSuffix
+                assert.deepEqual(await DevEnvFx.Names(creator), [DevEnvFx.Root1, DevEnvFx.Root2, DevEnvFx.Own, ullas, vics], DevEnvFx.SaysTheCreatorReadsEveryRow)
+                assert.deepEqual(await DevEnvFx.Names(tess), [DevEnvFx.Own, ullas], DevEnvFx.SaysBasicUserReadsAtBUDepthUnit)
             }
             finally
             {
