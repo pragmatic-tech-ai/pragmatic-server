@@ -35,7 +35,7 @@ import type { IEnvironmentRuntime, EnvEndpoint, EnvRuntimeContext } from '../env
 import { EnvironmentRuntimeResolver } from '../environment-runtime-resolver.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
-import { TenantPurposeName, type EnvDefinition, type EnvOidc } from '../../../environments/seed/bundle.js'
+import { BundleBuilder, TenantPurposeName, type EnvDefinition, type EnvOidc } from '../../../environments/seed/bundle.js'
 import type { UserSeed } from '../../../environments/seed/users.js'
 import { AdminProxyError, AdminProxyErrorKind, type IAdminProxy, type AdminConnectInfo, type AdminSnapshot } from '../admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, IssueTokenParams, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -43,7 +43,7 @@ import { PassThrough } from 'node:stream'
 import type { IPortForwardingKubectl, IProcessSpawner, ISpawnedProcess } from '../kubectl.js'
 import { ClusterTunnelPool } from '../cluster-tunnel-pool.js'
 import { GraphService } from '../graph-service.js'
-import { EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrlsLease } from '../environment-endpoints.js'
+import { EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrlsLease, type IEnvironmentReach } from '../environment-endpoints.js'
 import type { IHiveOrchestrator } from '../hive-orchestrator.js'
 
 /**
@@ -597,9 +597,41 @@ test('runtime create seeds through the proxy', async () =>
     const h = await Harness.Make()
     await h.Service.Create('demo1', Template.DemoContoso, EnvType.Runtime, undefined, undefined, 'owner-1')
     assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['SetSecurityModel', 'GetSecurityCatalog'])
-    assert.deepEqual(h.Proxy.Calls[0].args, [EnvironmentSecuritySeed.For('demo1', 'owner-1')])
+    // unfederated (no hive): the bootstrap local admin is seeded, not the creator (R39)
+    assert.deepEqual(h.Proxy.Calls[0].args, [EnvironmentSecuritySeed.For('demo1', BundleBuilder.AdminPrincipalId)])
     assert.equal(h.Proxy.Calls[0].info.password, 'pw-contoso-admin-pw')
     assert.equal(h.Registry.Get('demo1')?.status, EnvStatus.Running)
+})
+
+/** Reaches a DNS-reached env at a fixed admin password (no tunnel, no cluster Secret). */
+class FixedReach implements IEnvironmentReach
+{
+    public async UrlsFor(): Promise<EnvironmentUrlsLease>
+    {
+        return { httpUrl: 'http://svc', wsUrl: 'ws://svc', Release: () => undefined, Fail: () => undefined }
+    }
+
+    public async AdminPasswordFor(): Promise<string>
+    {
+        return 'pw'
+    }
+}
+
+test('a hive-bound runtime create seeds the creator only when federated', async () =>
+{
+    await IdpFixture.With('plat-t1', async (real) =>
+    {
+        const h = await Harness.Make()
+        const Service = (conn: IdpConnection): EnvironmentService => new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, false), SingleBackendResolver.Of(new DnsReachedFakeRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, h.Proxy, h.Directory, new FakeIdp(conn), c => new IdpAdminClient(c), undefined, new FixedReach())
+        // in-cluster with no base domain: not federated, the env has only local accounts and an authoritative directory
+        await Service({ ...real, baseDomain: undefined }).Create('unfed', Template.DevBlank, EnvType.Runtime, undefined, 'h1', 'owner-1')
+        assert.equal(h.Bundle.Oidc, undefined)
+        assert.deepEqual(h.Proxy.Calls[0].args, [EnvironmentSecuritySeed.For('unfed', BundleBuilder.AdminPrincipalId)], 'the bootstrap local admin, not the creator')
+        h.Proxy.Calls = []
+        await Service({ ...real, browserBaseUrl: 'https://idp-plat-t1.hive.test', baseDomain: 'hive.test' }).Create('fed', Template.DevBlank, EnvType.Runtime, undefined, 'h1', 'owner-1')
+        assert.ok(h.Bundle.Oidc)
+        assert.deepEqual(h.Proxy.Calls[0].args, [EnvironmentSecuritySeed.For('fed', 'owner-1')], 'the creator, who signs in through the tenant IdP')
+    })
 })
 
 test('development create is not seeded', async () =>

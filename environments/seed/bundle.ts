@@ -41,7 +41,8 @@ export class BundleBuilder
     private static readonly ApplicationsDir = 'applications'
     public static readonly AdminSecretSuffix = '-admin-pw'
     private static readonly PrincipalSecretSuffix = '-pw'
-    private static readonly AdminPrincipalId = 'admin'
+    /** The bootstrap local admin every bundle creates (the Owner the control plane signs in as). */
+    public static readonly AdminPrincipalId = 'admin'
     public static readonly AdminEmailPrefix = 'admin@'
     public static readonly AdminEmailSuffix = '.test'
     private static readonly LocalPackId = 'local'

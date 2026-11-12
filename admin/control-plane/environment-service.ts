@@ -378,7 +378,7 @@ export class EnvironmentService implements IAdminAccess
                 // in tenant-admin. The tenant-api create path always passes the session principal, so it always seeds.
                 if (type === EnvType.Runtime && creatorPrincipalId !== undefined)
                 {
-                    await this.SeedSecurity(record, def.name, creatorPrincipalId)
+                    await this.SeedSecurity(record, def.name, EnvironmentService.SeededAdministrator(oidc, creatorPrincipalId))
                 }
             }
             catch (err)
@@ -707,15 +707,27 @@ export class EnvironmentService implements IAdminAccess
     }
 
     /**
-     * Seeds a new Runtime environment's security setting with its creator as System Administrator, then reads the catalog
+     * The principal a new Runtime environment's seed makes System Administrator (ruling R39). A federated environment
+     * signs its creator in through the tenant IdP (a non-authoritative directory keeps it), so the creator is seeded.
+     * An unfederated one has only local accounts and an authoritative local directory: the creator (an IdP subject with
+     * no local account there) would read as Deleted at the first sync, so the bundle's bootstrap local admin, the one
+     * identity that can sign in, is seeded instead.
+     */
+    private static SeededAdministrator(oidc: EnvOidc | undefined, creatorPrincipalId: string): string
+    {
+        return oidc === undefined ? BundleBuilder.AdminPrincipalId : creatorPrincipalId
+    }
+
+    /**
+     * Seeds a new Runtime environment's security setting with `administratorPrincipalId` as System Administrator, then reads the catalog
      * back to prove the environment opened with the base roles. Any failure throws, so the caller's bring-up rollback runs.
      */
-    private async SeedSecurity(rec: EnvironmentRecord, environmentName: string, creatorPrincipalId: string): Promise<void>
+    private async SeedSecurity(rec: EnvironmentRecord, environmentName: string, administratorPrincipalId: string): Promise<void>
     {
         const lease = await this.AdminLeaseForRecord(rec)
         try
         {
-            await this.proxy.SetSecurityModel(lease.info, EnvironmentSecuritySeed.For(environmentName, creatorPrincipalId))
+            await this.proxy.SetSecurityModel(lease.info, EnvironmentSecuritySeed.For(environmentName, administratorPrincipalId))
             const catalog = await this.proxy.GetSecurityCatalog(lease.info)
             if (!catalog.roles.some(r => r.name === EnvironmentSecuritySeed.AdministratorRole))
             {
