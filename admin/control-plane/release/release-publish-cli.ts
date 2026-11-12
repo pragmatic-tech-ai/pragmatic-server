@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs'
 import { OciRegistryClient, type OciFetch } from '../oci-registry-client.js'
-import { ReleaseDescriptorCodec } from './release-descriptor.js'
 import { ReleasePublisher } from './release-publisher.js'
 import { ReleaseTag } from './release-tag.js'
 
@@ -24,6 +23,18 @@ export class ReleasePublishCli
     private static readonly FlagServerCommit = 'server-commit'
     private static readonly FlagSiblingsFile = 'siblings-file'
     private static readonly FlagKeyId = 'key-id'
+    private static readonly KnownFlags: readonly string[] = [
+        ReleasePublishCli.FlagTag,
+        ReleasePublishCli.FlagServerCommit,
+        ReleasePublishCli.FlagSiblingsFile,
+        ReleasePublishCli.FlagKeyId,
+    ]
+    private static readonly RepoNamePattern = /^(?!__proto__$)[A-Za-z0-9._-]+$/
+    private static readonly CommitPattern = /^[0-9a-f]{40}$/
+    private static readonly UnknownFlagPrefix = 'Unknown option: --'
+    private static readonly DuplicateFlagPrefix = 'Option given more than once: --'
+    private static readonly UnreadableKeyMessage = 'The signing key file named by RELEASE_SIGNING_KEY_FILE cannot be read'
+    private static readonly UnreadableSiblingsMessage = 'The file named by --siblings-file cannot be read'
     private static readonly EnvKeyFile = 'RELEASE_SIGNING_KEY_FILE'
     private static readonly EnvUser = 'RELEASE_REGISTRY_USER'
     private static readonly EnvToken = 'RELEASE_REGISTRY_TOKEN'
@@ -39,7 +50,7 @@ export class ReleasePublishCli
     private static readonly UsageMessage = 'Usage: pragmatic-release-publish check --tag <ref> | publish --tag <ref> --server-commit <sha> --siblings-file <path> --key-id <id>'
     private static readonly MissingFlagPrefix = 'Missing required option: --'
     private static readonly MissingEnvPrefix = 'Missing required environment variable: '
-    private static readonly BadSiblingsMessage = 'The siblings file must be a JSON object mapping repository names to commit shas'
+    private static readonly BadSiblingsMessage = 'The siblings file must be a JSON object mapping plain repository names to 40-hex commit shas'
     private static readonly VersionLabel = 'version '
     private static readonly FreeSuffix = ' is free'
     private static readonly PublishedPrefix = 'published '
@@ -89,24 +100,24 @@ export class ReleasePublishCli
         const serverCommit = S.Flag(flags, S.FlagServerCommit)
         const siblingCommits = S.ReadSiblings(S.Flag(flags, S.FlagSiblingsFile))
         const signingKeyId = S.Flag(flags, S.FlagKeyId)
-        const privateKeyPem = readFileSync(S.Env(env, S.EnvKeyFile), S.Utf8)
-        const descriptor = await S.NewPublisher(env, fetchFn).Publish({ tag, serverCommit, siblingCommits, signingKeyId, privateKeyPem })
+        const privateKeyPem = S.ReadFile(S.Env(env, S.EnvKeyFile), S.UnreadableKeyMessage)
+        const { descriptor, descriptorDigest } = await S.NewPublisher(env, fetchFn).Publish({ tag, serverCommit, siblingCommits, signingKeyId, privateKeyPem })
         output.Out(S.PublishedPrefix + descriptor.version)
         for (const [app, image] of Object.entries(descriptor.images))
         {
             output.Out(app + S.ImageSeparator + image.digest)
         }
-        output.Out(S.DescriptorLabel + OciRegistryClient.DigestOf(ReleaseDescriptorCodec.Encode(descriptor)))
+        output.Out(S.DescriptorLabel + descriptorDigest)
     }
 
     private static NewPublisher(env: NodeJS.ProcessEnv, fetchFn?: OciFetch): ReleasePublisher
     {
         const S = ReleasePublishCli
-        const host = env[S.EnvRegistry] ?? S.DefaultRegistry
+        const host = S.EnvOr(env, S.EnvRegistry, S.DefaultRegistry)
         const baseUrl = host.includes(S.SchemeMarker) ? host : S.HttpsScheme + host
         const credential = { username: S.Env(env, S.EnvUser), token: S.Env(env, S.EnvToken) }
         const registry = new OciRegistryClient(baseUrl, fetchFn, credential)
-        return new ReleasePublisher(registry, env[S.EnvNamespace] ?? S.DefaultNamespace)
+        return new ReleasePublisher(registry, S.EnvOr(env, S.EnvNamespace, S.DefaultNamespace))
     }
 
     private static ReadSiblings(path: string): Record<string, string>
@@ -115,17 +126,43 @@ export class ReleasePublishCli
         let parsed: unknown
         try
         {
-            parsed = JSON.parse(readFileSync(path, S.Utf8))
+            parsed = JSON.parse(S.ReadFile(path, S.UnreadableSiblingsMessage))
         }
-        catch
+        catch (err)
         {
-            throw new ReleaseCliUsageError(S.BadSiblingsMessage)
+            throw err instanceof ReleaseCliUsageError ? err : new ReleaseCliUsageError(S.BadSiblingsMessage)
         }
         if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed))
         {
             throw new ReleaseCliUsageError(S.BadSiblingsMessage)
         }
+        for (const [name, commit] of Object.entries(parsed))
+        {
+            if (!S.RepoNamePattern.test(name) || typeof commit !== 'string' || !S.CommitPattern.test(commit))
+            {
+                throw new ReleaseCliUsageError(S.BadSiblingsMessage)
+            }
+        }
         return parsed as Record<string, string>
+    }
+
+    /** Reads a file; an unreadable one becomes the given sentence (never the raw OS error). */
+    private static ReadFile(path: string, unreadableMessage: string): string
+    {
+        try
+        {
+            return readFileSync(path, ReleasePublishCli.Utf8)
+        }
+        catch
+        {
+            throw new ReleaseCliUsageError(unreadableMessage)
+        }
+    }
+
+    private static EnvOr(env: NodeJS.ProcessEnv, name: string, fallback: string): string
+    {
+        const value = env[name]
+        return value === undefined || value.length === 0 ? fallback : value
     }
 
     private static ParseFlags(args: readonly string[]): Map<string, string>
@@ -139,7 +176,16 @@ export class ReleasePublishCli
             {
                 throw new ReleaseCliUsageError(S.UsageMessage)
             }
-            flags.set(arg.slice(S.FlagPrefix.length), args[++i])
+            const name = arg.slice(S.FlagPrefix.length)
+            if (!S.KnownFlags.includes(name))
+            {
+                throw new ReleaseCliUsageError(S.UnknownFlagPrefix + name)
+            }
+            if (flags.has(name))
+            {
+                throw new ReleaseCliUsageError(S.DuplicateFlagPrefix + name)
+            }
+            flags.set(name, args[++i])
         }
         return flags
     }

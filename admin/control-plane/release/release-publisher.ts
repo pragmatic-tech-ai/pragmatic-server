@@ -3,6 +3,9 @@ import { ReleaseDescriptorCodec, type ReleaseDescriptor, type ReleaseImage } fro
 import { ReleaseSignature } from './release-signature.js'
 import { ReleaseApps, type ReleaseApp, type ReleaseTag } from './release-tag.js'
 
+/** The published descriptor and the digest of its encoded bytes (the layer digest the registry records and the signature covers). */
+export type ReleasePublishResult = { descriptor: ReleaseDescriptor; descriptorDigest: string }
+
 export type ReleasePublishInput = {
     tag: ReleaseTag
     serverCommit: string
@@ -69,7 +72,7 @@ export class ReleasePublisher
         }
     }
 
-    public async Publish(input: ReleasePublishInput): Promise<ReleaseDescriptor>
+    public async Publish(input: ReleasePublishInput): Promise<ReleasePublishResult>
     {
         const S = ReleasePublisher
         const version = input.tag.Version
@@ -96,12 +99,13 @@ export class ReleasePublisher
             images: images as ReleaseDescriptor['images'],
         }
         const bytes = ReleaseDescriptorCodec.Encode(descriptor)
-        const signature = ReleaseSignature.Sign(OciRegistryClient.DigestOf(bytes), input.privateKeyPem)
+        const descriptorDigest = OciRegistryClient.DigestOf(bytes)
+        const signature = ReleaseSignature.Sign(descriptorDigest, input.privateKeyPem)
         await this.registry.PushArtifact(this.repo(S.DescriptorRepository), version, S.ArtifactType, S.LayerMediaType, bytes, {
             [S.SignatureAnnotation]: signature,
             [S.KeyAnnotation]: input.signingKeyId,
         })
-        return descriptor
+        return { descriptor, descriptorDigest }
     }
 
     private repo(name: string): string

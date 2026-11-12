@@ -96,6 +96,12 @@ class CliFixture
         return join(this.Dir, 'siblings.json')
     }
 
+    public PublishArgs(): string[]
+    {
+        return ['publish', '--tag', PublisherFixture.TagRef, '--server-commit', PublisherFixture.ServerCommit,
+            '--siblings-file', this.SiblingsFile, '--key-id', PublisherFixture.KeyId]
+    }
+
     public Run(...argv: string[]): Promise<number>
     {
         const output = { Out: (line: string) => { this.Lines.push(line) }, Err: (line: string) => { this.Errors.push(line) } }
@@ -110,7 +116,7 @@ class CliFixture
 
 class ImportWalker
 {
-    private static readonly ImportPattern = /(?:from|import)\s+['"]([^'"]+)['"]/g
+    private static readonly ImportPattern = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)['"]([^'"]+)['"]/g
     private static readonly NodePrefix = 'node:'
     private static readonly RelativePrefix = '.'
     private static readonly JsExtension = /\.js$/
@@ -131,16 +137,22 @@ class ImportWalker
                 continue
             }
             seen.add(file)
-            for (const match of readFileSync(file, 'utf8').matchAll(S.ImportPattern))
+            for (const specifier of S.SpecifiersOfText(readFileSync(file, 'utf8')))
             {
-                specifiers.push(match[1])
-                if (match[1].startsWith(S.RelativePrefix))
+                specifiers.push(specifier)
+                if (specifier.startsWith(S.RelativePrefix))
                 {
-                    queue.push(resolve(dirname(file), match[1].replace(S.JsExtension, S.TsExtension)))
+                    queue.push(resolve(dirname(file), specifier.replace(S.JsExtension, S.TsExtension)))
                 }
             }
         }
         return specifiers
+    }
+
+    /** Every module specifier in a source text, static, dynamic, re-exported or required. */
+    public static SpecifiersOfText(text: string): string[]
+    {
+        return [...text.matchAll(ImportWalker.ImportPattern)].map(m => m[1])
     }
 
     public static IsBuiltinOrRelative(specifier: string): boolean
@@ -155,7 +167,7 @@ describe('ReleasePublisher', () =>
     {
         const f = new PublisherFixture()
         f.SeedImages()
-        const descriptor = await f.Publisher().Publish(f.Input())
+        const { descriptor, descriptorDigest } = await f.Publisher().Publish(f.Input())
         assert.equal(descriptor.builtAt, PublisherFixture.BuiltAt)
         const client = new OciRegistryClient(f.Registry.Origin, f.Registry.Fetch)
         const pulled = await client.PullArtifactLayer(PublisherFixture.Namespace + '/' + ReleasePublisher.DescriptorRepository, PublisherFixture.Version)
@@ -169,6 +181,7 @@ describe('ReleasePublisher', () =>
             assert.equal(image.digest, FakeOciRegistry.DigestOf(new TextEncoder().encode('image ' + app)))
             assert.ok(ReleaseSignature.Verifies(image.digest, image.signature, f.Public))
         }
+        assert.equal(pulled.layerDigest, descriptorDigest)
         assert.equal(pulled.layerDigest, OciRegistryClient.DigestOf(ReleaseDescriptorCodec.Encode(decoded)))
         assert.ok(ReleaseSignature.Verifies(pulled.layerDigest, pulled.annotations[ReleasePublisher.SignatureAnnotation], f.Public))
         assert.equal(pulled.annotations[ReleasePublisher.KeyAnnotation], PublisherFixture.KeyId)
@@ -291,6 +304,128 @@ describe('ReleasePublishCli', () =>
         }
     })
 
+    it('treats empty optional environment variables as unset', async () =>
+    {
+        const f = new PublisherFixture()
+        f.SeedImages()
+        const cli = new CliFixture(f)
+        try
+        {
+            cli.Env.RELEASE_NAMESPACE = ''
+            cli.Env.RELEASE_REGISTRY = ''
+            assert.equal(await cli.Run(...cli.PublishArgs()), 0)
+            assert.deepEqual(cli.Errors, [])
+            assert.ok(f.Registry.Requests[0].url.startsWith('https://ghcr.io/v2/' + PublisherFixture.Namespace + '/'))
+        }
+        finally
+        {
+            cli.Dispose()
+        }
+    })
+
+    it('rejects sibling files with bad names or non-sha values with a clear sentence', async () =>
+    {
+        const cli = new CliFixture(new PublisherFixture())
+        try
+        {
+            for (const body of [{ 'a/b': 'c'.repeat(40) }, { todl: 'main' }, { todl: 7 }, ['x']])
+            {
+                writeFileSync(cli.SiblingsFile, JSON.stringify(body))
+                cli.Errors.length = 0
+                assert.equal(await cli.Run(...cli.PublishArgs()), 1)
+                assert.equal(cli.Errors.length, 1)
+                assert.ok(cli.Errors[0].includes('40-hex'))
+            }
+        }
+        finally
+        {
+            cli.Dispose()
+        }
+    })
+
+    it('names the flag or variable when the siblings or key file is unreadable', async () =>
+    {
+        const cli = new CliFixture(new PublisherFixture())
+        try
+        {
+            const missing = join(cli.Dir, 'nope')
+            const args = cli.PublishArgs()
+            args[args.indexOf('--siblings-file') + 1] = missing
+            assert.equal(await cli.Run(...args), 1)
+            assert.ok(cli.Errors[0].includes('--siblings-file'))
+            assert.ok(!cli.Errors[0].includes('ENOENT'))
+            cli.Errors.length = 0
+            cli.Env.RELEASE_SIGNING_KEY_FILE = missing
+            assert.equal(await cli.Run(...cli.PublishArgs()), 1)
+            assert.ok(cli.Errors[0].includes('RELEASE_SIGNING_KEY_FILE'))
+            assert.ok(!cli.Errors[0].includes('ENOENT'))
+        }
+        finally
+        {
+            cli.Dispose()
+        }
+    })
+
+    it('names each missing required flag and environment variable', async () =>
+    {
+        const cli = new CliFixture(new PublisherFixture())
+        try
+        {
+            assert.equal(await cli.Run('publish', '--tag', PublisherFixture.TagRef), 1)
+            assert.equal(cli.Errors.pop(), 'Missing required option: --server-commit')
+            delete cli.Env.RELEASE_REGISTRY_TOKEN
+            assert.equal(await cli.Run('check', '--tag', PublisherFixture.TagRef), 1)
+            assert.equal(cli.Errors.pop(), 'Missing required environment variable: RELEASE_REGISTRY_TOKEN')
+            delete cli.Env.RELEASE_SIGNING_KEY_FILE
+            assert.equal(await cli.Run(...cli.PublishArgs()), 1)
+            assert.equal(cli.Errors.pop(), 'Missing required environment variable: RELEASE_SIGNING_KEY_FILE')
+        }
+        finally
+        {
+            cli.Dispose()
+        }
+    })
+
+    it('rejects unknown and duplicate flags', async () =>
+    {
+        const cli = new CliFixture(new PublisherFixture())
+        try
+        {
+            assert.equal(await cli.Run('check', '--tag', PublisherFixture.TagRef, '--bogus', 'x'), 1)
+            assert.equal(cli.Errors.pop(), 'Unknown option: --bogus')
+            assert.equal(await cli.Run('check', '--tag', PublisherFixture.TagRef, '--tag', PublisherFixture.TagRef), 1)
+            assert.equal(cli.Errors.pop(), 'Option given more than once: --tag')
+        }
+        finally
+        {
+            cli.Dispose()
+        }
+    })
+
+    it('never writes the key PEM or token to stderr on failure paths', async () =>
+    {
+        const f = new PublisherFixture()
+        f.SeedImages(ReleaseApp.EnvGateway)
+        const cli = new CliFixture(f)
+        try
+        {
+            await cli.Run(...cli.PublishArgs())
+            await cli.Run('publish', '--tag', 'release/1.4')
+            await cli.Run('bogus')
+            cli.Env.RELEASE_SIGNING_KEY_FILE = join(cli.Dir, 'nope')
+            await cli.Run(...cli.PublishArgs())
+            assert.equal(cli.Errors.length, 4)
+            const stderr = cli.Errors.join('\n')
+            assert.ok(!stderr.includes(PublisherFixture.Token))
+            assert.ok(!PublisherFixture.Pem.test(stderr))
+            assert.ok(!stderr.includes(f.Private.split('\n')[1]))
+        }
+        finally
+        {
+            cli.Dispose()
+        }
+    })
+
     it('imports only node builtins and relative modules, so it runs without npm install', () =>
     {
         const bin = resolve(dirname(fileURLToPath(import.meta.url)), '../../bin/pragmatic-release-publish.ts')
@@ -298,5 +433,11 @@ describe('ReleasePublishCli', () =>
         assert.ok(specifiers.length > 0)
         const offenders = specifiers.filter(s => !ImportWalker.IsBuiltinOrRelative(s))
         assert.deepEqual(offenders, [])
+    })
+
+    it('closure guard sees static, dynamic, re-export and require specifiers', () =>
+    {
+        const text = "import a from 'x1'\nimport 'x2'\nexport { b } from 'x3'\nconst c = await import('x4')\nconst d = require('x5')"
+        assert.deepEqual(ImportWalker.SpecifiersOfText(text), ['x1', 'x2', 'x3', 'x4', 'x5'])
     })
 })
