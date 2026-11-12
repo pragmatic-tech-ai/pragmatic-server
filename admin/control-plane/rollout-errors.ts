@@ -131,6 +131,46 @@ export class VersionBelowFloorError extends Error
     }
 }
 
+/** The version is a registry release that failed verification on import; it can never be gated. */
+export class ReleaseRejectedError extends Error
+{
+    private static readonly ErrorName = 'ReleaseRejectedError'
+    private static readonly MessagePrefix = 'Release rejected on import: '
+
+    public constructor(version: string)
+    {
+        super(ReleaseRejectedError.MessagePrefix + version)
+        this.name = ReleaseRejectedError.ErrorName
+    }
+}
+
+/** The version is an imported registry release; hives cannot select it until registry releases are runnable (plan ruling R4). */
+export class ReleaseNotRunnableYetError extends Error
+{
+    private static readonly ErrorName = 'ReleaseNotRunnableYetError'
+    private static readonly MessagePrefix = 'Release '
+    private static readonly MessageSuffix = ' is in the registry but hives cannot run registry releases yet.'
+
+    public constructor(version: string)
+    {
+        super(ReleaseNotRunnableYetError.MessagePrefix + version + ReleaseNotRunnableYetError.MessageSuffix)
+        this.name = ReleaseNotRunnableYetError.ErrorName
+    }
+}
+
+/** The release registry could not be reached or refused the credential; nothing was imported. Never carries token or response text. */
+export class ReleaseRegistryUnavailableError extends Error
+{
+    private static readonly ErrorName = 'ReleaseRegistryUnavailableError'
+    private static readonly DefaultMessage = 'The release registry is unreachable or refused the credential'
+
+    public constructor()
+    {
+        super(ReleaseRegistryUnavailableError.DefaultMessage)
+        this.name = ReleaseRegistryUnavailableError.ErrorName
+    }
+}
+
 export class PolicyStoreUnavailableError extends Error
 {
     private static readonly ErrorName = 'PolicyStoreUnavailableError'

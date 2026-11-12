@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { InfraMode } from './platform-records.js'
 import type { HiveRecord } from './platform-records.js'
 import { KindHiveOrchestrator } from './kind-hive-orchestrator.js'
+import { ReleaseState } from './manifest-record.js'
 import type { ManifestRecord, ManifestRegistry } from './manifest-record.js'
 import type { GatingRecord, GatingRegistry } from './gating-record.js'
 import type { SelectionRecord, SelectionRegistry } from './selection-record.js'
@@ -17,7 +18,7 @@ import { Channel } from './channel.js'
 import type { IManifestSigner } from './manifest-signer.js'
 import { ReleasePolicyRegistry } from './release-policy-record.js'
 import type { ReleasePolicyRecord } from './release-policy-record.js'
-import { PolicyStoreUnavailableError, AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError, ManifestWithdrawnError, TenantOnHoldError, ChannelNotSubscribedError, VersionBelowFloorError } from './rollout-errors.js'
+import { PolicyStoreUnavailableError, AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError, ManifestWithdrawnError, TenantOnHoldError, ChannelNotSubscribedError, VersionBelowFloorError, ReleaseRejectedError, ReleaseNotRunnableYetError } from './rollout-errors.js'
 import type { AdoptionLedgerRegistry, AdoptionLedgerRecord, LedgerAction } from './adoption-ledger-record.js'
 import { VersionOrder } from './version-order.js'
 
@@ -87,6 +88,16 @@ export class PlatformDeploymentRegistry
         }
         await this.manifests.Put(record)
         return record
+    }
+
+    /** Stores a manifest record built from a registry release (verified or rejected) exactly as given. */
+    public async ImportRelease(record: ManifestRecord): Promise<void>
+    {
+        if (this.manifests.Get(record.id) !== undefined)
+        {
+            throw new ManifestExistsError(record.id)
+        }
+        await this.manifests.Put(record)
     }
 
     /** Every published manifest, including withdrawn versions. */
@@ -245,9 +256,14 @@ export class PlatformDeploymentRegistry
 
     public async Gate(tenantId: string, version: string): Promise<void>
     {
-        if (this.manifests.Get(version) === undefined)
+        const manifest = this.manifests.Get(version)
+        if (manifest === undefined)
         {
             throw new UnknownManifestError(version)
+        }
+        if (manifest.release?.state === ReleaseState.Rejected)
+        {
+            throw new ReleaseRejectedError(version)
         }
         const existed = this.gating.Get(this.GateId(tenantId, version)) !== undefined
         await this.gating.Put({ id: this.GateId(tenantId, version), tenantId, version, gatedAt: new Date().toISOString() })
@@ -280,7 +296,7 @@ export class PlatformDeploymentRegistry
         await this.Record(hiveId, version, 'adopted')
     }
 
-    /** The versions gated for the tenant that owns the hive. */
+    /** The versions gated for the tenant that owns the hive (registry releases excluded until hives can run them, R4). */
     public AdoptableFor(hiveId: string): readonly ManifestRecord[]
     {
         const hive = this.hives.GetHive(hiveId)
@@ -288,13 +304,13 @@ export class PlatformDeploymentRegistry
         {
             throw new UnknownHiveError(hiveId)
         }
-        return this.ManifestsFor(hive.tenantId).filter(m => this.BlockReasonFor(hive.tenantId, hive.id, m) === undefined)
+        return this.ManifestsFor(hive.tenantId).filter(m => m.release === undefined && this.BlockReasonFor(hive.tenantId, hive.id, m) === undefined)
     }
 
-    /** Gated versions that also pass every release-policy rule (withdrawn, hold, channels, floor). */
+    /** Gated versions that also pass every release-policy rule (withdrawn, hold, channels, floor); registry releases excluded (R4). */
     public AdoptableForTenant(tenantId: string): readonly ManifestRecord[]
     {
-        return this.ManifestsFor(tenantId).filter(m => this.BlockReasonFor(tenantId, undefined, m) === undefined)
+        return this.ManifestsFor(tenantId).filter(m => m.release === undefined && this.BlockReasonFor(tenantId, undefined, m) === undefined)
     }
 
     /** First failing rule in fixed order, or undefined when the version may be adopted. */
@@ -379,6 +395,10 @@ export class PlatformDeploymentRegistry
         if (manifest === undefined)
         {
             throw new UnknownManifestError(version)
+        }
+        if (manifest.release !== undefined)
+        {
+            throw new ReleaseNotRunnableYetError(version)
         }
         const reason = this.BlockReasonFor(hive.tenantId, hiveId, manifest)
         if (reason !== undefined)

@@ -1,10 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
-import { ManifestRegistry } from '../manifest-record.js'
+import { ManifestRegistry, ReleaseState } from '../manifest-record.js'
+import type { ManifestRecord } from '../manifest-record.js'
+import { ReleaseNotRunnableYetError, ReleaseRejectedError } from '../rollout-errors.js'
 import { GatingRegistry } from '../gating-record.js'
 import { SelectionRegistry } from '../selection-record.js'
 import { RolloutRegistrationRegistry } from '../rollout-registration-record.js'
@@ -1034,6 +1036,104 @@ test('hive policy: no hive policy behaves exactly as tenant-only', async () =>
         assert.deepEqual(EnforceFx.Ids(reg.AdoptableFor(Fx.HiveB)), [HiveFx.Ten])
         assert.deepEqual(EnforceFx.Ids(reg.AdoptableForTenant(Fx.TenantA)), [HiveFx.Ten])
     })
+})
+
+class ReleaseFx
+{
+    public static readonly Version = '4.0.0'
+    public static readonly OldStyle = '3.9.0'
+    public static readonly Digest = 'sha256:' + 'c'.repeat(64)
+    public static readonly BuiltAt = '2026-11-12T10:00:00.000Z'
+    public static readonly Reason = 'image digest mismatch: pragmatic-env-gateway'
+
+    public static Verified(version: string): ManifestRecord
+    {
+        return {
+            id: version,
+            image: 'ghcr.io/pragmatic-tech-ai/pragmatic-env-server@' + ReleaseFx.Digest,
+            digest: ReleaseFx.Digest,
+            signed: true,
+            channel: Channel.Stable,
+            publishedAt: ReleaseFx.BuiltAt,
+            release: { state: ReleaseState.Verified, builtAt: ReleaseFx.BuiltAt, signingKeyId: 'release-2026' },
+        }
+    }
+
+    public static Rejected(version: string): ManifestRecord
+    {
+        return { id: version, image: '', signed: false, channel: Channel.Stable, publishedAt: ReleaseFx.BuiltAt, release: { state: ReleaseState.Rejected, rejectedReason: ReleaseFx.Reason } }
+    }
+}
+
+test('release: ImportRelease stores the record as given and refuses an existing id', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await reg.ImportRelease(ReleaseFx.Verified(ReleaseFx.Version))
+        assert.deepEqual(reg.AllManifests(), [ReleaseFx.Verified(ReleaseFx.Version)])
+        await assert.rejects(reg.ImportRelease(ReleaseFx.Verified(ReleaseFx.Version)), ManifestExistsError)
+        await reg.Publish(Fx.V1, Fx.Image(Fx.V1))
+        await assert.rejects(reg.ImportRelease(ReleaseFx.Verified(Fx.V1)), ManifestExistsError)
+    })
+})
+
+test('release: Gate on a Rejected release throws ReleaseRejectedError and records no gate', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await reg.ImportRelease(ReleaseFx.Rejected(ReleaseFx.Version))
+        await assert.rejects(reg.Gate(Fx.TenantA, ReleaseFx.Version), ReleaseRejectedError)
+        assert.deepEqual(reg.AllGating(), [])
+    })
+})
+
+test('release: a verified release is gateable but SelectTarget and RecordAdoption throw ReleaseNotRunnableYetError (R4)', async () =>
+{
+    await Fx.Run(async (reg, _registrations, rolls) =>
+    {
+        await reg.ImportRelease(ReleaseFx.Verified(ReleaseFx.Version))
+        await reg.Gate(Fx.TenantA, ReleaseFx.Version)
+        assert.deepEqual(reg.ManifestsFor(Fx.TenantA).map(m => m.id), [ReleaseFx.Version])
+        await assert.rejects(reg.SelectTarget(Fx.HiveA, ReleaseFx.Version), (err: Error) =>
+            err instanceof ReleaseNotRunnableYetError
+            && err.message === 'Release 4.0.0 is in the registry but hives cannot run registry releases yet.')
+        await assert.rejects(reg.RecordAdoption(Fx.HiveA, ReleaseFx.Version), ReleaseNotRunnableYetError)
+        assert.deepEqual(rolls, [])
+        assert.deepEqual(reg.AllSelections(), [])
+        assert.deepEqual(reg.AdoptableFor(Fx.HiveA), [])
+        assert.deepEqual(reg.AdoptableForTenant(Fx.TenantA), [])
+    })
+})
+
+test('release: an old-style record (no release) still selects and rolls beside an imported release', async () =>
+{
+    await Fx.Run(async (reg, _registrations, rolls) =>
+    {
+        await reg.ImportRelease(ReleaseFx.Verified(ReleaseFx.Version))
+        await Fx.PublishGated(reg, [ReleaseFx.OldStyle])
+        await reg.SelectTarget(Fx.HiveA, ReleaseFx.OldStyle)
+        assert.deepEqual(reg.TargetFor(Fx.HiveA), { version: ReleaseFx.OldStyle, image: Fx.Image(ReleaseFx.OldStyle) })
+        assert.equal(rolls.length, 2)
+        assert.equal(reg.AllManifests().find(m => m.id === ReleaseFx.OldStyle)!.release, undefined)
+    })
+})
+
+test('release: a manifests file written before releases existed loads unchanged', async () =>
+{
+    const dir = await mkdtemp(join(tmpdir(), Fx.Prefix))
+    try
+    {
+        const file = join(dir, 'm.json')
+        const legacy = { id: Fx.V1, image: Fx.Image(Fx.V1), publishedAt: Fx.LegacyAt, channel: Channel.Stable }
+        await writeFile(file, JSON.stringify({ manifests: { [Fx.V1]: legacy } }))
+        const manifests = new ManifestRegistry(file)
+        await manifests.Load()
+        assert.deepEqual(manifests.List(), [legacy])
+    }
+    finally
+    {
+        await rm(dir, { recursive: true, force: true })
+    }
 })
 
 test('hive policy: the tenant offered list ignores hive policies', async () =>

@@ -19,9 +19,10 @@ export class ReleaseDescriptorInvalidError extends Error
     private static readonly ErrorName = 'ReleaseDescriptorInvalidError'
     private static readonly MessagePrefix = 'Invalid release descriptor: '
 
-    public constructor(reason: string)
+    /** The codec's reason without the message prefix (a fixed sentence plus at most a field or app name). */
+    public constructor(public readonly Reason: string)
     {
-        super(ReleaseDescriptorInvalidError.MessagePrefix + reason)
+        super(ReleaseDescriptorInvalidError.MessagePrefix + Reason)
         this.name = ReleaseDescriptorInvalidError.ErrorName
     }
 }
