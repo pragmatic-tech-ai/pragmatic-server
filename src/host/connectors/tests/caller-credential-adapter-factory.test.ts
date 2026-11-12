@@ -5,10 +5,12 @@ import type { ExternalRecord, IDataSourceAdapter, IDataSourceAdapterFactory, IDa
 import { PresentedSecret, SourceToken, SourceTokenError, SourceTokenFailure, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecretStore, ISourceTokenProvider, SourceTokenRequest } from '@pragmatic-tech-ai/todl-identity'
 import { UpstreamTokens, UpstreamTokenVault } from '@pragmatic-tech-ai/todl-identity-cloud'
-import { Signal } from '@pragmatic-tech-ai/todl-runtime'
+import { ServiceProvider, Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
-import { CallerCredentialAdapterFactory, CallerCredentialError, ConnectionCredentialMode } from '../caller-credential-adapter-factory.js'
+import { CallerCredentialAdapterFactory, CallerCredentialError, CallerCredentialErrorCode, ConnectionCredentialMode } from '../caller-credential-adapter-factory.js'
 import { CallerCredentials } from '../caller-credentials.js'
+import { PragmaticServer } from '../../../pragmatic-server.js'
+import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
 
 /** An inner adapter that answers every read with the secret it was opened with; `AuthFails` makes reads fail as Auth. */
 class TokenEchoAdapter implements IDataSourceAdapter
@@ -18,6 +20,9 @@ class TokenEchoAdapter implements IDataSourceAdapter
 
     public Disposed = false
     public AuthFails = false
+    public readonly CanPage = true
+    /** While set, reads wait on it (a call held in flight). */
+    public Gate: Promise<void> | undefined
     public readonly Contexts: (string | undefined)[] = []
 
     public constructor(public readonly Secret: string | undefined)
@@ -29,6 +34,7 @@ class TokenEchoAdapter implements IDataSourceAdapter
         this.Contexts.push(context?.Key)
         // a turn of the event loop, so concurrent callers interleave
         await new Promise(resolve => setImmediate(resolve))
+        await this.Gate
         if (this.AuthFails) throw new Error(TokenEchoAdapter.RejectedMessage)
         return [{ [TokenEchoAdapter.TokenField]: this.Secret ?? null }]
     }
@@ -73,8 +79,17 @@ class FakeTokens implements ISourceTokenProvider
     private static readonly TokenPrefix = 'token-of-'
     private static readonly LifetimeMs = 3600000
 
+    private static readonly RenewedSuffix = '-renewed'
+
     public readonly Requests: SourceTokenRequest[] = []
     public readonly Failing = new Set<string>()
+    /** Principals whose next tokens are renewed ones. */
+    public readonly Renewed = new Set<string>()
+
+    public static RenewedTokenOf(principalId: string): string
+    {
+        return FakeTokens.TokenOf(principalId) + FakeTokens.RenewedSuffix
+    }
 
     public static TokenOf(principalId: string): string
     {
@@ -86,7 +101,8 @@ class FakeTokens implements ISourceTokenProvider
         this.Requests.push(request)
         await new Promise(resolve => setImmediate(resolve))
         if (this.Failing.has(request.PrincipalId)) throw new SourceTokenError(SourceTokenFailure.NoUpstreamSession)
-        return new SourceToken(request.Resource, new PresentedSecret(FakeTokens.TokenOf(request.PrincipalId)), new Date(Date.now() + FakeTokens.LifetimeMs))
+        const value = this.Renewed.has(request.PrincipalId) ? FakeTokens.RenewedTokenOf(request.PrincipalId) : FakeTokens.TokenOf(request.PrincipalId)
+        return new SourceToken(request.Resource, new PresentedSecret(value), new Date(Date.now() + FakeTokens.LifetimeMs))
     }
 }
 
@@ -136,9 +152,12 @@ class CallerFx
     public static readonly Request: QueryRequest = { Source: CallerFx.Source, Fields: [TokenEchoAdapter.TokenField] }
     public static readonly UpstreamAccess = 'upstream-access'
     public static readonly UpstreamRefresh = 'upstream-refresh'
+    public static readonly UnknownModes = ['Caller', 'user']
+    public static readonly Rejected = 'rejected'
+    public static readonly Fulfilled = 'fulfilled'
     private static readonly MaxTicks = 20
 
-    public static Connection(mode: ConnectionCredentialMode | undefined): ResolvedConnection
+    public static Connection(mode: ConnectionCredentialMode | string | undefined): ResolvedConnection
     {
         const config: Record<string, string> = { [CallerCredentialAdapterFactory.TokenResourceKey]: CallerFx.Resource }
         if (mode !== undefined) config[CallerCredentialAdapterFactory.CredentialsKey] = mode
@@ -169,6 +188,7 @@ describe('caller credential adapter factory', () =>
         const inner = new EchoFactory()
         const tokens = new FakeTokens()
         const adapter = await new CallerCredentialAdapterFactory(inner, tokens, CallerFx.Tenant).Open(CallerFx.Connection(ConnectionCredentialMode.Caller))
+        assert.equal(adapter.CanPage, false, 'before any caller: the weakest guarantee')
         const [alice, bob] = await Promise.all([CallerFx.Read(adapter, CallerFx.Alice), CallerFx.Read(adapter, CallerFx.Bob)])
         assert.equal(alice, FakeTokens.TokenOf(CallerFx.Alice))
         assert.equal(bob, FakeTokens.TokenOf(CallerFx.Bob))
@@ -176,7 +196,38 @@ describe('caller credential adapter factory', () =>
             [[CallerFx.Tenant.Id, CallerFx.Alice, CallerFx.Resource], [CallerFx.Tenant.Id, CallerFx.Bob, CallerFx.Resource]])
         assert.equal(inner.Connected.length, 2, 'one inner adapter per principal')
         for (const opened of inner.Connected) assert.deepEqual(opened.Contexts, [opened.Secret === FakeTokens.TokenOf(CallerFx.Alice) ? CallerFx.Alice : CallerFx.Bob], 'each inner adapter serves only its own principal')
-        assert.ok(inner.Opened.every(opened => opened.Secret !== CallerFx.AppSecret), 'the app credentials are never used')
+        assert.ok(inner.Opened.every(opened => opened.Secret !== CallerFx.AppSecret && opened.Secret !== undefined), 'never opened with the app credentials, nor without a caller\'s token')
+        assert.equal(adapter.CanPage, true, 'the flags are latched from the first principal\'s inner adapter')
+    })
+
+    test('an unknown credential mode is refused, never read as dedicated', async () =>
+    {
+        const inner = new EchoFactory()
+        const factory = new CallerCredentialAdapterFactory(inner, new FakeTokens(), CallerFx.Tenant)
+        for (const mode of CallerFx.UnknownModes)
+        {
+            await assert.rejects(factory.Open(CallerFx.Connection(mode)), (error: unknown) => error instanceof CallerCredentialError && error.Code === CallerCredentialErrorCode.UnknownCredentialMode)
+        }
+        assert.equal(inner.Opened.length, 0, 'nothing opened with the app credentials')
+    })
+
+    test('a renewed token reopens the principal\'s adapter without cutting off its in-flight call', async () =>
+    {
+        const inner = new EchoFactory()
+        const tokens = new FakeTokens()
+        const adapter = await new CallerCredentialAdapterFactory(inner, tokens, CallerFx.Tenant).Open(CallerFx.Connection(ConnectionCredentialMode.Caller))
+        await CallerFx.Read(adapter, CallerFx.Alice)
+        const first = inner.Connected[0]!
+        let release: () => void = () => undefined
+        first.Gate = new Promise<void>(resolve => { release = resolve })
+        const inFlight = CallerFx.Read(adapter, CallerFx.Alice)
+        await CallerFx.Until(async () => first.Contexts.length === 2)
+        tokens.Renewed.add(CallerFx.Alice)
+        assert.equal(await CallerFx.Read(adapter, CallerFx.Alice), FakeTokens.RenewedTokenOf(CallerFx.Alice), 'the renewed token opens a fresh adapter')
+        assert.equal(first.Disposed, false, 'the old adapter drains its in-flight call first')
+        release()
+        assert.equal(await inFlight, FakeTokens.TokenOf(CallerFx.Alice), 'the in-flight call finishes on the old adapter')
+        assert.equal(first.Disposed, true, 'then the old adapter is disposed')
     })
 
     test('anonymous context is refused by a caller\'s-identity connection', async () =>
@@ -219,9 +270,9 @@ describe('caller credential adapter factory', () =>
         const bobs = inner.Connected[0]!
         tokens.Failing.add(CallerFx.Alice)
         const [failed, bob] = await Promise.allSettled([CallerFx.Read(shared, CallerFx.Alice), CallerFx.Read(shared, CallerFx.Bob)])
-        assert.equal(failed.status, 'rejected')
+        assert.equal(failed.status, CallerFx.Rejected)
         assert.equal(caller.ClassifyFailure!((failed as PromiseRejectedResult).reason), ConnectionFailureKind.Permanent, 'a token failure is never Auth')
-        assert.deepEqual(bob, { status: 'fulfilled', value: FakeTokens.TokenOf(CallerFx.Bob) })
+        assert.deepEqual(bob, { status: CallerFx.Fulfilled, value: FakeTokens.TokenOf(CallerFx.Bob) })
         // the source refusing alice's token (an inner Auth failure) drops only alice's inner adapter
         tokens.Failing.delete(CallerFx.Alice)
         assert.equal(await CallerFx.Read(shared, CallerFx.Alice), FakeTokens.TokenOf(CallerFx.Alice))
@@ -274,6 +325,36 @@ describe('caller credential adapter factory', () =>
         finally
         {
             subscription.dispose()
+        }
+    })
+})
+
+class RegistrationFx
+{
+    public static readonly NoAdapter = 'no data-source adapter available'
+}
+
+describe('caller credentials registration', () =>
+{
+    test('every adapter kind the server registers is wrapped in the caller\'s credentials', async () =>
+    {
+        const server = new PragmaticServer({ purpose: TenantPurpose.Runtime })
+        try
+        {
+            const catalog = server.AdapterCatalog()
+            for (const kind of Object.values(DataSourceKind))
+            {
+                const spec = { Name: kind, Kind: kind, Config: { [CallerCredentialAdapterFactory.CredentialsKey]: ConnectionCredentialMode.Caller } }
+                // a wrapped factory refuses a caller connection naming no token resource before the inner factory runs;
+                // a kind with no factory at all fails to resolve; an unwrapped one would open with app credentials
+                await assert.rejects(catalog.Open(spec, new ServiceProvider()), (error: unknown) =>
+                    (error instanceof CallerCredentialError && error.Code === CallerCredentialErrorCode.NoTokenResource)
+                    || (error instanceof Error && error.message.includes(RegistrationFx.NoAdapter)), kind)
+            }
+        }
+        finally
+        {
+            await server.Dispose()
         }
     })
 })

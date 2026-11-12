@@ -4,7 +4,7 @@ import type { Cypher, GraphEngine, ISchemaDescription, ISignal, ISubscription } 
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
-import { CallerConnectorContext } from '../environment/caller-connector-context.js'
+import { CallerConnectorContext } from './caller-connector-context.js'
 import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
 import { EngineSchemaCatalog } from './engine-schema-catalog.js'

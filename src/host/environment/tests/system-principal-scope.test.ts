@@ -18,6 +18,8 @@ class SystemFx
     public static readonly HighSalary = 150000
     public static readonly Salaries = 'MATCH (e:`hr.Employee`) RETURN e.Salary AS s ORDER BY s'
     public static readonly RuntimeOnly = /applications are a runtime-tenant feature/
+    private static readonly SelectPrefix = 'MATCH (n:`'
+    private static readonly SelectSuffix = '`) RETURN n.name AS name ORDER BY name'
 
     /** E1 alice/sales, E2 bob/marketing (both with a secured Salary) and N1 (a concept no role covers). */
     public static async Seed(fx: EnvironmentFixture): Promise<void>
@@ -31,7 +33,7 @@ class SystemFx
 
     public static async Names(server: PragmaticServer, scope: AccessScope, concept: string): Promise<unknown[]>
     {
-        return Tier1Fx.Column(server, scope, 'MATCH (n:`' + concept + '`) RETURN n.name AS name ORDER BY name')
+        return Tier1Fx.Column(server, scope, SystemFx.SelectPrefix + concept + SystemFx.SelectSuffix)
     }
 }
 

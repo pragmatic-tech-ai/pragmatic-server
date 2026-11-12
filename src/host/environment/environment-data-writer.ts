@@ -4,7 +4,7 @@ import type { ExternalIdentity, IEnvironmentCatalog, IExternalBinding } from '@p
 import { AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppWriteOpDto, AppWriteOpResultDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { CallerConnectorContext } from './caller-connector-context.js'
+import { CallerConnectorContext } from '../engine/caller-connector-context.js'
 import type { IGraphScopeSource } from '../engine/access-scope-source.js'
 import type { EngineSchemaCatalog } from '../engine/engine-schema-catalog.js'
 import { EngineWriteFailure } from '../engine/engine-write-failure.js'

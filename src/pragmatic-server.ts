@@ -28,7 +28,7 @@ import { ConnectorsHost, NpmAdapterPackProvider, WorkerThreadSandboxFactory, Chi
 import { CallerCredentialAdapterProvider } from './host/connectors/caller-credential-adapter-factory.js'
 import { CallerCredentials } from './host/connectors/caller-credentials.js'
 import type { ICallerCredentialRevoker } from './host/connectors/caller-credentials.js'
-import { CallerConnectorContext } from './host/environment/caller-connector-context.js'
+import { CallerConnectorContext } from './host/engine/caller-connector-context.js'
 import { SystemPrincipalScope } from './host/environment/system-principal-scope.js'
 import { SandboxStrategy } from './config/server-config.js'
 import type { AdapterPacksConfig } from './config/server-config.js'
@@ -114,6 +114,12 @@ export interface PragmaticServerIdentityOptions
     machine?: MachinePrincipalMap
     httpClient?: IHttpClient
     flowStateStore?: IOidcFlowStateStore
+    /**
+     * Whether a Runtime tenant starts its IdP directory sync at Start (default true). Only a host that drives the sync
+     * itself sets false (tests over synthetic principals that have no accounts, which an authoritative local directory
+     * would deprovision).
+     */
+    directorySyncOnStart?: boolean
 }
 
 export interface PragmaticServerOptions
@@ -157,6 +163,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
 
     private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
     private static readonly DisposedMessage = 'The server has been disposed'
+    private static readonly DirectorySyncStartFailedLine = 'directory sync: start failed: '
+    private static readonly UnknownErrorName = 'unknown'
 
     private readonly root: LazyCompositionRoot
     private readonly options: PragmaticServerOptions
@@ -268,7 +276,25 @@ export class PragmaticServer implements IEnvironmentGraphHost
                 this.root.Services().dispose()
                 throw error
             }
+            this.StartDirectorySync()
         }
+    }
+
+    /**
+     * A Runtime tenant with identity starts its IdP directory sync when it starts serving (Task 10 start rule): the
+     * first run and the R27 deprovisioning follow begin at Start, not at the first connection. A failure to build it
+     * is logged by error name only (a later `DirectorySync()` retries).
+     */
+    private StartDirectorySync(): void
+    {
+        if (this.Purpose() !== TenantPurpose.Runtime || this.options.identity?.directorySyncOnStart === false)
+        {
+            return
+        }
+        this.DirectorySync().catch((error: unknown) =>
+        {
+            (this.options.logger ?? StructuredLogger.ToStdout()).Warn(PragmaticServer.DirectorySyncStartFailedLine + (error instanceof Error ? error.name : PragmaticServer.UnknownErrorName))
+        })
     }
 
     public async Pack(): Promise<ServerIdentityPack>
@@ -385,7 +411,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         // R27: a deprovisioned principal's stored upstream tokens, cached source tokens and inner connections go
         this.deprovisioned?.dispose()
         this.deprovisioned = this.callerCredentials.Follow(host.Deprovisioned)
-        // one run when the tenant's server starts serving (its first admin connection builds this)
+        // one run when the tenant's server starts serving (Start builds this: StartDirectorySync)
         void host.RunNow()
         return host
     }
@@ -864,8 +890,11 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.devConnectors
     }
 
-    /** The process-wide adapter catalog every external connector borrows its adapters from (ruling S18). */
-    private AdapterCatalog(): DataSourceAdapterCatalog
+    /**
+     * The process-wide adapter catalog every external connector borrows its adapters from (ruling S18); every factory
+     * registered on it is wrapped in the caller's credentials (PR12).
+     */
+    public AdapterCatalog(): DataSourceAdapterCatalog
     {
         return this.root.Services().getRequired(DataSourceAdapterCatalog.ServiceKey)
     }

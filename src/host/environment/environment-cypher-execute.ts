@@ -15,7 +15,7 @@ import { ExecuteAttempt, LoggerExecuteDiagnostics } from '../engine/graph-cypher
 import type { ICypherExecuteRequest, IExecuteDiagnostics, IGraphCypherExecute } from '../engine/graph-cypher-execute.js'
 import { ModelWriteScopes } from '../engine/model-write-scopes.js'
 import type { EnvironmentEngineHost, EnvironmentSnapshot } from './environment-engine-host.js'
-import { CallerConnectorContext } from './caller-connector-context.js'
+import { CallerConnectorContext } from '../engine/caller-connector-context.js'
 
 /**
  * The runtime `cypher/execute` (rulings S13, Q9) on the environment engine, under the caller's environment scope: the
@@ -84,10 +84,11 @@ export class EnvironmentCypherExecute implements IGraphCypherExecute
     private async Attempt(context: AccessContext, modelId: string | undefined, request: ICypherExecuteRequest, deadline: Cypher.Deadline, last: boolean): Promise<ExecuteAttempt>
     {
         const [engine, snapshot] = await this.host.Settled()
-        const connector = CallerConnectorContext.For(context.Principal)
+        // the revision pre-read runs before the scope resolves, as the caller (the same key the scope will carry)
+        const preRead = CallerConnectorContext.For(context.Principal)
         if (request.expectedRevision !== undefined)
         {
-            const revision = await EnvironmentCypherExecute.Revision(engine, connector)
+            const revision = await EnvironmentCypherExecute.Revision(engine, preRead)
             if (request.expectedRevision !== revision)
             {
                 return ExecuteAttempt.Done(CypherExecuteResultMapper.Refused(AppWriteStatus.Conflict, revision, EnvironmentCypherExecute.RevisionReason))
@@ -99,16 +100,16 @@ export class EnvironmentCypherExecute implements IGraphCypherExecute
         try
         {
             const cypher = new Cypher.CypherEngine(engine, { MaxVarLength: request.maxVarLength })
-            result = await cypher.Execute(scope, request.cypher, { Parameters: request.parameters, Limits: { Cancel: deadline }, Placement: graphScope.Placement(modelId), Connector: connector })
+            result = await cypher.Execute(scope, request.cypher, { Parameters: request.parameters, Limits: { Cancel: deadline }, Placement: graphScope.Placement(modelId), Connector: graphScope.Connector })
         }
         catch (error)
         {
             const failure = EngineWriteFailure.Map(error)
             if (failure === undefined) throw EngineCypherQuery.WireError(error)
             if (EngineWriteFailure.IsEngineConflict(error) && !last) return ExecuteAttempt.Conflicted
-            return ExecuteAttempt.Done(await EnvironmentCypherExecute.Refused(failure, engine, connector))
+            return ExecuteAttempt.Done(await EnvironmentCypherExecute.Refused(failure, engine, graphScope.Connector))
         }
-        return ExecuteAttempt.Done(await this.Applied(engine, snapshot, scope, connector, result))
+        return ExecuteAttempt.Done(await this.Applied(engine, snapshot, scope, graphScope.Connector, result))
     }
 
     /** The applied result; nothing after the commit can fail it (reported, rows best-effort). */

@@ -9,6 +9,8 @@ import { SystemPrincipalScope } from '../environment/system-principal-scope.js'
 
 class AuthenticatorFixture
 {
+    public static readonly OtherEnvironment = 'env-1'
+
     public static Tenant1(): Tenant
     {
         return new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
@@ -63,7 +65,7 @@ test('IdP principal cannot claim the system id', async () =>
     const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
     const tenant = AuthenticatorFixture.Tenant1()
     const authenticator = new ConnectionAuthenticator()
-    for (const id of [SystemPrincipal.IdFor(tenant.Id), SystemPrincipalScope.ReservedPrefix + 'env-1'])
+    for (const id of [SystemPrincipal.IdFor(tenant.Id), SystemPrincipalScope.ReservedPrefix + AuthenticatorFixture.OtherEnvironment])
     {
         const { Token } = await pack.Tokens.Issue(tenant, id, [], null)
         assert.equal(await authenticator.ResolveAsync(Token, tenant, pack), null, id + ' is refused like an unknown credential')

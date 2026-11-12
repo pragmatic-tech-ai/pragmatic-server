@@ -6,11 +6,10 @@ import { trace, isSpanContextValid } from '@opentelemetry/api'
 import { NullAccessAuditSink, AuditSurface, AuditOutcome } from './access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
 import { ScopedAccessContext } from './token-scope.js'
-import { SystemPrincipalScope } from './environment/system-principal-scope.js'
 
 /** Resolves a bearer token to an AccessContext: session first, then service token. Fail-closed:
- *  an unresolved token returns null and no context is built. A principal in the reserved system namespace (the
- *  environment's system id, or any id starting with `SystemPrincipalScope.ReservedPrefix`) is refused like an unknown
+ *  an unresolved token returns null and no context is built. A principal in the reserved system namespace
+ *  (`SystemPrincipal.IsReserved`: the environment's system id and every other `system:` id) is refused like an unknown
  *  credential: a User with that id would own the system principal's records at User depth. */
 export class ConnectionAuthenticator
 {
@@ -30,14 +29,9 @@ export class ConnectionAuthenticator
     public async ResolveAsync(token: string, tenant: Tenant, pack: ServerIdentityPack): Promise<AccessContext | null>
     {
         const resolved = await this.Resolve(token, tenant, pack)
-        const context = resolved !== null && ConnectionAuthenticator.Reserved(resolved.Principal.Id, tenant) ? null : resolved
+        const context = resolved !== null && SystemPrincipal.IsReserved(resolved.Principal.Id) ? null : resolved
         this.Emit(tenant, context)
         return context
-    }
-
-    private static Reserved(principalId: string, tenant: Tenant): boolean
-    {
-        return SystemPrincipal.IsId(principalId, tenant.Id) || principalId.startsWith(SystemPrincipalScope.ReservedPrefix)
     }
 
     private Emit(tenant: Tenant, context: AccessContext | null): void

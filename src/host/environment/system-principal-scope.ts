@@ -18,7 +18,10 @@ import type { EnvironmentScopeRules } from './environment-scope-rules.js'
  */
 export class SystemPrincipalScope implements IDisposable
 {
-    /** The id namespace no account or external identity may take (`SystemPrincipal.IsReserved`). */
+    /**
+     * The id namespace no account or external identity may take. Mirrors todl-identity's `SystemPrincipal.IsReserved`
+     * (whose prefix constant is private there); checks use `SystemPrincipal.IsReserved`, this names the namespace.
+     */
     public static readonly ReservedPrefix = 'system:'
 
     private readonly context: AccessContext

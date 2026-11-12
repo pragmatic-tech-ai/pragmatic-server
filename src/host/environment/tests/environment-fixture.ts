@@ -40,6 +40,8 @@ export interface IEnvironmentFixtureOptions
     readonly Identity?: boolean
     /** With identity: the environment security setting saved into the tenant config after boot. */
     readonly SecurityModel?: ISecurityModelConfig
+    /** With identity: start the IdP directory sync at Start (default false: the fixture's principals have no accounts). */
+    readonly DirectorySyncOnStart?: boolean
 }
 
 /**
@@ -143,7 +145,7 @@ export class EnvironmentFixture
             graphsRoot: this.GraphsDir,
             adapterFactories: [this.Source],
             ...(options.Identity === true
-                ? { identity: { identityRoot: this.IdentityDir, masterKey: { base64Env: EnvironmentFixture.KeyEnv }, tenant: { id: EnvironmentFixture.TenantId, displayName: EnvironmentFixture.DisplayName } } }
+                ? { identity: { identityRoot: this.IdentityDir, masterKey: { base64Env: EnvironmentFixture.KeyEnv }, tenant: { id: EnvironmentFixture.TenantId, displayName: EnvironmentFixture.DisplayName }, directorySyncOnStart: options.DirectorySyncOnStart ?? false } }
                 : {}),
         })
         await this.server.Start()

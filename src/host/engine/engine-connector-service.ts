@@ -25,7 +25,7 @@ import type { IEngineSnapshot, IGraphEngineHost } from './graph-engine-host.js'
 import { ModelScopes } from './model-scopes.js'
 import { DeleteGrantsScope, RecordGrantDeletion } from './record-grant-deletion.js'
 import { EngineWriteAttribution, RecordedBatch } from './recorded-batch.js'
-import { CallerConnectorContext } from '../environment/caller-connector-context.js'
+import { CallerConnectorContext } from './caller-connector-context.js'
 
 /** The `connector/*` endpoints' engine side, for any engine host (ruling S1); the wire DTOs are the protocol's. */
 export interface IGraphConnectorService

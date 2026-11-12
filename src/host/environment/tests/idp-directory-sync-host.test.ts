@@ -8,6 +8,9 @@ import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { EnvironmentSecuritySetting } from '../environment-security-setting.js'
 import { IdpDirectorySyncHost } from '../idp-directory-sync-host.js'
 import type { ISyncDiagnostics, ISyncTimer } from '../idp-directory-sync-host.js'
+import { PragmaticServer } from '../../../pragmatic-server.js'
+import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
+import { EnvironmentFixture } from './environment-fixture.js'
 
 /** A config store whose stored security model can be swapped between runs. */
 class MutableConfigStore implements ITenantConfigStore
@@ -274,4 +277,40 @@ describe('idp directory sync host', () =>
         await fx.host.RunNow()
         assert.equal(fx.source.Requests.length, 0, 'a disposed host does not sync')
     })
+
+    test('a runtime tenant syncs when it starts serving, without any connection', async () =>
+    {
+        const fx = new EnvironmentFixture()
+        let restarted: PragmaticServer | undefined
+        try
+        {
+            // a stored setting (the sync has something to ask about), then a restart: nothing connects to the new server
+            await fx.Start({ Identity: true, SecurityModel: SyncStartFx.Setting })
+            await fx.Server.Dispose()
+            restarted = new PragmaticServer({
+                purpose: TenantPurpose.Runtime,
+                packagesRoot: fx.PackagesDir,
+                applicationsRoot: fx.AppsDir,
+                graphsRoot: fx.GraphsDir,
+                identity: { identityRoot: fx.IdentityDir, masterKey: { base64Env: EnvironmentFixture.KeyEnv }, tenant: { id: EnvironmentFixture.TenantId, displayName: SyncStartFx.DisplayName } },
+            })
+            await restarted.Start()
+            const store = (await restarted.Pack()).IdpDirectory
+            for (let tick = 0; tick < SyncStartFx.MaxTicks && (await store.Get(EnvironmentFixture.TenantId)) === null; tick++) await new Promise(resolve => setTimeout(resolve, SyncStartFx.TickMs))
+            assert.notEqual(await store.Get(EnvironmentFixture.TenantId), null, 'Start ran the first sync: the directory snapshot is stored')
+        }
+        finally
+        {
+            await restarted?.Dispose()
+            await fx.Dispose()
+        }
+    })
 })
+
+class SyncStartFx
+{
+    public static readonly MaxTicks = 100
+    public static readonly TickMs = 10
+    public static readonly DisplayName = 'Environment One'
+    public static readonly Setting: ISecurityModelConfig = { businessUnits: [{ id: 'root', name: 'Root' }], users: [], teams: [], roleAssignments: [], profileAssignments: [], roleOverrides: [], profileOverrides: [] }
+}

@@ -7,7 +7,7 @@ import type { ISourceTokenProvider, Tenant } from '@pragmatic-tech-ai/todl-ident
 /** How a connector connection authenticates to its source (spec section 6): its connector config's `credentials`. */
 export enum ConnectionCredentialMode
 {
-    /** A connection string / service account (the default): the caller's context is ignored. */
+    /** A connection string / service account (the default when `credentials` is absent): the context is ignored. */
     Dedicated = 'dedicated',
     /** The caller's identity: an IdP token exchanged for a per-user source token (`tokenResource` names its audience). */
     Caller = 'caller',
@@ -21,6 +21,8 @@ export enum CallerCredentialErrorCode
     NoTokenResource = 2,
     /** The inner adapter cannot serve keyset-paged reads. */
     PagingUnsupported = 3,
+    /** The connection's `credentials` names no known mode (never read as dedicated: that would widen access). */
+    UnknownCredentialMode = 4,
 }
 
 /** A caller's-identity connection refused a call; the message never carries a token. */
@@ -31,6 +33,7 @@ export class CallerCredentialError extends Error
         [CallerCredentialErrorCode.AnonymousContext]: 'a caller\'s-identity connection refuses a call without a caller',
         [CallerCredentialErrorCode.NoTokenResource]: 'a caller\'s-identity connection must name its token resource',
         [CallerCredentialErrorCode.PagingUnsupported]: 'the caller\'s-identity connection does not support paged reads',
+        [CallerCredentialErrorCode.UnknownCredentialMode]: 'the connection names an unknown credential mode',
     }
 
     public constructor(public readonly Code: CallerCredentialErrorCode)
@@ -40,29 +43,82 @@ export class CallerCredentialError extends Error
     }
 }
 
-/** One principal's inner connection: opened with its source token (held only as a digest here). */
+/**
+ * One principal's inner connection, opened with its source token (held only as a digest here). Calls `Enter` / `Exit`
+ * it; once `Retire`d (token renewed, principal revoked) it is disposed when its last in-flight call ends, so a renewal
+ * never cuts off a call of the same principal still running on it.
+ */
 class PrincipalConnection
 {
+    private inFlight = 0
+    private retired = false
+
     public constructor(public readonly TokenDigest: string, public readonly Adapter: IDataSourceAdapter)
     {
     }
+
+    public Enter(): void
+    {
+        this.inFlight++
+    }
+
+    public async Exit(): Promise<void>
+    {
+        this.inFlight--
+        await this.DisposeIfDrained()
+    }
+
+    public async Retire(): Promise<void>
+    {
+        this.retired = true
+        await this.DisposeIfDrained()
+    }
+
+    private async DisposeIfDrained(): Promise<void>
+    {
+        if (!this.retired || this.inFlight > 0) return
+        try
+        {
+            await this.Adapter.Dispose()
+        }
+        catch
+        {
+            // a dead connection's Dispose may throw; it is dropped either way
+        }
+    }
 }
 
-/** What a caller's-identity connection reports of itself before any caller opened it (the probe's flags). */
-interface ICapabilities
+/** The flags a caller's-identity connection reports, latched from the first principal's inner adapter. */
+class Capabilities
 {
-    readonly CanTransact: boolean
-    readonly CanVersion: boolean
-    readonly CanPage: boolean
-    readonly SourceManagesVersions: boolean
+    public constructor(
+        public readonly CanTransact: boolean,
+        public readonly CanVersion: boolean,
+        public readonly CanPage: boolean,
+        public readonly SourceManagesVersions: boolean)
+    {
+    }
+
+    /** Before any caller opened the connection: the weakest guarantee (absent flags are false in TODL). */
+    public static readonly None = new Capabilities(false, false, false, false)
+
+    public static Of(adapter: IDataSourceAdapter): Capabilities
+    {
+        return new Capabilities(adapter.CanTransact ?? false, adapter.CanVersion ?? false, adapter.CanPage ?? false, adapter.SourceManagesVersions ?? false)
+    }
 }
 
 /**
  * A connection in caller's-identity mode (spec section 6, PR12; ruling R28). Each Query / QueryPage / Apply acquires
  * the caller's source token (`SourceTokenRequest(tenant, context.Key, resource)`) and runs on that principal's own
- * inner adapter, opened with the token as its secret; the inner adapter is reopened when the token is renewed. Inner
- * adapters are keyed by the context key and never lent across principals; the connection's own secret (app
- * credentials) is never used. A missing or anonymous context, and a failed acquisition, fail the call.
+ * inner adapter, opened with the token as its secret; the inner adapter is reopened when the token is renewed (the old
+ * one is disposed once its in-flight calls end). Inner adapters are keyed by the context key and never lent across
+ * principals; the connection's own secret (app credentials) is never used, and no adapter is ever opened without a
+ * caller's token. A missing or anonymous context, and a failed acquisition, fail the call.
+ *
+ * Capabilities: TODL's adapter contract has no static capability metadata, so the flags are latched from the first
+ * principal's inner adapter (same connection config, so the same flags); before any caller opened it the connection
+ * reports the weakest guarantee (all false).
  *
  * TODL's ReconnectingAdapter shares this adapter across callers and reopens it for everyone on an Auth (or repeated
  * Transient) classification, so every failure here is one caller's and is classified Permanent (ruling R28): no
@@ -76,6 +132,7 @@ export class CallerCredentialAdapter implements IDataSourceAdapter
     private static readonly DigestEncoding = 'hex'
 
     private readonly connections = new Map<string, Promise<PrincipalConnection>>()
+    private capabilities = Capabilities.None
     private disposed = false
 
     public constructor(
@@ -84,7 +141,6 @@ export class CallerCredentialAdapter implements IDataSourceAdapter
         private readonly tenant: Tenant,
         private readonly connection: ResolvedConnection,
         private readonly resource: string,
-        private readonly capabilities: ICapabilities,
         private readonly registry: Set<CallerCredentialAdapter>)
     {
     }
@@ -134,13 +190,13 @@ export class CallerCredentialAdapter implements IDataSourceAdapter
         return ConnectionFailureKind.Permanent
     }
 
-    /** Drops and disposes `principalId`'s inner adapter (deprovisioning, sign-out: R27); its next call reconnects. */
+    /** Retires `principalId`'s inner adapter (deprovisioning, sign-out: R27); its next call reconnects with a fresh token. */
     public async Forget(principalId: string): Promise<void>
     {
         const pending = this.connections.get(principalId)
         if (pending === undefined) return
         this.connections.delete(principalId)
-        await CallerCredentialAdapter.DisposeQuietly(pending)
+        await CallerCredentialAdapter.RetireQuietly(pending)
     }
 
     /** Disposes every principal's inner adapter. Idempotent. */
@@ -151,7 +207,17 @@ export class CallerCredentialAdapter implements IDataSourceAdapter
         this.registry.delete(this)
         const pending = [...this.connections.values()]
         this.connections.clear()
-        await Promise.all(pending.map(opening => CallerCredentialAdapter.DisposeQuietly(opening)))
+        await Promise.all(pending.map(async opening =>
+        {
+            try
+            {
+                await (await opening).Adapter.Dispose()
+            }
+            catch
+            {
+                // a failed open produced no adapter, or its Dispose threw
+            }
+        }))
     }
 
     private async Run<T>(context: IDataSourceContext | undefined, op: (adapter: IDataSourceAdapter) => Promise<T>): Promise<T>
@@ -160,6 +226,7 @@ export class CallerCredentialAdapter implements IDataSourceAdapter
         if (key.length === 0) throw new CallerCredentialError(CallerCredentialErrorCode.AnonymousContext)
         const token = await this.tokens.Acquire(new SourceTokenRequest(this.tenant.Id, key, this.resource))
         const secret = token.Value.Reveal()
+        // entered by ConnectionFor: a renewal racing this call cannot dispose the adapter under it
         const connection = await this.ConnectionFor(key, secret)
         try
         {
@@ -171,37 +238,48 @@ export class CallerCredentialAdapter implements IDataSourceAdapter
             if (connection.Adapter.ClassifyFailure?.(error) === ConnectionFailureKind.Auth) await this.Drop(key, connection)
             throw error
         }
+        finally
+        {
+            await connection.Exit()
+        }
     }
 
-    /** `key`'s inner adapter for the token `secret`: the held one while the token is unchanged, else a fresh one. */
+    /**
+     * `key`'s inner adapter for the token `secret`, entered (the caller exits it): the held one while the token is
+     * unchanged, else a fresh one (the old one is retired).
+     */
     private async ConnectionFor(key: string, secret: string): Promise<PrincipalConnection>
     {
         const digest = createHash(CallerCredentialAdapter.DigestAlgorithm).update(secret).digest(CallerCredentialAdapter.DigestEncoding)
         for (;;)
         {
-            const pending = this.connections.get(key)
+            let pending = this.connections.get(key)
+            const opened = pending === undefined
             if (pending === undefined)
             {
-                const opening = this.Open(digest, secret)
-                this.connections.set(key, opening)
-                opening.catch(() =>
-                {
-                    if (this.connections.get(key) === opening) this.connections.delete(key)
-                })
-                return opening
+                pending = this.Open(digest, secret)
+                this.connections.set(key, pending)
             }
             let held: PrincipalConnection
             try
             {
                 held = await pending
             }
-            catch
+            catch (error)
             {
                 if (this.connections.get(key) === pending) this.connections.delete(key)
+                // this call's own open failed: it fails; another call's failed open is retried with this call's token
+                if (opened) throw error
                 continue
             }
-            if (held.TokenDigest === digest) return held
-            // the token was renewed: the principal's adapter is reopened with the new one
+            // replaced meanwhile (a renewal or a revoke): look again
+            if (this.connections.get(key) !== pending) continue
+            if (held.TokenDigest === digest)
+            {
+                held.Enter()
+                return held
+            }
+            // the token was renewed: the principal's adapter is reopened with the new one, the old drains
             await this.Drop(key, held)
         }
     }
@@ -209,9 +287,11 @@ export class CallerCredentialAdapter implements IDataSourceAdapter
     private async Open(digest: string, secret: string): Promise<PrincipalConnection>
     {
         const adapter = await this.inner.Open({ Kind: this.connection.Kind, Config: this.connection.Config, Secret: secret })
+        if (this.capabilities === Capabilities.None) this.capabilities = Capabilities.Of(adapter)
         return new PrincipalConnection(digest, adapter)
     }
 
+    /** Retires `connection` if it is still `key`'s current one. */
     private async Drop(key: string, connection: PrincipalConnection): Promise<void>
     {
         const pending = this.connections.get(key)
@@ -227,27 +307,29 @@ export class CallerCredentialAdapter implements IDataSourceAdapter
         }
         if (held !== connection || this.connections.get(key) !== pending) return
         this.connections.delete(key)
-        await CallerCredentialAdapter.DisposeQuietly(pending)
+        await connection.Retire()
     }
 
-    private static async DisposeQuietly(pending: Promise<PrincipalConnection>): Promise<void>
+    private static async RetireQuietly(pending: Promise<PrincipalConnection>): Promise<void>
     {
+        let connection: PrincipalConnection
         try
         {
-            await (await pending).Adapter.Dispose()
+            connection = await pending
         }
         catch
         {
-            // a failed open produced no adapter, or its Dispose threw; it is dropped either way
+            // a failed open produced no adapter
+            return
         }
+        await connection.Retire()
     }
 }
 
 /**
- * Wraps a data-source adapter factory (PR12): a connection whose config says `credentials = caller` opens a
- * {@link CallerCredentialAdapter} over the identity pack's source tokens; every other connection (dedicated
- * credentials, the default) gets the inner adapter unchanged and its calls' context is ignored. The caller's-identity
- * adapter reads its capabilities from a probe opened without any secret and disposed at once (never called).
+ * Wraps a data-source adapter factory (PR12). A connection's `credentials` decides: absent or `dedicated` gets the
+ * inner adapter unchanged (its calls' context is ignored); `caller` opens a {@link CallerCredentialAdapter} over the
+ * identity pack's source tokens; any other value is refused (`UnknownCredentialMode`), never read as dedicated.
  */
 export class CallerCredentialAdapterFactory implements IDataSourceAdapterFactory
 {
@@ -265,46 +347,29 @@ export class CallerCredentialAdapterFactory implements IDataSourceAdapterFactory
         this.Kind = inner.Kind
     }
 
-    /** Whether `connection` authenticates with the caller's identity. */
-    public static IsCallerMode(connection: ResolvedConnection): boolean
+    /** The connection's credential mode: absent (or empty) is Dedicated; an unknown value throws `UnknownCredentialMode`. */
+    public static ModeOf(connection: ResolvedConnection): ConnectionCredentialMode
     {
-        return connection.Config[CallerCredentialAdapterFactory.CredentialsKey] === ConnectionCredentialMode.Caller
+        const mode = connection.Config[CallerCredentialAdapterFactory.CredentialsKey]
+        if (mode === undefined || mode.length === 0 || mode === ConnectionCredentialMode.Dedicated) return ConnectionCredentialMode.Dedicated
+        if (mode === ConnectionCredentialMode.Caller) return ConnectionCredentialMode.Caller
+        throw new CallerCredentialError(CallerCredentialErrorCode.UnknownCredentialMode)
     }
 
     public async Open(connection: ResolvedConnection): Promise<IDataSourceAdapter>
     {
-        if (!CallerCredentialAdapterFactory.IsCallerMode(connection)) return this.inner.Open(connection)
+        if (CallerCredentialAdapterFactory.ModeOf(connection) === ConnectionCredentialMode.Dedicated) return this.inner.Open(connection)
         const resource = connection.Config[CallerCredentialAdapterFactory.TokenResourceKey]
         if (resource === undefined || resource.length === 0) throw new CallerCredentialError(CallerCredentialErrorCode.NoTokenResource)
-        const capabilities = await this.Probe(connection)
-        const adapter = new CallerCredentialAdapter(this.inner, this.tokens, this.tenant, connection, resource, capabilities, this.open)
+        const adapter = new CallerCredentialAdapter(this.inner, this.tokens, this.tenant, connection, resource, this.open)
         this.open.add(adapter)
         return adapter
     }
 
-    /** Drops `principalId`'s inner adapters on every open caller's-identity connection of this factory (R27). */
+    /** Retires `principalId`'s inner adapters on every open caller's-identity connection of this factory (R27). */
     public async Forget(principalId: string): Promise<void>
     {
         await Promise.all([...this.open].map(adapter => adapter.Forget(principalId)))
-    }
-
-    /** The inner adapter's flags for this connection, read from an adapter opened with no secret and never called. */
-    private async Probe(connection: ResolvedConnection): Promise<ICapabilities>
-    {
-        const probe = await this.inner.Open({ Kind: connection.Kind, Config: connection.Config })
-        try
-        {
-            return {
-                CanTransact: probe.CanTransact ?? false,
-                CanVersion: probe.CanVersion ?? false,
-                CanPage: probe.CanPage ?? false,
-                SourceManagesVersions: probe.SourceManagesVersions ?? false,
-            }
-        }
-        finally
-        {
-            await probe.Dispose()
-        }
     }
 }
 
