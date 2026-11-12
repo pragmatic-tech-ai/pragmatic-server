@@ -1,6 +1,6 @@
 # Platform security architecture — design
 
-**Status:** design — brainstormed with the owner 2026-11-11; awaiting owner approval of this document
+**Status:** implemented (S1–S4) — brainstormed with the owner 2026-11-11; built in security S1 (TODL), S2 (pragmatic-graph), S3 (todl-identity*) and S4 (pragmatic-server, tenant-admin); the user cases of section 9 run end to end in `pragmatic-server` `src/tests/e2e/security-capstone-e2e.test.ts`
 **Scope:** cross-repo — `todl` (system aspect, package security declarations), `pragmatic-graph`
 (enforcement over engine storage), `todl-identity*` (IdP sync, team membership, per-user source
 tokens), `pragmatic-server` + `admin/tenant-portal` (environment security setup), Plexus (authoring).
