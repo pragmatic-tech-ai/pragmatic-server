@@ -362,6 +362,7 @@ describe('connector endpoints on the engine', () =>
                 ConnectorFx.Upsert(ConnectorFx.Customer, ConnectorFx.CustomerSource, 'k9', { [ConnectorFx.Name]: 'Eon' }),
             ] })
             assert.deepEqual(result.results, [{ key: 'k8', status: AppWriteStatus.Applied }, { key: 'k9', status: AppWriteStatus.Applied }], JSON.stringify(result))
+            assert.equal('version' in result.results[0]!, false, 'an unversioned binding reports none: version is unset, not null')
             const rows = fx.Source.Adapter.Rows(ConnectorFx.CustomerSource)
             assert.deepEqual(rows.find(row => row[ConnectorFx.CustomerKey] === 'k8'), { [ConnectorFx.CustomerKey]: 'k8', [ConnectorFx.NameField]: 'Dyn', [ConnectorFx.AmountField]: 7 })
             assert.ok(rows.some(row => row[ConnectorFx.CustomerKey] === 'k9' && row[ConnectorFx.NameField] === 'Eon'))
@@ -400,7 +401,7 @@ describe('connector endpoints on the engine', () =>
             const unversioned = await service.WritePaged(ConnectorFx.Context(fx), { modelId: ConnectorFx.ModelId, operations: [ConnectorFx.Upsert(ConnectorFx.Customer, ConnectorFx.CustomerSource, 'k1', { [ConnectorFx.Name]: ConnectorFx.Renamed }, 1)] })
             assert.deepEqual(ConnectorFx.Statuses(unversioned), [[AppWriteStatus.Invalid, ConnectorFx.NoVersionField]])
             const applied = await service.WritePaged(ConnectorFx.Context(fx), { modelId: ConnectorFx.ModelId, operations: [ConnectorFx.Upsert(ConnectorFx.Order, ConnectorFx.OrderSource, 'o1', { [ConnectorFx.Total]: 12 }, 1)] })
-            assert.deepEqual(applied.results, [{ key: 'o1', status: AppWriteStatus.Applied }], 'no version is reported (R50)')
+            assert.deepEqual(applied.results, [{ key: 'o1', status: AppWriteStatus.Applied, version: 2 }], 'the committed version (1 bumped) is echoed')
             assert.equal(fx.Source.Adapter.Rows(ConnectorFx.OrderSource)[0]![ConnectorFx.TotalField], 12)
             assert.equal(fx.Source.Adapter.Batches.length, 1)
         })

@@ -1,5 +1,5 @@
 import { AccessScope, Cypher, ValueType } from '@pragmatic-tech-ai/graph'
-import type { CellValue, ConnectorContext, GraphEngine, GraphTransaction, IFetchedView } from '@pragmatic-tech-ai/graph'
+import type { CellValue, ConnectorContext, GraphEngine, GraphTransaction, IFetchedView, RowVersion } from '@pragmatic-tech-ai/graph'
 import type { DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
 import type { ExternalIdentity, IExternalBinding } from '@pragmatic-tech-ai/todl/engine'
 import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
@@ -96,8 +96,8 @@ interface ISettled
  *   write guard (R16): it needs a binding with a version field (else `invalid`), the fetched row's version must equal it
  *   (else `conflict` "write conflict" and nothing is written), and the engine carries that version to the source as
  *   ExpectedVersion. A pre-check or commit failure gives the op it names the mapped status (EngineWriteFailure) and
- *   every other op `failed` "atomic batch rolled back". Results carry no `version` (R50: reporting the new version waits
- *   for the engine to report the source versions a commit wrote).
+ *   every other op `failed` "atomic batch rolled back". Each result echoes the new source `version` the commit wrote
+ *   (the engine's CommittedVersions, bigint as a string); an op whose id the source reported no version for omits it.
  * - `WriteBack`: writes commit when made, so `dirty` ids flush nothing (diagnostic `NothingToFlush`); `deleted` ids are
  *   deleted in one transaction under the caller scope after a fetch (audit defect 2): an id the transaction cannot see,
  *   or one another model owns, or a delete the scope refuses, is a failure and nothing is removed. The share grants
@@ -241,6 +241,7 @@ export class EngineConnectorService implements IGraphConnectorService
         const identity = snapshot.Identity!
         const graphScope = await (await this.scopes()).ScopeFor(context)
         const transaction = await engine.Begin(graphScope.Scope, { Connector: graphScope.Connector })
+        let versions: ReadonlyMap<string, RowVersion>
         try
         {
             const batch = new RecordedBatch(transaction)
@@ -248,12 +249,27 @@ export class EngineConnectorService implements IGraphConnectorService
             if (refusal !== undefined) return EngineConnectorService.Refused(operations, refusal)
             const failure = await EngineConnectorService.Commit(transaction, identity, batch)
             if (failure !== undefined) return EngineConnectorService.Refused(operations, failure)
+            versions = transaction.CommittedVersions()
         }
         finally
         {
             transaction.dispose()
         }
-        return { results: planned.map((op): ConnectorWriteOpResultDto => ({ key: op.Key, status: AppWriteStatus.Applied })) }
+        return {
+            results: planned.map((op): ConnectorWriteOpResultDto =>
+            {
+                const version = EngineConnectorService.WireVersion(versions.get(op.Id))
+                return version === undefined
+                    ? { key: op.Key, status: AppWriteStatus.Applied }
+                    : { key: op.Key, status: AppWriteStatus.Applied, version }
+            })
+        }
+    }
+
+    /** A committed source version on the wire: bigint becomes a string; absent stays undefined. */
+    private static WireVersion(version: RowVersion | undefined): string | number | undefined
+    {
+        return typeof version === 'bigint' ? String(version) : version
     }
 
     public async WriteBack(context: AccessContext, params: ConnectorWriteBackParams): Promise<FlushOutcomeDto>
