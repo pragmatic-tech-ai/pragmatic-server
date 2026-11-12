@@ -44,6 +44,7 @@ describe('ReleaseSignature', () =>
     it('returns false for a garbage signature or key without throwing', () =>
     {
         const key = new KeyFixture()
+        assert.equal(ReleaseSignature.Verifies(digest, Buffer.alloc(64, 7).toString('base64'), key.Public), false)
         assert.equal(ReleaseSignature.Verifies(digest, '%%%not-base64%%%', key.Public), false)
         assert.equal(ReleaseSignature.Verifies(digest, 'c2ln', 'not a pem'), false)
     })

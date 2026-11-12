@@ -82,6 +82,35 @@ describe('ReleaseDescriptorCodec', () =>
         assert.throws(() => ReleaseDescriptorCodec.Decode(DescriptorFixture.Bytes(d)), ReleaseDescriptorInvalidError)
     })
 
+    it('rejects empty repository, signature and signingKeyId', () =>
+    {
+        const noRepo = DescriptorFixture.Make()
+        noRepo.images[ReleaseApp.EnvServer].repository = ''
+        const noSig = DescriptorFixture.Make()
+        noSig.images[ReleaseApp.EnvServer].signature = ''
+        const noKey = { ...DescriptorFixture.Make(), signingKeyId: '' }
+        for (const d of [noRepo, noSig, noKey])
+        {
+            assert.throws(() => ReleaseDescriptorCodec.Decode(DescriptorFixture.Bytes(d)), ReleaseDescriptorInvalidError)
+        }
+    })
+
+    it('rejects sibling names that are not plain repo names', () =>
+    {
+        const json = JSON.stringify(DescriptorFixture.Make()).replace('"siblingCommits":{', `"siblingCommits":{"__proto__":"${'e'.repeat(40)}",`)
+        assert.throws(() => ReleaseDescriptorCodec.Decode(new TextEncoder().encode(json)), ReleaseDescriptorInvalidError)
+        const spaced = { ...DescriptorFixture.Make(), siblingCommits: { 'a b': 'e'.repeat(40) } }
+        assert.throws(() => ReleaseDescriptorCodec.Decode(DescriptorFixture.Bytes(spaced)), ReleaseDescriptorInvalidError)
+    })
+
+    it('reports the first failure in the documented field order', () =>
+    {
+        const d = { ...DescriptorFixture.Make(), version: '', serverCommit: 'abc', signingKeyId: '' }
+        assert.throws(() => ReleaseDescriptorCodec.Decode(DescriptorFixture.Bytes(d)), /field: version/)
+        const e = { ...DescriptorFixture.Make(), serverCommit: 'abc', signingKeyId: '' }
+        assert.throws(() => ReleaseDescriptorCodec.Decode(DescriptorFixture.Bytes(e)), /serverCommit/)
+    })
+
     it('rejects non-JSON bytes', () =>
     {
         assert.throws(() => ReleaseDescriptorCodec.Decode(new TextEncoder().encode('nope')), ReleaseDescriptorInvalidError)

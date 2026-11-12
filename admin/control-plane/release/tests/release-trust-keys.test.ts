@@ -1,4 +1,4 @@
-import { describe, it, before, after } from 'node:test'
+import { describe, it, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
@@ -19,27 +19,14 @@ class PemFixture
     }
 }
 
-describe('ReleaseTrustKeys', () =>
+class DirFixture
 {
-    const dirs: string[] = []
+    private readonly dirs: string[] = []
 
-    before(() =>
-    {
-        dirs.length = 0
-    })
-
-    after(() =>
-    {
-        for (const dir of dirs)
-        {
-            rmSync(dir, { recursive: true, force: true })
-        }
-    })
-
-    const makeDir = (files: Record<string, string>): string =>
+    public Make(files: Record<string, string>): string
     {
         const dir = mkdtempSync(join(tmpdir(), 'release-keys-'))
-        dirs.push(dir)
+        this.dirs.push(dir)
         for (const [name, content] of Object.entries(files))
         {
             writeFileSync(join(dir, name), content)
@@ -47,9 +34,27 @@ describe('ReleaseTrustKeys', () =>
         return dir
     }
 
+    public Cleanup(): void
+    {
+        for (const dir of this.dirs)
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
+    }
+}
+
+describe('ReleaseTrustKeys', () =>
+{
+    const fixture = new DirFixture()
+
+    after(() =>
+    {
+        fixture.Cleanup()
+    })
+
     it('loads every .pub.pem and ignores other files', () =>
     {
-        const keys = ReleaseTrustKeys.FromDirectory(makeDir({
+        const keys = ReleaseTrustKeys.FromDirectory(fixture.Make({
             'a.pub.pem': PemFixture.Ed25519(),
             'b.pub.pem': PemFixture.Ed25519(),
             'notes.txt': 'hello',
@@ -61,13 +66,13 @@ describe('ReleaseTrustKeys', () =>
 
     it('rejects a non-Ed25519 key', () =>
     {
-        const dir = makeDir({ 'bad.pub.pem': PemFixture.Rsa() })
+        const dir = fixture.Make({ 'bad.pub.pem': PemFixture.Rsa() })
         assert.throws(() => ReleaseTrustKeys.FromDirectory(dir), (e: unknown) => e instanceof ReleaseTrustKeyInvalidError && e.message.endsWith('bad'))
     })
 
     it('rejects unparseable key content', () =>
     {
-        const dir = makeDir({ 'junk.pub.pem': 'garbage' })
+        const dir = fixture.Make({ 'junk.pub.pem': 'garbage' })
         assert.throws(() => ReleaseTrustKeys.FromDirectory(dir), ReleaseTrustKeyInvalidError)
     })
 

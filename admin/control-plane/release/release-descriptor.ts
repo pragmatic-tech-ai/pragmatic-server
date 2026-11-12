@@ -32,6 +32,7 @@ export class ReleaseDescriptorCodec
     private static readonly SchemaVersion = 1
     private static readonly DigestPattern = /^sha256:[0-9a-f]{64}$/
     private static readonly CommitPattern = /^[0-9a-f]{40}$/
+    private static readonly RepoNamePattern = /^(?!__proto__$)[A-Za-z0-9._-]+$/
     private static readonly NotObject = 'not an object'
     private static readonly NotJson = 'not valid JSON'
     private static readonly BadSchema = 'schema must be 1'
@@ -52,6 +53,7 @@ export class ReleaseDescriptorCodec
         return new TextEncoder().encode(JSON.stringify(ReleaseDescriptorCodec.sortKeys(d)))
     }
 
+    /** Validates in a fixed order: schema, version, channel, serverCommit, siblingCommits, builtAt, signingKeyId, images. */
     public static Decode(bytes: Uint8Array): ReleaseDescriptor
     {
         let raw: unknown
@@ -72,8 +74,6 @@ export class ReleaseDescriptorCodec
             throw new ReleaseDescriptorInvalidError(ReleaseDescriptorCodec.BadSchema)
         }
         const version = ReleaseDescriptorCodec.requireString(raw, ReleaseDescriptorCodec.FieldVersion)
-        const builtAt = ReleaseDescriptorCodec.requireString(raw, ReleaseDescriptorCodec.FieldBuiltAt)
-        const signingKeyId = ReleaseDescriptorCodec.requireString(raw, ReleaseDescriptorCodec.FieldSigningKeyId)
         if (!Object.values(Channel).includes(raw.channel as Channel))
         {
             throw new ReleaseDescriptorInvalidError(ReleaseDescriptorCodec.BadChannel)
@@ -83,6 +83,8 @@ export class ReleaseDescriptorCodec
             throw new ReleaseDescriptorInvalidError(ReleaseDescriptorCodec.BadServerCommit)
         }
         const siblingCommits = ReleaseDescriptorCodec.decodeSiblings(raw.siblingCommits)
+        const builtAt = ReleaseDescriptorCodec.requireString(raw, ReleaseDescriptorCodec.FieldBuiltAt)
+        const signingKeyId = ReleaseDescriptorCodec.requireString(raw, ReleaseDescriptorCodec.FieldSigningKeyId)
         const images = ReleaseDescriptorCodec.decodeImages(raw.images)
         return {
             schema: 1,
@@ -105,7 +107,7 @@ export class ReleaseDescriptorCodec
         const result: Record<string, string> = {}
         for (const [name, commit] of Object.entries(value))
         {
-            if (typeof commit !== 'string' || !ReleaseDescriptorCodec.CommitPattern.test(commit))
+            if (!ReleaseDescriptorCodec.RepoNamePattern.test(name) || typeof commit !== 'string' || !ReleaseDescriptorCodec.CommitPattern.test(commit))
             {
                 throw new ReleaseDescriptorInvalidError(ReleaseDescriptorCodec.BadSiblingCommits)
             }
@@ -130,8 +132,10 @@ export class ReleaseDescriptorCodec
             }
             if (!ReleaseDescriptorCodec.isRecord(image)
                 || typeof image.repository !== 'string'
+                || image.repository.length === 0
                 || typeof image.digest !== 'string'
-                || typeof image.signature !== 'string')
+                || typeof image.signature !== 'string'
+                || image.signature.length === 0)
             {
                 throw new ReleaseDescriptorInvalidError(ReleaseDescriptorCodec.BadImagePrefix + app)
             }
