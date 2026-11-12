@@ -87,13 +87,15 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly GrantsLeaf = 'grants'
     private static readonly ConfigLeaf = 'config'
     private static readonly SecurityModelLeaf = 'security-model'
+    private static readonly SecurityCatalogLeaf = 'security-catalog'
+    private static readonly TeamMembersLeaf = 'team-members'
     private static readonly TokensLeaf = 'tokens'
     private static readonly MakerTokenLeaf = 'maker-token'
     private static readonly AppReaderLeaf = 'app-reader-grant'
-    /** Matches .../environments/NAME/admin/LEAF[/PRINCIPAL] for the per-environment identity-admin surface. */
+    /** Matches .../environments/NAME/admin/LEAF[/TAIL] for the per-environment identity-admin surface (TAIL is a principal, or the team id for team-members). */
     private static readonly AdminPathPattern = new RegExp(
         '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.EnvironmentsSegment + '/([^/]+)/' + TenantApiEndpoint.AdminSegment + '/(' +
-        [TenantApiEndpoint.SnapshotLeaf, TenantApiEndpoint.AccountsLeaf, TenantApiEndpoint.GrantsLeaf, TenantApiEndpoint.ConfigLeaf, TenantApiEndpoint.SecurityModelLeaf, TenantApiEndpoint.TokensLeaf].join('|') +
+        [TenantApiEndpoint.SnapshotLeaf, TenantApiEndpoint.AccountsLeaf, TenantApiEndpoint.GrantsLeaf, TenantApiEndpoint.ConfigLeaf, TenantApiEndpoint.SecurityModelLeaf, TenantApiEndpoint.SecurityCatalogLeaf, TenantApiEndpoint.TeamMembersLeaf, TenantApiEndpoint.TokensLeaf].join('|') +
         ')(?:/([^/]+))?$')
     /** Matches .../environments/NAME/(maker-token|app-reader-grant). */
     private static readonly EnvCredentialPathPattern = new RegExp(
@@ -761,6 +763,17 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             this.WriteJson(res, TenantApiEndpoint.StatusOk, { [TenantApiEndpoint.OkKey]: true })
             return true
         }
+        if (leaf === TenantApiEndpoint.TeamMembersLeaf && tail !== undefined && method === TenantApiEndpoint.MethodGet)
+        {
+            const teamId = TenantApiEndpoint.Decode(tail)
+            if (teamId === undefined)
+            {
+                this.WriteNotFound(res)
+                return true
+            }
+            this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.service.AdminListTeamMembers(name, teamId))
+            return true
+        }
         if (tail !== undefined)
         {
             return false
@@ -814,6 +827,11 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         {
             // JSON null (not undefined) so the body is always valid JSON when no model is stored.
             this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.service.AdminGetSecurityModel(name) ?? null)
+            return true
+        }
+        if (leaf === TenantApiEndpoint.SecurityCatalogLeaf)
+        {
+            this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.service.AdminGetSecurityCatalog(name))
             return true
         }
         return false

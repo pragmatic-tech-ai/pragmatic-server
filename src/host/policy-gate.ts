@@ -157,6 +157,8 @@ export class PolicyGate
             [AdminProtocol.SetConfig.method, administer],
             [AdminProtocol.GetSecurityModel.method, administer],
             [AdminProtocol.SetSecurityModel.method, administer],
+            [AdminProtocol.GetSecurityCatalog.method, administer],
+            [AdminProtocol.ListTeamMembers.method, administer],
             [AdminProtocol.ListAccounts.method, administer],
             [AdminProtocol.CreateAccount.method, administer],
             [AdminProtocol.DisableAccount.method, administer],

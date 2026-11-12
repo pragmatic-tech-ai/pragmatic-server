@@ -1,5 +1,6 @@
 import { Action, AuditEvent, AuditEventKind, Grant, ResourceRef, Role, RoleCapabilities, ResourceKind, IdentityConfig, SecurityModelValidator } from '@pragmatic-tech-ai/todl-identity'
-import type { LocalAccount, ServiceTokenSummary, PresentedSecret, IRoleGrantStore, IAuditSink, ITenantConfigStore, ILocalAccountStore, IServiceTokenStore, ServiceTokenGrant, Tenant, ISecurityModelConfig, ISessionManager } from '@pragmatic-tech-ai/todl-identity'
+import type { LocalAccount, ServiceTokenSummary, PresentedSecret, IRoleGrantStore, IAuditSink, ITenantConfigStore, ILocalAccountStore, IServiceTokenStore, ServiceTokenGrant, Tenant, ISecurityModelConfig, ISessionManager, TeamMembershipRow } from '@pragmatic-tech-ai/todl-identity'
+import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import type { LocalAccountRegistrar } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminEnums } from './admin-enums.js'
 import type { IAdapterPackAdmin } from './adapter-pack-admin.js'
@@ -68,13 +69,31 @@ export class AdminSecuritySettingRefusedError extends Error
     }
 }
 
-/** What the admin save needs of a Runtime environment's security (EnvironmentSecurityAdmin); absent on a Development tenant. */
+/** What the admin save and reads need of a Runtime environment's security (EnvironmentSecurityAdmin); absent on a Development tenant. */
 export interface ISecuritySettingAdmin
 {
     /** The catalog issues of `config` against the deployed packages; throws InvalidSecurityModelError when it is structurally invalid. */
     Issues(config: ISecurityModelConfig): Promise<readonly SecuritySettingIssue[]>
     /** Drops the cached setting, so every scope compiled after it reads the stored one. */
     Invalidate(): void
+    /** The environment's security catalog: the vocabulary the admin edits the setting against (S4 Task 10). */
+    Catalog(): Promise<IEnvironmentCatalog>
+    /** The team's effective membership rows (synced + manual, inactive filtered); throws UnknownTeamError for an unknown team. */
+    TeamMembers(teamId: string): Promise<readonly TeamMembershipRow[]>
+    /** Requests an IdP directory sync now (fire-and-forget); the host serializes and coalesces runs. */
+    RequestSync(): void
+}
+
+/** Raised when a team-members read names a team the stored setting does not define. */
+export class UnknownTeamError extends Error
+{
+    public static readonly Message = 'unknown team'
+
+    public constructor(public readonly TeamId: string)
+    {
+        super(UnknownTeamError.Message)
+        this.name = 'UnknownTeamError'
+    }
 }
 
 /** Raised when a grant mutation targets a resource that belongs to a different tenant. */
@@ -226,6 +245,26 @@ export class AdminService
         return config?.SecurityModel
     }
 
+    /** The environment's security catalog (the admin's editing vocabulary); refused on a Development tenant (PR13). */
+    public async GetSecurityCatalog(): Promise<IEnvironmentCatalog>
+    {
+        if (this.security === undefined)
+        {
+            throw new AdminSecurityModelUnavailableError()
+        }
+        return this.security.Catalog()
+    }
+
+    /** A team's effective membership rows; refused on a Development tenant (PR13); UnknownTeamError for an unknown team. */
+    public async ListTeamMembers(teamId: string): Promise<readonly TeamMembershipRow[]>
+    {
+        if (this.security === undefined)
+        {
+            throw new AdminSecurityModelUnavailableError()
+        }
+        return this.security.TeamMembers(teamId)
+    }
+
     /**
      * Replaces ONLY the tenant's security setting (every other config field is preserved), persists it, then invalidates
      * the cached setting so the change takes effect on the next scope without a restart. Refused before any write: on a
@@ -250,6 +289,8 @@ export class AdminService
         ])
         await this.Audit(null, detail)
         this.security?.Invalidate()
+        // Pull the directory for the groups and principals the new setting names (S4 Task 10); the run re-invalidates when it lands.
+        this.security?.RequestSync()
     }
 
     private async CheckSecurityModel(model: ISecurityModelConfig): Promise<void>

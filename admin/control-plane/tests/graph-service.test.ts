@@ -186,6 +186,16 @@ class FakeAdminProxy implements IAdminProxy
         throw new Error(Fixture.Unused)
     }
 
+    public async GetSecurityCatalog(): Promise<never>
+    {
+        throw new Error(Fixture.Unused)
+    }
+
+    public async ListTeamMembers(): Promise<never>
+    {
+        throw new Error(Fixture.Unused)
+    }
+
     private Track(info: AdminConnectInfo, call: string): void
     {
         this.Calls.push(call)

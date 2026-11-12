@@ -12,6 +12,7 @@ import type { ISecuritySettingAdmin } from '../admin-service.js'
 import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
 import { SecurityModelWire } from '../security-model-wire.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
+import { EnvironmentSecurityAdmin } from '../environment/environment-security-admin.js'
 import { SecuritySettingIssue, SecuritySettingIssueCode } from '../environment/security-setting-catalog-check.js'
 import { EnvironmentFixture } from '../environment/tests/environment-fixture.js'
 import { Tier1Fx } from '../environment/tests/tier1-fixture.js'
@@ -41,7 +42,11 @@ class AdminClient
     {
         await Tier1Fx.Run({ Identity: true, SecurityModel: Tier1Fx.Setting() }, async (fx, server) =>
         {
-            const admin = await AdminClient.Open(server, Tier1Fx.Context(Tier1Fx.Admin), security === null ? undefined : security ?? await server.SecurityAdmin())
+            // These tests cover the catalog check, invalidation and scope effect of SetSecurityModel; the IdP directory
+            // sync (which the local, authoritative source would otherwise run over account-less fixture principals) has
+            // its own coverage, so the admin here carries a no-op sync trigger.
+            const resolved = security === null ? undefined : security ?? new EnvironmentSecurityAdmin(await server.SecuritySetting(), server.EnvironmentEngine(), { RunNow: async () => undefined })
+            const admin = await AdminClient.Open(server, Tier1Fx.Context(Tier1Fx.Admin), resolved)
             try
             {
                 await body(server, admin, fx)

@@ -68,6 +68,8 @@ import { EnvironmentScopeRules } from './host/environment/environment-scope-rule
 import type { IEnvironmentTier1 } from './host/environment/environment-scope-rules.js'
 import { EnvironmentSecuritySetting, LoggerSecuritySettingDiagnostics } from './host/environment/environment-security-setting.js'
 import { EnvironmentSecurityAdmin } from './host/environment/environment-security-admin.js'
+import { IdpDirectorySyncHost } from './host/environment/idp-directory-sync-host.js'
+import { IdpDirectorySync } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecuritySettingAdmin } from './host/admin-service.js'
 import { InvalidParamsPrefix } from './host/invalid-params-prefix.js'
 import type { GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -178,6 +180,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private environmentShares: EnvironmentShareService | undefined
     private environmentAssign: EnvironmentAssignService | undefined
     private securitySetting: Promise<EnvironmentSecuritySetting> | undefined
+    private directorySync: Promise<IdpDirectorySyncHost> | undefined
     private environmentRules: EnvironmentScopeRules | undefined
     private devExecute: DevCypherExecute | undefined
 
@@ -318,7 +321,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         {
             return undefined
         }
-        return new EnvironmentSecurityAdmin(await this.SecuritySetting(), this.EnvironmentEngine())
+        return new EnvironmentSecurityAdmin(await this.SecuritySetting(), this.EnvironmentEngine(), await this.DirectorySync())
     }
 
     private async BuildSecuritySetting(): Promise<EnvironmentSecuritySetting>
@@ -326,6 +329,49 @@ export class PragmaticServer implements IEnvironmentGraphHost
         const store = await this.TenantConfigStore()
         const pack = await this.Pack()
         return new EnvironmentSecuritySetting(store, pack.IdpDirectory, this.Tenant(), new LoggerSecuritySettingDiagnostics(this.options.logger ?? StructuredLogger.ToStdout()))
+    }
+
+    /**
+     * The tenant's IdP directory sync host (S4 Task 10): pulls the directory on start, after each `SetSecurityModel` and
+     * every {@link IdpDirectorySyncHost.IntervalMs}, invalidating {@link SecuritySetting} after each run. Memoized (a
+     * failed build is retried) and disposed with the server before the setting. Runtime tenants with identity only; one
+     * `PragmaticServer` holds the tenant lease, so exactly one replica polls.
+     */
+    public DirectorySync(): Promise<IdpDirectorySyncHost>
+    {
+        if (this.disposing !== undefined)
+        {
+            return Promise.reject(new Error(PragmaticServer.DisposedMessage))
+        }
+        this.AssertRuntimePurpose()
+        if (this.identity === undefined)
+        {
+            return Promise.reject(new Error(PragmaticServer.IdentityNotConfiguredError))
+        }
+        if (this.directorySync === undefined)
+        {
+            const built = this.BuildDirectorySync()
+            this.directorySync = built
+            built.catch(() =>
+            {
+                if (this.directorySync === built)
+                {
+                    this.directorySync = undefined
+                }
+            })
+        }
+        return this.directorySync
+    }
+
+    private async BuildDirectorySync(): Promise<IdpDirectorySyncHost>
+    {
+        const pack = await this.Pack()
+        const setting = await this.SecuritySetting()
+        const sync = new IdpDirectorySync(pack.DirectorySource, pack.IdpDirectory, pack.Sessions, pack.Audit)
+        const host = new IdpDirectorySyncHost(sync, setting, this.Tenant())
+        // one run when the tenant's server starts serving (its first admin connection builds this)
+        void host.RunNow()
+        return host
     }
 
     public Purpose(): TenantPurpose
@@ -839,6 +885,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
             // the scope source unsubscribes from the engine host and the security setting before either goes
             const environmentScopes = await this.environmentScopes?.catch(() => undefined)
             environmentScopes?.dispose()
+            // the directory sync host polls the setting: stop it before the setting goes
+            const directorySync = await this.directorySync?.catch(() => undefined)
+            directorySync?.dispose()
             const setting = await this.securitySetting?.catch(() => undefined)
             setting?.dispose()
             // the environment engine's connectors borrow adapters from the connectors host's catalog: it closes first

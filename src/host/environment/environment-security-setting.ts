@@ -68,6 +68,12 @@ export class EnvironmentSecuritySetting implements IDisposable
         return (await this.store.Get(this.tenant.Id))?.SecurityModel ?? undefined
     }
 
+    /** The stored IdP directory snapshot the setting reads (team membership, user states); a non-authoritative one when none is stored. */
+    public Snapshot(): Promise<IdpDirectorySnapshot>
+    {
+        return this.Directory()
+    }
+
     public Model(): Promise<TenantSecurityModel>
     {
         if (this.model === undefined)

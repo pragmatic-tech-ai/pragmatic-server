@@ -1,12 +1,13 @@
 import {
     createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol, GraphProtocol,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelViewPageDto, ModelViewParams, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, CypherModelListDto, ConnectorReadParams, Page, EntityDto, PragmaticAppSummaryDto, GraphSummaryDto, GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelViewPageDto, ModelViewParams, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, TeamMemberDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, CypherModelListDto, ConnectorReadParams, Page, EntityDto, PragmaticAppSummaryDto, GraphSummaryDto, GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { TeamMemberOrigin } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResponseError, ErrorCodes, DrainingError, ApplicationDeployProtocol, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherAppDeployParamsDto, AppDeployResultDto, AppWriteParams, AppWriteResultDto, AppWriteOpDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto, DataChangedPayload } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { RequestType, NotificationType } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { ResourceRef, IdentityConfig, PresentedSecret, LocalAccountNotFoundError, InvalidSecurityModelError } from '@pragmatic-tech-ai/todl-identity'
-import type { AccessContext, ISecurityModelConfig, Grant, Role, LocalAccount, ServiceTokenSummary, ServiceTokenGrant } from '@pragmatic-tech-ai/todl-identity'
+import { ResourceRef, IdentityConfig, PresentedSecret, LocalAccountNotFoundError, InvalidSecurityModelError, MembershipOrigin } from '@pragmatic-tech-ai/todl-identity'
+import type { AccessContext, ISecurityModelConfig, Grant, Role, LocalAccount, ServiceTokenSummary, ServiceTokenGrant, TeamMembershipRow } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { Cypher } from '@pragmatic-tech-ai/graph'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
@@ -21,8 +22,9 @@ import { TokenScopeGate } from './token-scope.js'
 import type { IEnvironmentDataService } from './environment/environment-data-service.js'
 import type { IEnvironmentDataChanges } from './environment/data-changed-push.js'
 import type { IGraphScope, IGraphScopeSource } from './engine/access-scope-source.js'
-import { AdminService, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, AdminTokenNotFoundError, ForeignTenantResourceError, AdminSecurityModelUnavailableError, AdminSecuritySettingRefusedError } from './admin-service.js'
+import { AdminService, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, AdminTokenNotFoundError, ForeignTenantResourceError, AdminSecurityModelUnavailableError, AdminSecuritySettingRefusedError, UnknownTeamError } from './admin-service.js'
 import { SecurityModelWire } from './security-model-wire.js'
+import { SecurityCatalogReader } from './environment/security-catalog-reader.js'
 import { AdminEnums, AdminEnumError } from './admin-enums.js'
 import { TenantPurpose } from '../tenancy/tenant-purpose.js'
 import type { IDevGraphService } from './graphs/dev-graph-service.js'
@@ -58,6 +60,7 @@ export class ServerConnectionHandler
     private static readonly GroupRoleMapField = 'groupRoleMap'
     private static readonly ClaimsMappingField = 'claimsMapping'
     private static readonly PrincipalIdField = 'principalId'
+    private static readonly TeamIdField = 'teamId'
     private static readonly OutsideScopeMessage = "method is outside this credential's scope"
     private static readonly EmailField = 'email'
     private static readonly PasswordField = 'password'
@@ -829,6 +832,18 @@ export class ServerConnectionHandler
             await this.AdminCall(() => admin.SetSecurityModel(this.actor(), model))
             return { ok: true as const }
         })
+        this.connection.onRequest(AdminProtocol.GetSecurityCatalog, () => this.Dispatch(AdminProtocol.GetSecurityCatalog.method, async () =>
+        {
+            this.EnforceRate(AdminProtocol.GetSecurityCatalog.method)
+            this.authorize(AdminProtocol.GetSecurityCatalog.method)
+            return SecurityCatalogReader.Read(await this.AdminCall(() => admin.GetSecurityCatalog()))
+        }))
+        this.guarded(AdminProtocol.ListTeamMembers, async p =>
+        {
+            const teamId = this.RequireNonEmptyString(p?.teamId, ServerConnectionHandler.TeamIdField)
+            const rows = await this.AdminCall(() => admin.ListTeamMembers(teamId))
+            return rows.map(row => this.ToTeamMemberDto(row))
+        })
         this.connection.onRequest(AdminProtocol.ListAccounts, () => this.Dispatch(AdminProtocol.ListAccounts.method, async () =>
         {
             this.EnforceRate(AdminProtocol.ListAccounts.method)
@@ -932,6 +947,10 @@ export class ServerConnectionHandler
             if (error instanceof AdminSecuritySettingRefusedError)
             {
                 throw new ResponseError(ErrorCodes.InvalidParams, InvalidParamsPrefix.Text + error.Issues[0].Message)
+            }
+            if (error instanceof UnknownTeamError)
+            {
+                throw new ResponseError(ErrorCodes.InvalidParams, InvalidParamsPrefix.Text + error.message)
             }
             if (error instanceof InvalidSecurityModelError)
             {
@@ -1116,6 +1135,11 @@ export class ServerConnectionHandler
             scopes: [...issued.Grant.Scopes],
             expiresAt: issued.Grant.ExpiresAt === null ? null : issued.Grant.ExpiresAt.toISOString(),
         }
+    }
+
+    private ToTeamMemberDto(row: TeamMembershipRow): TeamMemberDto
+    {
+        return { principalId: row.PrincipalId, origin: row.Origin === MembershipOrigin.Synced ? TeamMemberOrigin.Synced : TeamMemberOrigin.Manual }
     }
 
     private ToGrantDto(grant: Grant): GrantDto

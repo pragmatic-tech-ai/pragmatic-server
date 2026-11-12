@@ -11,7 +11,7 @@ import type { PortAllocator } from './port-allocator.js'
 import { TemplateCatalog } from './template-catalog.js'
 import { AdminProxyError, type AdminConnectInfo, type AdminSnapshot, type IAdminAccess, type IAdminProxy } from './admin-proxy.js'
 import { TransportFailure } from './transport-failure.js'
-import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityModelDto, TokenIssuedDto, ServiceTokenSummaryDto, IssueTokenParams } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityCatalogDto, SecurityModelDto, TeamMemberDto, TokenIssuedDto, ServiceTokenSummaryDto, IssueTokenParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 import { UnknownHiveError } from './rollout-errors.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
@@ -648,6 +648,16 @@ export class EnvironmentService implements IAdminAccess
     public async AdminSetSecurityModel(name: string, securityModel: SecurityModelDto): Promise<void>
     {
         return this.WithAdmin(name, info => this.proxy.SetSecurityModel(info, securityModel))
+    }
+
+    public async AdminGetSecurityCatalog(name: string): Promise<SecurityCatalogDto>
+    {
+        return this.WithAdmin(name, info => this.proxy.GetSecurityCatalog(info))
+    }
+
+    public async AdminListTeamMembers(name: string, teamId: string): Promise<TeamMemberDto[]>
+    {
+        return this.WithAdmin(name, info => this.proxy.ListTeamMembers(info, teamId))
     }
 
     /**

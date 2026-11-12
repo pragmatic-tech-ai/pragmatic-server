@@ -296,4 +296,66 @@ describe('TenantApiEndpoint read routes', () =>
         const res = await Get('/tenant-api/environments', Fixtures.Session(TenantA))
         assert.doesNotMatch(res.body, /secret|password|token/i)
     })
+
+    it('proxies the security-catalog read to the owning environment', async () =>
+    {
+        const spy = new SecurityReadsService([Fixtures.Env('a-env', 'hive-a', TenantA)])
+        endpoint = new TenantApiEndpoint(spy as unknown as IEnvironmentService, directory, new InProcessRolloutClient(deployments), new FakeFactory(), new EnvironmentPlacement(directory))
+        const res = await Get('/tenant-api/environments/a-env/admin/security-catalog', Fixtures.Session(TenantA))
+        assert.equal(res.status, 200)
+        assert.deepEqual(spy.CatalogCalls, ['a-env'])
+        assert.deepEqual((res.Json() as { roles: Array<{ name: string }> }).roles.map(r => r.name), ['SystemAdministrator'])
+    })
+
+    it('passes the decoded team id on the team-members route', async () =>
+    {
+        const spy = new SecurityReadsService([Fixtures.Env('a-env', 'hive-a', TenantA)])
+        endpoint = new TenantApiEndpoint(spy as unknown as IEnvironmentService, directory, new InProcessRolloutClient(deployments), new FakeFactory(), new EnvironmentPlacement(directory))
+        const res = await Get('/tenant-api/environments/a-env/admin/team-members/team%201', Fixtures.Session(TenantA))
+        assert.equal(res.status, 200)
+        assert.deepEqual(spy.TeamCalls, [['a-env', 'team 1']])
+        assert.deepEqual(res.Json(), [{ principalId: 'dual', origin: 'synced' }])
+    })
+
+    it('404s a team-members request without a team id', async () =>
+    {
+        const spy = new SecurityReadsService([Fixtures.Env('a-env', 'hive-a', TenantA)])
+        endpoint = new TenantApiEndpoint(spy as unknown as IEnvironmentService, directory, new InProcessRolloutClient(deployments), new FakeFactory(), new EnvironmentPlacement(directory))
+        const res = await Get('/tenant-api/environments/a-env/admin/team-members', Fixtures.Session(TenantA))
+        assert.equal(res.status, 404)
+        assert.deepEqual(spy.TeamCalls, [])
+    })
 })
+
+/** Records the two S4 Task 10 admin reads the tenant-api serves, returning fixed shapes. */
+class SecurityReadsService
+{
+    public readonly CatalogCalls: string[] = []
+    public readonly TeamCalls: Array<[string, string]> = []
+
+    public constructor(private readonly records: readonly EnvironmentRecord[])
+    {
+    }
+
+    public List(): readonly EnvironmentRecord[]
+    {
+        return this.records
+    }
+
+    public async ListReconciled(): Promise<readonly EnvironmentRecord[]>
+    {
+        return this.records
+    }
+
+    public async AdminGetSecurityCatalog(name: string): Promise<unknown>
+    {
+        this.CatalogCalls.push(name)
+        return { roles: [{ name: 'SystemAdministrator', kind: 'base', defaults: [] }], concepts: [], securedFields: [], profiles: [] }
+    }
+
+    public async AdminListTeamMembers(name: string, teamId: string): Promise<unknown>
+    {
+        this.TeamCalls.push([name, teamId])
+        return [{ principalId: 'dual', origin: 'synced' }]
+    }
+}

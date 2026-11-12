@@ -12,6 +12,8 @@ class AdminGateFixture
         AdminProtocol.RevokeRole.method,
         AdminProtocol.GetConfig.method,
         AdminProtocol.SetConfig.method,
+        AdminProtocol.GetSecurityCatalog.method,
+        AdminProtocol.ListTeamMembers.method,
         AdminProtocol.ListAccounts.method,
         AdminProtocol.CreateAccount.method,
         AdminProtocol.DisableAccount.method,

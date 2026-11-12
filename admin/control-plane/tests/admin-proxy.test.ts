@@ -73,6 +73,18 @@ class FakeConnection implements IAdminConnection
         this.Record('SetSecurityModel')
     }
 
+    public async GetSecurityCatalog(): Promise<any>
+    {
+        this.Record('GetSecurityCatalog')
+        return { roles: [], concepts: [], securedFields: [], profiles: [] }
+    }
+
+    public async ListTeamMembers(teamId: string): Promise<any>
+    {
+        this.Record(`ListTeamMembers:${teamId}`)
+        return []
+    }
+
     public async CreateGraph(_p: any): Promise<any>
     {
         this.Record('CreateGraph')

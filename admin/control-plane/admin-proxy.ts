@@ -1,5 +1,5 @@
 import { AdminProtocol, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { AccountDto, AdminAckDto, CreateAccountParams, GraphCreateParamsDto, GraphDetailDto, GraphExportDto, GraphLoadParamsDto, GraphLoadedDto, GraphRefParamsDto, GraphSummaryDto, GrantDto, GrantMutationDto, IdentityConfigDto, IssueTokenParams, MessageConnection, RevokeTokenParams, SecurityModelDto, ServiceTokenSummaryDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { AccountDto, AdminAckDto, CreateAccountParams, GraphCreateParamsDto, GraphDetailDto, GraphExportDto, GraphLoadParamsDto, GraphLoadedDto, GraphRefParamsDto, GraphSummaryDto, GrantDto, GrantMutationDto, IdentityConfigDto, IssueTokenParams, MessageConnection, RevokeTokenParams, SecurityCatalogDto, SecurityModelDto, ServiceTokenSummaryDto, TeamMemberDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { TransportFailure } from './transport-failure.js'
 import { GraphWireCodes } from './graph-error-code.js'
@@ -74,6 +74,8 @@ export interface IAdminConnection
     SetConfig(config: IdentityConfigDto): Promise<void>
     GetSecurityModel(): Promise<SecurityModelDto | undefined>
     SetSecurityModel(securityModel: SecurityModelDto): Promise<void>
+    GetSecurityCatalog(): Promise<SecurityCatalogDto>
+    ListTeamMembers(teamId: string): Promise<TeamMemberDto[]>
     CreateGraph(params: GraphCreateParamsDto): Promise<GraphSummaryDto>
     ListGraphs(): Promise<GraphSummaryDto[]>
     GetGraph(params: GraphRefParamsDto): Promise<GraphDetailDto>
@@ -103,6 +105,8 @@ export interface IAdminProxy
     SetConfig(info: AdminConnectInfo, config: IdentityConfigDto): Promise<void>
     GetSecurityModel(info: AdminConnectInfo): Promise<SecurityModelDto | undefined>
     SetSecurityModel(info: AdminConnectInfo, securityModel: SecurityModelDto): Promise<void>
+    GetSecurityCatalog(info: AdminConnectInfo): Promise<SecurityCatalogDto>
+    ListTeamMembers(info: AdminConnectInfo, teamId: string): Promise<TeamMemberDto[]>
     CreateGraph(info: AdminConnectInfo, params: GraphCreateParamsDto): Promise<GraphSummaryDto>
     ListGraphs(info: AdminConnectInfo): Promise<GraphSummaryDto[]>
     GetGraph(info: AdminConnectInfo, params: GraphRefParamsDto): Promise<GraphDetailDto>
@@ -183,6 +187,16 @@ export class AdminProxy implements IAdminProxy
     public async SetSecurityModel(info: AdminConnectInfo, securityModel: SecurityModelDto): Promise<void>
     {
         await this.With(info, conn => conn.SetSecurityModel(securityModel))
+    }
+
+    public async GetSecurityCatalog(info: AdminConnectInfo): Promise<SecurityCatalogDto>
+    {
+        return this.With(info, conn => conn.GetSecurityCatalog())
+    }
+
+    public async ListTeamMembers(info: AdminConnectInfo, teamId: string): Promise<TeamMemberDto[]>
+    {
+        return this.With(info, conn => conn.ListTeamMembers(teamId))
     }
 
     public async CreateGraph(info: AdminConnectInfo, params: GraphCreateParamsDto): Promise<GraphSummaryDto>
@@ -368,6 +382,16 @@ export class WsAdminConnection implements IAdminConnection
     public async SetSecurityModel(securityModel: SecurityModelDto): Promise<void>
     {
         await this.conn.sendRequest(AdminProtocol.SetSecurityModel, { securityModel })
+    }
+
+    public GetSecurityCatalog(): Promise<SecurityCatalogDto>
+    {
+        return this.conn.sendRequest(AdminProtocol.GetSecurityCatalog, undefined) as Promise<SecurityCatalogDto>
+    }
+
+    public ListTeamMembers(teamId: string): Promise<TeamMemberDto[]>
+    {
+        return this.conn.sendRequest(AdminProtocol.ListTeamMembers, { teamId }) as Promise<TeamMemberDto[]>
     }
 
     public CreateGraph(params: GraphCreateParamsDto): Promise<GraphSummaryDto>

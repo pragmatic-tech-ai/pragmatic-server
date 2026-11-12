@@ -324,6 +324,18 @@ class FakeAdminProxy implements IAdminProxy
         this.Calls.push({ method: 'SetSecurityModel', info, args: [model] })
     }
 
+    public async GetSecurityCatalog(info: AdminConnectInfo): Promise<any>
+    {
+        this.Calls.push({ method: 'GetSecurityCatalog', info, args: [] })
+        return { roles: [], concepts: [], securedFields: [], profiles: [] }
+    }
+
+    public async ListTeamMembers(info: AdminConnectInfo, teamId: string): Promise<any>
+    {
+        this.Calls.push({ method: 'ListTeamMembers', info, args: [teamId] })
+        return []
+    }
+
     public async CreateGraph(_info: AdminConnectInfo, _p: any): Promise<any>
     {
         throw new Error('unused')

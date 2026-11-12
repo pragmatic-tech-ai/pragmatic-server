@@ -4,7 +4,8 @@ import { randomBytes } from 'node:crypto'
 import { Tenant, TenantKind, Role, ResourceKind, ResourceRef, IdentityConfig, DelegationDepth, AuditEventKind, PresentedSecret, LocalAccountNotFoundError } from '@pragmatic-tech-ai/todl-identity'
 import { Grant } from '@pragmatic-tech-ai/todl-identity'
 import type { ISessionManager } from '@pragmatic-tech-ai/todl-identity'
-import type { IAuditSink, AuditEvent, ITenantConfigStore, IRoleGrantStore, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
+import type { IAuditSink, AuditEvent, ITenantConfigStore, IRoleGrantStore, ISecurityModelConfig, TeamMembershipRow } from '@pragmatic-tech-ai/todl-identity'
+import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminService, AdminTokenNotFoundError, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, ForeignTenantResourceError } from '../admin-service.js'
 import type { ISecuritySettingAdmin } from '../admin-service.js'
@@ -33,7 +34,10 @@ class FailingAuditSink implements IAuditSink
 
 class RecordingReload implements ISecuritySettingAdmin
 {
+    private static readonly CatalogUnavailable = 'catalog not available in this test'
+
     public Invalidations = 0
+    public SyncRequests = 0
 
     public async Issues(_config: ISecurityModelConfig): Promise<readonly SecuritySettingIssue[]>
     {
@@ -43,6 +47,21 @@ class RecordingReload implements ISecuritySettingAdmin
     public Invalidate(): void
     {
         this.Invalidations++
+    }
+
+    public async Catalog(): Promise<IEnvironmentCatalog>
+    {
+        throw new Error(RecordingReload.CatalogUnavailable)
+    }
+
+    public async TeamMembers(_teamId: string): Promise<readonly TeamMembershipRow[]>
+    {
+        return []
+    }
+
+    public RequestSync(): void
+    {
+        this.SyncRequests++
     }
 }
 

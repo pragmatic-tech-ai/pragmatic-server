@@ -289,6 +289,20 @@ class FakeService implements IEnvironmentService
         this.MaybeThrow()
     }
 
+    public async AdminGetSecurityCatalog(name: string): Promise<any>
+    {
+        this.Calls.push(`adminGetSecurityCatalog:${name}`)
+        this.MaybeThrow()
+        return { roles: [], concepts: [], securedFields: [], profiles: [] }
+    }
+
+    public async AdminListTeamMembers(name: string, teamId: string): Promise<any>
+    {
+        this.Calls.push(`adminListTeamMembers:${name}:${teamId}`)
+        this.MaybeThrow()
+        return []
+    }
+
     public async AdminSetConfig(name: string, config: IdentityConfigDto): Promise<void>
     {
         this.Calls.push(`adminSetConfig:${name}:${JSON.stringify(config)}`)
