@@ -1,9 +1,8 @@
 import { createHash } from 'node:crypto'
 
-export type OciFetch = (
-    url: string,
-    init: { method: string; headers?: Record<string, string>; body?: Uint8Array | string },
-) => Promise<Response>
+export type OciRequestInit = { method: string; headers?: Record<string, string>; body?: Uint8Array | string }
+
+export type OciFetch = (url: string, init: OciRequestInit) => Promise<Response>
 
 /** Basic credential for a registry that issues bearer tokens (GHCR: GitHub user name + personal access token). */
 export type RegistryCredential = { username: string; token: string }
@@ -44,6 +43,40 @@ export class OciResponseError extends Error
     }
 }
 
+/** The registry answered 2xx but the content breaks the OCI protocol (not a transport status). Still an OciResponseError. */
+export class OciProtocolError extends OciResponseError
+{
+    private static readonly ProtocolErrorName = 'OciProtocolError'
+    private static readonly NoStatus = 0
+
+    public constructor(message: string)
+    {
+        super(OciProtocolError.NoStatus, message)
+        this.name = OciProtocolError.ProtocolErrorName
+    }
+}
+
+/** Constants and helpers shared by the client and the bearer-auth class. */
+class OciHttp
+{
+    public static readonly MethodGet = 'GET'
+    public static readonly StatusOk = 200
+    public static readonly UnreachableMessage = 'The OCI registry is unreachable'
+
+    /** Discards a response body; a failed drain changes nothing. */
+    public static async Drain(response: Response): Promise<void>
+    {
+        try
+        {
+            await response.body?.cancel()
+        }
+        catch
+        {
+            // The body is discarded; a failed drain changes nothing.
+        }
+    }
+}
+
 /**
  * Answers a registry's `WWW-Authenticate: Bearer` challenge: exchanges the Basic credential at the challenge realm for a bearer,
  * caches it per scope, and retries the request once. Never echoes the credential, a Basic header or a bearer into an error.
@@ -51,36 +84,35 @@ export class OciResponseError extends Error
 class RegistryBearerAuth
 {
     private static readonly UnauthorizedStatus = 401
-    private static readonly StatusOk = 200
     private static readonly AuthorizationHeader = 'Authorization'
     private static readonly ChallengeHeader = 'www-authenticate'
-    private static readonly BearerScheme = 'Bearer'
+    private static readonly BearerScheme = /^bearer\s/i
+    private static readonly HttpsProtocol = 'https:'
+    private static readonly NoRealm = ''
     private static readonly BearerPrefix = 'Bearer '
     private static readonly BasicPrefix = 'Basic '
     private static readonly Base64 = 'base64'
     private static readonly Utf8 = 'utf8'
-    private static readonly MethodGet = 'GET'
     private static readonly RealmParam = 'realm'
     private static readonly ServiceParam = 'service'
     private static readonly ScopeParam = 'scope'
     private static readonly Separator = ':'
     private static readonly RepositoryScopePrefix = 'repository:'
     private static readonly NoScope = ''
-    private static readonly ChallengeParam = /(\w+)="([^"]*)"/g
+    private static readonly ChallengeParam = /([A-Za-z_][\w-]*)=(?:"((?:[^"\\]|\\.)*)"|([^\s,"]+))/g
+    private static readonly Unescape = /\\(.)/g
+    private static readonly UnescapedChar = '$1'
     private static readonly RefusedMessage = 'The OCI registry refused the credential'
-    private static readonly UnreachableMessage = 'The OCI registry is unreachable'
 
     private readonly bearers = new Map<string, string>()
+    private readonly registryHost: string
 
-    public constructor(private readonly fetchFn: OciFetch, private readonly credential: RegistryCredential | undefined)
+    public constructor(baseUrl: string, private readonly fetchFn: OciFetch, private readonly credential: RegistryCredential | undefined)
     {
+        this.registryHost = new URL(baseUrl).host
     }
 
-    public async Send(
-        url: string,
-        init: { method: string; headers?: Record<string, string>; body?: Uint8Array | string },
-        repo: string,
-    ): Promise<Response>
+    public async Send(url: string, init: OciRequestInit, repo: string): Promise<Response>
     {
         const S = RegistryBearerAuth
         const first = await this.Dispatch(url, init, this.CachedBearerFor(repo))
@@ -89,8 +121,8 @@ class RegistryBearerAuth
             return first
         }
         const challenge = first.headers.get(S.ChallengeHeader)
-        await this.Drain(first)
-        if (this.credential === undefined || challenge === null || !challenge.startsWith(S.BearerScheme))
+        await OciHttp.Drain(first)
+        if (this.credential === undefined || challenge === null || !S.BearerScheme.test(challenge))
         {
             throw new OciResponseError(S.UnauthorizedStatus, S.RefusedMessage)
         }
@@ -101,7 +133,7 @@ class RegistryBearerAuth
         const second = await this.Dispatch(url, init, bearer)
         if (second.status === S.UnauthorizedStatus)
         {
-            await this.Drain(second)
+            await OciHttp.Drain(second)
             throw new OciResponseError(S.UnauthorizedStatus, S.RefusedMessage)
         }
         return second
@@ -112,7 +144,8 @@ class RegistryBearerAuth
         const params = new Map<string, string>()
         for (const match of challenge.matchAll(RegistryBearerAuth.ChallengeParam))
         {
-            params.set(match[1].toLowerCase(), match[2])
+            const value = match[2] === undefined ? match[3] : match[2].replace(RegistryBearerAuth.Unescape, RegistryBearerAuth.UnescapedChar)
+            params.set(match[1].toLowerCase(), value)
         }
         return params
     }
@@ -131,11 +164,7 @@ class RegistryBearerAuth
         return found
     }
 
-    private async Dispatch(
-        url: string,
-        init: { method: string; headers?: Record<string, string>; body?: Uint8Array | string },
-        bearer: string | undefined,
-    ): Promise<Response>
+    private async Dispatch(url: string, init: OciRequestInit, bearer: string | undefined): Promise<Response>
     {
         const S = RegistryBearerAuth
         const headers = bearer === undefined ? init.headers : { ...init.headers, [S.AuthorizationHeader]: S.BearerPrefix + bearer }
@@ -145,19 +174,34 @@ class RegistryBearerAuth
         }
         catch
         {
-            throw new OciUnavailableError(S.UnreachableMessage)
+            throw new OciUnavailableError(OciHttp.UnreachableMessage)
         }
+    }
+
+    /** The realm as a URL the Basic credential may be sent to: well-formed, and https unless it is the registry's own host. */
+    private RealmUrl(realm: string | undefined): URL
+    {
+        const S = RegistryBearerAuth
+        let target: URL
+        try
+        {
+            target = new URL(realm ?? S.NoRealm)
+        }
+        catch
+        {
+            throw new OciResponseError(S.UnauthorizedStatus, S.RefusedMessage)
+        }
+        if (target.protocol !== S.HttpsProtocol && target.host !== this.registryHost)
+        {
+            throw new OciResponseError(S.UnauthorizedStatus, S.RefusedMessage)
+        }
+        return target
     }
 
     private async IssueBearer(params: Map<string, string>, scope: string, credential: RegistryCredential): Promise<string>
     {
         const S = RegistryBearerAuth
-        const realm = params.get(S.RealmParam)
-        if (realm === undefined)
-        {
-            throw new OciResponseError(S.UnauthorizedStatus, S.RefusedMessage)
-        }
-        const target = new URL(realm)
+        const target = this.RealmUrl(params.get(S.RealmParam))
         const service = params.get(S.ServiceParam)
         if (service !== undefined)
         {
@@ -171,15 +215,15 @@ class RegistryBearerAuth
         let response: Response
         try
         {
-            response = await this.fetchFn(target.toString(), { method: S.MethodGet, headers: { [S.AuthorizationHeader]: S.BasicPrefix + basic } })
+            response = await this.fetchFn(target.toString(), { method: OciHttp.MethodGet, headers: { [S.AuthorizationHeader]: S.BasicPrefix + basic } })
         }
         catch
         {
-            throw new OciUnavailableError(S.UnreachableMessage)
+            throw new OciUnavailableError(OciHttp.UnreachableMessage)
         }
-        if (response.status !== S.StatusOk)
+        if (response.status !== OciHttp.StatusOk)
         {
-            await this.Drain(response)
+            await OciHttp.Drain(response)
             throw new OciResponseError(S.UnauthorizedStatus, S.RefusedMessage)
         }
         const issued = await this.ReadToken(response)
@@ -201,18 +245,6 @@ class RegistryBearerAuth
         catch
         {
             return undefined
-        }
-    }
-
-    private async Drain(response: Response): Promise<void>
-    {
-        try
-        {
-            await response.body?.cancel()
-        }
-        catch
-        {
-            // The body is discarded; a failed drain changes nothing.
         }
     }
 }
@@ -246,13 +278,17 @@ export class OciRegistryClient
     private static readonly EmptyConfigMediaType = 'application/vnd.oci.empty.v1+json'
     private static readonly EmptyConfigJson = '{}'
     private static readonly AcceptSeparator = ', '
+    private static readonly ManifestAccept = [
+        OciRegistryClient.OciIndexMediaType,
+        OciRegistryClient.ManifestMediaType,
+        OciRegistryClient.DockerManifestListMediaType,
+        OciRegistryClient.DockerManifestMediaType,
+    ].join(OciRegistryClient.AcceptSeparator)
     private static readonly ManifestSchemaVersion = 2
     private static readonly MaxTagPages = 1000
-    private static readonly MethodGet = 'GET'
     private static readonly MethodHead = 'HEAD'
     private static readonly MethodPost = 'POST'
     private static readonly MethodPut = 'PUT'
-    private static readonly StatusOk = 200
     private static readonly StatusCreated = 201
     private static readonly StatusAccepted = 202
     private static readonly StatusNotFound = 404
@@ -263,11 +299,11 @@ export class OciRegistryClient
     private static readonly ReferenceShape = /^[A-Za-z0-9_][A-Za-z0-9._:-]{0,127}$/
     private static readonly BadDigestMessage = 'The OCI digest must be sha256:<64 hex characters>'
     private static readonly BadReferenceMessage = 'The OCI reference must be a tag or digest without slashes, queries or whitespace'
-    private static readonly UnreachableMessage = 'The OCI registry is unreachable'
     private static readonly StatusMessagePrefix = 'The OCI registry answered HTTP '
     private static readonly NoLocationMessage = 'The OCI registry accepted the upload but returned no Location'
     private static readonly NoDigestMessage = 'The OCI registry answered a manifest HEAD without a digest'
     private static readonly BadTagsMessage = 'The OCI registry returned an unreadable tag list'
+    private static readonly BadAnnotationsMessage = 'The OCI manifest annotations are not string values'
     private static readonly BadManifestMessage = 'The OCI manifest is not a single-layer artifact'
     private static readonly LayerMismatchMessage = 'The OCI layer bytes do not match the digest in the manifest'
 
@@ -280,7 +316,7 @@ export class OciRegistryClient
     public constructor(baseUrl: string, fetchFn: OciFetch = OciRegistryClient.GlobalFetch, credential?: RegistryCredential)
     {
         this.baseUrl = baseUrl.replace(OciRegistryClient.TrailingSlash, OciRegistryClient.NoSlash)
-        this.auth = new RegistryBearerAuth(fetchFn, credential)
+        this.auth = new RegistryBearerAuth(baseUrl, fetchFn, credential)
     }
 
     public static DigestOf(bytes: Uint8Array): string
@@ -317,7 +353,7 @@ export class OciRegistryClient
     {
         const S = OciRegistryClient
         S.AssertReference(reference)
-        return this.ReadBytes(await this.Send(repo, S.MethodGet, this.RepoUrl(repo) + S.ManifestsPath + reference, S.StatusOk))
+        return this.ReadBytes(await this.Send(repo, OciHttp.MethodGet, this.RepoUrl(repo) + S.ManifestsPath + reference, OciHttp.StatusOk, { [S.AcceptHeader]: S.ManifestAccept }))
     }
 
     public async PullBlob(repo: string, digest: string): Promise<Uint8Array>
@@ -327,7 +363,7 @@ export class OciRegistryClient
         {
             throw new OciArgumentError(S.BadDigestMessage)
         }
-        return this.ReadBytes(await this.Send(repo, S.MethodGet, this.RepoUrl(repo) + S.BlobsPath + digest, S.StatusOk))
+        return this.ReadBytes(await this.Send(repo, OciHttp.MethodGet, this.RepoUrl(repo) + S.BlobsPath + digest, OciHttp.StatusOk))
     }
 
     /** All tags of a repository, following `Link: rel="next"` pagination; empty when the repository does not exist. */
@@ -340,15 +376,15 @@ export class OciRegistryClient
         {
             if (page >= S.MaxTagPages)
             {
-                throw new OciResponseError(S.StatusOk, S.BadTagsMessage)
+                throw new OciProtocolError(S.BadTagsMessage)
             }
-            const response = await this.Request(S.MethodGet, url, repo)
+            const response = await this.Request(OciHttp.MethodGet, url, repo)
             if (response.status === S.StatusNotFound)
             {
-                await this.Drain(response)
+                await OciHttp.Drain(response)
                 return tags
             }
-            await this.Expect(response, S.StatusOk)
+            await this.Expect(response, OciHttp.StatusOk)
             tags.push(...await this.ReadTags(response))
             const next = S.NextLink.exec(response.headers.get(S.LinkHeader) ?? S.NoSlash)
             url = next === null ? undefined : new URL(next[1], this.baseUrl + S.V2Prefix).toString()
@@ -361,14 +397,13 @@ export class OciRegistryClient
     {
         const S = OciRegistryClient
         S.AssertReference(reference)
-        const accept = [S.OciIndexMediaType, S.ManifestMediaType, S.DockerManifestListMediaType, S.DockerManifestMediaType].join(S.AcceptSeparator)
-        const response = await this.Request(S.MethodHead, this.RepoUrl(repo) + S.ManifestsPath + reference, repo, { [S.AcceptHeader]: accept })
+        const response = await this.Request(S.MethodHead, this.RepoUrl(repo) + S.ManifestsPath + reference, repo, { [S.AcceptHeader]: S.ManifestAccept })
         if (response.status === S.StatusNotFound)
         {
-            await this.Drain(response)
+            await OciHttp.Drain(response)
             return undefined
         }
-        await this.Expect(response, S.StatusOk)
+        await this.Expect(response, OciHttp.StatusOk)
         const digest = response.headers.get(S.DigestHeader)
         if (digest === null || !S.DigestShape.test(digest))
         {
@@ -415,19 +450,24 @@ export class OciRegistryClient
         }
         catch
         {
-            throw new OciResponseError(S.StatusOk, S.BadManifestMessage)
+            throw new OciProtocolError(S.BadManifestMessage)
         }
         const layerDigest = manifest.layers?.length === 1 ? manifest.layers[0].digest : undefined
         if (typeof layerDigest !== 'string')
         {
-            throw new OciResponseError(S.StatusOk, S.BadManifestMessage)
+            throw new OciProtocolError(S.BadManifestMessage)
         }
         const layer = await this.PullBlob(repo, layerDigest)
         if (S.DigestOf(layer) !== layerDigest)
         {
-            throw new OciResponseError(S.StatusOk, S.LayerMismatchMessage)
+            throw new OciProtocolError(S.LayerMismatchMessage)
         }
-        return { layer, layerDigest, annotations: manifest.annotations ?? {} }
+        const annotations = manifest.annotations ?? {}
+        if (typeof annotations !== 'object' || Object.values(annotations).some(v => typeof v !== 'string'))
+        {
+            throw new OciProtocolError(S.BadAnnotationsMessage)
+        }
+        return { layer, layerDigest, annotations }
     }
 
     private static AssertReference(reference: string): void
@@ -451,7 +491,7 @@ export class OciRegistryClient
         }
         catch
         {
-            throw new OciUnavailableError(OciRegistryClient.UnreachableMessage)
+            throw new OciUnavailableError(OciHttp.UnreachableMessage)
         }
     }
 
@@ -473,19 +513,7 @@ export class OciRegistryClient
         {
             // Falls through to the uniform unreadable-list error.
         }
-        throw new OciResponseError(OciRegistryClient.StatusOk, OciRegistryClient.BadTagsMessage)
-    }
-
-    private async Drain(response: Response): Promise<void>
-    {
-        try
-        {
-            await response.body?.cancel()
-        }
-        catch
-        {
-            // The body is discarded; a failed drain changes nothing.
-        }
+        throw new OciProtocolError(OciRegistryClient.BadTagsMessage)
     }
 
     private Request(method: string, url: string, repo: string, headers?: Record<string, string>, body?: Uint8Array): Promise<Response>
@@ -497,7 +525,7 @@ export class OciRegistryClient
     {
         if (response.status !== expected)
         {
-            await this.Drain(response)
+            await OciHttp.Drain(response)
             throw new OciResponseError(response.status, OciRegistryClient.StatusMessagePrefix + response.status)
         }
     }

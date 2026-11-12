@@ -136,3 +136,114 @@ test('a 401 without any credential is refused', async () =>
     const client = new OciRegistryClient(Base, Fixtures.Bearered().Fetch)
     await assert.rejects(client.ListTags('pragmatic-release'), (e: unknown) => e instanceof OciResponseError && e.status === 401)
 })
+
+class ChallengeStub
+{
+    public readonly Urls: string[] = []
+
+    public constructor(private readonly challenge: string)
+    {
+    }
+
+    public get Fetch(): OciFetch
+    {
+        return async (url, init) =>
+        {
+            this.Urls.push(url)
+            if (url.includes('/token'))
+            {
+                return new Response(JSON.stringify({ token: 'b' }), { status: 200 })
+            }
+            return init.headers?.Authorization === 'Bearer b'
+                ? new Response(JSON.stringify({ tags: ['t'] }), { status: 200 })
+                : new Response(null, { status: 401, headers: { 'WWW-Authenticate': this.challenge } })
+        }
+    }
+}
+
+test('challenge parameters may be unquoted, the scheme is case-insensitive', async () =>
+{
+    const stub = new ChallengeStub(`bearer realm=${Base}/token,service=registry.test,scope=repository:r:pull`)
+    const client = new OciRegistryClient(Base, stub.Fetch, { username: User, token: Token })
+
+    assert.deepEqual(await client.ListTags('r'), ['t'])
+    assert.match(stub.Urls[1], /service=registry\.test/)
+})
+
+test('a quoted challenge value may contain escaped quotes', async () =>
+{
+    const stub = new ChallengeStub(`Bearer realm="${Base}/token",service="reg \\"x\\" y",scope="repository:r:pull"`)
+    const client = new OciRegistryClient(Base, stub.Fetch, { username: User, token: Token })
+
+    assert.deepEqual(await client.ListTags('r'), ['t'])
+    assert.equal(new URL(stub.Urls[1]).searchParams.get('service'), 'reg "x" y')
+})
+
+test('a malformed realm is an OciResponseError, not a TypeError', async () =>
+{
+    const client = new OciRegistryClient(Base, new ChallengeStub('Bearer realm="not a url",service="s"').Fetch, { username: User, token: Token })
+    await assert.rejects(client.ListTags('r'), (e: unknown) => e instanceof OciResponseError && e.status === 401 && !e.message.includes(Token))
+})
+
+test('the Basic credential is never sent to a non-https realm on another host', async () =>
+{
+    const stub = new ChallengeStub('Bearer realm="http://evil.test/token",service="s"')
+    const client = new OciRegistryClient(Base, stub.Fetch, { username: User, token: Token })
+
+    await assert.rejects(client.ListTags('r'), (e: unknown) => e instanceof OciResponseError && e.status === 401)
+    assert.ok(!stub.Urls.some(u => u.includes('evil.test')))
+})
+
+test('a plain-http realm on the registry own host is allowed (local registry)', async () =>
+{
+    const local = 'http://localhost:5000'
+    const stub = new ChallengeStub(`Bearer realm="${local}/token",service="s"`)
+    const client = new OciRegistryClient(local, stub.Fetch, { username: User, token: Token })
+    assert.deepEqual(await client.ListTags('r'), ['t'])
+})
+
+test('manifest reads send the four-type Accept, so a distribution-style registry serves the OCI manifest', async () =>
+{
+    const fake = new FakeOciRegistry(Base)
+    fake.EnforceManifestAccept(true)
+    const client = new OciRegistryClient(Base, fake.Fetch)
+    await client.PushArtifact('pragmatic-release', '1.2.3', 'application/vnd.x', 'application/json', new TextEncoder().encode('data'), {})
+
+    const pulled = await client.PullArtifactLayer('pragmatic-release', '1.2.3')
+
+    assert.equal(new TextDecoder().decode(pulled.layer), 'data')
+    const get = fake.Requests.find(r => r.method === 'GET' && r.url.includes('/manifests/'))
+    assert.ok(get !== undefined)
+    assert.equal(get.headers.Accept.split(', ').length, 4)
+    assert.ok(get.headers.Accept.includes('application/vnd.oci.image.manifest.v1+json'))
+})
+
+test('the fake enforces Accept: a read without it is a 404', async () =>
+{
+    const fake = new FakeOciRegistry(Base)
+    fake.EnforceManifestAccept(true)
+    await new OciRegistryClient(Base, fake.Fetch).PushArtifact('r', 't', 'a', 'application/json', new Uint8Array([1]), {})
+    const response = await fake.Fetch(Base + '/v2/r/manifests/t', { method: 'GET' })
+    assert.equal(response.status, 404)
+})
+
+test('ListTags follows an absolute Link URL', async () =>
+{
+    const fake = new FakeOciRegistry(Base)
+    fake.SetTags('r', ['a', 'b', 'c'])
+    fake.PaginateTags(2)
+    fake.UseAbsoluteLinks(true)
+    assert.deepEqual(await new OciRegistryClient(Base, fake.Fetch).ListTags('r'), ['a', 'b', 'c'])
+})
+
+test('PullArtifactLayer rejects manifest annotations with non-string values', async () =>
+{
+    const fake = new FakeOciRegistry(Base)
+    const client = new OciRegistryClient(Base, fake.Fetch)
+    const layer = new TextEncoder().encode('data')
+    const layerDigest = await client.PushBlob('r', layer)
+    const manifest = { schemaVersion: 2, layers: [{ digest: layerDigest }], annotations: { a: 1 } }
+    fake.PutManifest('r', 't', new TextEncoder().encode(JSON.stringify(manifest)), 'application/vnd.oci.image.manifest.v1+json')
+
+    await assert.rejects(client.PullArtifactLayer('r', 't'), (e: unknown) => e instanceof OciResponseError)
+})
