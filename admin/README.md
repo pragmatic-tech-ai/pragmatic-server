@@ -115,7 +115,34 @@ Releases are published to the registry by the release workflow; the control plan
 - PRAGMATIC_RELEASE_TRUST_DIR: the directory of trusted release public keys, `<key id>.pub.pem` (default `release-keys` at the repository root; the platform-admin image carries it beside the compiled control plane).
 - PRAGMATIC_RELEASE_POLL_SECONDS: the poll interval (default 300; 0 turns the poll off). Anything but a whole number from 0 to 2147483 stops startup. The first poll runs one interval after start; to import at once, use Refresh (`POST /api/releases/refresh`).
 
-The manual publish path (`manifest-publish.ts` and `POST /api/manifests`) is gone; versions published locally before remain in the catalogue.
+Cutting a release. A build manager tags pragmatic-server directly on GitHub: `release/X.Y.Z` for a stable release, `release/X.Y.Z-early.N` for the early-access channel. Only pragmatic-server is tagged; the sibling packages build from their `main` head and their commits are recorded in the descriptor. The `release` workflow (`.github/workflows/release.yml`) checks the tag, builds the eight app images with `docker/docker-bake.hcl` (`pragmatic-platform-admin`, `pragmatic-platform-edge`, `pragmatic-env-server`, `pragmatic-env-gateway`, `pragmatic-hive-agent`, `pragmatic-tenant-admin`, `pragmatic-tenant-idp`, `pragmatic-ui-unpack`), pushes each to `ghcr.io/pragmatic-tech-ai` tagged `:X.Y.Z` and `:git-<server sha>`, signs every image digest, and pushes the signed descriptor as `pragmatic-release:X.Y.Z`. All nine packages are private. The images are built from `docker/images/Dockerfile`; each carries only the packages listed for it in `docker/images/closure.json`, which `docker/images/closure-check.ts` keeps in step with the code. The control plane never publishes: after the workflow is green, a Full operator uses Refresh in the portal (or `POST /api/releases/refresh`) to import the new version.
+
+The read-only registry token. Create a classic personal access token with only the `read:packages` scope and write the credential file, outside the repository and never committed:
+
+```
+{ "username": "<github user>", "token": "<the token>" }
+```
+
+Point PRAGMATIC_RELEASE_CREDENTIAL_FILE at it. The same token, written as an `.npmrc`, is what a local `docker buildx bake` needs as its `npmrc` secret:
+
+```
+//npm.pkg.github.com/:_authToken=<the token>
+@pragmatic-tech-ai:registry=https://npm.pkg.github.com
+```
+
+Run the local build from the workspace root `architecture-agent/`:
+
+```
+NPMRC_FILE=<path-to>/.npmrc VERSION=0.1.0 SERVER_SHA=<server sha> docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --set "*.output=type=docker"
+```
+
+Trust keys and rotation. The control plane trusts a release only when its descriptor and every image are signed by a key whose public half is in the trust directory (`release-keys/`, one `<key id>.pub.pem` per key; today `release-2026-11`). The private key exists only as the `RELEASE_SIGNING_KEY` GitHub Actions secret, and only the workflow signs. To rotate: add the new `<id>.pub.pem` to `release-keys/`, change the workflow's `--key-id` to the new id, replace the `RELEASE_SIGNING_KEY` secret, and keep the old public key for as long as releases signed with it are in use.
+
+Control plane role. PRAGMATIC_CONTROL_PLANE_ROLE is `all` (default, everything in one process), `edge` (only the agent-channel listener, the `pragmatic-platform-edge` image; needs PRAGMATIC_AGENT_CHANNEL_PORT) or `admin` (everything except the agent channel, the `pragmatic-platform-admin` image). The operator host and the tenant plane answer `/healthz` and `/readyz` for probes.
+
+Not runnable yet (R4). A registry release can be imported, gated for a tenant and shown in the portal, but hives cannot run it until the next piece: selecting one for a hive answers "Release X.Y.Z is in the registry but hives cannot run registry releases yet." The tenant and agent routes answer their generic refusal instead, so a tenant cannot probe which versions exist.
+
+The manual publish path (`manifest-publish.ts` and `POST /api/manifests`) is gone. Manifest records published locally before are not migrated: they stay in the catalogue as they were, with no release provenance, and a registry release with the same id as a local one is hidden by it (reported as `shadowed`).
 
 ## Create environments
 

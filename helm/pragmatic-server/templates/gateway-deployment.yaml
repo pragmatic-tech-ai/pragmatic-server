@@ -32,7 +32,7 @@ spec:
         fsGroup: 10001
       containers:
         - name: gateway
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.gatewayRepository | default .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           command: ["node", "dist/bin/pragmatic-gatewayd.js"]
           securityContext:

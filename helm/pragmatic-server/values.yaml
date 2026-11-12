@@ -6,8 +6,13 @@ nameOverride: ""
 fullnameOverride: ""
 
 image:
-  repository: pragmatic-server
-  tag: "0.1.0"
+  # The single server and the worker StatefulSet run this image.
+  repository: ghcr.io/pragmatic-tech-ai/pragmatic-env-server
+  # The gateway Deployment (cluster.enabled) runs this one.
+  gatewayRepository: ghcr.io/pragmatic-tech-ai/pragmatic-env-gateway
+  # Set to the release version to run (e.g. "0.1.0"; both images carry the same :X.Y.Z tag). Empty falls back to the
+  # chart's appVersion. The images are private: supply a pull secret for ghcr.io in the cluster.
+  tag: ""
   pullPolicy: IfNotPresent
 
 service:

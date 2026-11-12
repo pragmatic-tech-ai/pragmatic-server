@@ -307,6 +307,10 @@ The consolidated list of what a client or operator sees differently from the leg
 19. **`FederatedModelDataConnector` retired from TODL (R60, todl#27, todl 0.60.0).** The server never used it or `ConnectorWorkingCopy`; both are now deleted. TODL's package generator emits `BundledModelDataConnector` over the embedded shard for connector-backed models too (the environment engine re-derives connector resolution at runtime from the shard's connector/population metadata), and the connectors-host e2e was migrated onto the engine `DataSourceConnector` path.
 20. **Tier 2 is retired (A1 to A8)** and write-only members (hidden but writable) are unsupported; see the amendment above and "Dev graph behaviour changes" for the dev-side differences.
 
+## Platform images and releases
+
+One image per app, built by `docker/docker-bake.hcl` from `docker/images/Dockerfile`; `docker/images/closure.json` lists the packages each image carries and `docker/images/closure-check.ts` keeps it in step with the code. A `release/X.Y.Z` tag on this repo runs `.github/workflows/release.yml`, which pushes the eight images and a signed descriptor (`pragmatic-release:X.Y.Z`) to GHCR. The control plane imports and verifies releases through the toolkit in `admin/control-plane/release/` (`ReleaseCatalog`, `ReleaseRefresher`, `ReleasePublisher`, `ReleaseTrustKeys`; the workflow CLI is `admin/control-plane/bin/pragmatic-release-publish.ts`). Design: `docs/superpowers/specs/2026-11-09-platform-images-design.md`; operator guide: `admin/README.md`, "Releases from the registry"; live check: `docs/superpowers/runbooks/2026-11-13-platform-images-live-check.md`.
+
 ## Tests
 
 - `src/host/tests/` — e2e through real `PragmaticClient` → socket pair → server (e.g. `cypher-surface.test.ts`). Node test runner; `npm test`. Suite ~1560 (18 env-gated skips).
