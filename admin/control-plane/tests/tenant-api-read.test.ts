@@ -317,6 +317,16 @@ describe('TenantApiEndpoint read routes', () =>
         assert.deepEqual(res.Json(), [{ principalId: 'dual', origin: 'synced' }])
     })
 
+    it('security-changes route proxies the list', async () =>
+    {
+        const spy = new SecurityReadsService([Fixtures.Env('a-env', 'hive-a', TenantA)])
+        endpoint = new TenantApiEndpoint(spy as unknown as IEnvironmentService, directory, new InProcessRolloutClient(deployments), new FakeFactory(), new EnvironmentPlacement(directory))
+        const res = await Get('/tenant-api/environments/a-env/admin/security-changes', Fixtures.Session(TenantA))
+        assert.equal(res.status, 200)
+        assert.deepEqual(spy.ChangeCalls, ['a-env'])
+        assert.deepEqual((res.Json() as Array<{ delivery: string; version: string }>).map(c => `${c.delivery}@${c.version}`), ['suite@2.0.0'])
+    })
+
     it('404s a team-members request without a team id', async () =>
     {
         const spy = new SecurityReadsService([Fixtures.Env('a-env', 'hive-a', TenantA)])
@@ -332,6 +342,7 @@ class SecurityReadsService
 {
     public readonly CatalogCalls: string[] = []
     public readonly TeamCalls: Array<[string, string]> = []
+    public readonly ChangeCalls: string[] = []
 
     public constructor(private readonly records: readonly EnvironmentRecord[])
     {
@@ -357,5 +368,11 @@ class SecurityReadsService
     {
         this.TeamCalls.push([name, teamId])
         return [{ principalId: 'dual', origin: 'synced' }]
+    }
+
+    public async AdminListSecurityChanges(name: string): Promise<unknown>
+    {
+        this.ChangeCalls.push(name)
+        return [{ at: '2026-11-12T10:00:00.000Z', delivery: 'suite', version: '2.0.0', roleDefaults: [], profileDefaults: [], securedFieldsAdded: [], securedFieldsRemoved: [], roleOverridesDropped: [], profileOverridesDropped: [], rolesRemoved: [], profilesRemoved: [] }]
     }
 }

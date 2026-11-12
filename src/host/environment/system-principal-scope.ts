@@ -34,6 +34,12 @@ export class SystemPrincipalScope implements IDisposable
         this.dropped = scopes.Dropped.Subscribe(() => this.Forget())
     }
 
+    /** `system:<environment>`: the owner the system principal's writes and the deploy ownership backfill record. */
+    public get PrincipalId(): string
+    {
+        return this.context.Principal.Id
+    }
+
     /** The system principal's engine scope (memoized per scope-source generation; a failed build is retried). */
     public Scope(): Promise<IGraphScope>
     {

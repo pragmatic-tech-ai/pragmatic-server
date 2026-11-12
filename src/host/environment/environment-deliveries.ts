@@ -3,6 +3,7 @@ import { DeliveryChannel } from '@pragmatic-tech-ai/todl/engine'
 import type { IPackageDelivery } from '@pragmatic-tech-ai/todl/engine'
 import type { PragmaticAppsRegistry } from '../apps/pragmatic-apps-registry.js'
 import type { PromoteRecordStore } from './promote-record-store.js'
+import type { SecurityChangesDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /**
  * One delivery a deploy or promote is about to make: an app's (Deploy, name = the app name) or the promote set's
@@ -12,15 +13,25 @@ export type DeliveryChange = {
     readonly Channel: DeliveryChannel
     readonly Name: string
     readonly Packages: readonly Required<PackageRef>[]
+    /** The version the security change log names: the app version of a Deploy; absent for a Promote (its packages are named). */
+    readonly Version?: string
+}
+
+/** What a delivery answers: its persist step's result and the security changes it applied, when it changed any. */
+export interface IDelivered<T>
+{
+    readonly Result: T
+    readonly SecurityChanges?: SecurityChangesDto
 }
 
 /**
  * Where a deploy or promote hands its change (ruling S4): validates the prospective delivery set, runs `persist` (the
- * app live pointer or the promote record) only when it composes, then redelivers. Implemented by EnvironmentEngineHost.
+ * app live pointer or the promote record) only when it composes, then applies its security changes and redelivers.
+ * Implemented by EnvironmentEngineHost.
  */
 export interface IDeliveryGate
 {
-    Deliver<T>(change: DeliveryChange, persist: () => Promise<T>): Promise<T>
+    Deliver<T>(change: DeliveryChange, persist: () => Promise<T>): Promise<IDelivered<T>>
 }
 
 /**

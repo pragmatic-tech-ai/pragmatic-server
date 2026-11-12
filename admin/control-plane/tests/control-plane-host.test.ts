@@ -303,6 +303,13 @@ class FakeService implements IEnvironmentService
         return []
     }
 
+    public async AdminListSecurityChanges(name: string): Promise<any>
+    {
+        this.Calls.push(`adminListSecurityChanges:${name}`)
+        this.MaybeThrow()
+        return []
+    }
+
     public async AdminSetConfig(name: string, config: IdentityConfigDto): Promise<void>
     {
         this.Calls.push(`adminSetConfig:${name}:${JSON.stringify(config)}`)

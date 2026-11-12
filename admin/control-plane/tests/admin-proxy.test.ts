@@ -85,6 +85,12 @@ class FakeConnection implements IAdminConnection
         return []
     }
 
+    public async ListSecurityChanges(): Promise<any>
+    {
+        this.Record('ListSecurityChanges')
+        return []
+    }
+
     public async CreateGraph(_p: any): Promise<any>
     {
         this.Record('CreateGraph')

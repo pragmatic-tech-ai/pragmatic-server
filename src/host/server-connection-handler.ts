@@ -838,6 +838,12 @@ export class ServerConnectionHandler
             this.authorize(AdminProtocol.GetSecurityCatalog.method)
             return SecurityCatalogReader.Read(await this.AdminCall(() => admin.GetSecurityCatalog()))
         }))
+        this.connection.onRequest(AdminProtocol.ListSecurityChanges, () => this.Dispatch(AdminProtocol.ListSecurityChanges.method, async () =>
+        {
+            this.EnforceRate(AdminProtocol.ListSecurityChanges.method)
+            this.authorize(AdminProtocol.ListSecurityChanges.method)
+            return this.AdminCall(() => admin.ListSecurityChanges())
+        }))
         this.guarded(AdminProtocol.ListTeamMembers, async p =>
         {
             const teamId = this.RequireNonEmptyString(p?.teamId, ServerConnectionHandler.TeamIdField)

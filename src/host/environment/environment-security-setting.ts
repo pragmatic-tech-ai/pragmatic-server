@@ -1,5 +1,5 @@
 import type { ISignal } from '@pragmatic-tech-ai/graph'
-import { IdpDirectorySnapshot, InvalidSecurityModelError, UnreadableIdpDirectoryRecordError } from '@pragmatic-tech-ai/todl-identity'
+import { IdentityConfig, IdpDirectorySnapshot, InvalidSecurityModelError, UnreadableIdpDirectoryRecordError } from '@pragmatic-tech-ai/todl-identity'
 import type { IIdpDirectoryStore, ISecurityModelConfig, ITenantConfigStore, Tenant } from '@pragmatic-tech-ai/todl-identity'
 import { TenantSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
@@ -66,6 +66,18 @@ export class EnvironmentSecuritySetting implements IDisposable
     public async Config(): Promise<ISecurityModelConfig | undefined>
     {
         return (await this.store.Get(this.tenant.Id))?.SecurityModel ?? undefined
+    }
+
+    /**
+     * Stores `config` as the setting, keeping the tenant config's other sections (as the admin save does), then
+     * `Invalidate`. Nothing is stored when the tenant has no stored config (it then holds no setting either).
+     */
+    public async Replace(config: ISecurityModelConfig): Promise<void>
+    {
+        const stored = await this.store.Get(this.tenant.Id)
+        if (stored === null) return
+        await this.store.Save(this.tenant.Id, new IdentityConfig(stored.PackId, stored.DelegationDepth, stored.ProviderSettings, stored.GroupRoleMap, stored.ClaimsMapping, config))
+        this.Invalidate()
     }
 
     /** The stored IdP directory snapshot the setting reads (team membership, user states); a non-authoritative one when none is stored. */

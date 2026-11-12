@@ -59,6 +59,11 @@ class RecordingReload implements ISecuritySettingAdmin
         return []
     }
 
+    public async SecurityChanges(): Promise<never[]>
+    {
+        return []
+    }
+
     public RequestSync(): void
     {
         this.SyncRequests++

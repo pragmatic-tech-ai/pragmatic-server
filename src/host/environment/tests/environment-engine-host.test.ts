@@ -249,7 +249,7 @@ class HostFx
     public static Deploy(fx: EnvironmentFixture, host: EnvironmentEngineHost, app: string, ref: { id: string; version: string }): Promise<void>
     {
         return host.Deliver({ Channel: DeliveryChannel.Deploy, Name: app, Packages: [{ model: ref.id, version: ref.version }] },
-            async () => fx.Live(app, HostFx.AppVersion, [ref]))
+            async () => fx.Live(app, HostFx.AppVersion, [ref])).then(() => undefined)
     }
 
     public static Definitions(description: { Definitions: readonly { Name: string }[] }): string[]

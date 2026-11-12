@@ -45,7 +45,7 @@ class AdminClient
             // These tests cover the catalog check, invalidation and scope effect of SetSecurityModel; the IdP directory
             // sync (which the local, authoritative source would otherwise run over account-less fixture principals) has
             // its own coverage, so the admin here carries a no-op sync trigger.
-            const resolved = security === null ? undefined : security ?? new EnvironmentSecurityAdmin(await server.SecuritySetting(), server.EnvironmentEngine(), { RunNow: async () => undefined })
+            const resolved = security === null ? undefined : security ?? new EnvironmentSecurityAdmin(await server.SecuritySetting(), server.EnvironmentEngine(), { RunNow: async () => undefined }, server.SecurityChangeLog())
             const admin = await AdminClient.Open(server, Tier1Fx.Context(Tier1Fx.Admin), resolved)
             try
             {

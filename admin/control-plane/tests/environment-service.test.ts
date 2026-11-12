@@ -343,6 +343,12 @@ class FakeAdminProxy implements IAdminProxy
         return []
     }
 
+    public async ListSecurityChanges(info: AdminConnectInfo): Promise<any>
+    {
+        this.Calls.push({ method: 'ListSecurityChanges', info, args: [] })
+        return []
+    }
+
     public async CreateGraph(_info: AdminConnectInfo, _p: any): Promise<any>
     {
         throw new Error('unused')

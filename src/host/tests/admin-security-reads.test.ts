@@ -67,7 +67,7 @@ class ReadsClient
         {
             const pack = await server.Pack()
             await pack.IdpDirectory.Save(EnvironmentFixture.TenantId, ReadsClient.TeamSnapshot())
-            const security = new EnvironmentSecurityAdmin(await server.SecuritySetting(), server.EnvironmentEngine(), { RunNow: async () => undefined })
+            const security = new EnvironmentSecurityAdmin(await server.SecuritySetting(), server.EnvironmentEngine(), { RunNow: async () => undefined }, server.SecurityChangeLog())
             const admin = await ReadsClient.Open(server, Tier1Fx.Context(Tier1Fx.Admin), security)
             try
             {

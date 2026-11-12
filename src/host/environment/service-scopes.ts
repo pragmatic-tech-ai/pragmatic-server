@@ -64,8 +64,14 @@ export class AssignScope
 
     public static For(scope: AccessScope, concept: string, recordId: string, ownershipMembers: ReadonlySet<string>, catalog: EngineSchemaCatalog): AccessScope
     {
+        return AssignScope.ForRecords(scope, concept, new Set([recordId]), ownershipMembers, catalog)
+    }
+
+    /** `For` over several records of `concept` at once (the deploy ownership backfill, PR16): updates admitted on those only. */
+    public static ForRecords(scope: AccessScope, concept: string, recordIds: ReadonlySet<string>, ownershipMembers: ReadonlySet<string>, catalog: EngineSchemaCatalog): AccessScope
+    {
         const draft = new ScopeDraft(scope, catalog)
-        const record = new IdIn(new Set([recordId]))
+        const record = new IdIn(recordIds)
         for (const rule of AssignScope.RecordRules)
         {
             draft.SetRule(concept, rule, record)

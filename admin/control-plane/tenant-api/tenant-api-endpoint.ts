@@ -89,13 +89,14 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly SecurityModelLeaf = 'security-model'
     private static readonly SecurityCatalogLeaf = 'security-catalog'
     private static readonly TeamMembersLeaf = 'team-members'
+    private static readonly SecurityChangesLeaf = 'security-changes'
     private static readonly TokensLeaf = 'tokens'
     private static readonly MakerTokenLeaf = 'maker-token'
     private static readonly AppReaderLeaf = 'app-reader-grant'
     /** Matches .../environments/NAME/admin/LEAF[/TAIL] for the per-environment identity-admin surface (TAIL is a principal, or the team id for team-members). */
     private static readonly AdminPathPattern = new RegExp(
         '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.EnvironmentsSegment + '/([^/]+)/' + TenantApiEndpoint.AdminSegment + '/(' +
-        [TenantApiEndpoint.SnapshotLeaf, TenantApiEndpoint.AccountsLeaf, TenantApiEndpoint.GrantsLeaf, TenantApiEndpoint.ConfigLeaf, TenantApiEndpoint.SecurityModelLeaf, TenantApiEndpoint.SecurityCatalogLeaf, TenantApiEndpoint.TeamMembersLeaf, TenantApiEndpoint.TokensLeaf].join('|') +
+        [TenantApiEndpoint.SnapshotLeaf, TenantApiEndpoint.AccountsLeaf, TenantApiEndpoint.GrantsLeaf, TenantApiEndpoint.ConfigLeaf, TenantApiEndpoint.SecurityModelLeaf, TenantApiEndpoint.SecurityCatalogLeaf, TenantApiEndpoint.TeamMembersLeaf, TenantApiEndpoint.SecurityChangesLeaf, TenantApiEndpoint.TokensLeaf].join('|') +
         ')(?:/([^/]+))?$')
     /** Matches .../environments/NAME/(maker-token|app-reader-grant). */
     private static readonly EnvCredentialPathPattern = new RegExp(
@@ -832,6 +833,11 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         if (leaf === TenantApiEndpoint.SecurityCatalogLeaf)
         {
             this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.service.AdminGetSecurityCatalog(name))
+            return true
+        }
+        if (leaf === TenantApiEndpoint.SecurityChangesLeaf)
+        {
+            this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.service.AdminListSecurityChanges(name))
             return true
         }
         return false

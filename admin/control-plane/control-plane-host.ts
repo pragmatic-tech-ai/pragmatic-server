@@ -65,7 +65,7 @@ import type { HiveRolloutStatus, PlatformDeploymentRegistry } from './platform-d
 import type { ManifestRecord } from './manifest-record.js'
 import { BodyTooLargeError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, ManifestWithdrawnError, PolicyStoreUnavailableError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from './rollout-errors.js'
 import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
-import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityCatalogDto, SecurityModelDto, TeamMemberDto, TokenIssuedDto, ServiceTokenSummaryDto, IssueTokenParams } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityCatalogDto, SecurityChangesDto, SecurityModelDto, TeamMemberDto, TokenIssuedDto, ServiceTokenSummaryDto, IssueTokenParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { LoginThrottle } from './login-throttle.js'
 import type { ILogProcess } from '../../environments/seed/docker.js'
 
@@ -93,6 +93,7 @@ export interface IEnvironmentService
     AdminSetSecurityModel(name: string, securityModel: SecurityModelDto): Promise<void>
     AdminGetSecurityCatalog(name: string): Promise<SecurityCatalogDto>
     AdminListTeamMembers(name: string, teamId: string): Promise<TeamMemberDto[]>
+    AdminListSecurityChanges(name: string): Promise<SecurityChangesDto[]>
     AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
     AdminIssueDeployToken(name: string): Promise<TokenIssuedDto>
     AdminListTokens(name: string): Promise<ServiceTokenSummaryDto[]>

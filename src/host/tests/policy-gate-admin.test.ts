@@ -14,6 +14,7 @@ class AdminGateFixture
         AdminProtocol.SetConfig.method,
         AdminProtocol.GetSecurityCatalog.method,
         AdminProtocol.ListTeamMembers.method,
+        AdminProtocol.ListSecurityChanges.method,
         AdminProtocol.ListAccounts.method,
         AdminProtocol.CreateAccount.method,
         AdminProtocol.DisableAccount.method,

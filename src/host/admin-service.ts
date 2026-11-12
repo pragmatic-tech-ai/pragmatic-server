@@ -1,4 +1,5 @@
 import { Action, AuditEvent, AuditEventKind, Grant, ResourceRef, Role, RoleCapabilities, ResourceKind, IdentityConfig, SecurityModelValidator } from '@pragmatic-tech-ai/todl-identity'
+import type { SecurityChangesDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { LocalAccount, ServiceTokenSummary, PresentedSecret, IRoleGrantStore, IAuditSink, ITenantConfigStore, ILocalAccountStore, IServiceTokenStore, ServiceTokenGrant, Tenant, ISecurityModelConfig, ISessionManager, TeamMembershipRow } from '@pragmatic-tech-ai/todl-identity'
 import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import type { LocalAccountRegistrar } from '@pragmatic-tech-ai/todl-identity-local'
@@ -80,6 +81,8 @@ export interface ISecuritySettingAdmin
     Catalog(): Promise<IEnvironmentCatalog>
     /** The team's effective membership rows (synced + manual, inactive filtered); throws UnknownTeamError for an unknown team. */
     TeamMembers(teamId: string): Promise<readonly TeamMembershipRow[]>
+    /** The security changes of the environment's deploys and promotes, newest first (S4 Task 13). */
+    SecurityChanges(): Promise<SecurityChangesDto[]>
     /** Requests an IdP directory sync now (fire-and-forget); the host serializes and coalesces runs. */
     RequestSync(): void
 }
@@ -253,6 +256,16 @@ export class AdminService
             throw new AdminSecurityModelUnavailableError()
         }
         return this.security.Catalog()
+    }
+
+    /** The environment's security change log, newest first; refused on a Development tenant (PR13). */
+    public async ListSecurityChanges(): Promise<SecurityChangesDto[]>
+    {
+        if (this.security === undefined)
+        {
+            throw new AdminSecurityModelUnavailableError()
+        }
+        return this.security.SecurityChanges()
     }
 
     /** A team's effective membership rows; refused on a Development tenant (PR13); UnknownTeamError for an unknown team. */

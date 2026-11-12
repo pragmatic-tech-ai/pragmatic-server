@@ -11,7 +11,7 @@ import type { CypherAppDeployParamsDto } from '@pragmatic-tech-ai/pragmatic-prot
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { AppIngestService } from '../app-ingest-service.js'
 import { DeliveryChannel, EnvironmentCatalogError, EnvironmentCatalogErrorCode } from '@pragmatic-tech-ai/todl/engine'
-import type { DeliveryChange, IDeliveryGate } from '../../environment/environment-deliveries.js'
+import type { DeliveryChange, IDelivered, IDeliveryGate } from '../../environment/environment-deliveries.js'
 import { EnvironmentUpgradeFailedError } from '../../environment/environment-engine-host.js'
 import { PragmaticAppsRegistry } from '../pragmatic-apps-registry.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
@@ -35,11 +35,11 @@ class RecordingGate implements IDeliveryGate
 {
     public readonly Delivered: DeliveryChange[] = []
 
-    public async Deliver<T>(change: DeliveryChange, persist: () => Promise<T>): Promise<T>
+    public async Deliver<T>(change: DeliveryChange, persist: () => Promise<T>): Promise<IDelivered<T>>
     {
         const result = await persist()
         this.Delivered.push(change)
-        return result
+        return { Result: result }
     }
 }
 
@@ -50,7 +50,7 @@ class RefusingGate implements IDeliveryGate
     {
     }
 
-    public Deliver<T>(): Promise<T>
+    public Deliver<T>(): Promise<IDelivered<T>>
     {
         return Promise.reject(this.error)
     }
@@ -61,7 +61,7 @@ class UpgradeFailingGate implements IDeliveryGate
 {
     private static readonly FailureMessage = 'upgrade failed'
 
-    public async Deliver<T>(_change: DeliveryChange, persist: () => Promise<T>): Promise<T>
+    public async Deliver<T>(_change: DeliveryChange, persist: () => Promise<T>): Promise<IDelivered<T>>
     {
         const result = await persist()
         throw new EnvironmentUpgradeFailedError(result, new Error(UpgradeFailingGate.FailureMessage))
@@ -179,7 +179,7 @@ test('a valid deploy writes packages, UI assets and application.json last, and t
         assert.deepEqual(readdirSync(join(fx.AppsDir, 'shop')).sort(), ['1.0.0', 'live'])
         const app = await new PragmaticAppsRegistry(fx.Apps).ApplicationFor('shop')
         assert.equal(app.Manifest.version, '1.0.0')
-        assert.deepEqual(fx.Gate.Delivered, [{ Channel: DeliveryChannel.Deploy, Name: 'shop', Packages: [{ model: 'shop.core', version: '1.0.0' }] }])
+        assert.deepEqual(fx.Gate.Delivered, [{ Channel: DeliveryChannel.Deploy, Name: 'shop', Packages: [{ model: 'shop.core', version: '1.0.0' }], Version: '1.0.0' }])
     })
 })
 

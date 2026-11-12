@@ -1,6 +1,6 @@
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { randomUUID } from 'node:crypto'
-import { DeliveryChannel, EnvironmentCatalogError } from '@pragmatic-tech-ai/todl/engine'
+import { DeliveryChannel, EnvironmentCatalogError, SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import { AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppDeployResultDto, CypherAppDeployParamsDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { PragmaticAppsRegistry } from './pragmatic-apps-registry.js'
@@ -72,6 +72,8 @@ export class AppIngestService
     private static readonly TempPrefix = '.ingest-'
     private static readonly TempSuffix = '.tmp'
     private static readonly KeySeparator = '@'
+    /** The platform package every environment composes in (EnvironmentCatalogComposer); a closure needs not supply it. */
+    private static readonly SystemPackageKey = SystemNames.Model + AppIngestService.KeySeparator + SystemNames.Version
     private static readonly Base64Encoding = 'base64'
     // A linear char-class scan plus a group-size check: canonical base64 only, with padding solely at the end. The
     // earlier grouped-quantifier form ((?:...){4})* overflowed the regex stack (RangeError) on multi-megabyte assets.
@@ -134,8 +136,9 @@ export class AppIngestService
                 // S4 step 1: the packages are stored (immutably) first, so the gate composes over them; on a resume
                 // only the ones still missing are written.
                 await this.Commit(plan.files.filter(file => file.storage === this.packages && file.skip !== true))
-                // S4 steps 2-4: the gate validates the prospective deliveries, runs the persist step, then upgrades.
-                await this.gate.Deliver(AppIngestService.ChangeOf(params), async () =>
+                // S4 steps 2-4: the gate validates the prospective deliveries, runs the persist step, applies the
+                // security diff, then upgrades; the deploy answers the security changes it applied (S4 Task 13).
+                const delivered = await this.gate.Deliver(AppIngestService.ChangeOf(params), async () =>
                 {
                     if (!resume)
                     {
@@ -144,12 +147,13 @@ export class AppIngestService
                     // The final commit point: the whole version tree is in place, so atomically repoint the app at it.
                     await this.applications.WriteText([appName, AppIngestService.LivePointerFile].join(AppIngestService.Separator), appVersion)
                 })
+                const applied: AppDeployResultDto = { status: AppWriteStatus.Applied, appName, appVersion }
+                return delivered.SecurityChanges === undefined ? applied : { ...applied, securityChanges: delivered.SecurityChanges }
             }
             catch (error)
             {
                 return this.Failure(error, appName, appVersion)
             }
-            return { status: AppWriteStatus.Applied, appName, appVersion }
         })
     }
 
@@ -160,6 +164,7 @@ export class AppIngestService
             Channel: DeliveryChannel.Deploy,
             Name: params.appName,
             Packages: params.manifest.packages.map(ref => ({ model: ref.id, version: ref.version })),
+            Version: params.appVersion,
         }
     }
 
@@ -349,7 +354,8 @@ export class AppIngestService
             AppIngestService.AssertSegment(ref.version, AppIngestService.UnsafePackageMessage)
             required.add(AppIngestService.PackageKey(ref.id, ref.version))
         }
-        const missing = [...required].filter(key => !supplied.has(key)).sort()
+        // the platform's own todl.system package (the ownership aspect a secured package builds on) is never shipped by an app
+        const missing = [...required].filter(key => !supplied.has(key) && key !== AppIngestService.SystemPackageKey).sort()
         if (missing.length > 0)
         {
             throw new IngestRejection(AppWriteStatus.Invalid, AppIngestService.ClosureMessage + missing.join(AppIngestService.ListSeparator))

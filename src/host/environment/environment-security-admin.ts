@@ -5,6 +5,8 @@ import { UnknownTeamError } from '../admin-service.js'
 import type { ISecuritySettingAdmin } from '../admin-service.js'
 import type { EnvironmentEngineHost } from './environment-engine-host.js'
 import type { EnvironmentSecuritySetting } from './environment-security-setting.js'
+import type { SecurityChangeLog } from './security-change-log.js'
+import type { SecurityChangesDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { SecuritySettingCatalogCheck } from './security-setting-catalog-check.js'
 import type { SecuritySettingIssue } from './security-setting-catalog-check.js'
 
@@ -18,14 +20,16 @@ export interface IDirectorySyncTrigger
  * The admin save and reads' view of a Runtime environment's security (AdminService): a candidate setting checked
  * against the environment's deployed packages (SecuritySettingCatalogCheck over the model the candidate builds on the
  * current directory snapshot), the live reload of the stored one, the environment's security catalog and a team's
- * effective membership, and the request to re-sync the IdP directory after a save.
+ * effective membership, the security change log of its deploys and promotes, and the request to re-sync the IdP
+ * directory after a save.
  */
 export class EnvironmentSecurityAdmin implements ISecuritySettingAdmin
 {
     public constructor(
         private readonly setting: EnvironmentSecuritySetting,
         private readonly host: Pick<EnvironmentEngineHost, 'Snapshot'>,
-        private readonly sync: IDirectorySyncTrigger)
+        private readonly sync: IDirectorySyncTrigger,
+        private readonly changes: SecurityChangeLog)
     {
     }
 
@@ -55,6 +59,11 @@ export class EnvironmentSecurityAdmin implements ISecuritySettingAdmin
             throw new UnknownTeamError(teamId)
         }
         return TeamMembershipRows.For(config, await this.setting.Snapshot()).Rows(teamId)
+    }
+
+    public SecurityChanges(): Promise<SecurityChangesDto[]>
+    {
+        return this.changes.List()
     }
 
     public RequestSync(): void

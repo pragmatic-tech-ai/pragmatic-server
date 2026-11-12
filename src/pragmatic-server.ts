@@ -76,6 +76,9 @@ import { EnvironmentScopeRules } from './host/environment/environment-scope-rule
 import type { IEnvironmentTier1 } from './host/environment/environment-scope-rules.js'
 import { EnvironmentSecuritySetting, LoggerSecuritySettingDiagnostics } from './host/environment/environment-security-setting.js'
 import { EnvironmentSecurityAdmin } from './host/environment/environment-security-admin.js'
+import { DeliverySecurity } from './host/environment/delivery-security.js'
+import { SecurityChangeLog } from './host/environment/security-change-log.js'
+import { TimeoutUpgradeTimer } from './host/engine/bounded-wait.js'
 import { IdpDirectorySyncHost } from './host/environment/idp-directory-sync-host.js'
 import { IdpDirectorySync } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecuritySettingAdmin } from './host/admin-service.js'
@@ -200,6 +203,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private directorySync: Promise<IdpDirectorySyncHost> | undefined
     private deprovisioned: ISubscription | undefined
     private systemPrincipal: Promise<SystemPrincipalScope> | undefined
+    private deliverySecurity: Promise<DeliverySecurity> | undefined
+    private securityChangeLog: SecurityChangeLog | undefined
     private environmentRules: EnvironmentScopeRules | undefined
     private devExecute: DevCypherExecute | undefined
 
@@ -360,7 +365,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         {
             return undefined
         }
-        return new EnvironmentSecurityAdmin(await this.SecuritySetting(), this.EnvironmentEngine(), await this.DirectorySync())
+        return new EnvironmentSecurityAdmin(await this.SecuritySetting(), this.EnvironmentEngine(), await this.DirectorySync(), this.SecurityChangeLog())
     }
 
     private async BuildSecuritySetting(): Promise<EnvironmentSecuritySetting>
@@ -478,11 +483,12 @@ export class PragmaticServer implements IEnvironmentGraphHost
         const change = { Channel: DeliveryChannel.Promote, Name: record.name, Packages: record.packages.map(ref => ({ model: ref.id, version: ref.version })) }
         try
         {
-            return await this.EnvironmentEngine().Deliver(change, async () =>
+            // the promote's security changes are in the change log; `graph/load` answers the record only
+            return (await this.EnvironmentEngine().Deliver(change, async () =>
             {
                 await this.PromoteRecords().Save(record)
                 return record
-            })
+            })).Result
         }
         catch (error)
         {
@@ -520,8 +526,10 @@ export class PragmaticServer implements IEnvironmentGraphHost
         if (this.environmentEngine === undefined)
         {
             const storage = { Kind: this.options.environmentEngineStorage ?? StorageKind.Lmdb, Path: join(this.options.graphsRoot ?? PragmaticServer.DefaultGraphsDir, EnvironmentEngineHost.StoreDir) }
+            // with identity every delivery applies its security diff (S4 Task 13); without, deliveries change no setting
+            const security = this.identity === undefined ? undefined : (): Promise<DeliverySecurity> => this.DeliverySecurity()
             this.environmentEngine = new EnvironmentEngineHost(new EnvironmentDeliveries(this.Applications(), this.PromoteRecords()), this.PackagesStorage(), this.root.Services(), storage,
-                new LoggerEnvironmentDiagnostics(this.options.logger ?? new NullLogger()))
+                new LoggerEnvironmentDiagnostics(this.options.logger ?? new NullLogger()), {}, new TimeoutUpgradeTimer(), security)
         }
         return this.environmentEngine
     }
@@ -653,6 +661,43 @@ export class PragmaticServer implements IEnvironmentGraphHost
             })
         }
         return this.systemPrincipal
+    }
+
+    /**
+     * The environment's security change log (`graphs/security-changes.json`, S4 Task 13): the security changes of the
+     * deploys and promotes that changed any, newest first. Memoized; runtime tenants only.
+     */
+    public SecurityChangeLog(): SecurityChangeLog
+    {
+        this.AssertRuntimePurpose()
+        this.securityChangeLog ??= new SecurityChangeLog(this.GraphsStorage())
+        return this.securityChangeLog
+    }
+
+    /**
+     * What a delivery does to the environment's security (DeliverySecurity over {@link SecuritySetting}, {@link
+     * SecurityChangeLog} and {@link SystemPrincipal}), memoized (a failed build is retried). Runtime tenants with identity.
+     */
+    private DeliverySecurity(): Promise<DeliverySecurity>
+    {
+        if (this.deliverySecurity === undefined)
+        {
+            const built = this.BuildDeliverySecurity()
+            this.deliverySecurity = built
+            built.catch(() =>
+            {
+                if (this.deliverySecurity === built)
+                {
+                    this.deliverySecurity = undefined
+                }
+            })
+        }
+        return this.deliverySecurity
+    }
+
+    private async BuildDeliverySecurity(): Promise<DeliverySecurity>
+    {
+        return new DeliverySecurity(await this.SecuritySetting(), this.SecurityChangeLog(), () => this.SystemPrincipal())
     }
 
     /** Revokes a principal's per-user source credentials (R27): the auth endpoint calls it on sign-out. */
