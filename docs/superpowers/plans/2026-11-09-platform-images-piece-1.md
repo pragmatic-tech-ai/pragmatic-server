@@ -31,6 +31,15 @@
 - **R4 — imported releases cannot yet be selected for a hive.** Hives cannot pull from GHCR until the proxy (piece 2). `SelectTarget` on a release-backed record refuses with a plain sentence; gating, listing and withdrawal work. Piece 2 removes the guard.
 - **R5 — channel from the tag:** `release/X.Y.Z` → `Channel.Stable`; `release/X.Y.Z-early.N` → `Channel.EarlyAccess`. Anything else is refused.
 
+## Refresh after the graph-engine merge (2026-11-12, branch rebased onto master e9f94f04)
+
+The engine work landed on master after this plan was written. What changes for this plan:
+
+- **R6 — `pragmatic-graph` is an eighteenth sibling.** The server depends on `file:../pragmatic-graph`, and TODL's lock resolves the engine from GitHub Packages, so `docker/link-graph-engine.sh <workspace-root>` re-points TODL at the sibling (one engine copy). Task 5's `build` stage copies and builds `pragmatic-graph` **first**, runs the link script before the server's `npm install`, unlinks `TODL/node_modules/@pragmatic-tech-ai/graph` before the per-package `npm prune --omit=dev` and re-runs the link script after it, exactly as today's `docker/Dockerfile` does. `release.yml` clones `pragmatic-graph` with the others (it is in `ci.yml`'s list already) and records its commit in `siblings.json`. `docker/images/Dockerfile.dockerignore` re-includes `pragmatic-graph`.
+- **R7 — closure.json lists `pragmatic-graph`** wherever the check finds it reached (expected: env-server, platform-admin/edge, possibly tenant-admin). hive-agent, env-gateway, tenant-idp and ui-unpack must not reach it, TODL or Mural.
+- **R8 — `ci.yml` today** has separate "Build siblings", "Point TODL at the sibling graph engine" and "Build pragmatic-server" steps and a "Docker build" step of the old Dockerfile. Task 5 replaces only the "Docker build" step with the Bake build (no push) and adds the closure check after "Build pragmatic-server"; the other steps stay. `image.yml` (now pointed at `ghcr.io/pragmatic-tech-ai/pragmatic-server:latest`) is still deleted.
+- **R9 — Task 4 re-measures** the tenant-admind closure on the current master: `environments/seed/compile.ts`, `docker.ts` and `environment-service.ts` changed with the engine work (environment security seeding), so the chains found during the design recon may differ.
+
 ## Review Focus
 
 1. GHCR answers a tag with an **OCI image index** (Buildx adds attestation manifests), not a single manifest → `HeadManifest` must send index media types in `Accept` and return the index digest from `Docker-Content-Digest`. Pinned in Task 2.
