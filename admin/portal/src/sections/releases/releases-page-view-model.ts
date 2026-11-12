@@ -1,11 +1,10 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import type { ManifestDto } from '../../portal-types.js'
+import { ReleaseVerification, type ManifestDto, type ReleaseRefreshDto } from '../../portal-types.js'
 import { ReleaseChannel } from '../../release-channel.js'
 import { ReleasesViewModel, type ReleaseListRow } from '../../releases-view-model.js'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
-import { PublishDialogViewModel } from './publish-dialog-view-model.js'
 import type { ReleasesSectionService } from './releases-section-service.js'
 
 // Labels shared by the releases list and a release's detail.
@@ -19,6 +18,13 @@ export class ReleaseLabels
     private static readonly OneEnvironmentLabel = '1 environment'
     private static readonly EnvironmentsTemplate = '{n} environments'
     private static readonly CountToken = '{n}'
+    private static readonly VerifiedLabel = 'Verified'
+    private static readonly RejectedLabel = 'Rejected'
+    // A value the record does not have: a local manifest's verification, a rejected release's image or digest.
+    public static readonly NoValue = '—'
+    private static readonly DigestSeparator = ':'
+    private static readonly DigestLength = 12
+    private static readonly CommitLength = 7
 
     public static Signature(manifest: ManifestDto): string
     {
@@ -28,6 +34,38 @@ export class ReleaseLabels
     public static Status(manifest: ManifestDto): string
     {
         return manifest.withdrawn === true ? ReleaseLabels.WithdrawnLabel : ReleaseLabels.PublishedLabel
+    }
+
+    // Verified / Rejected for a registry release; a dash for a local manifest, which was never verified.
+    public static Verification(manifest: ManifestDto): string
+    {
+        switch (manifest.release?.state)
+        {
+            case ReleaseVerification.Verified:
+                return ReleaseLabels.VerifiedLabel
+            case ReleaseVerification.Rejected:
+                return ReleaseLabels.RejectedLabel
+            default:
+                return ReleaseLabels.NoValue
+        }
+    }
+
+    // The image reference; a dash when there is none (a rejected release records no image).
+    public static Image(manifest: ManifestDto): string
+    {
+        return manifest.image.length > 0 ? manifest.image : ReleaseLabels.NoValue
+    }
+
+    // A digest's hash, algorithm dropped, to its first characters.
+    public static ShortDigest(digest: string): string
+    {
+        return digest.slice(digest.lastIndexOf(ReleaseLabels.DigestSeparator) + 1).slice(0, ReleaseLabels.DigestLength)
+    }
+
+    // A git commit as git abbreviates it.
+    public static ShortCommit(commit: string): string
+    {
+        return commit.slice(0, ReleaseLabels.CommitLength)
     }
 
     // How many observed environments run the version.
@@ -59,7 +97,12 @@ export class ReleaseRowViewModel extends Observable
 
     public get Image(): string
     {
-        return this.manifest.image
+        return ReleaseLabels.Image(this.manifest)
+    }
+
+    public get VerificationLabel(): string
+    {
+        return ReleaseLabels.Verification(this.manifest)
     }
 
     public get ChannelLabel(): string
@@ -93,21 +136,45 @@ export class ReleaseRowViewModel extends Observable
     }
 }
 
-// Registry & Releases: the published versions, newest first, with the
-// environments observed running each. Publish a version opens a dialog.
+// Registry & Releases: the versions, newest first, with the environments
+// observed running each. Versions come from the release registry: Refresh from
+// registry imports (and verifies) what is new, then reloads the list.
 export class ReleasesPageViewModel extends PortalPageViewModel
 {
-    private static readonly PublishTitle = 'Publish a version'
+    private static readonly RefreshResultTextProperty = 'RefreshResultText'
+    private static readonly ResultTemplate = 'Imported {imported}, rejected {rejected}'
+    private static readonly ShadowedTemplate = ', shadowed {shadowed}'
+    private static readonly ImportedToken = '{imported}'
+    private static readonly RejectedToken = '{rejected}'
+    private static readonly ShadowedToken = '{shadowed}'
+    private static readonly NoText = ''
 
     private readonly rows = new ObservableCollection<ReleaseRowViewModel>()
     private readonly openCommand: RelayCommand
-    private readonly publishCommand: RelayCommand
+    private readonly refreshFromRegistryCommand: RelayCommand
+    private refreshResultText = ReleasesPageViewModel.NoText
 
     public constructor(session: PortalSessionService, private readonly section: ReleasesSectionService)
     {
         super(session)
         this.openCommand = new RelayCommand(row => this.Open(row))
-        this.publishCommand = this.MutatingCommand(() => this.Publish())
+        this.refreshFromRegistryCommand = this.MutatingCommand(() => this.RefreshFromRegistry())
+    }
+
+    // What the last refresh from the registry did; '' before one, or when it failed (CommandErrorText says why).
+    public get RefreshResultText(): string
+    {
+        return this.refreshResultText
+    }
+
+    // "Imported N, rejected M", plus ", shadowed K" when local manifests hid some registry versions.
+    public static ResultText(result: ReleaseRefreshDto): string
+    {
+        const P = ReleasesPageViewModel
+        const text = P.ResultTemplate
+            .replace(P.ImportedToken, String(result.imported.length))
+            .replace(P.RejectedToken, String(result.rejected.length))
+        return result.shadowed.length > 0 ? text + P.ShadowedTemplate.replace(P.ShadowedToken, String(result.shadowed.length)) : text
     }
 
     public get Rows(): ObservableCollection<ReleaseRowViewModel>
@@ -121,9 +188,9 @@ export class ReleasesPageViewModel extends PortalPageViewModel
         return this.openCommand
     }
 
-    public get PublishCommand(): RelayCommand
+    public get RefreshFromRegistryCommand(): RelayCommand
     {
-        return this.publishCommand
+        return this.refreshFromRegistryCommand
     }
 
     protected override async LoadCore(): Promise<boolean>
@@ -156,9 +223,23 @@ export class ReleasesPageViewModel extends PortalPageViewModel
         }
     }
 
-    private Publish(): Promise<void>
+    // Clears the last result first, so a failure never leaves stale counts next to its error.
+    private async RefreshFromRegistry(): Promise<void>
     {
-        return this.OpenCreate(this.section.Dialogs, dialogs => new PublishDialogViewModel(this.Session, dialogs),
-            ReleasesPageViewModel.PublishTitle, () => this.Refresh())
+        this.SetRefreshResultText(ReleasesPageViewModel.NoText)
+        const result = await this.Session.Client.RefreshReleases()
+        this.SetRefreshResultText(ReleasesPageViewModel.ResultText(result))
+        await this.Refresh()
+    }
+
+    private SetRefreshResultText(next: string): void
+    {
+        const old = this.refreshResultText
+        if (old === next)
+        {
+            return
+        }
+        this.refreshResultText = next
+        this.RaisePropertyChanged(ReleasesPageViewModel.RefreshResultTextProperty, old, next)
     }
 }

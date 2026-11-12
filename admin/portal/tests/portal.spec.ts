@@ -33,6 +33,27 @@ class FakeControlPlane
     public static readonly Digest = 'sha256:0f3a9c'
     // The digest as the release detail shows it (the hash, algorithm dropped).
     public static readonly DigestLabel = '0f3a9c'
+    // A release imported (and verified) from the release registry, and one rejected on import.
+    public static readonly RegistryVersion = '4.3.0'
+    public static readonly RejectedVersion = '4.4.0'
+    public static readonly ServerCommit = '1f2e3d4c5b6a79881f2e3d4c5b6a79881f2e3d4c'
+    // The server commit as the release detail shows it (git's short form).
+    public static readonly ServerCommitShort = '1f2e3d4'
+    public static readonly SiblingRepo = 'todl'
+    public static readonly SigningKeyId = 'release-2026'
+    public static readonly BuiltAt = '2026-11-09T14:30:00.000Z'
+    public static readonly BuiltAtLabel = '2026-11-09 14:30'
+    public static readonly RejectedReason = 'signature did not verify for image: pragmatic-env-server'
+    private static readonly RegistryNamespace = 'ghcr.io/pragmatic-tech-ai/'
+    private static readonly DigestPrefix = 'sha256:'
+    private static readonly DigestSeparator = '@'
+    private static readonly VerifiedState = 'verified'
+    private static readonly RejectedState = 'rejected'
+    // The eight release images, in release order.
+    public static readonly ReleaseApps: readonly string[] = [
+        'pragmatic-platform-admin', 'pragmatic-platform-edge', 'pragmatic-env-server', 'pragmatic-env-gateway',
+        'pragmatic-hive-agent', 'pragmatic-tenant-admin', 'pragmatic-tenant-idp', 'pragmatic-ui-unpack',
+    ]
     // The ledger row's action label for AdoptAction, as the hive detail shows it.
     public static readonly AdoptedLabel = 'Adopted'
     // The check-in row's summary for the one ready environment Observations() reports.
@@ -343,7 +364,52 @@ class FakeControlPlane
             channel: FakeControlPlane.StableChannel,
             digest: FakeControlPlane.Digest,
             signed: true,
+        }, this.RegistryManifest(), {
+            id: FakeControlPlane.RejectedVersion,
+            image: '',
+            publishedAt: FakeControlPlane.BuiltAt,
+            channel: FakeControlPlane.StableChannel,
+            signed: false,
+            release: { state: FakeControlPlane.RejectedState, rejectedReason: FakeControlPlane.RejectedReason },
         }]
+    }
+
+    // The digest of the i-th release image: a distinct hex digit repeated.
+    public static ReleaseDigest(index: number): string
+    {
+        return FakeControlPlane.DigestPrefix + (index + 1).toString(16).repeat(64)
+    }
+
+    // The i-th release image's digest as the detail shows it (the hash, algorithm dropped, to 12 characters).
+    public static ReleaseDigestLabel(index: number): string
+    {
+        return FakeControlPlane.ReleaseDigest(index).slice(FakeControlPlane.DigestPrefix.length, FakeControlPlane.DigestPrefix.length + 12)
+    }
+
+    private RegistryManifest(): unknown
+    {
+        const images: Record<string, { repository: string; digest: string }> = {}
+        FakeControlPlane.ReleaseApps.forEach((app, i) =>
+        {
+            images[app] = { repository: FakeControlPlane.RegistryNamespace + app, digest: FakeControlPlane.ReleaseDigest(i) }
+        })
+        const server = images[FakeControlPlane.ReleaseApps[2]!]!
+        return {
+            id: FakeControlPlane.RegistryVersion,
+            image: server.repository + FakeControlPlane.DigestSeparator + server.digest,
+            publishedAt: FakeControlPlane.BuiltAt,
+            channel: FakeControlPlane.StableChannel,
+            digest: server.digest,
+            signed: true,
+            release: {
+                state: FakeControlPlane.VerifiedState,
+                serverCommit: FakeControlPlane.ServerCommit,
+                siblingCommits: { [FakeControlPlane.SiblingRepo]: FakeControlPlane.ServerCommit },
+                builtAt: FakeControlPlane.BuiltAt,
+                signingKeyId: FakeControlPlane.SigningKeyId,
+                images,
+            },
+        }
     }
 
     private static ReadBody(req: IncomingMessage): Promise<string>
@@ -580,6 +646,16 @@ class PortalText
     public static readonly ReleaseDetailCaptions: readonly string[] = [
         'Manifest', 'What\'s new', 'Where it runs',
     ]
+    // What only a registry release's detail adds.
+    public static readonly ImagesCaption = 'Images'
+    public static readonly SiblingCommitsCaption = 'Sibling commits'
+    public static readonly RegistryReleaseCaptions: readonly string[] = [
+        'Release', 'Verification', 'Built', 'Server commit', 'Signer key', PortalText.ImagesCaption, PortalText.SiblingCommitsCaption,
+    ]
+    public static readonly RefreshFromRegistryLabel = 'Refresh from registry'
+    public static readonly VerificationHeader = 'Verification'
+    public static readonly VerifiedLabel = 'Verified'
+    public static readonly RejectedLabel = 'Rejected'
     // Text a template shows only when a binding or a label formatter failed.
     public static readonly BrokenBinding = /undefined|\[object Object\]|NaN/
 }
@@ -791,6 +867,47 @@ test.describe('admin portal', () =>
         await expect(PortalSteps.Visible(page, FakeControlPlane.DigestLabel)).toBeVisible()
         await expect(PortalSteps.Visible(page, FakeControlPlane.Notes)).toBeVisible()
         await expect(PortalSteps.Visible(page, FakeControlPlane.HiveName)).toBeVisible()
+        // A local manifest shows none of a registry release's provenance.
+        await expect(PortalSteps.Text(page, PortalText.SiblingCommitsCaption).filter({ visible: true })).toHaveCount(0)
+        await PortalSteps.ExpectNoBrokenText(page)
+    })
+
+    test('Releases: the list offers Refresh from registry and shows each version\'s verification', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await PortalSteps.OpenSection(page, RailEntry.Releases)
+        await expect(PortalSteps.Visible(page, PortalText.RefreshFromRegistryLabel)).toBeVisible()
+        await expect(PortalSteps.Visible(page, PortalText.VerificationHeader)).toBeVisible()
+        await expect(PortalSteps.Visible(page, PortalText.VerifiedLabel)).toBeVisible()
+        await expect(PortalSteps.Visible(page, PortalText.RejectedLabel)).toBeVisible()
+        await PortalSteps.ExpectNoBrokenText(page)
+    })
+
+    test('Releases: a registry release shows its provenance and eight images; a rejected one its reason', async ({ page }) =>
+    {
+        await page.goto(base)
+        await expect(PortalSteps.Text(page, PortalText.FleetSubtitle)).toBeVisible()
+        await PortalSteps.OpenSection(page, RailEntry.Releases)
+        await PortalSteps.Click(page, FakeControlPlane.RegistryVersion)
+        for (const caption of PortalText.RegistryReleaseCaptions)
+        {
+            await expect(PortalSteps.Visible(page, caption)).toBeVisible()
+        }
+        await expect(PortalSteps.Visible(page, FakeControlPlane.BuiltAtLabel)).toBeVisible()
+        await expect(PortalSteps.Visible(page, FakeControlPlane.SigningKeyId)).toBeVisible()
+        await expect(PortalSteps.Visible(page, FakeControlPlane.SiblingRepo)).toBeVisible()
+        expect(await PortalSteps.Text(page, FakeControlPlane.ServerCommitShort).filter({ visible: true }).count()).toBe(2)
+        for (const [i, app] of FakeControlPlane.ReleaseApps.entries())
+        {
+            await expect(PortalSteps.Visible(page, app)).toBeVisible()
+            await expect(PortalSteps.Visible(page, FakeControlPlane.ReleaseDigestLabel(i))).toBeVisible()
+        }
+        await PortalSteps.ExpectNoBrokenText(page)
+        await PortalSteps.Click(page, PortalText.BackLabel)
+        await PortalSteps.Click(page, FakeControlPlane.RejectedVersion)
+        await expect(PortalSteps.Visible(page, FakeControlPlane.RejectedReason)).toBeVisible()
+        await expect(PortalSteps.Text(page, PortalText.ImagesCaption).filter({ visible: true })).toHaveCount(0)
         await PortalSteps.ExpectNoBrokenText(page)
     })
 

@@ -1,4 +1,4 @@
-import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto, HiveDeleteOutcomeDto, OwnerPasswordResetDto, PasswordChangedDto, HiveConsoleSpecDto, ConsoleInstallStatusDto, ConsoleRemovalDto, InHiveOwnerPasswordDto, TenantEmailDomainsDto } from './portal-types.js'
+import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto, HiveDeleteOutcomeDto, OwnerPasswordResetDto, PasswordChangedDto, HiveConsoleSpecDto, ConsoleInstallStatusDto, ConsoleRemovalDto, InHiveOwnerPasswordDto, ReleaseRefreshDto, TenantEmailDomainsDto } from './portal-types.js'
 
 // Thrown for non-2xx control-plane responses; Message carries the server's error text.
 export class ApiError extends Error
@@ -34,6 +34,7 @@ export class ControlPlaneClient
     private static readonly ProvisionRoute = '/api/provision'
     private static readonly FleetRoute = '/api/fleet'
     private static readonly ManifestsRoute = '/api/manifests'
+    private static readonly ReleasesRefreshRoute = '/api/releases/refresh'
     private static readonly OperatorsRoute = '/api/operators'
     private static readonly OperatorRoleRoute = '/api/operators/role'
     private static readonly OperatorPasswordResetRoute = '/api/operators/password-reset'
@@ -59,9 +60,6 @@ export class ControlPlaneClient
     private static readonly GatingSegment = 'gating'
     private static readonly WithdrawnSegment = 'withdrawn'
     private static readonly VersionKey = 'version'
-    private static readonly ImageKey = 'image'
-    private static readonly NotesKey = 'notes'
-    private static readonly ChannelKey = 'channel'
     private static readonly ReasonKey = 'reason'
     private static readonly EmailKey = 'email'
     private static readonly PasswordKey = 'password'
@@ -299,18 +297,11 @@ export class ControlPlaneClient
         return await this.Send<HiveDeleteOutcomeDto>(route, { method: ControlPlaneClient.MethodDelete })
     }
 
-    public async PublishManifest(version: string, image: string, notes?: string, channel?: string): Promise<ManifestDto>
+    // Imports every new release from the registry (Full operators only). A 409 (no registry configured) or 502 (the
+    // registry is unavailable) carries the server's sentence.
+    public async RefreshReleases(): Promise<ReleaseRefreshDto>
     {
-        const body: Record<string, unknown> = { [ControlPlaneClient.VersionKey]: version, [ControlPlaneClient.ImageKey]: image }
-        if (notes !== undefined && notes.length > 0)
-        {
-            body[ControlPlaneClient.NotesKey] = notes
-        }
-        if (channel !== undefined && channel.length > 0)
-        {
-            body[ControlPlaneClient.ChannelKey] = channel
-        }
-        return await this.Send<ManifestDto>(ControlPlaneClient.ManifestsRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify(body) })
+        return await this.Send<ReleaseRefreshDto>(ControlPlaneClient.ReleasesRefreshRoute, { method: ControlPlaneClient.MethodPost })
     }
 
     public async Gate(tenantId: string, version: string): Promise<void>

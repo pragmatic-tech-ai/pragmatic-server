@@ -25,6 +25,8 @@ export class ActivityActions
     private static readonly QueryMark = '?'
 
     private static readonly Rules: readonly ActionRule[] = [
+        { method: 'POST', test: /^\/api\/releases\/refresh\/?$/, label: 'Refreshed releases from the registry' },
+        // Manual publishing is gone; older audit entries keep their name.
         { method: 'POST', test: /^\/api\/manifests\/?$/, label: 'Published a version' },
         { method: 'POST', test: /^\/api\/manifests\/[^/]+\/withdrawn\/?$/, label: 'Withdrew a version' },
         { method: 'DELETE', test: /^\/api\/manifests\/[^/]+\/withdrawn\/?$/, label: 'Restored a version' },

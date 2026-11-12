@@ -2,7 +2,8 @@ import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/run
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { FleetViewModel } from '../../fleet-view-model.js'
 import { PortalDates } from '../../portal-dates.js'
-import type { FleetEnvDto, FleetHiveDto, ManifestDto } from '../../portal-types.js'
+import { ReleaseVerification, type FleetEnvDto, type FleetHiveDto, type ManifestDto, type ReleaseApp } from '../../portal-types.js'
+import { ReleaseApps } from '../../release-apps.js'
 import { ReleaseChannel } from '../../release-channel.js'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
@@ -44,17 +45,46 @@ export class ReleaseAdoptionRowViewModel extends Observable
     }
 }
 
+// One image of a registry release: its app, repository and digest (short, the
+// full digest on hover).
+export class ReleaseImageRowViewModel extends Observable
+{
+    public constructor(public readonly App: ReleaseApp, public readonly Repository: string, public readonly Digest: string)
+    {
+        super()
+    }
+
+    public get DigestLabel(): string
+    {
+        return ReleaseLabels.ShortDigest(this.Digest)
+    }
+}
+
+// One sibling repository a release was built from, at its commit (short, the
+// full sha on hover).
+export class ReleaseSiblingCommitRowViewModel extends Observable
+{
+    public constructor(public readonly Repo: string, public readonly Commit: string)
+    {
+        super()
+    }
+
+    public get CommitShort(): string
+    {
+        return ReleaseLabels.ShortCommit(this.Commit)
+    }
+}
+
 // One version's detail: its manifest, signature, what's new, and where it runs
-// (observed, read-only). Withdraw asks for the version and a reason; Restore
-// returns a withdrawn version to offers.
+// (observed, read-only). A version imported from the release registry also
+// shows its provenance: verification, build time, commits, signer and its
+// images (or why it was rejected). Withdraw asks for the version and a reason;
+// Restore returns a withdrawn version to offers.
 export class ReleaseDetailPageViewModel extends PortalPageViewModel
 {
     private static readonly NotFoundTemplate = 'Version {id} was not found.'
     private static readonly IdToken = '{id}'
     private static readonly NoNotesLabel = 'No release notes.'
-    private static readonly NoDigestLabel = '-'
-    private static readonly DigestSeparator = ':'
-    private static readonly DigestLength = 12
     private static readonly WithdrawnNotice = 'This version is withdrawn. Hives stop seeing it as adoptable after their next check-in. Environments already running it keep running it until their tenant adopts another version.'
     private static readonly WithdrawalTemplate = ' Reason: {reason} (withdrawn by {actor} on {date}).'
     private static readonly ReasonToken = '{reason}'
@@ -77,9 +107,22 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
     private static readonly WithdrawnTextProperty = 'WithdrawnText'
     private static readonly HasAdoptionProperty = 'HasAdoption'
     private static readonly HasNoAdoptionProperty = 'HasNoAdoption'
+    private static readonly HasReleaseProperty = 'HasRelease'
+    private static readonly IsRejectedProperty = 'IsRejected'
+    private static readonly IsVerifiedProperty = 'IsVerified'
+    private static readonly VerificationLabelProperty = 'VerificationLabel'
+    private static readonly BuiltAtLabelProperty = 'BuiltAtLabel'
+    private static readonly ServerCommitProperty = 'ServerCommit'
+    private static readonly ServerCommitShortProperty = 'ServerCommitShort'
+    private static readonly SigningKeyIdProperty = 'SigningKeyId'
+    private static readonly RejectedReasonProperty = 'RejectedReason'
+    private static readonly HasImagesProperty = 'HasImages'
+    private static readonly HasSiblingCommitsProperty = 'HasSiblingCommits'
 
     private manifest: ManifestDto | undefined
     private readonly adoptionRows = new ObservableCollection<ReleaseAdoptionRowViewModel>()
+    private readonly imageRows = new ObservableCollection<ReleaseImageRowViewModel>()
+    private readonly siblingCommitRows = new ObservableCollection<ReleaseSiblingCommitRowViewModel>()
     private readonly withdrawCommand: RelayCommand
     private readonly restoreCommand: RelayCommand
     private readonly backCommand: RelayCommand
@@ -92,20 +135,96 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
         this.backCommand = new RelayCommand(() => { void this.section.BackAndRefresh() })
     }
 
+    // The image reference; a dash for a rejected release, which records none.
     public get Image(): string
     {
-        return this.manifest?.image ?? ReleaseDetailPageViewModel.NoText
+        return this.manifest === undefined ? ReleaseDetailPageViewModel.NoText : ReleaseLabels.Image(this.manifest)
     }
 
-    // The image digest's first characters; '-' when the registry recorded none.
+    // The image digest's first characters; a dash when the registry recorded none.
     public get DigestLabel(): string
     {
         const digest = this.manifest?.digest
         if (digest === undefined || digest.length === 0)
         {
-            return ReleaseDetailPageViewModel.NoDigestLabel
+            return ReleaseLabels.NoValue
         }
-        return digest.slice(digest.lastIndexOf(ReleaseDetailPageViewModel.DigestSeparator) + 1).slice(0, ReleaseDetailPageViewModel.DigestLength)
+        return ReleaseLabels.ShortDigest(digest)
+    }
+
+    // Whether the version came from the release registry (a local manifest has no provenance to show).
+    public get HasRelease(): boolean
+    {
+        return this.manifest?.release !== undefined
+    }
+
+    public get IsRejected(): boolean
+    {
+        return this.manifest?.release?.state === ReleaseVerification.Rejected
+    }
+
+    // A verified registry release: its build provenance (built-at, commit, signer) is shown.
+    public get IsVerified(): boolean
+    {
+        return this.manifest?.release?.state === ReleaseVerification.Verified
+    }
+
+    public get VerificationLabel(): string
+    {
+        return this.manifest === undefined ? ReleaseDetailPageViewModel.NoText : ReleaseLabels.Verification(this.manifest)
+    }
+
+    // When the release was built, to the minute (UTC).
+    public get BuiltAtLabel(): string
+    {
+        const builtAt = this.manifest?.release?.builtAt
+        return builtAt === undefined ? ReleaseDetailPageViewModel.NoText : PortalDates.DateTimeLabel(builtAt)
+    }
+
+    // The full pragmatic-server commit the release was tagged on (the hover text of ServerCommitShort).
+    public get ServerCommit(): string
+    {
+        return this.manifest?.release?.serverCommit ?? ReleaseDetailPageViewModel.NoText
+    }
+
+    public get ServerCommitShort(): string
+    {
+        return ReleaseLabels.ShortCommit(this.ServerCommit)
+    }
+
+    // The id of the release key that signed the images.
+    public get SigningKeyId(): string
+    {
+        return this.manifest?.release?.signingKeyId ?? ReleaseDetailPageViewModel.NoText
+    }
+
+    // Why verification failed; '' unless Rejected.
+    public get RejectedReason(): string
+    {
+        const reason = this.IsRejected ? this.manifest?.release?.rejectedReason : undefined
+        return reason ?? ReleaseDetailPageViewModel.NoText
+    }
+
+    // The release's images, in release order.
+    public get ImageRows(): ObservableCollection<ReleaseImageRowViewModel>
+    {
+        return this.imageRows
+    }
+
+    public get HasImages(): boolean
+    {
+        return this.imageRows.Count > 0
+    }
+
+    // The sibling repositories the release was built from, by name.
+    public get SiblingCommitRows(): ObservableCollection<ReleaseSiblingCommitRowViewModel>
+    {
+        return this.siblingCommitRows
+    }
+
+    public get HasSiblingCommits(): boolean
+    {
+        return this.siblingCommitRows.Count > 0
     }
 
     public get ChannelLabel(): string
@@ -217,7 +336,8 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
         {
             for (const env of hive.environments)
             {
-                if (env.image !== undefined && env.image === manifest.image)
+                // A rejected release has no image, so nothing can be running it.
+                if (manifest.image.length > 0 && env.image !== undefined && env.image === manifest.image)
                 {
                     this.adoptionRows.Add(new ReleaseAdoptionRowViewModel(hive, env))
                 }
@@ -235,10 +355,14 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
         const P = ReleaseDetailPageViewModel
         const before = [this.Image, this.DigestLabel, this.ChannelLabel, this.SignatureLabel, this.StatusLabel,
             this.PublishedLabel, this.NotesLabel, this.WithdrawnText] as const
+        const releaseBefore = [this.VerificationLabel, this.BuiltAtLabel, this.ServerCommit, this.ServerCommitShort,
+            this.SigningKeyId, this.RejectedReason] as const
+        const flagsBefore = [this.HasRelease, this.IsRejected, this.IsVerified, this.HasImages, this.HasSiblingCommits] as const
         const wasWithdrawn = this.IsWithdrawn
         const wasPublished = this.IsPublished
         // A private copy: what was shown stays as it was until the next Apply.
         this.manifest = { ...manifest }
+        this.FillRelease(manifest)
         this.RaisePropertyChanged(P.ImageProperty, before[0], this.Image)
         this.RaisePropertyChanged(P.DigestLabelProperty, before[1], this.DigestLabel)
         this.RaisePropertyChanged(P.ChannelLabelProperty, before[2], this.ChannelLabel)
@@ -249,8 +373,45 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
         this.RaisePropertyChanged(P.WithdrawnTextProperty, before[7], this.WithdrawnText)
         this.RaisePropertyChanged(P.IsWithdrawnProperty, wasWithdrawn, this.IsWithdrawn)
         this.RaisePropertyChanged(P.IsPublishedProperty, wasPublished, this.IsPublished)
+        this.RaisePropertyChanged(P.VerificationLabelProperty, releaseBefore[0], this.VerificationLabel)
+        this.RaisePropertyChanged(P.BuiltAtLabelProperty, releaseBefore[1], this.BuiltAtLabel)
+        this.RaisePropertyChanged(P.ServerCommitProperty, releaseBefore[2], this.ServerCommit)
+        this.RaisePropertyChanged(P.ServerCommitShortProperty, releaseBefore[3], this.ServerCommitShort)
+        this.RaisePropertyChanged(P.SigningKeyIdProperty, releaseBefore[4], this.SigningKeyId)
+        this.RaisePropertyChanged(P.RejectedReasonProperty, releaseBefore[5], this.RejectedReason)
+        this.RaisePropertyChanged(P.HasReleaseProperty, flagsBefore[0], this.HasRelease)
+        this.RaisePropertyChanged(P.IsRejectedProperty, flagsBefore[1], this.IsRejected)
+        this.RaisePropertyChanged(P.IsVerifiedProperty, flagsBefore[2], this.IsVerified)
+        this.RaisePropertyChanged(P.HasImagesProperty, flagsBefore[3], this.HasImages)
+        this.RaisePropertyChanged(P.HasSiblingCommitsProperty, flagsBefore[4], this.HasSiblingCommits)
         this.withdrawCommand.RaiseCanExecuteChanged()
         this.restoreCommand.RaiseCanExecuteChanged()
+    }
+
+    // Refills the image and sibling-commit rows from the release (none for a local manifest).
+    private FillRelease(manifest: ManifestDto): void
+    {
+        this.imageRows.Clear()
+        this.siblingCommitRows.Clear()
+        const release = manifest.release
+        if (release === undefined)
+        {
+            return
+        }
+        const images: Partial<Record<ReleaseApp, { repository: string; digest: string }>> = release.images ?? {}
+        for (const app of ReleaseApps.All)
+        {
+            const image = images[app]
+            if (image !== undefined)
+            {
+                this.imageRows.Add(new ReleaseImageRowViewModel(app, image.repository, image.digest))
+            }
+        }
+        const siblings = release.siblingCommits ?? {}
+        for (const repo of Object.keys(siblings).sort((a, b) => a.localeCompare(b)))
+        {
+            this.siblingCommitRows.Add(new ReleaseSiblingCommitRowViewModel(repo, siblings[repo] as string))
+        }
     }
 
     private Withdraw(): Promise<void>

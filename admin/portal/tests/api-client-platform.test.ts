@@ -2,7 +2,7 @@ import { afterEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { ApiError, ControlPlaneClient } from '../src/api-client.js'
 import { AgentInstallState, AgentInstallStep } from '../src/portal-types.js'
-import type { AgentInstallStatusDto, GatingDto, HiveDto, HiveRolloutDto, ManifestDto, OperatorSummaryDto, SelectionDto, TenantDto } from '../src/portal-types.js'
+import type { AgentInstallStatusDto, GatingDto, HiveDto, HiveRolloutDto, ManifestDto, OperatorSummaryDto, ReleaseRefreshDto, SelectionDto, TenantDto } from '../src/portal-types.js'
 
 type Recorded = { route: string; init: RequestInit | undefined }
 
@@ -11,13 +11,13 @@ class FetchStub
     public static readonly Original = globalThis.fetch
     public static Calls: Recorded[] = []
 
-    public static Install(payload: unknown): void
+    public static Install(payload: unknown, status: number = 200): void
     {
         FetchStub.Calls = []
         globalThis.fetch = (async (route: string, init?: RequestInit) =>
         {
             FetchStub.Calls.push({ route, init })
-            return { ok: true, status: 200, json: async () => payload } as Response
+            return { ok: status >= 200 && status < 300, status, json: async () => payload } as Response
         }) as typeof fetch
     }
 
@@ -196,25 +196,29 @@ describe('ControlPlaneClient platform records', () =>
         assert.deepEqual(manifests, payload)
     })
 
-    it('PublishManifest POSTs version, image and notes', async () =>
+    it('RefreshReleases POSTs /api/releases/refresh and returns the counts', async () =>
     {
-        FetchStub.Install({ id: '1.2.0', image: 'img:1.2.0', publishedAt: '2026-01-01T00:00:00.000Z' })
-        const dto = await new ControlPlaneClient().PublishManifest('1.2.0', 'img:1.2.0', 'note')
+        const payload: ReleaseRefreshDto = { imported: ['1.5.0'], rejected: [], unchanged: 2, shadowed: ['1.4.0'] }
+        FetchStub.Install(payload)
+        const result = await new ControlPlaneClient().RefreshReleases()
         const call = FetchStub.Calls[0]!
-        assert.equal(call.route, '/api/manifests')
+        assert.equal(call.route, '/api/releases/refresh')
         assert.equal(call.init?.method, 'POST')
-        assert.deepEqual(JSON.parse(call.init?.body as string), { version: '1.2.0', image: 'img:1.2.0', notes: 'note' })
-        assert.equal(dto.id, '1.2.0')
+        assert.deepEqual(result, payload)
     })
 
-    it('PublishManifest omits absent or blank notes', async () =>
+    it('RefreshReleases surfaces the server sentence of a 409 or 502 as an ApiError', async () =>
     {
-        FetchStub.Install({ id: '1.2.0', image: 'img:1.2.0', publishedAt: '2026-01-01T00:00:00.000Z' })
-        const client = new ControlPlaneClient()
-        await client.PublishManifest('1.2.0', 'img:1.2.0')
-        await client.PublishManifest('1.2.0', 'img:1.2.0', '')
-        assert.deepEqual(JSON.parse(FetchStub.Calls[0]!.init?.body as string), { version: '1.2.0', image: 'img:1.2.0' })
-        assert.deepEqual(JSON.parse(FetchStub.Calls[1]!.init?.body as string), { version: '1.2.0', image: 'img:1.2.0' })
+        for (const [status, sentence] of [[409, 'No release registry is configured.'], [502, 'The release registry is unavailable.']] as const)
+        {
+            FetchStub.Install({ error: sentence }, status)
+            await assert.rejects(new ControlPlaneClient().RefreshReleases(), (e: unknown) => e instanceof ApiError && e.Status === status && e.message === sentence)
+        }
+    })
+
+    it('the client no longer publishes manifests by hand', () =>
+    {
+        assert.equal('PublishManifest' in ControlPlaneClient.prototype, false)
     })
 
     it('Gate POSTs the version to the tenant gating route', async () =>
@@ -251,18 +255,6 @@ describe('ControlPlaneClient platform records', () =>
         assert.equal(call.init?.method, 'POST')
         assert.deepEqual(JSON.parse(call.init?.body as string), { reason: 'bad build' })
         assert.equal(dto.id, '1.0.0')
-    })
-
-    it('PublishManifest includes channel when given and omits it otherwise', async () =>
-    {
-        FetchStub.Install({ id: '1.2.0', image: 'img:1.2.0', publishedAt: '2026-01-01T00:00:00.000Z' })
-        const client = new ControlPlaneClient()
-        await client.PublishManifest('1.2.0', 'img:1.2.0', undefined, 'early')
-        await client.PublishManifest('1.2.0', 'img:1.2.0', undefined, '')
-        await client.PublishManifest('1.2.0', 'img:1.2.0')
-        assert.deepEqual(JSON.parse(FetchStub.Calls[0]!.init?.body as string), { version: '1.2.0', image: 'img:1.2.0', channel: 'early' })
-        assert.deepEqual(JSON.parse(FetchStub.Calls[1]!.init?.body as string), { version: '1.2.0', image: 'img:1.2.0' })
-        assert.deepEqual(JSON.parse(FetchStub.Calls[2]!.init?.body as string), { version: '1.2.0', image: 'img:1.2.0' })
     })
 
     it('SetManifestWithdrawn(false) DELETEs the withdrawn route', async () =>

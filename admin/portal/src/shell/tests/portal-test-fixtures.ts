@@ -9,7 +9,7 @@ import { ApiError, type ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
 import { AgentInstallState, AgentInstallStep, ConsoleInstallState, ConsoleInstallStep, DomainApprovalState, EmailDomainSource, type AgentInstallStatusDto, type ConsoleInstallStatusDto, type TenantEmailDomainsDto } from '../../portal-types.js'
 import type { ConsoleRemovalDto, HiveConsoleSpecDto, HiveDeleteOutcomeDto, InHiveOwnerPasswordDto, OwnerPasswordResetDto, PasswordChangedDto } from '../../portal-types.js'
-import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveBootstrapDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, ProvisionInputDto, ProvisionResultDto, SelectionDto, TenantDto } from '../../portal-types.js'
+import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveBootstrapDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, ProvisionInputDto, ProvisionResultDto, ReleaseRefreshDto, SelectionDto, TenantDto } from '../../portal-types.js'
 import { DownloadService } from '../download-service.js'
 import type { IPageReloader } from '../page-reloader.js'
 import { PollScheduling, type IPollScheduler } from '../poll-scheduler.js'
@@ -303,7 +303,12 @@ export class FakeControlPlane
     public EmailDomainReads = 0
     // What a hive delete replies.
     public DeleteOutcome: HiveDeleteOutcomeDto = { ok: true, retained: [] }
-    public readonly Published: Array<[string, string, string | undefined, string | undefined]> = []
+    // Release refreshes from the registry: how many ran, what each answers (or, while set, the failure each throws),
+    // and the manifests each imports into Manifests.
+    public ReleaseRefreshes = 0
+    public ReleaseRefreshResult: ReleaseRefreshDto = { imported: [], rejected: [], unchanged: 0, shadowed: [] }
+    public ReleaseRefreshFailure: Error | undefined
+    public ReleaseRefreshImports: ManifestDto[] = []
     public readonly Withdrawals: Array<[string, boolean, string | undefined]> = []
     public readonly GateCalls: Array<[string, string]> = []
     public readonly UngateCalls: Array<[string, string]> = []
@@ -400,13 +405,17 @@ export class FakeControlPlane
         return this.Manifests.map(m => ({ ...m }))
     }
 
-    public async PublishManifest(version: string, image: string, notes?: string, channel?: string): Promise<ManifestDto>
+    public async RefreshReleases(): Promise<ReleaseRefreshDto>
     {
         this.ThrowIfFailing()
-        this.Published.push([version, image, notes, channel])
-        const manifest: ManifestDto = { id: version, image, notes, publishedAt: new Date().toISOString(), channel: channel as ManifestDto['channel'] }
-        this.Manifests.push(manifest)
-        return manifest
+        this.ReleaseRefreshes++
+        if (this.ReleaseRefreshFailure !== undefined)
+        {
+            throw this.ReleaseRefreshFailure
+        }
+        this.Manifests.push(...this.ReleaseRefreshImports)
+        this.ReleaseRefreshImports = []
+        return { ...this.ReleaseRefreshResult }
     }
 
     public async SetManifestWithdrawn(version: string, withdraw: boolean, reason?: string): Promise<ManifestDto>

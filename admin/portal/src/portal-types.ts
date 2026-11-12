@@ -105,7 +105,43 @@ export type OperatorDto =
 export type GatingDto = { tenantId: string; version: string; gatedAt: string }
 export type SelectionDto = { hiveId: string; targetVersion: string; selectedAt: string }
 export type OperatorSummaryDto = { email: string; role: string; disabled?: boolean }
-export type ManifestDto = { id: string; image: string; notes?: string; publishedAt: string; withdrawn?: boolean; channel?: 'stable' | 'early'; digest?: string; signed?: boolean; withdrawal?: { reason: string; actor: string; at: string } }
+export type ManifestDto = { id: string; image: string; notes?: string; publishedAt: string; withdrawn?: boolean; channel?: 'stable' | 'early'; digest?: string; signed?: boolean; withdrawal?: { reason: string; actor: string; at: string }; release?: ManifestReleaseDto }
+
+// The outcome of verifying a registry release on import; values match the server wire strings.
+export enum ReleaseVerification
+{
+    Verified = 'verified',
+    Rejected = 'rejected',
+}
+
+// The applications a release ships, one image each; values match the server's image names (ReleaseApps.All order).
+export enum ReleaseApp
+{
+    PlatformAdmin = 'pragmatic-platform-admin',
+    PlatformEdge = 'pragmatic-platform-edge',
+    EnvServer = 'pragmatic-env-server',
+    EnvGateway = 'pragmatic-env-gateway',
+    HiveAgent = 'pragmatic-hive-agent',
+    TenantAdmin = 'pragmatic-tenant-admin',
+    TenantIdp = 'pragmatic-tenant-idp',
+    UiUnpack = 'pragmatic-ui-unpack',
+}
+
+// Provenance of a version imported from the release registry (mirrors the server's ManifestRelease); absent on
+// locally published manifests. A Rejected one carries only its reason.
+export type ManifestReleaseDto = {
+    state: ReleaseVerification
+    serverCommit?: string
+    siblingCommits?: Record<string, string>
+    builtAt?: string
+    signingKeyId?: string
+    images?: Record<ReleaseApp, { repository: string; digest: string }>
+    rejectedReason?: string
+}
+
+// POST /api/releases/refresh's reply: the versions imported and rejected, how many were already known, and the
+// registry versions hidden by a local manifest with the same id.
+export type ReleaseRefreshDto = { imported: string[]; rejected: string[]; unchanged: number; shadowed: string[] }
 export type EnvRolloutDto = { environmentName: string; runningImage?: string; obsolete: boolean; ready: boolean }
 export type HiveRolloutDto = { hiveId: string; targetVersion?: string; environments: EnvRolloutDto[] }
 

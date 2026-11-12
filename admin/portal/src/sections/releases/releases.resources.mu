@@ -3,9 +3,9 @@
 // ReleasesPageViewModel (the list) and ReleaseDetailPageViewModel are
 // presented full-width in the shell's content region, matched implicitly by
 // type. Where a version runs is observed (reported by hives), read-only.
-// PublishDialogViewModel renders inside the shell's DialogService surface with
-// its own Cancel / Publish buttons; Withdraw uses the shared name-to-confirm
-// dialog (shell resources) with a reason.
+// Versions come from the release registry (Refresh from registry); a registry
+// release's detail adds its provenance and images. Withdraw uses the shared
+// name-to-confirm dialog (shell resources) with a reason.
 //
 // The releases table uses a keyed row template set as the ListBox's
 // ItemTemplate (a ListBox resolves implicit templates only for MuralBase
@@ -15,21 +15,24 @@ import ReleasesPageViewModel from "./releases-page-view-model.js"
 import ReleaseRowViewModel from "./releases-page-view-model.js"
 import ReleaseDetailPageViewModel from "./release-detail-page-view-model.js"
 import ReleaseAdoptionRowViewModel from "./release-detail-page-view-model.js"
-import PublishDialogViewModel from "./publish-dialog-view-model.js"
+import ReleaseImageRowViewModel from "./release-detail-page-view-model.js"
+import ReleaseSiblingCommitRowViewModel from "./release-detail-page-view-model.js"
 
 resources ReleasesResources {
     DataTemplate [ DataType = ReleasesPageViewModel ] {
         DockPanel [ Margin = (24,20,24,20) ] {
             DockPanel [ DockPanel.Dock = Top, Margin = (0,0,0,16) ] {
-                Button [ DockPanel.Dock = Right, Variant = Primary, Command = $PublishCommand, VerticalAlignment = Top ] {
-                    TextBlock [ Text = "Publish a version" ]
+                Button [ DockPanel.Dock = Right, Variant = Primary, Command = $RefreshFromRegistryCommand, VerticalAlignment = Top ] {
+                    TextBlock [ Text = "Refresh from registry" ]
                 }
                 StackPanel [ Orientation = Vertical ] {
                     TextBlock [ Text = "Registry & Releases", Style = @H3, Foreground = @Fg0 ]
-                    TextBlock [ Text = "Signed application images. Hives are offered these; tenants choose when to adopt.",
+                    TextBlock [ Text = "Signed releases from the release registry. Hives are offered these; tenants choose when to adopt.",
                                 Style = @Body, Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,4,0,0) ]
                     TextBlock [ Text = $DeniedReason, Style = @UiCaption, Foreground = @StateWarningInk, Margin = (0,4,0,0),
                                 Visibility = $DeniedReason << ToVisibility ]
+                    TextBlock [ Text = $RefreshResultText, Style = @UiCaption, Foreground = @Fg1, Margin = (0,4,0,0),
+                                Visibility = $RefreshResultText << ToVisibility ]
                     TextBlock [ Text = $CommandErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,4,0,0),
                                 Visibility = $CommandErrorText << ToVisibility ]
                 }
@@ -37,7 +40,7 @@ resources ReleasesResources {
 
             TextBlock [ DockPanel.Dock = Top, Text = "Loading versions...", Foreground = @Fg2,
                         Visibility = $IsLoading << ToVisibility ]
-            TextBlock [ DockPanel.Dock = Top, Text = "No versions published yet. Publish a version to sign it and offer it to hives. Nothing is pushed: tenants adopt when they choose.",
+            TextBlock [ DockPanel.Dock = Top, Text = "No versions yet. Refresh from registry to import and verify the signed releases. Nothing is pushed: tenants adopt when they choose.",
                         Foreground = @Fg2, TextWrapping = Wrap, Visibility = $IsEmpty << ToVisibility ]
             TextBlock [ DockPanel.Dock = Top, Text = $ErrorText, Foreground = @StateDangerInk,
                         TextWrapping = Wrap, Visibility = $IsError << ToVisibility ]
@@ -58,14 +61,16 @@ resources ReleasesResources {
                             ColumnDefinition [ Width = GridLength.Star ]
                             ColumnDefinition [ Width = GridLength.Star ]
                             ColumnDefinition [ Width = GridLength.Star ]
+                            ColumnDefinition [ Width = GridLength.Star ]
                         }
                         TextBlock [ Grid.Column = 0, Text = "Version", Style = @PortalTableLinkHeader ]
                         TextBlock [ Grid.Column = 1, Text = "Channel", Style = @PortalTableHeader ]
-                        TextBlock [ Grid.Column = 2, Text = "Signature", Style = @PortalTableHeader ]
-                        TextBlock [ Grid.Column = 3, Text = "Status", Style = @PortalTableHeader ]
-                        TextBlock [ Grid.Column = 4, Text = "Published", Style = @PortalTableHeader ]
-                        TextBlock [ Grid.Column = 5, Text = "Adoption (observed)", Style = @PortalTableHeader ]
-                        TextBlock [ Grid.Column = 6, Text = "Image", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 2, Text = "Verification", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 3, Text = "Signature", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 4, Text = "Status", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 5, Text = "Published", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 6, Text = "Adoption (observed)", Style = @PortalTableHeader ]
+                        TextBlock [ Grid.Column = 7, Text = "Image", Style = @PortalTableHeader ]
                     }
                     ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $Rows, ItemTemplate = @ReleaseRowTemplate ]
                 }
@@ -84,16 +89,20 @@ resources ReleasesResources {
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
                 ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
             }
             Button [ Grid.Column = 0, Variant = Ghost, Command = $OpenCommand, HorizontalAlignment = Left ] {
                 TextBlock [ Text = $Version, Style = @UiLabel ]
             }
             TextBlock [ Grid.Column = 1, Text = $ChannelLabel, Foreground = @Fg1, VerticalAlignment = Center ]
-            TextBlock [ Grid.Column = 2, Text = $SignatureLabel, Foreground = @Fg1, VerticalAlignment = Center ]
-            TextBlock [ Grid.Column = 3, Text = $StatusLabel, Foreground = @Fg1, VerticalAlignment = Center ]
-            TextBlock [ Grid.Column = 4, Text = $PublishedLabel, Style = @Code, Foreground = @Fg2, VerticalAlignment = Center ]
-            TextBlock [ Grid.Column = 5, Text = $AdoptionLabel, Foreground = @Fg1, VerticalAlignment = Center ]
-            TextBlock [ Grid.Column = 6, Text = $Image, Style = @Code, Foreground = @Fg2, TextWrapping = Wrap, VerticalAlignment = Center ]
+            TextBlock [ Grid.Column = 2, Text = $VerificationLabel, Foreground = @Fg1, VerticalAlignment = Center ]
+            TextBlock [ Grid.Column = 3, Text = $SignatureLabel, Foreground = @Fg1, VerticalAlignment = Center ]
+            TextBlock [ Grid.Column = 4, Text = $StatusLabel, Foreground = @Fg1, VerticalAlignment = Center ]
+            TextBlock [ Grid.Column = 5, Text = $PublishedLabel, Style = @Code, Foreground = @Fg2, VerticalAlignment = Center ]
+            TextBlock [ Grid.Column = 6, Text = $AdoptionLabel, Foreground = @Fg1, VerticalAlignment = Center, TextTrimming = CharacterEllipsis ]
+            // A by-digest reference has no break point: one line, ellipsed, the full reference on hover.
+            TextBlock [ Grid.Column = 7, Text = $Image, Style = @Code, Foreground = @Fg2, VerticalAlignment = Center,
+                        TextTrimming = CharacterEllipsis, ToolTipService.ToolTip = $Image ]
         }
     }
 
@@ -141,23 +150,79 @@ resources ReleasesResources {
                     // The manifest and its signature.
                     TextBlock [ Text = "Manifest", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,6) ]
                     Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,16) ] {
-                        Grid {
-                            ColumnDefinitions {
-                                ColumnDefinition [ Width = GridLength.Star ]
-                                ColumnDefinition [ Width = GridLength.Star ]
-                                ColumnDefinition [ Width = GridLength.Star ]
+                        // The image on its own line: a by-digest reference is long and unbreakable.
+                        StackPanel [ Orientation = Vertical ] {
+                            TextBlock [ Text = "Image", Style = @UiCaption, Foreground = @Fg2 ]
+                            TextBlock [ Text = $Image, Style = @Code, Foreground = @Fg0, TextWrapping = Wrap, Margin = (0,0,0,8) ]
+                            Grid {
+                                ColumnDefinitions {
+                                    ColumnDefinition [ Width = GridLength.Star ]
+                                    ColumnDefinition [ Width = GridLength.Star ]
+                                }
+                                StackPanel [ Grid.Column = 0, Orientation = Vertical ] {
+                                    TextBlock [ Text = "Digest", Style = @UiCaption, Foreground = @Fg2 ]
+                                    TextBlock [ Text = $DigestLabel, Style = @Code, Foreground = @Fg0 ]
+                                }
+                                StackPanel [ Grid.Column = 1, Orientation = Vertical ] {
+                                    TextBlock [ Text = "Signature", Style = @UiCaption, Foreground = @Fg2 ]
+                                    TextBlock [ Text = $SignatureLabel, Foreground = @Fg0 ]
+                                }
                             }
-                            StackPanel [ Grid.Column = 0, Orientation = Vertical ] {
-                                TextBlock [ Text = "Image", Style = @UiCaption, Foreground = @Fg2 ]
-                                TextBlock [ Text = $Image, Style = @Code, Foreground = @Fg0, TextWrapping = Wrap ]
+                        }
+                    }
+
+                    // A registry release's provenance; a local manifest has none.
+                    // A commit or digest shows short, the full value on hover.
+                    StackPanel [ Orientation = Vertical, Visibility = $HasRelease << ToVisibility ] {
+                        TextBlock [ Text = "Release", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,6) ]
+                        Border [ Fill = @StateDangerSoft, Padding = (12,10,12,10), Margin = (0,0,0,16),
+                                 Visibility = $IsRejected << ToVisibility ] {
+                            StackPanel [ Orientation = Vertical ] {
+                                TextBlock [ Text = "Rejected on import: nothing about it is trusted, it records no image and it cannot be gated.", Foreground = @StateDangerInk, TextWrapping = Wrap ]
+                                TextBlock [ Text = $RejectedReason, Style = @Code, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,4,0,0) ]
                             }
-                            StackPanel [ Grid.Column = 1, Orientation = Vertical ] {
-                                TextBlock [ Text = "Digest", Style = @UiCaption, Foreground = @Fg2 ]
-                                TextBlock [ Text = $DigestLabel, Style = @Code, Foreground = @Fg0 ]
+                        }
+                        // Build provenance: only a verified release's is trusted (and present).
+                        Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,16),
+                                 Visibility = $IsVerified << ToVisibility ] {
+                            Grid {
+                                ColumnDefinitions {
+                                    ColumnDefinition [ Width = GridLength.Star ]
+                                    ColumnDefinition [ Width = GridLength.Star ]
+                                    ColumnDefinition [ Width = GridLength.Star ]
+                                    ColumnDefinition [ Width = GridLength.Star ]
+                                }
+                                StackPanel [ Grid.Column = 0, Orientation = Vertical ] {
+                                    TextBlock [ Text = "Verification", Style = @UiCaption, Foreground = @Fg2 ]
+                                    TextBlock [ Text = $VerificationLabel, Foreground = @Fg0 ]
+                                }
+                                StackPanel [ Grid.Column = 1, Orientation = Vertical ] {
+                                    TextBlock [ Text = "Built", Style = @UiCaption, Foreground = @Fg2 ]
+                                    TextBlock [ Text = $BuiltAtLabel, Style = @Code, Foreground = @Fg0 ]
+                                }
+                                StackPanel [ Grid.Column = 2, Orientation = Vertical ] {
+                                    TextBlock [ Text = "Server commit", Style = @UiCaption, Foreground = @Fg2 ]
+                                    TextBlock [ Text = $ServerCommitShort, Style = @Code, Foreground = @Fg0,
+                                                ToolTipService.ToolTip = $ServerCommit ]
+                                }
+                                StackPanel [ Grid.Column = 3, Orientation = Vertical ] {
+                                    TextBlock [ Text = "Signer key", Style = @UiCaption, Foreground = @Fg2 ]
+                                    TextBlock [ Text = $SigningKeyId, Style = @Code, Foreground = @Fg0 ]
+                                }
                             }
-                            StackPanel [ Grid.Column = 2, Orientation = Vertical ] {
-                                TextBlock [ Text = "Signature", Style = @UiCaption, Foreground = @Fg2 ]
-                                TextBlock [ Text = $SignatureLabel, Foreground = @Fg0 ]
+                        }
+
+                        StackPanel [ Orientation = Vertical, Visibility = $HasImages << ToVisibility ] {
+                            TextBlock [ Text = "Images", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,6) ]
+                            Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,16) ] {
+                                ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $ImageRows, ItemTemplate = @ReleaseImageRowTemplate ]
+                            }
+                        }
+
+                        StackPanel [ Orientation = Vertical, Visibility = $HasSiblingCommits << ToVisibility ] {
+                            TextBlock [ Text = "Sibling commits", Style = @UiLabel, Foreground = @Fg1, Margin = (0,0,0,6) ]
+                            Border [ Fill = @Bg1, Stroke = Pen [ Brush = @Border ], Padding = (12,10,12,10), Margin = (0,0,0,16) ] {
+                                ListBox [ Style = @PortalTableList, HorizontalAlignment = Stretch, ItemsSource = $SiblingCommitRows, ItemTemplate = @ReleaseSiblingCommitRowTemplate ]
                             }
                         }
                     }
@@ -201,31 +266,29 @@ resources ReleasesResources {
         }
     }
 
-    // Publish a version.
-    DataTemplate [ DataType = PublishDialogViewModel ] {
-        StackPanel [ Orientation = Vertical, Margin = (0,4,0,0) ] {
-            TextBlock [ Text = "The image is signed with the platform release key. Every hive verifies the signature and refuses an unsigned image.",
-                        TextWrapping = Wrap, Foreground = @Fg2, Margin = (0,0,0,12) ]
-            TextBlock [ Text = "Version", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ UsesNativeInput = true, Text = $Version, Placeholder = "e.g. 4.2.0", Margin = (0,0,0,12) ]
-            TextBlock [ Text = "Image", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ UsesNativeInput = true, Text = $Image, Placeholder = "e.g. registry.example/apps/capability-maps:4.2.0", Margin = (0,0,0,12) ]
-            TextBlock [ Text = "Channel", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            ComboBox [ ItemsSource = $Channels, SelectedItem = $SelectedChannel, HorizontalAlignment = Stretch, Margin = (0,0,0,4) ]
-            TextBlock [ Text = "Release Policy decides which hives may adopt from each channel.", Style = @UiCaption,
-                        Foreground = @Fg2, TextWrapping = Wrap, Margin = (0,0,0,12) ]
-            TextBlock [ Text = "What's new (shown to tenants, optional)", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ UsesNativeInput = true, Text = $Notes, AcceptsReturn = true, TextWrapping = Wrap, Margin = (0,0,0,12) ]
-            TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,12),
-                        Visibility = $ErrorText << ToVisibility ]
-            StackPanel [ Orientation = Horizontal, HorizontalAlignment = Right ] {
-                Button [ Variant = Secondary, Command = $CancelCommand, Margin = (0,0,8,0) ] {
-                    TextBlock [ Text = "Cancel" ]
-                }
-                Button [ Variant = Primary, Command = $ConfirmCommand ] {
-                    TextBlock [ Text = "Sign and publish" ]
-                }
+    // One image of a registry release: app, short digest (full on hover), repository.
+    DataTemplate x:key="ReleaseImageRowTemplate" [ DataType = ReleaseImageRowViewModel ] {
+        Grid [ Margin = (0,2,0,2) ] {
+            ColumnDefinitions {
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
             }
+            TextBlock [ Grid.Column = 0, Text = $App, Style = @Code, Foreground = @Fg0 ]
+            TextBlock [ Grid.Column = 1, Text = $DigestLabel, Style = @Code, Foreground = @Fg1, ToolTipService.ToolTip = $Digest ]
+            TextBlock [ Grid.Column = 2, Text = $Repository, Style = @Code, Foreground = @Fg2, TextWrapping = Wrap ]
+        }
+    }
+
+    // One sibling repository and its short commit (full on hover).
+    DataTemplate x:key="ReleaseSiblingCommitRowTemplate" [ DataType = ReleaseSiblingCommitRowViewModel ] {
+        Grid [ Margin = (0,2,0,2) ] {
+            ColumnDefinitions {
+                ColumnDefinition [ Width = GridLength.Star ]
+                ColumnDefinition [ Width = GridLength.Star ]
+            }
+            TextBlock [ Grid.Column = 0, Text = $Repo, Foreground = @Fg0 ]
+            TextBlock [ Grid.Column = 1, Text = $CommitShort, Style = @Code, Foreground = @Fg1, ToolTipService.ToolTip = $Commit ]
         }
     }
 }

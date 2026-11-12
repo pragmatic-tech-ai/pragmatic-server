@@ -94,6 +94,17 @@ describe('Activity section', () =>
         assert.equal(without.HasNote, false)
     })
 
+    it('a refresh from the registry is named as such; an old manual publish keeps its name', async () =>
+    {
+        const fx = new ActivityFixture()
+        fx.Api.Activity = [
+            { id: 'a5', actor: 'op@example.test', method: 'POST', path: '/api/releases/refresh', status: 200, at: '2026-11-12T09:15:00.000Z' },
+            { id: 'a4', actor: 'op@example.test', method: 'POST', path: '/api/manifests', status: 200, at: '2026-10-01T09:15:00.000Z' },
+        ]
+        const list = await fx.List()
+        assert.deepEqual(list.Rows.ToArray().map(r => r.ActionLabel), ['Refreshed releases from the registry', 'Published a version'])
+    })
+
     it('no entries -> Empty', async () =>
     {
         const fx = new ActivityFixture()
