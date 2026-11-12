@@ -304,7 +304,7 @@ The consolidated list of what a client or operator sees differently from the leg
 16. **Dead on-disk data (S17).** `applications/<app>/data/` (built-in documents, the `__shares` collection or `store.sqlite`) and any previously built environment instance are never read or imported; an operator may delete them.
 17. **`application/open` (S7, Q1).** Refuses an application without a live pointer (InvalidParams "no live application named ..."); binds only the app, which `data/write`, `data/share|unshare|shares/list` and `data/assign` require; it never narrows or widens the scope.
 18. **Owned-concept placement (R35, security S4 Task 9).** With identity, an owned concept created at runtime is stamped with the acting principal's `owner` and home business unit (`PrincipalFacts`); without identity nothing is stamped.
-19. **`FederatedModelDataConnector` stays in TODL (R60).** TODL's package generator still emits it (with `ConnectorWorkingCopy`) into connector-backed packages and connectors-host e2e uses it; the server no longer uses either. Retiring them needs a code-generation change.
+19. **`FederatedModelDataConnector` retired from TODL (R60, todl#27, todl 0.60.0).** The server never used it or `ConnectorWorkingCopy`; both are now deleted. TODL's package generator emits `BundledModelDataConnector` over the embedded shard for connector-backed models too (the environment engine re-derives connector resolution at runtime from the shard's connector/population metadata), and the connectors-host e2e was migrated onto the engine `DataSourceConnector` path.
 20. **Tier 2 is retired (A1 to A8)** and write-only members (hidden but writable) are unsupported; see the amendment above and "Dev graph behaviour changes" for the dev-side differences.
 
 ## Tests
