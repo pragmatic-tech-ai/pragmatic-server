@@ -1,7 +1,10 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ConnectionFailureKind, DataSourceKind, ReconnectingAdapter } from '@pragmatic-tech-ai/todl'
-import type { ExternalRecord, IDataSourceAdapter, IDataSourceAdapterFactory, IDataSourceContext, QueryRequest, ResolvedConnection, WriteResult } from '@pragmatic-tech-ai/todl'
+import { ConnectionFailureKind, DataSourceKind, ReconnectingAdapter, WriteAtomicity, WriteConcurrency } from '@pragmatic-tech-ai/todl'
+import type { ExternalRecord, IDataSourceAdapter, IDataSourceAdapterFactory, IDataSourceContext, QueryRequest, ResolvedConnection, WriteBatch, WriteResult } from '@pragmatic-tech-ai/todl'
+import { SqlAdapterFactory } from '@pragmatic-tech-ai/todl-connectors-host'
+import type { PgPoolOptions } from '@pragmatic-tech-ai/todl-connectors-host'
+import type { Pool } from 'pg'
 import { PresentedSecret, SourceToken, SourceTokenError, SourceTokenFailure, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecretStore, ISourceTokenProvider, SourceTokenRequest } from '@pragmatic-tech-ai/todl-identity'
 import { UpstreamTokens, UpstreamTokenVault } from '@pragmatic-tech-ai/todl-identity-cloud'
@@ -20,7 +23,10 @@ class TokenEchoAdapter implements IDataSourceAdapter
 
     public Disposed = false
     public AuthFails = false
+    public Applied = 0
     public readonly CanPage = true
+    /** An etag-style source when set (the factory's `ManagesVersions`). */
+    public SourceManagesVersions = false
     /** While set, reads wait on it (a call held in flight). */
     public Gate: Promise<void> | undefined
     public readonly Contexts: (string | undefined)[] = []
@@ -41,6 +47,7 @@ class TokenEchoAdapter implements IDataSourceAdapter
 
     public async Apply(): Promise<WriteResult>
     {
+        this.Applied++
         return { Applied: 0, Failures: [] }
     }
 
@@ -59,10 +66,12 @@ class EchoFactory implements IDataSourceAdapterFactory
 {
     public readonly Kind = DataSourceKind.Sql
     public readonly Opened: TokenEchoAdapter[] = []
+    public ManagesVersions = false
 
     public async Open(connection: ResolvedConnection): Promise<IDataSourceAdapter>
     {
         const adapter = new TokenEchoAdapter(connection.Secret)
+        adapter.SourceManagesVersions = this.ManagesVersions
         this.Opened.push(adapter)
         return adapter
     }
@@ -72,6 +81,45 @@ class EchoFactory implements IDataSourceAdapterFactory
     {
         return this.Opened.filter(adapter => adapter.Secret !== undefined)
     }
+}
+
+/** A pg pool stand-in for SqlAdapterFactory: records whether anything connected or queried, and whether it ended. */
+class RecordingPool
+{
+    public static readonly Built: RecordingPool[] = []
+
+    public Connects = 0
+    public Queries = 0
+    public Ended = false
+
+    public constructor(public readonly Options: PgPoolOptions)
+    {
+        RecordingPool.Built.push(this)
+    }
+
+    public static Builder(): (options: PgPoolOptions) => Pool
+    {
+        return options => new RecordingPool(options) as unknown as Pool
+    }
+
+    public async connect(): Promise<never>
+    {
+        this.Connects++
+        throw new Error(RecordingPool.NotConnectable)
+    }
+
+    public async query(): Promise<{ rows: unknown[] }>
+    {
+        this.Queries++
+        return { rows: [] }
+    }
+
+    public async end(): Promise<void>
+    {
+        this.Ended = true
+    }
+
+    private static readonly NotConnectable = 'the recording pool never connects'
 }
 
 class FakeTokens implements ISourceTokenProvider
@@ -157,6 +205,20 @@ class CallerFx
     public static readonly Fulfilled = 'fulfilled'
     private static readonly MaxTicks = 20
 
+    public static readonly Database = 'crm'
+    public static readonly VersionField = 'etag'
+
+    /** A caller's-identity SQL connection (what the built-in SqlAdapterFactory opens). */
+    public static SqlConnection(): ResolvedConnection
+    {
+        const connection = CallerFx.Connection(ConnectionCredentialMode.Caller)
+        return { ...connection, Config: { ...connection.Config, [CallerFx.DatabaseKey]: CallerFx.Database } }
+    }
+
+    private static readonly IdKey = 'id'
+    public static readonly Batch: WriteBatch = { Source: CallerFx.Source, IdKey: CallerFx.IdKey, Concurrency: WriteConcurrency.Optimistic, Atomicity: WriteAtomicity.Transactional, VersionField: CallerFx.VersionField, Operations: [] }
+    private static readonly DatabaseKey = 'database'
+
     public static Connection(mode: ConnectionCredentialMode | string | undefined): ResolvedConnection
     {
         const config: Record<string, string> = { [CallerCredentialAdapterFactory.TokenResourceKey]: CallerFx.Resource }
@@ -198,6 +260,37 @@ describe('caller credential adapter factory', () =>
         for (const opened of inner.Connected) assert.deepEqual(opened.Contexts, [opened.Secret === FakeTokens.TokenOf(CallerFx.Alice) ? CallerFx.Alice : CallerFx.Bob], 'each inner adapter serves only its own principal')
         assert.ok(inner.Opened.every(opened => opened.Secret !== CallerFx.AppSecret && opened.Secret !== undefined), 'never opened with the app credentials, nor without a caller\'s token')
         assert.equal(adapter.CanPage, true, 'the flags are latched from the first principal\'s inner adapter')
+    })
+
+    test('a built-in factory reports its capabilities before any call, without connecting (R36)', async () =>
+    {
+        RecordingPool.Built.length = 0
+        const adapter = await new CallerCredentialAdapterFactory(new SqlAdapterFactory(RecordingPool.Builder()), new FakeTokens(), CallerFx.Tenant).Open(CallerFx.SqlConnection())
+        // what TODL's DataSourceTransaction.Apply reads before a transactional write's first adapter call
+        assert.equal(adapter.CanTransact, true, 'a transactional write as the very first call is not refused')
+        assert.equal(adapter.CanPage, true)
+        const probe = RecordingPool.Built[0]!
+        assert.equal(RecordingPool.Built.length, 1)
+        assert.equal(probe.Options.password, undefined, 'the probe carries no secret (no app credentials)')
+        assert.deepEqual([probe.Connects, probe.Queries, probe.Ended], [0, 0, true], 'the probe never connected or queried, and was ended')
+        await adapter.Query(CallerFx.Request, CallerFx.Context(CallerFx.Alice))
+        const alices = RecordingPool.Built[1]!
+        assert.equal(alices.Options.password, FakeTokens.TokenOf(CallerFx.Alice), 'the read runs on a pool opened with alice\'s token')
+        assert.equal(alices.Queries, 1)
+        assert.equal(probe.Queries, 0)
+    })
+
+    test('a write that first learns the source manages versions is refused, never sent bumped (R36)', async () =>
+    {
+        const inner = new EchoFactory()
+        inner.ManagesVersions = true
+        const adapter = await new CallerCredentialAdapterFactory(inner, new FakeTokens(), CallerFx.Tenant).Open(CallerFx.Connection(ConnectionCredentialMode.Caller))
+        assert.equal(adapter.CanTransact, false, 'an unknown factory: TODL refuses a transactional write explicitly until a caller opened it')
+        await assert.rejects(adapter.Apply(CallerFx.Batch, CallerFx.Context(CallerFx.Alice)), (error: unknown) => error instanceof CallerCredentialError && error.Code === CallerCredentialErrorCode.CapabilitiesUnsettled)
+        assert.equal(inner.Connected[0]!.Applied, 0, 'nothing reached the source')
+        assert.equal(adapter.SourceManagesVersions, true, 'latched now')
+        await adapter.Apply(CallerFx.Batch, CallerFx.Context(CallerFx.Alice))
+        assert.equal(inner.Connected[0]!.Applied, 1, 'the next write goes through')
     })
 
     test('an unknown credential mode is refused, never read as dedicated', async () =>

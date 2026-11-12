@@ -286,6 +286,7 @@ describe('idp directory sync host', () =>
         {
             // a stored setting (the sync has something to ask about), then a restart: nothing connects to the new server
             await fx.Start({ Identity: true, SecurityModel: SyncStartFx.Setting })
+            assert.equal(await (await fx.Server.Pack()).IdpDirectory.Get(EnvironmentFixture.TenantId), null, 'no snapshot is stored before the restart')
             await fx.Server.Dispose()
             restarted = new PragmaticServer({
                 purpose: TenantPurpose.Runtime,

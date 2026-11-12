@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { ConnectionFailureKind } from '@pragmatic-tech-ai/todl'
 import type { AdapterResolutionRequest, DataSourceKind, ExternalRecord, IDataSourceAdapter, IDataSourceAdapterFactory, IDataSourceAdapterProvider, IDataSourceContext, PageQuery, PageSlice, QueryRequest, ResolvedConnection, WriteBatch, WriteResult } from '@pragmatic-tech-ai/todl'
+import { CypherAdapterFactory, DocumentAdapterFactory, RestAdapterFactory, SqlAdapterFactory } from '@pragmatic-tech-ai/todl-connectors-host'
 import { SourceTokenRequest } from '@pragmatic-tech-ai/todl-identity'
 import type { ISourceTokenProvider, Tenant } from '@pragmatic-tech-ai/todl-identity'
 
@@ -23,6 +24,11 @@ export enum CallerCredentialErrorCode
     PagingUnsupported = 3,
     /** The connection's `credentials` names no known mode (never read as dedicated: that would widen access). */
     UnknownCredentialMode = 4,
+    /**
+     * A write reached a connection whose capabilities were first learned by that very call and say the source manages
+     * its own versions: TODL's version bumping may already have bumped the batch, so it is refused, never sent.
+     */
+    CapabilitiesUnsettled = 5,
 }
 
 /** A caller's-identity connection refused a call; the message never carries a token. */
@@ -34,6 +40,7 @@ export class CallerCredentialError extends Error
         [CallerCredentialErrorCode.NoTokenResource]: 'a caller\'s-identity connection must name its token resource',
         [CallerCredentialErrorCode.PagingUnsupported]: 'the caller\'s-identity connection does not support paged reads',
         [CallerCredentialErrorCode.UnknownCredentialMode]: 'the connection names an unknown credential mode',
+        [CallerCredentialErrorCode.CapabilitiesUnsettled]: 'the caller\'s-identity connection learned its capabilities on this write; retry it',
     }
 
     public constructor(public readonly Code: CallerCredentialErrorCode)
@@ -88,8 +95,8 @@ class PrincipalConnection
     }
 }
 
-/** The flags a caller's-identity connection reports, latched from the first principal's inner adapter. */
-class Capabilities
+/** The flags a caller's-identity connection reports (known up front, or latched from the first principal's inner adapter). */
+export class Capabilities
 {
     public constructor(
         public readonly CanTransact: boolean,
@@ -116,9 +123,12 @@ class Capabilities
  * principals; the connection's own secret (app credentials) is never used, and no adapter is ever opened without a
  * caller's token. A missing or anonymous context, and a failed acquisition, fail the call.
  *
- * Capabilities: TODL's adapter contract has no static capability metadata, so the flags are latched from the first
- * principal's inner adapter (same connection config, so the same flags); before any caller opened it the connection
- * reports the weakest guarantee (all false).
+ * Capabilities (ruling R36): known when the factory gives them up front (CallerCredentialAdapterFactory: the built-in
+ * factories, read from an adapter opened without a secret, which they never connect or authenticate at); otherwise
+ * latched from the first principal's inner adapter (same connection config, so the same flags), reporting the weakest
+ * guarantee (all false) until then. TODL reads them live: before the latch a transactional write is refused explicitly
+ * (UnsupportedExternalChange) and a read is unpaged; a write whose own call latched `SourceManagesVersions` true is
+ * refused (`CapabilitiesUnsettled`), so a version bumped by TODL is never sent to a source that assigns its own.
  *
  * TODL's ReconnectingAdapter shares this adapter across callers and reopens it for everyone on an Auth (or repeated
  * Transient) classification, so every failure here is one caller's and is classified Permanent (ruling R28): no
@@ -132,7 +142,7 @@ export class CallerCredentialAdapter implements IDataSourceAdapter
     private static readonly DigestEncoding = 'hex'
 
     private readonly connections = new Map<string, Promise<PrincipalConnection>>()
-    private capabilities = Capabilities.None
+    private capabilities: Capabilities
     private disposed = false
 
     public constructor(
@@ -141,8 +151,10 @@ export class CallerCredentialAdapter implements IDataSourceAdapter
         private readonly tenant: Tenant,
         private readonly connection: ResolvedConnection,
         private readonly resource: string,
-        private readonly registry: Set<CallerCredentialAdapter>)
+        private readonly registry: Set<CallerCredentialAdapter>,
+        capabilities: Capabilities)
     {
+        this.capabilities = capabilities
     }
 
     public get CanTransact(): boolean
@@ -181,7 +193,13 @@ export class CallerCredentialAdapter implements IDataSourceAdapter
 
     public Apply(batch: WriteBatch, context?: IDataSourceContext): Promise<WriteResult>
     {
-        return this.Run(context, adapter => adapter.Apply(batch, context))
+        const unsettled = this.capabilities === Capabilities.None
+        return this.Run(context, adapter =>
+        {
+            // TODL's version bumping read SourceManagesVersions before this call latched it (R36 (a))
+            if (unsettled && this.capabilities.SourceManagesVersions) throw new CallerCredentialError(CallerCredentialErrorCode.CapabilitiesUnsettled)
+            return adapter.Apply(batch, context)
+        })
     }
 
     /** Always Permanent (never Auth, never Transient): see the class remarks. */
@@ -235,7 +253,8 @@ export class CallerCredentialAdapter implements IDataSourceAdapter
         catch (error)
         {
             // the source refused this caller's token: only this principal reconnects, nobody else's adapter is touched
-            if (connection.Adapter.ClassifyFailure?.(error) === ConnectionFailureKind.Auth) await this.Drop(key, connection)
+            // (a refusal of this adapter's own is not the source's: it is never classified by the inner adapter)
+            if (!(error instanceof CallerCredentialError) && connection.Adapter.ClassifyFailure?.(error) === ConnectionFailureKind.Auth) await this.Drop(key, connection)
             throw error
         }
         finally
@@ -340,6 +359,13 @@ export class CallerCredentialAdapterFactory implements IDataSourceAdapterFactory
 
     public readonly Kind: DataSourceKind
 
+    /**
+     * Factories whose Open neither connects nor authenticates (verified in connectors-host / TODL source, ruling R36):
+     * their capabilities are read from an adapter opened without a secret, disposed at once and never called. Any other
+     * factory (adapter packs, test sources) is never opened without a caller's token.
+     */
+    private static readonly LazyOpenFactories: readonly (abstract new (...args: never[]) => IDataSourceAdapterFactory)[] = [SqlAdapterFactory, RestAdapterFactory, CypherAdapterFactory, DocumentAdapterFactory]
+
     private readonly open = new Set<CallerCredentialAdapter>()
 
     public constructor(private readonly inner: IDataSourceAdapterFactory, private readonly tokens: ISourceTokenProvider, private readonly tenant: Tenant)
@@ -361,7 +387,7 @@ export class CallerCredentialAdapterFactory implements IDataSourceAdapterFactory
         if (CallerCredentialAdapterFactory.ModeOf(connection) === ConnectionCredentialMode.Dedicated) return this.inner.Open(connection)
         const resource = connection.Config[CallerCredentialAdapterFactory.TokenResourceKey]
         if (resource === undefined || resource.length === 0) throw new CallerCredentialError(CallerCredentialErrorCode.NoTokenResource)
-        const adapter = new CallerCredentialAdapter(this.inner, this.tokens, this.tenant, connection, resource, this.open)
+        const adapter = new CallerCredentialAdapter(this.inner, this.tokens, this.tenant, connection, resource, this.open, await this.KnownCapabilities(connection))
         this.open.add(adapter)
         return adapter
     }
@@ -370,6 +396,21 @@ export class CallerCredentialAdapterFactory implements IDataSourceAdapterFactory
     public async Forget(principalId: string): Promise<void>
     {
         await Promise.all([...this.open].map(adapter => adapter.Forget(principalId)))
+    }
+
+    /** A lazily-opening factory's flags for `connection` (a secret-less open, never called); else None (latched later). */
+    private async KnownCapabilities(connection: ResolvedConnection): Promise<Capabilities>
+    {
+        if (!CallerCredentialAdapterFactory.LazyOpenFactories.some(kind => this.inner instanceof kind)) return Capabilities.None
+        const probe = await this.inner.Open({ Kind: connection.Kind, Config: connection.Config })
+        try
+        {
+            return Capabilities.Of(probe)
+        }
+        finally
+        {
+            await probe.Dispose()
+        }
     }
 }
 

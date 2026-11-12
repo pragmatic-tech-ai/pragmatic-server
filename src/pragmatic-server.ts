@@ -986,8 +986,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
             const environmentScopes = await this.environmentScopes?.catch(() => undefined)
             environmentScopes?.dispose()
             // the directory sync host polls the setting: stop it before the setting goes
-            this.deprovisioned?.dispose()
+            // awaited first: a build still running would otherwise subscribe after the follow below is disposed
             const directorySync = await this.directorySync?.catch(() => undefined)
+            this.deprovisioned?.dispose()
             directorySync?.dispose()
             const setting = await this.securitySetting?.catch(() => undefined)
             setting?.dispose()
