@@ -105,6 +105,18 @@ Deleting a hive removes its agent from a cluster the control plane drives (an at
 
 An invalid PRAGMATIC_AGENT_CHANNEL_URL (not an absolute http or https URL) is ignored with a startup warning, and hive pages then report the channel as not configured.
 
+## Releases from the registry
+
+Releases are published to the registry by the release workflow; the control plane never publishes them. It discovers them by listing the signed release descriptors, verifies each new version (descriptor and every image signed by a trusted key, every image present at its signed digest) and imports it as verified or rejected. A Full operator triggers a refresh with `POST /api/releases/refresh`, which answers `{ imported, rejected, unchanged, shadowed }` (the versions imported or rejected, how many were already imported, and the versions hidden by a local manifest with the same id); it answers 409 when no registry is configured and 502 when the registry cannot be reached or refuses the credential. The control plane also refreshes on a poll, logging only the counts, or the failure sentence and carrying on. A refresh and the poll never run at once: a request that arrives during one gets its result. `GET /api/manifests` lists every version with its `release` provenance. Only the roles that serve operators (`all`, `admin`) compose the catalogue and the poll; the edge never reads these settings:
+
+- PRAGMATIC_RELEASE_CREDENTIAL_FILE: a JSON file `{ "username": "...", "token": "..." }` holding a registry credential that can read the release packages. Unset, there is no catalogue. A missing, unreadable or malformed file stops startup; the token is never logged or answered.
+- PRAGMATIC_RELEASE_REGISTRY: the registry API base URL (default `https://ghcr.io`).
+- PRAGMATIC_RELEASE_NAMESPACE: the namespace the release repositories live under (default `pragmatic-tech-ai`).
+- PRAGMATIC_RELEASE_TRUST_DIR: the directory of trusted release public keys, `<key id>.pub.pem` (default `release-keys` at the repository root; the platform-admin image carries it beside the compiled control plane).
+- PRAGMATIC_RELEASE_POLL_SECONDS: the poll interval (default 300; 0 turns the poll off). Anything but a whole number from 0 to 2147483 stops startup.
+
+The manual publish path (`manifest-publish.ts` and `POST /api/manifests`) is gone; versions published locally before remain in the catalogue.
+
 ## Create environments
 
 The Platform Admin portal no longer has environment screens; the /api/environments routes remain. Through them, create either a dev-blank environment (the name must be a lowercase slug, characters a-z, 0-9 and hyphen) or a demo-contoso environment (seeds the Contoso security model and four demo users). Each is a pragmatic-server:dev container on an allocated host port. Connect over HTTP at http://localhost:PORT and over WebSocket at ws://localhost:PORT/?environment=TENANT.

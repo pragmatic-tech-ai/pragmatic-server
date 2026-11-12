@@ -70,7 +70,8 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
 # ui-unpack all run from the tenant-admin compile. It emits only JavaScript, so the assets those modules read relative to
 # themselves are placed beside them here: the operator portal (admin/portal/dist) and the tenant portal
 # (admin/tenant-portal/dist) SPAs, the environment templates (TemplateCatalog), the Demo seed and the Northwind sample
-# (BundleBuilder / NorthwindApp.Compile).
+# (BundleBuilder / NorthwindApp.Compile), and the release trust keys (release-keys, the default PRAGMATIC_RELEASE_TRUST_DIR,
+# resolved two levels above the compiled control plane).
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd pragmatic-server && npm run build:tenant-admin \
     && cd admin/tenant-portal && npm install --no-audit --no-fund && npm run build \
@@ -85,7 +86,8 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
 RUN cd pragmatic-server \
     && mkdir -p dist-tenant-admin/environments \
     && cp -r environments/demo environments/dev environments/sample-apps dist-tenant-admin/environments/ \
-    && cp -r admin/control-plane/templates dist-tenant-admin/admin/control-plane/templates
+    && cp -r admin/control-plane/templates dist-tenant-admin/admin/control-plane/templates \
+    && cp -r release-keys dist-tenant-admin/release-keys
 
 # IdP sign-in app: the IdP daemon (dist/bin/pragmatic-idpd.js) serves idp-login/dist (the path IdpLoginPage resolves
 # relative to its own module) and refuses to start without it. Only the built dist is kept.

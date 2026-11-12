@@ -3,6 +3,12 @@ export class ReleaseRegistry
 {
     /** The registry every release image and descriptor is published to. */
     public static readonly DefaultHost = 'ghcr.io'
+    /** The registry namespace (organisation) every release repository lives under. */
+    public static readonly DefaultNamespace = 'pragmatic-tech-ai'
+    /** The scheme the registry's API is reached over when a host is named without one. */
+    public static readonly HttpsScheme = 'https://'
+    /** The default registry API base URL, `https://ghcr.io`. */
+    public static readonly DefaultBaseUrl = ReleaseRegistry.HttpsScheme + ReleaseRegistry.DefaultHost
     private static readonly PathSeparator = '/'
     private static readonly DigestSeparator = '@'
 

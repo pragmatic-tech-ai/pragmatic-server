@@ -8,7 +8,7 @@ import { DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerify
 import { InvalidEmailDomainError } from './email-domain-policy.js'
 import type { DomainVerificationAnswer } from './domain-verification-record.js'
 import type { HiveHealthDto } from './hive-health-producer.js'
-import { AgentUnauthorizedError, BodyTooLargeError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestNotGatedError, ManifestWithdrawnError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from './rollout-errors.js'
+import { AgentUnauthorizedError, BodyTooLargeError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestNotGatedError, ManifestWithdrawnError, ReleaseNotRunnableYetError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from './rollout-errors.js'
 
 /** The dedicated public listener for the hive agent channel: eight bearer-authenticated routes (target, snapshot, adoptable, status, adopt, ledger, console, console/verify-domain), nothing else. The console routes are mounted only when an advert receiver is given. */
 export class AgentChannelHost
@@ -429,9 +429,11 @@ export class AgentChannelHost
             PlaneHttp.WriteJson(res, AgentChannelHost.StatusUnavailable, { error: AgentChannelHost.UnavailableMessage })
             return
         }
-        // Intentionally route-agnostic: only the adopt route can raise a gating refusal or a release-policy refusal; the agent never learns which rule failed.
+        // Intentionally route-agnostic: only the adopt route can raise a gating refusal, a release-policy refusal or a registry
+        // release hives cannot run yet; the agent never learns which rule failed.
         if (err instanceof ManifestNotGatedError || err instanceof UnknownManifestError || err instanceof ManifestWithdrawnError ||
-            err instanceof TenantOnHoldError || err instanceof ChannelNotSubscribedError || err instanceof VersionBelowFloorError)
+            err instanceof TenantOnHoldError || err instanceof ChannelNotSubscribedError || err instanceof VersionBelowFloorError ||
+            err instanceof ReleaseNotRunnableYetError)
         {
             PlaneHttp.WriteJson(res, AgentChannelHost.StatusForbidden, { error: AgentChannelHost.AdoptRefusedMessage })
             return

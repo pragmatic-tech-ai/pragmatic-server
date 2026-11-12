@@ -155,7 +155,7 @@ describe('ControlPlaneHost audit edge cases', () =>
     {
         operator.Role = OperatorRole.ReadOnly
         host = await Harness.Build(parent, operator, new ThrowingAudit(join(parent, 'audit-throw.json')))
-        const res = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        const res = await Harness.Send(host, 'POST', '/api/clients', { id: 'c1', displayName: 'C1' })
         assert.equal(res.status, 403)
     })
 
@@ -163,7 +163,7 @@ describe('ControlPlaneHost audit edge cases', () =>
     {
         const audit = new HeldAudit(join(parent, 'audit.json'))
         host = await Harness.Build(parent, operator, audit)
-        const res = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        const res = await Harness.Send(host, 'POST', '/api/clients', { id: 'c1', displayName: 'C1' })
         assert.equal(res.status, 201)
         await audit.Entered
         const closed = host.Close().then(() => audit.Written)
@@ -197,19 +197,19 @@ describe('ControlPlaneHost operator action audit', () =>
 
     it('records one entry for an authorized mutation with the real status', async () =>
     {
-        const res = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        const res = await Harness.Send(host, 'POST', '/api/clients', { id: 'c1', displayName: 'C1' })
         assert.equal(res.status, 201)
         const recent = audit.Recent(10)
         assert.equal(recent.length, 1)
         assert.equal(recent[0]!.actor, 'op@example.com')
         assert.equal(recent[0]!.method, 'POST')
-        assert.equal(recent[0]!.path, '/api/manifests')
+        assert.equal(recent[0]!.path, '/api/clients')
         assert.equal(recent[0]!.status, 201)
     })
 
     it('records the handler rejection status', async () =>
     {
-        const res = await Harness.Send(host, 'POST', '/api/manifests', {})
+        const res = await Harness.Send(host, 'POST', '/api/clients', {})
         assert.equal(res.status, 400)
         const recent = audit.Recent(10)
         assert.equal(recent.length, 1)
@@ -226,7 +226,7 @@ describe('ControlPlaneHost operator action audit', () =>
     it('records a 403 for a ReadOnly-denied mutation', async () =>
     {
         operator.Role = OperatorRole.ReadOnly
-        const res = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        const res = await Harness.Send(host, 'POST', '/api/clients', { id: 'c1', displayName: 'C1' })
         assert.equal(res.status, 403)
         const recent = audit.Recent(10)
         assert.equal(recent.length, 1)
@@ -236,7 +236,7 @@ describe('ControlPlaneHost operator action audit', () =>
 
     it('records a 401 as (anonymous) for an unauthenticated mutation', async () =>
     {
-        const res = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' }, false)
+        const res = await Harness.Send(host, 'POST', '/api/clients', { id: 'c1', displayName: 'C1' }, false)
         assert.equal(res.status, 401)
         const recent = audit.Recent(10)
         assert.equal(recent.length, 1)
@@ -258,14 +258,14 @@ describe('ControlPlaneHost operator action audit', () =>
 
     it('audits a successful mutation exactly once', async () =>
     {
-        const res = await Harness.Send(host, 'POST', '/api/manifests', { version: '3.0.0', image: 'img:3' })
+        const res = await Harness.Send(host, 'POST', '/api/clients', { id: 'c3', displayName: 'C3' })
         assert.equal(res.status, 201)
         assert.equal(audit.Recent(10).length, 1)
     })
 
     it('audits a bad-origin 403 as (anonymous)', async () =>
     {
-        const res = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' }, true, { origin: 'http://evil.example' })
+        const res = await Harness.Send(host, 'POST', '/api/clients', { id: 'c1', displayName: 'C1' }, true, { origin: 'http://evil.example' })
         assert.equal(res.status, 403)
         const recent = audit.Recent(10)
         assert.equal(recent.length, 1)
@@ -275,11 +275,11 @@ describe('ControlPlaneHost operator action audit', () =>
 
     it('serves GET /api/activity newest-first and honors limit', async () =>
     {
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await Harness.Send(host, 'POST', '/api/clients', { id: 'c1', displayName: 'C1' })
         await new Promise(r => setTimeout(r, 5))
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '2.0.0', image: 'img:2' })
+        await Harness.Send(host, 'POST', '/api/clients', { id: 'c2', displayName: 'C2' })
         await new Promise(r => setTimeout(r, 5))
-        await Harness.Send(host, 'POST', '/api/manifests', {})
+        await Harness.Send(host, 'POST', '/api/clients', {})
         const res = await Harness.Send(host, 'GET', '/api/activity?limit=2')
         assert.equal(res.status, 200)
         const rows = JSON.parse(res.body) as AuditRecord[]
@@ -291,7 +291,7 @@ describe('ControlPlaneHost operator action audit', () =>
 
     it('stores no query string and no body field', async () =>
     {
-        await Harness.Send(host, 'POST', '/api/manifests?token=s3cret', { version: '1.0.0', image: 'img:1', notes: 'hunter2' })
+        await Harness.Send(host, 'POST', '/api/clients?token=s3cret', { id: 'c1', displayName: 'hunter2' })
         const entry = audit.Recent(1)[0]!
         assert.deepEqual(Object.keys(entry).sort(), ['actor', 'at', 'id', 'method', 'path', 'status'])
         assert.ok(!entry.path.includes('?'))
@@ -300,8 +300,8 @@ describe('ControlPlaneHost operator action audit', () =>
 
     it('a non-hive write sent with force=true is audited without any query (the marker is for hive deletes only)', async () =>
     {
-        await Harness.Send(host, 'POST', '/api/manifests?force=true&token=s3cret', { version: '1.0.0', image: 'img:1' })
-        assert.equal(audit.Recent(1)[0]!.path, '/api/manifests')
+        await Harness.Send(host, 'POST', '/api/clients?force=true&token=s3cret', { id: 'c1', displayName: 'C1' })
+        assert.equal(audit.Recent(1)[0]!.path, '/api/clients')
     })
 
     it('swallows an audit failure without changing the response', async () =>
@@ -309,7 +309,7 @@ describe('ControlPlaneHost operator action audit', () =>
         await host.Close()
         const throwing = new ThrowingAudit(join(parent, 'audit-throw.json'))
         host = await Harness.Build(join(parent, 'b'), operator, throwing)
-        const res = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        const res = await Harness.Send(host, 'POST', '/api/clients', { id: 'c1', displayName: 'C1' })
         assert.equal(res.status, 201)
     })
 })
@@ -336,23 +336,23 @@ describe('ControlPlaneHost pre-auth audit throttle', () =>
     it('trips to 429 with Retry-After after maxHits anonymous mutations', async () =>
     {
         host = await Harness.Build(parent, new FakeOperator(), audit, new AuditThrottle({ maxHits: 1 }))
-        const body = { version: '1.0.0', image: 'img:1' }
-        const first = await Harness.Send(host, 'POST', '/api/manifests', body, false)
-        const second = await Harness.Send(host, 'POST', '/api/manifests', body, false)
-        const third = await Harness.Send(host, 'POST', '/api/manifests', body, false)
+        const body = { id: 'c1', displayName: 'C1' }
+        const first = await Harness.Send(host, 'POST', '/api/clients', body, false)
+        const second = await Harness.Send(host, 'POST', '/api/clients', body, false)
+        const third = await Harness.Send(host, 'POST', '/api/clients', body, false)
         assert.equal(first.status, 401)
         assert.equal(second.status, 401)
         assert.equal(third.status, 429)
         assert.ok(Number(third.headers['retry-after']) > 0)
-        const anonymous = audit.Recent(10).filter(r => r.actor === AuditRegistry.AnonymousActor && r.path === '/api/manifests')
+        const anonymous = audit.Recent(10).filter(r => r.actor === AuditRegistry.AnonymousActor && r.path === '/api/clients')
         assert.equal(anonymous.length, 2)
     })
 
     it('never throttles an authorized operator', async () =>
     {
         host = await Harness.Build(parent, new FakeOperator(), audit, new AuditThrottle({ maxHits: 1 }))
-        await Harness.Send(host, 'POST', '/api/manifests', {}, false)
-        const res = await Harness.Send(host, 'POST', '/api/manifests', {})
+        await Harness.Send(host, 'POST', '/api/clients', {}, false)
+        const res = await Harness.Send(host, 'POST', '/api/clients', {})
         assert.equal(res.status, 400)
     })
 
@@ -371,7 +371,7 @@ describe('ControlPlaneHost pre-auth audit throttle', () =>
         host = await Harness.Build(parent, new FakeOperator(), audit)
         for (let i = 0; i < 5; i++)
         {
-            const res = await Harness.Send(host, 'POST', '/api/manifests', {}, false)
+            const res = await Harness.Send(host, 'POST', '/api/clients', {}, false)
             assert.equal(res.status, 401)
         }
     })

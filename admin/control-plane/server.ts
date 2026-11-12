@@ -91,7 +91,8 @@ import type { TenantPlane } from './tenant-auth/tenant-plane.js'
 import type { IEnvironmentService } from './control-plane-host.js'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 import type { IRolloutClient } from './tenant-api/rollout-client.js'
-import { ControlPlaneRoles, ControlPlaneStart, type IControlPlaneListenerStarts } from './control-plane-role.js'
+import { ControlPlaneRoles, ControlPlaneStart, type ControlPlaneRole, type IControlPlaneListenerStarts } from './control-plane-role.js'
+import { ReleaseCatalogConfig, type ReleaseServices } from './release/release-catalog-config.js'
 
 /** The composed tenant listener, its port/bind already validated (so a bad tenant port fails before any socket binds). */
 interface ITenantPlaneStart
@@ -315,6 +316,9 @@ export class ControlPlaneServer
             await accountIndex.BackfillFrom(directory)
         }
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(signing.PlatformSigner.KeyRef, dataRoot, signing.ImageSigner), policies, ledger)
+        // The release catalogue and its poll are operator-side: composed (and their settings validated) before any listener
+        // starts, and never by the edge.
+        const releases = ControlPlaneServer.ReleasesOf(role, process.env, join(here, TenantPlaneComposer.ParentSegment, TenantPlaneComposer.ParentSegment), deployments)
         const agentChannelUrlRaw = process.env[ControlPlaneServer.AgentChannelUrlEnvVar]
         const agentChannelUrl = ControlPlaneServer.AgentChannelUrl(agentChannelPort, agentChannelUrlRaw)
         if (agentChannelPort !== ControlPlaneServer.AgentChannelDisabled && agentChannelUrl === undefined)
@@ -351,7 +355,7 @@ export class ControlPlaneServer
             new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)), agentChannelUrl, new SystemInstallClock(), adverts, ownerResets)
         // Daily DNS re-check of verified domains (after approvals.Load; its interval timer is unref'd, so no shutdown hook).
         new DomainVerificationRechecker(approvals, domainVerifier).Start()
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery, consoleInstaller, adverts, approvals, emailDomains)
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery, consoleInstaller, adverts, approvals, emailDomains, releases?.Refresher)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
             masterKey, adminClientRegistry, TenantPlaneComposer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]), tenantSessions, principalSessions,
@@ -384,6 +388,17 @@ export class ControlPlaneServer
         }
         // The admin role still derives the channel URL above (hive bundles point at the edge) but does not listen on it.
         await new ControlPlaneStart(role).Run(new ComposedListeners({ host, port, tenant: tenantStart }, channelStart))
+        // The poll's timer is unref'd, so it never holds the process open and needs no shutdown hook.
+        releases?.Poll?.Start()
+    }
+
+    /**
+     * The release catalogue (POST /api/releases/refresh) and its periodic poll, for roles that serve operators only: the edge
+     * never reads the release settings. Undefined there, and when no credential file is configured.
+     */
+    public static ReleasesOf(role: ControlPlaneRole, env: NodeJS.ProcessEnv, repoRoot: string, deployments: PlatformDeploymentRegistry): ReleaseServices | undefined
+    {
+        return ControlPlaneRoles.ServesOperators(role) ? ReleaseCatalogConfig.Compose(env, repoRoot, deployments) : undefined
     }
 
     /** Pure: derives operator-identity compose options and cookie policy from the environment. */

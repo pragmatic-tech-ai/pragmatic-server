@@ -64,7 +64,8 @@ import { UnsupportedBackendError } from './hive-orchestrator.js'
 import { KubectlError, PortForwardError } from './kubectl.js'
 import type { HiveRolloutStatus, PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import type { ManifestRecord } from './manifest-record.js'
-import { BodyTooLargeError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, ManifestWithdrawnError, PolicyStoreUnavailableError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from './rollout-errors.js'
+import { BodyTooLargeError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, ManifestWithdrawnError, PolicyStoreUnavailableError, ReleaseNotRunnableYetError, ReleaseRegistryUnavailableError, ReleaseRejectedError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from './rollout-errors.js'
+import type { ReleaseRefresher } from './release/release-refresher.js'
 import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
 import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityCatalogDto, SecurityChangesDto, SecurityModelDto, TeamMemberDto, TokenIssuedDto, ServiceTokenSummaryDto, IssueTokenParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { LoginThrottle } from './login-throttle.js'
@@ -319,6 +320,8 @@ export class ControlPlaneHost
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.ObservationsSegment + '$')
     private static readonly ManifestsSegment = 'manifests'
     private static readonly ManifestsPath = ControlPlaneHost.ApiPrefix + ControlPlaneHost.ManifestsSegment
+    private static readonly ReleasesRefreshPath = ControlPlaneHost.ApiPrefix + 'releases/refresh'
+    private static readonly ReleasesNotConfiguredMessage = 'The release registry is not configured.'
     private static readonly WithdrawnSegment = 'withdrawn'
     private static readonly ManifestWithdrawnPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.ManifestsSegment + '/([^/]+)/' + ControlPlaneHost.WithdrawnSegment + '$')
@@ -358,9 +361,6 @@ export class ControlPlaneHost
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.PolicySegment + '/(' +
         [ControlPlaneHost.ChannelsSegment, ControlPlaneHost.MinVersionSegment, ControlPlaneHost.HoldSegment].join('|') + ')$')
     private static readonly VersionRequiredMessage = 'version (non-empty string) is required'
-    private static readonly ImageRequiredMessage = 'image (non-empty string) is required'
-    private static readonly NotesInvalidMessage = 'notes must be a string'
-    private static readonly ChannelInvalidMessage = 'channel must be one of: stable, early'
     private static readonly ChannelsInvalidMessage = 'channels must be an array of: stable, early'
     private static readonly ChannelValues: readonly string[] = Object.values(Channel)
     private static readonly ReasonRequiredMessage = 'reason (non-empty string) is required'
@@ -477,6 +477,11 @@ export class ControlPlaneHost
         [VersionBelowFloorError, ControlPlaneHost.StatusConflict],
         [PolicyStoreUnavailableError, ControlPlaneHost.StatusInternal],
         [ManifestExistsError, ControlPlaneHost.StatusConflict],
+        // Registry releases: a rejected one can never be gated, a verified one cannot be run by hives yet (each a plain
+        // sentence); a registry that is down or refuses the credential is a bad gateway with its fixed, token-free sentence.
+        [ReleaseRejectedError, ControlPlaneHost.StatusConflict],
+        [ReleaseNotRunnableYetError, ControlPlaneHost.StatusConflict],
+        [ReleaseRegistryUnavailableError, ControlPlaneHost.StatusBadGateway],
         [HiveNotRegisteredError, PlaneHttp.StatusNotFound],
         [UnknownHiveError, PlaneHttp.StatusNotFound],
         [AgentInstallUnavailableError, ControlPlaneHost.StatusConflict],
@@ -515,6 +520,8 @@ export class ControlPlaneHost
         [DomainVerifyThrottledError, ControlPlaneHost.StatusTooManyRequests],
         [DomainVerificationUnavailableError, ControlPlaneHost.StatusUnavailable],
     ])
+    /** 5xx errors whose message is a fixed sentence safe to show, so they are answered as mapped instead of masked as a generic 500. */
+    private static readonly UnmaskedServerErrors: ReadonlySet<ErrorCtor> = new Set<ErrorCtor>([ReleaseRegistryUnavailableError])
 
     private httpServer: HttpServer | undefined
     private wsServer: WebSocketServer | undefined
@@ -575,7 +582,9 @@ export class ControlPlaneHost
         /** Email-domain standing per tenant (approvals, revokes, verification tokens); forgotten with the tenant only (it belongs to the tenant, not a hive). */
         private readonly approvals?: ConsoleDomainApprovals,
         /** Tenant email domains, their approvals, revokes and verification (/api/tenants/ID/email-domains); undefined leaves those routes unmounted. */
-        private readonly emailDomains?: PlatformEmailDomains)
+        private readonly emailDomains?: PlatformEmailDomains,
+        /** Refreshes the release catalogue from the registry (POST /api/releases/refresh); undefined when no registry is configured (409). */
+        private readonly releases?: ReleaseRefresher)
     {
         this.allowedHosts = new Set([...ControlPlaneHost.DefaultAllowedHosts, ...allowedHosts.map(h => h.toLowerCase())])
         this.staticRootAbs = resolve(staticRoot)
@@ -1069,14 +1078,15 @@ export class ControlPlaneHost
             await this.HandleProvision(req, res)
             return true
         }
-        if (path === ControlPlaneHost.ManifestsPath)
+        if (path === ControlPlaneHost.ManifestsPath && method === PlaneHttp.MethodGet)
         {
-            if (method === PlaneHttp.MethodGet)
-            {
-                PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, [...this.deployments.AllManifests()])
-                return true
-            }
-            return await this.RoutePublishManifest(req, res, method)
+            PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, [...this.deployments.AllManifests()])
+            return true
+        }
+        if (path === ControlPlaneHost.ReleasesRefreshPath && method === PlaneHttp.MethodPost)
+        {
+            await this.HandleReleasesRefresh(res)
+            return true
         }
         const mwm = ControlPlaneHost.ManifestWithdrawnPathPattern.exec(path)
         if (mwm !== null)
@@ -1819,42 +1829,19 @@ export class ControlPlaneHost
         return true
     }
 
-    /** Serves POST /api/manifests: publishes a version/image pair; false for any other method. */
-    private async RoutePublishManifest(req: IncomingMessage, res: ServerResponse, method: string): Promise<boolean>
+    /**
+     * Serves POST /api/releases/refresh (Full-only through the central gate): imports every new registry release and
+     * answers the refresh counts. 409 when no registry is configured; a registry that is down or refuses the credential
+     * answers 502 with its fixed sentence (WriteError). Concurrent calls and the poll share one refresh.
+     */
+    private async HandleReleasesRefresh(res: ServerResponse): Promise<void>
     {
-        if (method !== PlaneHttp.MethodPost)
+        if (this.releases === undefined)
         {
-            return false
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.ReleasesNotConfiguredMessage })
+            return
         }
-        const body = await this.ReadJsonObject(req, res)
-        if (body === undefined)
-        {
-            return true
-        }
-        if (!ControlPlaneHost.NonEmpty(body.version))
-        {
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.VersionRequiredMessage })
-            return true
-        }
-        if (!ControlPlaneHost.NonEmpty(body.image))
-        {
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ImageRequiredMessage })
-            return true
-        }
-        if (!ControlPlaneHost.OptionalString(body.notes))
-        {
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.NotesInvalidMessage })
-            return true
-        }
-        const channel = body.channel
-        if (channel !== undefined && !ControlPlaneHost.ChannelValues.includes(channel as string))
-        {
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusBadRequest, { error: ControlPlaneHost.ChannelInvalidMessage })
-            return true
-        }
-        const manifest: ManifestDto = await this.deployments.Publish(body.version as string, body.image as string, body.notes as string | undefined, channel as Channel | undefined)
-        PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, manifest)
-        return true
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.releases.Refresh())
     }
 
     /** Serves POST /api/manifests/:version/withdrawn (withdraw) and DELETE (restore); 404 for an unknown version, false for any other method. */
@@ -2967,7 +2954,8 @@ export class ControlPlaneHost
             return
         }
         const status = this.StatusFor(err)
-        if (status === undefined || status >= ControlPlaneHost.StatusInternal && status !== ControlPlaneHost.StatusUnavailable)
+        if (status === undefined || status >= ControlPlaneHost.StatusInternal && status !== ControlPlaneHost.StatusUnavailable
+            && !ControlPlaneHost.UnmaskedServerErrors.has((err as Error).constructor as ErrorCtor))
         {
             console.error(ControlPlaneHost.LogPrefix, err)
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusInternal, { error: ControlPlaneHost.OperationFailedMessage })

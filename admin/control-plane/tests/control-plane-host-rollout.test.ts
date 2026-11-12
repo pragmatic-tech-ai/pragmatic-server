@@ -14,6 +14,7 @@ import { PlatformDirectory } from '../platform-directory.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
+import { Channel } from '../channel.js'
 import { RolloutFixture } from './rollout-fixture.js'
 
 type Reply = { status: number; body: string }
@@ -125,11 +126,9 @@ describe('ControlPlaneHost rollout routes', () =>
         rmSync(parent, { recursive: true, force: true })
     })
 
-    it('publishes a manifest, and lists it for a tenant only once gated', async () =>
+    it('lists a published manifest for a tenant only once gated', async () =>
     {
-        const published = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1', notes: 'first' })
-        assert.equal(published.status, 201)
-        assert.equal((JSON.parse(published.body) as { id: string }).id, '1.0.0')
+        await deployments.Publish('1.0.0', 'img:1', 'first')
         const before = await Harness.Send(host, 'GET', '/api/tenants/t1/manifests')
         assert.equal(before.status, 200)
         assert.deepEqual(JSON.parse(before.body), [])
@@ -145,7 +144,7 @@ describe('ControlPlaneHost rollout routes', () =>
 
     it('DELETE of a version that is not gated is idempotent: 204 and the tenant listing is unchanged', async () =>
     {
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await deployments.Publish('1.0.0', 'img:1')
         const never = await Harness.Send(host, 'DELETE', '/api/tenants/t1/gating/1.0.0')
         assert.equal(never.status, 204)
         const unknown = await Harness.Send(host, 'DELETE', '/api/tenants/t1/gating/9.9.9')
@@ -155,7 +154,7 @@ describe('ControlPlaneHost rollout routes', () =>
 
     it('lists [] with 200 for a tenant id that does not exist', async () =>
     {
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await deployments.Publish('1.0.0', 'img:1')
         await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
         const reply = await Harness.Send(host, 'GET', '/api/tenants/no-such-tenant/manifests')
         assert.equal(reply.status, 200)
@@ -164,7 +163,7 @@ describe('ControlPlaneHost rollout routes', () =>
 
     it('withdraws and restores a published version through the operator route, surfacing on the tenant listing', async () =>
     {
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await deployments.Publish('1.0.0', 'img:1')
         await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
         const withdrawn = await Harness.Send(host, 'POST', '/api/manifests/1.0.0/withdrawn', { reason: 'bad build' })
         assert.equal(withdrawn.status, 200)
@@ -183,8 +182,8 @@ describe('ControlPlaneHost rollout routes', () =>
         const empty = await Harness.Send(host, 'GET', '/api/manifests')
         assert.equal(empty.status, 200)
         assert.deepEqual(JSON.parse(empty.body), [])
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '2.0.0', image: 'img:2' })
+        await deployments.Publish('1.0.0', 'img:1')
+        await deployments.Publish('2.0.0', 'img:2')
         await Harness.Send(host, 'POST', '/api/manifests/2.0.0/withdrawn', { reason: 'r' })
         const listed = await Harness.Send(host, 'GET', '/api/manifests')
         assert.equal(listed.status, 200)
@@ -199,8 +198,8 @@ describe('ControlPlaneHost rollout routes', () =>
         const empty = await Harness.Send(host, 'GET', '/api/gating')
         assert.equal(empty.status, 200)
         assert.deepEqual(JSON.parse(empty.body), [])
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '2.0.0', image: 'img:2' })
+        await deployments.Publish('1.0.0', 'img:1')
+        await deployments.Publish('2.0.0', 'img:2')
         await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
         await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '2.0.0' })
         const listed = await Harness.Send(host, 'GET', '/api/gating')
@@ -215,7 +214,7 @@ describe('ControlPlaneHost rollout routes', () =>
         const empty = await Harness.Send(host, 'GET', '/api/selections')
         assert.equal(empty.status, 200)
         assert.deepEqual(JSON.parse(empty.body), [])
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await deployments.Publish('1.0.0', 'img:1')
         await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
         await deployments.SelectTarget('local1', '1.0.0')
         const listed = await Harness.Send(host, 'GET', '/api/selections')
@@ -234,7 +233,7 @@ describe('ControlPlaneHost rollout routes', () =>
 
     it('reports global rollout status on GET /api/rollouts, flagging an env running a stale image obsolete', async () =>
     {
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await deployments.Publish('1.0.0', 'img:1')
         await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
         await deployments.SelectTarget('local1', '1.0.0')
         await deployments.ReportSnapshot('local1', [{ environmentName: 'prod', runningImage: 'img:0', ready: true, detail: 'ok' }])
@@ -249,7 +248,7 @@ describe('ControlPlaneHost rollout routes', () =>
 
     it('reports an env running the target image and ready as not obsolete', async () =>
     {
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await deployments.Publish('1.0.0', 'img:1')
         await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
         await deployments.SelectTarget('local1', '1.0.0')
         await deployments.ReportSnapshot('local1', [{ environmentName: 'prod', runningImage: 'img:1', ready: true, detail: 'ok' }])
@@ -272,7 +271,7 @@ describe('ControlPlaneHost rollout routes', () =>
 
     it('exposes exactly the documented keys on GET /api/rollouts and leaks nothing else', async () =>
     {
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await deployments.Publish('1.0.0', 'img:1')
         await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
         await deployments.SelectTarget('local1', '1.0.0')
         await deployments.ReportSnapshot('local1', [{ environmentName: 'prod', runningImage: 'img:1', ready: true, detail: 'secret-detail' }])
@@ -290,31 +289,18 @@ describe('ControlPlaneHost rollout routes', () =>
         assert.equal((await Harness.Send(host, 'GET', '/api/rollouts', undefined, false)).status, 401)
     })
 
-    it('publish accepts a channel and passes it through', async () =>
+    it('lists each manifest with its channel on GET /api/manifests (stable unless published to another)', async () =>
     {
-        const r = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1', channel: 'early' })
-        assert.equal(r.status, 201)
+        await deployments.Publish('1.0.0', 'img:1')
+        await deployments.Publish('2.0.0', 'img:2', undefined, Channel.EarlyAccess)
         const all = JSON.parse((await Harness.Send(host, 'GET', '/api/manifests')).body) as { id: string; channel?: string }[]
-        assert.equal(all.find(m => m.id === '1.0.0')!.channel, 'early')
-    })
-
-    it('publish rejects an invalid channel', async () =>
-    {
-        const r = await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1', channel: 'beta' })
-        assert.equal(r.status, 400)
-        assert.deepEqual(JSON.parse((await Harness.Send(host, 'GET', '/api/manifests')).body), [])
-    })
-
-    it('publish without a channel defaults to stable', async () =>
-    {
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
-        const all = JSON.parse((await Harness.Send(host, 'GET', '/api/manifests')).body) as { channel?: string }[]
-        assert.equal(all[0]!.channel, 'stable')
+        assert.equal(all.find(m => m.id === '1.0.0')!.channel, 'stable')
+        assert.equal(all.find(m => m.id === '2.0.0')!.channel, 'early')
     })
 
     it('withdraw requires a non-empty reason', async () =>
     {
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await deployments.Publish('1.0.0', 'img:1')
         assert.equal((await Harness.Send(host, 'POST', '/api/manifests/1.0.0/withdrawn')).status, 400)
         assert.equal((await Harness.Send(host, 'POST', '/api/manifests/1.0.0/withdrawn', {})).status, 400)
         assert.equal((await Harness.Send(host, 'POST', '/api/manifests/1.0.0/withdrawn', { reason: '  ' })).status, 400)
@@ -324,7 +310,7 @@ describe('ControlPlaneHost rollout routes', () =>
 
     it('withdraw records the reason and the session actor, and restore clears it', async () =>
     {
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await deployments.Publish('1.0.0', 'img:1')
         const w = await Harness.Send(host, 'POST', '/api/manifests/1.0.0/withdrawn', { reason: 'bad build' })
         assert.equal(w.status, 200)
         const rec = JSON.parse(w.body) as { withdrawal?: { reason: string; actor: string } }
@@ -335,11 +321,10 @@ describe('ControlPlaneHost rollout routes', () =>
         assert.equal((JSON.parse(restored.body) as { withdrawal?: unknown }).withdrawal, undefined)
     })
 
-    it('a non-Full operator is still 403 on publish and withdraw', async () =>
+    it('a non-Full operator is still 403 on withdraw', async () =>
     {
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await deployments.Publish('1.0.0', 'img:1')
         operator.Role = OperatorRole.ReadOnly
-        assert.equal((await Harness.Send(host, 'POST', '/api/manifests', { version: '2.0.0', image: 'img:2' })).status, 403)
         assert.equal((await Harness.Send(host, 'POST', '/api/manifests/1.0.0/withdrawn', { reason: 'x' })).status, 403)
     })
 
@@ -350,7 +335,7 @@ describe('ControlPlaneHost rollout routes', () =>
 
     it('no longer selects a target from the operator plane, and reports the rollout status', async () =>
     {
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await deployments.Publish('1.0.0', 'img:1')
         await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
         const selected = await Harness.Send(host, 'POST', '/api/hives/local1/target', { version: '1.0.0' })
         assert.equal(selected.status, 404)
@@ -388,7 +373,7 @@ describe('ControlPlaneHost rollout routes', () =>
     it('challenges every rollout route with 401 when unauthenticated', async () =>
     {
         const calls: [string, string, unknown][] = [
-            ['POST', '/api/manifests', { version: 'v', image: 'i' }],
+            ['POST', '/api/releases/refresh', undefined],
             ['POST', '/api/manifests/v/withdrawn', undefined],
             ['DELETE', '/api/manifests/v/withdrawn', undefined],
             ['GET', '/api/tenants/t1/manifests', undefined],
@@ -403,16 +388,10 @@ describe('ControlPlaneHost rollout routes', () =>
         }
     })
 
-    it('maps an unknown manifest to 404, and a duplicate publish to 409', async () =>
+    it('maps gating an unknown manifest to 404', async () =>
     {
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '2.0.0', image: 'img:2' })
+        await deployments.Publish('2.0.0', 'img:2')
         assert.equal((await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '9.9.9' })).status, 404)
-        assert.equal((await Harness.Send(host, 'POST', '/api/manifests', { version: '2.0.0', image: 'img:2' })).status, 409)
-    })
-
-    it('rejects a malformed publish body with 400', async () =>
-    {
-        assert.equal((await Harness.Send(host, 'POST', '/api/manifests', { version: '3.0.0' })).status, 400)
     })
 
     it('lists release policies on GET /api/policies and persists channels set through the operator route', async () =>
@@ -511,7 +490,7 @@ describe('ControlPlaneHost rollout routes', () =>
 
     it('omits a policy-blocked gated version from the tenant manifest listing', async () =>
     {
-        await Harness.Send(host, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        await deployments.Publish('1.0.0', 'img:1')
         await Harness.Send(host, 'POST', '/api/tenants/t1/gating', { version: '1.0.0' })
         assert.equal((JSON.parse((await Harness.Send(host, 'GET', '/api/tenants/t1/manifests')).body) as unknown[]).length, 1)
         await Harness.Send(host, 'POST', '/api/manifests/1.0.0/withdrawn', { reason: 'bad' })

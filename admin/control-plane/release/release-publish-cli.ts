@@ -41,9 +41,9 @@ export class ReleasePublishCli
     private static readonly EnvToken = 'RELEASE_REGISTRY_TOKEN'
     private static readonly EnvRegistry = 'RELEASE_REGISTRY'
     private static readonly EnvNamespace = 'RELEASE_NAMESPACE'
-    private static readonly DefaultNamespace = 'pragmatic-tech-ai'
+    private static readonly DefaultNamespace = ReleaseRegistry.DefaultNamespace
     private static readonly SchemeMarker = '://'
-    private static readonly HttpsScheme = 'https://'
+    private static readonly HttpsScheme = ReleaseRegistry.HttpsScheme
     private static readonly Utf8 = 'utf8'
     private static readonly OkExitCode = 0
     private static readonly FailExitCode = 1

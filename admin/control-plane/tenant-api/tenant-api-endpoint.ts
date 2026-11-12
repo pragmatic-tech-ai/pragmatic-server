@@ -12,7 +12,7 @@ import type { ITenantDirectory } from './tenant-directory.js'
 import { DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerifyThrottledError, EmailDomainsNotEditableError, TenantEmailDomainsLimits, type ITenantEmailDomains, type TenantEmailDomainsView } from './tenant-email-domains.js'
 import { InvalidEmailDomainError } from '../email-domain-policy.js'
 import type { EnvironmentRecord } from '../environment-record.js'
-import { ChannelNotSubscribedError, ManifestNotGatedError, ManifestWithdrawnError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from '../rollout-errors.js'
+import { ChannelNotSubscribedError, ManifestNotGatedError, ManifestWithdrawnError, ReleaseNotRunnableYetError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from '../rollout-errors.js'
 import type { ITenantApiEndpoint } from '../tenant-auth/tenant-plane.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
 import { AdminProxyError, AdminProxyErrorKind } from '../admin-proxy.js'
@@ -366,7 +366,9 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         {
             return this.WriteRolloutError(res, err)
         }
-        if (err instanceof ManifestNotGatedError || err instanceof RolloutAdoptionRefusedError || err instanceof ManifestWithdrawnError || err instanceof TenantOnHoldError || err instanceof ChannelNotSubscribedError || err instanceof VersionBelowFloorError)
+        // A registry release (hives cannot run those yet) is refused the same way: the tenant never learns which rule failed.
+        if (err instanceof ManifestNotGatedError || err instanceof RolloutAdoptionRefusedError || err instanceof ManifestWithdrawnError || err instanceof TenantOnHoldError || err instanceof ChannelNotSubscribedError || err instanceof VersionBelowFloorError
+            || err instanceof ReleaseNotRunnableYetError)
         {
             this.WriteJson(res, TenantApiEndpoint.StatusConflict, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.TargetUnavailableMessage })
             return true

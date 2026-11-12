@@ -17,6 +17,8 @@ import type { IKubectl } from '../kubectl.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
+import { Channel } from '../channel.js'
+import { ReleaseState } from '../manifest-record.js'
 import { InProcessRolloutClient } from '../tenant-api/in-process-rollout-client.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
@@ -269,6 +271,16 @@ describe('TenantApiEndpoint mutation routes', () =>
         assert.equal(res.status, 409)
         assert.doesNotMatch(res.body, /v1|withdrawn|bad-release-reason/i)
         assert.deepEqual(res.Json(), { error: 'Requested version is not available for this hive' })
+    })
+
+    it('409s a roll to a gated registry release (hives cannot run those yet) with the generic body, not a 500', async () =>
+    {
+        await real.ImportRelease({ id: 'r4', image: 'ghcr.io/x@sha256:' + 'c'.repeat(64), signed: true, channel: Channel.Stable, publishedAt: '2026-11-12T10:00:00.000Z', release: { state: ReleaseState.Verified, builtAt: '2026-11-12T10:00:00.000Z', signingKeyId: 'k' } })
+        await real.Gate(TenantA, 'r4')
+        const res = await Handle(Fixtures.PostJson({ version: 'r4' }), '/tenant-api/hives/hive-a/target', Fixtures.Session(TenantA))
+        assert.equal(res.status, 409)
+        assert.deepEqual(res.Json(), { error: 'Requested version is not available for this hive' })
+        assert.equal(real.TargetFor('hive-a'), undefined)
     })
 
     it('omits a policy-withdrawn version from the tenant manifest list but keeps adoptable ones', async () =>

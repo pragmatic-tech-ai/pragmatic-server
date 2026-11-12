@@ -23,6 +23,8 @@ import { InvalidEmailDomainError } from '../email-domain-policy.js'
 import { DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerifyThrottledError } from '../tenant-api/tenant-email-domains.js'
 import { ConsoleOwnerResets } from '../console-owner-resets.js'
 import { IngressTlsSource } from '../ingress-tls.js'
+import { Channel } from '../channel.js'
+import { ReleaseState } from '../manifest-record.js'
 
 type Reply = { status: number; body: string }
 
@@ -312,6 +314,17 @@ describe('AgentChannelHost', () =>
         assert.equal(reply.status, 403)
         assert.ok(!reply.body.includes('withdrawn'))
         assert.ok(!reply.body.includes('bad build'))
+        assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
+    })
+
+    it('refuses a gated registry release (hives cannot run those yet) with the generic 403, not 500', async () =>
+    {
+        const release = '4.0.0'
+        await deployments.ImportRelease({ id: release, image: 'ghcr.io/x@sha256:' + 'c'.repeat(64), signed: true, channel: Channel.Stable, publishedAt: '2026-11-12T10:00:00.000Z', release: { state: ReleaseState.Verified, builtAt: '2026-11-12T10:00:00.000Z', signingKeyId: 'k' } })
+        await deployments.Gate(TenantId, release)
+        const reply = await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, Harness.BearerPrefix + token, { version: release })
+        assert.equal(reply.status, 403)
+        assert.ok(!reply.body.includes(release))
         assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
     })
 
