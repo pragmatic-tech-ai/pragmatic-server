@@ -23,6 +23,7 @@ import type { EnvEndpoint, EnvRuntimeContext } from './environment-runtime.js'
 import type { EnvironmentRuntimeResolver } from './environment-runtime-resolver.js'
 import type { IUiDeployActuator, UiDeployBundle } from './ui-deploy-actuator.js'
 import { InClusterOperationFailedError } from './in-cluster-environment-runtime.js'
+import { EnvironmentSecuritySeed, SecuritySeedError } from './environment-security-seed.js'
 import { EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrlsLease, type IEnvironmentReach } from './environment-endpoints.js'
 
 export class EnvironmentExistsError extends Error
@@ -149,6 +150,7 @@ export class EnvironmentService implements IAdminAccess
     private static readonly HttpsPrefix = 'https://'
     private static readonly HttpPrefix = 'http://localhost:'
     private static readonly WsPrefix = 'ws://localhost:'
+    private static readonly CatalogLacksAdministrator = 'the security catalog does not list the System Administrator role'
     private static readonly NoDatabasePrefix = 'environment has no provisioned database: '
     private static readonly SecretsFile = 'provisioned-secrets.json'
     private static readonly UsersFile = 'users.json'
@@ -269,7 +271,7 @@ export class EnvironmentService implements IAdminAccess
         }
     }
 
-    public async Create(name: string, template: Template, type: EnvType, hostPort?: number, hiveId?: string): Promise<EnvironmentRecord>
+    public async Create(name: string, template: Template, type: EnvType, hostPort?: number, hiveId?: string, creatorPrincipalId?: string): Promise<EnvironmentRecord>
     {
         const safe = TemplateCatalog.SanitizeName(name)
         const platformTenantId = this.ResolveHiveTenant(hiveId)
@@ -369,6 +371,14 @@ export class EnvironmentService implements IAdminAccess
                     // Host-port (Docker) demos seed their users over the published port. A DNS-reached (in-cluster) demo has no
                     // host port to dial; its tree is projected by the seed init-container instead.
                     await this.SeedDemoUsers(def, bundleDir as string, seedDir, port as number)
+                }
+                // Only a Runtime environment with a known creator is seeded. A Runtime create WITHOUT a creator (a non-tenant path such as
+                // a platform-admin route or the control-plane smoke) is intentionally left unseeded: it gets no security setting and no
+                // SystemAdministrator assignment, so its tier-1 scope denies data access to non-sysadmins until an administrator is assigned
+                // in tenant-admin. The tenant-api create path always passes the session principal, so it always seeds.
+                if (type === EnvType.Runtime && creatorPrincipalId !== undefined)
+                {
+                    await this.SeedSecurity(record, def.name, creatorPrincipalId)
                 }
             }
             catch (err)
@@ -686,9 +696,43 @@ export class EnvironmentService implements IAdminAccess
         }
     }
 
-    private async AdminLeaseFor(name: string): Promise<{ info: AdminConnectInfo; Release(): void; Fail(): void }>
+    private AdminLeaseFor(name: string): Promise<{ info: AdminConnectInfo; Release(): void; Fail(): void }>
     {
-        const rec = this.Require(name)
+        return this.AdminLeaseForRecord(this.Require(name))
+    }
+
+    /**
+     * Seeds a new Runtime environment's security setting with its creator as System Administrator, then reads the catalog
+     * back to prove the environment opened with the base roles. Any failure throws, so the caller's bring-up rollback runs.
+     */
+    private async SeedSecurity(rec: EnvironmentRecord, environmentName: string, creatorPrincipalId: string): Promise<void>
+    {
+        const lease = await this.AdminLeaseForRecord(rec)
+        try
+        {
+            await this.proxy.SetSecurityModel(lease.info, EnvironmentSecuritySeed.For(environmentName, creatorPrincipalId))
+            const catalog = await this.proxy.GetSecurityCatalog(lease.info)
+            if (!catalog.roles.some(r => r.name === EnvironmentSecuritySeed.AdministratorRole))
+            {
+                throw new SecuritySeedError(EnvironmentService.CatalogLacksAdministrator)
+            }
+        }
+        catch (err)
+        {
+            if ((err instanceof AdminProxyError && err.IsTransport) || TransportFailure.Is(err))
+            {
+                lease.Fail()
+            }
+            throw err
+        }
+        finally
+        {
+            lease.Release()
+        }
+    }
+
+    private async AdminLeaseForRecord(rec: EnvironmentRecord): Promise<{ info: AdminConnectInfo; Release(): void; Fail(): void }>
+    {
         // The password is resolved first, so a missing secret never opens a cluster tunnel.
         const password = await this.AdminPasswordOf(rec)
         const urls = await this.UrlsOf(rec)

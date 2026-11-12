@@ -71,7 +71,7 @@ import type { ILogProcess } from '../../environments/seed/docker.js'
 
 export interface IEnvironmentService
 {
-    Create(name: string, template: Template, type: EnvType, hostPort?: number, hiveId?: string): Promise<EnvironmentRecord>
+    Create(name: string, template: Template, type: EnvType, hostPort?: number, hiveId?: string, creatorPrincipalId?: string): Promise<EnvironmentRecord>
     Start(name: string): Promise<EnvironmentRecord>
     Stop(name: string): Promise<EnvironmentRecord>
     Restart(name: string): Promise<EnvironmentRecord>

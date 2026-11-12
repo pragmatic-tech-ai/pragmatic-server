@@ -31,16 +31,16 @@ class ErrorLog
     }
 }
 
-type CreateCall = { name: string; template: Template; type: EnvType; hostPort: number | undefined; hiveId: string | undefined }
+type CreateCall = { name: string; template: Template; type: EnvType; hostPort: number | undefined; hiveId: string | undefined; creatorPrincipalId: string | undefined }
 
 class FakeService
 {
     public readonly Calls: CreateCall[] = []
     public Failure: Error | undefined
 
-    public async Create(name: string, template: Template, type: EnvType, hostPort?: number, hiveId?: string): Promise<EnvironmentRecord>
+    public async Create(name: string, template: Template, type: EnvType, hostPort?: number, hiveId?: string, creatorPrincipalId?: string): Promise<EnvironmentRecord>
     {
-        this.Calls.push({ name, template, type, hostPort, hiveId })
+        this.Calls.push({ name, template, type, hostPort, hiveId, creatorPrincipalId })
         if (this.Failure) throw this.Failure
         return {
             name, type, template, environmentId: 'eid-' + name, tenantId: 't-a', hiveId, hostPort: 8101,
@@ -134,10 +134,16 @@ describe('TenantApiEndpoint POST /tenant-api/environments', () =>
     {
         const res = await Post(Fixtures.Valid())
         assert.equal(res.status, 201)
-        assert.deepEqual(service.Calls, [{ name: 'e1', template: Template.DevBlank, type: EnvType.Development, hostPort: undefined, hiveId: 'hive-a' }])
+        assert.deepEqual(service.Calls, [{ name: 'e1', template: Template.DevBlank, type: EnvType.Development, hostPort: undefined, hiveId: 'hive-a', creatorPrincipalId: 'p-t-a' }])
         const dto = res.Json() as { name: string; hiveId: string }
         assert.equal(dto.name, 'e1')
         assert.equal(dto.hiveId, 'hive-a')
+    })
+
+    it('passes the session principal as the creator', async () =>
+    {
+        await Post(Fixtures.Valid(), 't-a')
+        assert.equal(service.Calls[0]?.creatorPrincipalId, 'p-t-a')
     })
 
     it('ignores a body hiveId naming another tenant hive', async () =>

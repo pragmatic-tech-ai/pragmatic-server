@@ -1,3 +1,4 @@
+import { EnvironmentSecuritySeed } from '../environment-security-seed.js'
 import { test } from 'node:test'
 import { randomBytes } from 'node:crypto'
 import { readFileSync, rmSync } from 'node:fs'
@@ -280,6 +281,8 @@ class FakeAdminProxy implements IAdminProxy
     public Calls: { method: string; info: AdminConnectInfo; args: unknown[] }[] = []
     public Snapshot = { accounts: [], grants: [], config: {} } as unknown as AdminSnapshot
     public Config = { marker: 'cfg' } as unknown as IdentityConfigDto
+    public SetSecurityFailure: Error | undefined
+    public CatalogRoles: { name: string }[] = [{ name: 'SystemAdministrator' }]
 
     public async LoadAdmin(info: AdminConnectInfo): Promise<AdminSnapshot>
     {
@@ -322,12 +325,16 @@ class FakeAdminProxy implements IAdminProxy
     public async SetSecurityModel(info: AdminConnectInfo, model: any): Promise<void>
     {
         this.Calls.push({ method: 'SetSecurityModel', info, args: [model] })
+        if (this.SetSecurityFailure)
+        {
+            throw this.SetSecurityFailure
+        }
     }
 
     public async GetSecurityCatalog(info: AdminConnectInfo): Promise<any>
     {
         this.Calls.push({ method: 'GetSecurityCatalog', info, args: [] })
-        return { roles: [], concepts: [], securedFields: [], profiles: [] }
+        return { roles: this.CatalogRoles, concepts: [], securedFields: [], profiles: [] }
     }
 
     public async ListTeamMembers(info: AdminConnectInfo, teamId: string): Promise<any>
@@ -577,6 +584,42 @@ test('Create demo runs the full ordered flow and persists a Running record', asy
     assert.equal(got?.containerName, 'pragmatic-env-demo1')
     assert.equal(got?.volumeName, 'pragmatic-env-demo1-data')
     assert.equal(got?.environmentId, 'contoso')
+})
+
+test('runtime create seeds through the proxy', async () =>
+{
+    const h = await Harness.Make()
+    await h.Service.Create('demo1', Template.DemoContoso, EnvType.Runtime, undefined, undefined, 'owner-1')
+    assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['SetSecurityModel', 'GetSecurityCatalog'])
+    assert.deepEqual(h.Proxy.Calls[0].args, [EnvironmentSecuritySeed.For('demo1', 'owner-1')])
+    assert.equal(h.Proxy.Calls[0].info.password, 'pw-contoso-admin-pw')
+    assert.equal(h.Registry.Get('demo1')?.status, EnvStatus.Running)
+})
+
+test('development create is not seeded', async () =>
+{
+    const h = await Harness.Make()
+    await h.Service.Create('dev1', Template.DevBlank, EnvType.Development, undefined, undefined, 'owner-1')
+    assert.deepEqual(h.Proxy.Calls, [])
+})
+
+test('seed failure rolls the create back', async () =>
+{
+    const h = await Harness.Make()
+    h.Proxy.SetSecurityFailure = new Error('rejected')
+    await assert.rejects(() => h.Service.Create('demo1', Template.DemoContoso, EnvType.Runtime, undefined, undefined, 'owner-1'), (e: unknown) => e instanceof CreateFailedError && e.Recorded)
+    assert.equal(h.Calls.filter(c => c === 'down').length, 1)
+    assert.equal(h.Calls.filter(c => c === 'removeVolume').length, 1)
+    assert.equal(h.Registry.Get('demo1')?.status, EnvStatus.Failed)
+})
+
+test('catalog without system administrator fails the create', async () =>
+{
+    const h = await Harness.Make()
+    h.Proxy.CatalogRoles = [{ name: 'Reader' }]
+    await assert.rejects(() => h.Service.Create('demo1', Template.DemoContoso, EnvType.Runtime, undefined, undefined, 'owner-1'), (e: unknown) => e instanceof CreateFailedError && /System Administrator/.test(e.reason))
+    assert.equal(h.Calls.filter(c => c === 'down').length, 1)
+    assert.equal(h.Registry.Get('demo1')?.status, EnvStatus.Failed)
 })
 
 test('Create dev skips user seeding', async () =>

@@ -451,7 +451,7 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         }
         try
         {
-            const record = await this.service.Create(name, template as Template, type as EnvType, undefined, hive.id)
+            const record = await this.service.Create(name, template as Template, type as EnvType, undefined, hive.id, session.principalId)
             this.WriteJson(res, TenantApiEndpoint.StatusCreated, EnvironmentDtoMapper.ToDto(record))
         }
         catch (err)
