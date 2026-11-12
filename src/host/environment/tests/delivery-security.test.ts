@@ -9,7 +9,9 @@ import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { AppWriteStatus, AssignStatus, ShareSubjectKind } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppDeployResultDto, ContributedPackageDto, CypherAppDeployParamsDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { PragmaticServer } from '../../../pragmatic-server.js'
+import { AdminSecuritySettingRefusedError, AdminService } from '../../admin-service.js'
 import { DeliverySecurity } from '../delivery-security.js'
+import { EnvironmentSecurityAdmin } from '../environment-security-admin.js'
 import { EnvironmentFixture } from './environment-fixture.js'
 import type { FixturePackageRef } from './environment-fixture.js'
 import { Tier1Fx } from './tier1-fixture.js'
@@ -35,6 +37,7 @@ class DeliveryFx
     public static readonly Crm2 = { id: 'crm', version: '2.0.0' }
     public static readonly Extra = { id: 'extra', version: '1.0.0' }
     public static readonly ExtraSet = 'extra-set'
+    private static readonly NoPacks = { Invalidate: async () => undefined, AllowScripts: async () => undefined, DenyScripts: async () => undefined, ListScriptAllowlist: async () => [] }
     public static readonly Crash = 'the process died after the persist step'
     public static readonly Employee = 'hr.Employee'
     public static readonly Review = 'hr.Review'
@@ -139,6 +142,14 @@ class DeliveryFx
         const result = await DeliveryFx.Deploy(fx, DeliveryFx.App, version, refs)
         assert.equal(result.status, AppWriteStatus.Applied, result.reason)
         return result
+    }
+
+    /** The server's admin service over its security admin (a no-op directory sync: the fixture principals have no accounts). */
+    public static async Admin(server: PragmaticServer): Promise<AdminService>
+    {
+        const pack = await server.Pack()
+        const security = new EnvironmentSecurityAdmin(await server.SecuritySetting(), server.EnvironmentEngine(), { RunNow: async () => undefined }, server.SecurityChangeLog())
+        return new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), async () => undefined, pack.Accounts, pack.Registrar, pack.Tokens, DeliveryFx.NoPacks, security)
     }
 
     public static async Stored(server: PragmaticServer): Promise<ISecurityModelConfig | undefined>
@@ -310,6 +321,25 @@ describe('delivery security (S4 Task 13)', () =>
             assert.equal(stored?.roleAssignments.some(a => a.role === DeliveryFx.Reviewer), false, 'nor the removed role assignments')
             const reconciled = (await next.SecurityChangeLog().List()).find(entry => entry.delivery === DeliverySecurity.ReconcileDelivery)
             assert.deepEqual(reconciled?.roleOverridesDropped, [DeliveryFx.ReviewerOverride], 'the drop is in the change log')
+        })
+    })
+
+    test('an admin save landing while the deploy persists is pruned at commit and refused after', async () =>
+    {
+        await DeliveryFx.Run(async (fx, server) =>
+        {
+            const admin = await DeliveryFx.Admin(server)
+            const late = Tier1Fx.Override(DeliveryFx.Reviewer, DeliveryFx.Review, PrivilegeAction.Update, AccessLevel.BusinessUnit)
+            const withLate: ISecurityModelConfig = { ...DeliveryFx.Setting(), roleOverrides: [DeliveryFx.ReviewerOverride, late] }
+            const change = { Channel: DeliveryChannel.Deploy, Name: DeliveryFx.App, Packages: [DeliveryFx.Hr2, DeliveryFx.Crm1].map(ref => ({ model: ref.id, version: ref.version })), Version: DeliveryFx.V2 }
+            // v2 drops hr.Review and Reviewer; the save is checked against v1, which still runs, and lands mid-persist
+            await server.EnvironmentEngine().Deliver(change, async () =>
+            {
+                fx.Live(DeliveryFx.App, DeliveryFx.V2, [DeliveryFx.Hr2, DeliveryFx.Crm1])
+                await admin.SetSecurityModel(Tier1Fx.Admin, withLate)
+            })
+            assert.deepEqual((await DeliveryFx.Stored(server))?.roleOverrides, [], 'the commit pruned the override saved during the persist')
+            await assert.rejects(admin.SetSecurityModel(Tier1Fx.Admin, withLate), (error: unknown) => error instanceof AdminSecuritySettingRefusedError, 'after the commit the save is refused')
         })
     })
 

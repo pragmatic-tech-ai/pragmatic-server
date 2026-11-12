@@ -102,7 +102,8 @@ export class SecurityDeployDiff
 
     /**
      * True when the deploy changes nothing the change log shows. An upgrade that only adds the ownership aspect is
-     * empty here: it is backfilled (`NewlyOwned`), visible through the backfill diagnostics (ruling R37).
+     * empty here: it is backfilled (`NewlyOwned`) without a change-log entry; a failed backfill is reported, a
+     * successful one is silent (ruling R37).
      */
     public get IsEmpty(): boolean
     {

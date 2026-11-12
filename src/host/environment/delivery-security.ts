@@ -86,10 +86,14 @@ export class DeliverySecurity
         return entry
     }
 
-    /** Prunes what the stored setting holds that `catalog` (the one about to run) cannot mean; logged when anything is. */
+    /**
+     * Prunes what the stored setting holds that `catalog` (the one about to run) cannot mean, logged when anything is;
+     * and drops the owed backfills of concepts `catalog` does not own (left by a delivery whose persist step failed).
+     */
     public async Reconcile(catalog: IEnvironmentCatalog, version: string): Promise<void>
     {
         await this.Commit(SecurityDeployDiff.Compute(catalog, catalog, undefined, TenantSecurityModel.Empty()), DeliverySecurity.ReconcileDelivery, version)
+        await this.pending.Retain(catalog.Security.OwnedConcepts())
     }
 
     /** Owns the ownerless records of every pending concept the running catalog owns by the system principal; the number written. */
