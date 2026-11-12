@@ -18,13 +18,10 @@
     { "id": "sales-south", "name": "Sales South", "businessUnitId": "south", "idpGroups": [], "manualMembers": ["rep-atlanta"] }
   ],
   "roleAssignments": [
-    { "role": "salesRep", "principalIds": ["rep-boston", "rep-atlanta"], "teamIds": [] },
-    { "role": "salesManager", "principalIds": ["manager-north"], "teamIds": [] },
-    { "role": "reader", "principalIds": ["finance"], "teamIds": [] }
+    { "role": "BasicUser", "principalIds": ["rep-boston", "rep-atlanta", "manager-north"], "teamIds": [] },
+    { "role": "Reader", "principalIds": ["finance"], "teamIds": [] }
   ],
-  "profileAssignments": [
-    { "profile": "credit-readers", "principalIds": ["manager-north", "finance"], "teamIds": [] }
-  ],
+  "profileAssignments": [],
   "roleOverrides": [],
   "profileOverrides": []
 }
