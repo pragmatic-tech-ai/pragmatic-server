@@ -62,7 +62,7 @@ export class CallerCredentials implements ICallerCredentialWrapper, ICallerCrede
         return wrapper
     }
 
-    // Entra's OnBehalfOfTokenProvider keeps a private per-user cache with no Forget: an identity-repo change (R34)
+    // Revoke drops the caller's cached source tokens here and in the pack provider's own cache (R34).
     public async Revoke(principalId: string): Promise<void>
     {
         this.tokens.Forget(this.tenant.Id, principalId)

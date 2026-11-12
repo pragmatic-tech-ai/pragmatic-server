@@ -1,5 +1,6 @@
 import { PerUserSourceTokenCache } from '@pragmatic-tech-ai/todl-identity'
 import type { ISourceTokenProvider, SourceToken, SourceTokenRequest } from '@pragmatic-tech-ai/todl-identity'
+import type { IRevocableSourceTokenProvider } from '@pragmatic-tech-ai/todl-identity-cloud'
 
 /**
  * The identity pack's source-token provider behind a per-user cache (tenant, principal, resource; dropped a minute
@@ -22,9 +23,11 @@ export class CallerSourceTokens implements ISourceTokenProvider
         return token
     }
 
-    /** Drops every cached token of `principalId` in `tenantId`. */
+    /** Drops every cached token of `principalId` in `tenantId`, here and in the inner provider's own cache. */
     public Forget(tenantId: string, principalId: string): void
     {
         this.cache.Forget(tenantId, principalId)
+        const revocable = this.inner as Partial<IRevocableSourceTokenProvider>
+        revocable.Forget?.(tenantId, principalId)
     }
 }
