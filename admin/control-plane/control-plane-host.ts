@@ -65,7 +65,8 @@ import { KubectlError, PortForwardError } from './kubectl.js'
 import type { HiveRolloutStatus, PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import type { ManifestRecord } from './manifest-record.js'
 import { BodyTooLargeError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, ManifestWithdrawnError, PolicyStoreUnavailableError, ReleaseNotRunnableYetError, ReleaseRegistryUnavailableError, ReleaseRejectedError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from './rollout-errors.js'
-import type { ReleaseRefresher } from './release/release-refresher.js'
+import { ReleaseRefresher } from './release/release-refresher.js'
+import type { ReleaseRefreshResult } from './release/release-catalog.js'
 import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
 import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityCatalogDto, SecurityChangesDto, SecurityModelDto, TeamMemberDto, TokenIssuedDto, ServiceTokenSummaryDto, IssueTokenParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { LoginThrottle } from './login-throttle.js'
@@ -320,8 +321,12 @@ export class ControlPlaneHost
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.HivesSegment + '/([^/]+)/' + ControlPlaneHost.ObservationsSegment + '$')
     private static readonly ManifestsSegment = 'manifests'
     private static readonly ManifestsPath = ControlPlaneHost.ApiPrefix + ControlPlaneHost.ManifestsSegment
-    private static readonly ReleasesRefreshPath = ControlPlaneHost.ApiPrefix + 'releases/refresh'
+    private static readonly ReleasesSegment = 'releases'
+    private static readonly RefreshSegment = 'refresh'
+    private static readonly ReleasesRefreshPath = ControlPlaneHost.ApiPrefix + ControlPlaneHost.ReleasesSegment + '/' + ControlPlaneHost.RefreshSegment
     private static readonly ReleasesNotConfiguredMessage = 'The release registry is not configured.'
+    private static readonly ReleaseRefreshFailedLog = 'release refresh failed: '
+    private static readonly ReleaseRefreshFailedMessage = 'The release refresh failed.'
     private static readonly WithdrawnSegment = 'withdrawn'
     private static readonly ManifestWithdrawnPathPattern = new RegExp(
         '^' + ControlPlaneHost.ApiPrefix + ControlPlaneHost.ManifestsSegment + '/([^/]+)/' + ControlPlaneHost.WithdrawnSegment + '$')
@@ -1832,7 +1837,8 @@ export class ControlPlaneHost
     /**
      * Serves POST /api/releases/refresh (Full-only through the central gate): imports every new registry release and
      * answers the refresh counts. 409 when no registry is configured; a registry that is down or refuses the credential
-     * answers 502 with its fixed sentence (WriteError). Concurrent calls and the poll share one refresh.
+     * answers 502 with its fixed sentence (WriteError). Any other failure is logged like the poll logs it (the error's name
+     * only, never the error object) and answered as a plain 500. Concurrent calls and the poll share one refresh.
      */
     private async HandleReleasesRefresh(res: ServerResponse): Promise<void>
     {
@@ -1841,7 +1847,22 @@ export class ControlPlaneHost
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.ReleasesNotConfiguredMessage })
             return
         }
-        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, await this.releases.Refresh())
+        let result: ReleaseRefreshResult
+        try
+        {
+            result = await this.releases.Refresh()
+        }
+        catch (err)
+        {
+            if (err instanceof ReleaseRegistryUnavailableError)
+            {
+                throw err
+            }
+            console.error(ControlPlaneHost.LogPrefix, ControlPlaneHost.ReleaseRefreshFailedLog + ReleaseRefresher.FailureText(err))
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusInternal, { error: ControlPlaneHost.ReleaseRefreshFailedMessage })
+            return
+        }
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, result)
     }
 
     /** Serves POST /api/manifests/:version/withdrawn (withdraw) and DELETE (restore); 404 for an unknown version, false for any other method. */

@@ -92,7 +92,8 @@ import type { IEnvironmentService } from './control-plane-host.js'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 import type { IRolloutClient } from './tenant-api/rollout-client.js'
 import { ControlPlaneRoles, ControlPlaneStart, type ControlPlaneRole, type IControlPlaneListenerStarts } from './control-plane-role.js'
-import { ReleaseCatalogConfig, type ReleaseServices } from './release/release-catalog-config.js'
+import { ReleaseCatalogConfig, type IReleaseServices } from './release/release-catalog-config.js'
+import type { ReleasePoll } from './release/release-poll.js'
 
 /** The composed tenant listener, its port/bind already validated (so a bad tenant port fails before any socket binds). */
 interface ITenantPlaneStart
@@ -388,15 +389,28 @@ export class ControlPlaneServer
         }
         // The admin role still derives the channel URL above (hive bundles point at the edge) but does not listen on it.
         await new ControlPlaneStart(role).Run(new ComposedListeners({ host, port, tenant: tenantStart }, channelStart))
-        // The poll's timer is unref'd, so it never holds the process open and needs no shutdown hook.
-        releases?.Poll?.Start()
+        // The poll's timer is unref'd, so it never holds the process open; it is also stopped on shutdown, beside the tunnels.
+        if (releases?.Poll !== undefined)
+        {
+            releases.Poll.Start()
+            ControlPlaneServer.StopOnShutdown(releases.Poll)
+        }
+    }
+
+    /**
+     * Stops the release poll when the process ends. The SIGINT/SIGTERM handlers CloseOnShutdown installs exit the process,
+     * which runs this 'exit' hook too.
+     */
+    public static StopOnShutdown(poll: ReleasePoll): void
+    {
+        process.once(ControlPlaneServer.ExitEvent, () => poll.Stop())
     }
 
     /**
      * The release catalogue (POST /api/releases/refresh) and its periodic poll, for roles that serve operators only: the edge
      * never reads the release settings. Undefined there, and when no credential file is configured.
      */
-    public static ReleasesOf(role: ControlPlaneRole, env: NodeJS.ProcessEnv, repoRoot: string, deployments: PlatformDeploymentRegistry): ReleaseServices | undefined
+    public static ReleasesOf(role: ControlPlaneRole, env: NodeJS.ProcessEnv, repoRoot: string, deployments: PlatformDeploymentRegistry): IReleaseServices | undefined
     {
         return ControlPlaneRoles.ServesOperators(role) ? ReleaseCatalogConfig.Compose(env, repoRoot, deployments) : undefined
     }

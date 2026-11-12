@@ -45,7 +45,8 @@ class ScriptedCatalog implements IReleaseRefreshSource
 class Fx
 {
     public static readonly Secret = 'ghp_SECRET_in_an_inner_message'
-    public static readonly Result: ReleaseRefreshResult = { imported: ['4.0.0', '4.1.0'], rejected: ['4.2.0'], unchanged: 3, shadowed: ['1.0.0'] }
+    public static readonly CountsLine = 'Release poll: imported 2, rejected 1, unchanged 3, shadowed 1'
+    public static readonly Result: ReleaseRefreshResult ={ imported: ['4.0.0', '4.1.0'], rejected: ['4.2.0'], unchanged: 3, shadowed: ['1.0.0'] }
 }
 
 describe('ReleasePoll', () =>
@@ -54,7 +55,7 @@ describe('ReleasePoll', () =>
     {
         const log = new RecordingLog()
         await new ReleasePoll(new ReleaseRefresher(new ScriptedCatalog([Fx.Result])), 1000, log).Tick()
-        assert.deepEqual(log.Infos, ['Release poll: imported 2, rejected 1, unchanged 3, shadowed 1'])
+        assert.deepEqual(log.Infos, [Fx.CountsLine])
         assert.deepEqual(log.Warnings, [])
     })
 
@@ -75,6 +76,28 @@ describe('ReleasePoll', () =>
         await new ReleasePoll(new ReleaseRefresher(new ScriptedCatalog([inner])), 1000, log).Tick()
         assert.deepEqual(log.Warnings, ['Release poll failed: TypeError'])
         assert.ok(!log.Warnings.join().includes(Fx.Secret))
+    })
+
+    it('skips a tick while the previous one is still pending, so each refresh logs once', async () =>
+    {
+        const log = new RecordingLog()
+        let release: (r: ReleaseRefreshResult) => void = () => undefined
+        let calls = 0
+        const held: IReleaseRefreshSource = { Refresh: () => new Promise(resolve => { calls++; release = resolve }) }
+        const poll = new ReleasePoll(new ReleaseRefresher(held), 1000, log)
+        const first = poll.Tick()
+        const second = poll.Tick()
+        await new Promise(resolve => setImmediate(resolve))
+        release(Fx.Result)
+        await Promise.all([first, second])
+        assert.deepEqual(log.Infos, [Fx.CountsLine])
+        assert.equal(calls, 1)
+        const later = poll.Tick()
+        await new Promise(resolve => setImmediate(resolve))
+        release(Fx.Result)
+        await later
+        assert.equal(calls, 2, 'a later tick runs again')
+        assert.equal(log.Infos.length, 2)
     })
 
     it('refreshes on its interval once started and stops on Stop', async () =>

@@ -72,16 +72,24 @@ class FakeOperator implements IOperatorIdentity
     }
 }
 
-/** A catalogue stand-in that answers a fixed result and counts its calls. */
+/** A catalogue stand-in that answers a fixed result (or throws a given error) and counts its calls. */
 class FakeCatalog implements IReleaseRefreshSource
 {
     public static readonly Result: ReleaseRefreshResult = { imported: ['4.0.0'], rejected: ['4.1.0'], unchanged: 2, shadowed: ['1.0.0'] }
 
     public Calls = 0
 
+    public constructor(private readonly failure?: Error)
+    {
+    }
+
     public async Refresh(): Promise<ReleaseRefreshResult>
     {
         this.Calls++
+        if (this.failure !== undefined)
+        {
+            throw this.failure
+        }
         return FakeCatalog.Result
     }
 }
@@ -89,9 +97,19 @@ class FakeCatalog implements IReleaseRefreshSource
 class Fx
 {
     public static readonly RefreshPath = '/api/releases/refresh'
+    public static readonly ManifestsPath = '/api/manifests'
+    public static readonly GatingPath = '/api/tenants/t1/gating'
+    public static readonly Post = 'POST'
+    public static readonly Get = 'GET'
     public static readonly NotConfigured = 'The release registry is not configured.'
     public static readonly Unavailable = 'The release registry is unreachable or refused the credential'
+    public static readonly RefreshFailed = 'The release refresh failed.'
+    public static readonly RejectedPrefix = 'Release rejected on import: '
     public static readonly Token = 'ghp_SECRET_release_token_value'
+    public static readonly InnerPath = '/secret/data/manifests.json'
+    public static readonly Namespace = 'pragmatic-tech-ai'
+    public static readonly RegistryUrl = 'https://ghcr.example'
+    public static readonly TrustDir = join(import.meta.dirname, '..', '..', '..', 'release-keys')
     public static readonly Version = '4.0.0'
     public static readonly Digest = 'sha256:' + 'c'.repeat(64)
     public static readonly BuiltAt = '2026-11-12T10:00:00.000Z'
@@ -130,24 +148,42 @@ class Fx
             req.end(body === undefined ? undefined : JSON.stringify(body))
         })
     }
+
+    /** Runs body with console.error captured; answers every logged line (its arguments joined). */
+    public static async CapturingErrors(body: () => Promise<void>): Promise<string[]>
+    {
+        const lines: string[] = []
+        const original = console.error
+        console.error = (...args: unknown[]) => { lines.push(args.map(a => String(a)).join(' ')) }
+        try
+        {
+            await body()
+        }
+        finally
+        {
+            console.error = original
+        }
+        return lines
+    }
 }
 
-describe('ControlPlaneHost release routes', () =>
+/** A directory with one tenant and hive, a real deployment registry, and the host started over them. */
+class HostFixture
 {
-    let host: ControlPlaneHost | undefined
-    let parent: string
-    let root: string
-    let directory: PlatformDirectory
-    let deployments: PlatformDeploymentRegistry
-    let operator: FakeOperator
+    public readonly Operator = new FakeOperator()
+    private host: ControlPlaneHost | undefined
 
-    beforeEach(async () =>
+    private constructor(private readonly parent: string, private readonly root: string, private readonly directory: PlatformDirectory, public readonly Deployments: PlatformDeploymentRegistry)
     {
-        parent = mkdtempSync(join(tmpdir(), 'cp-releases-'))
-        root = join(parent, 'static')
+    }
+
+    public static async Create(): Promise<HostFixture>
+    {
+        const parent = mkdtempSync(join(tmpdir(), 'cp-releases-'))
+        const root = join(parent, 'static')
         mkdirSync(root)
         writeFileSync(join(root, 'index.html'), '<h1>portal</h1>')
-        directory = new PlatformDirectory(
+        const directory = new PlatformDirectory(
             new ClientRegistry(join(parent, 'clients.json')),
             new TenantRegistry(join(parent, 'tenants.json')),
             new HiveRegistry(join(parent, 'hives.json')),
@@ -156,31 +192,45 @@ describe('ControlPlaneHost release routes', () =>
         await directory.CreateClient({ id: 'acme', displayName: 'Acme' })
         await directory.CreateTenant({ id: 't1', clientId: 'acme', displayName: 'T' })
         await directory.CreateHive({ id: 'local1', tenantId: 't1', displayName: 'L', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
-        operator = new FakeOperator()
-        deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
+        return new HostFixture(parent, root, directory, await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory()))
+    }
+
+    /** Starts the host with the given refresher (undefined: no registry configured). */
+    public async Start(releases: ReleaseRefresher | undefined): Promise<ControlPlaneHost>
+    {
+        const h = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, this.root, this.Operator, false, this.directory, this.Deployments, new FakeProvisioning(this.directory).AsService(), RolloutFixture.Observations(this.parent),
+            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, releases)
+        await h.Listen(0, '127.0.0.1')
+        this.host = h
+        return h
+    }
+
+    public async Dispose(): Promise<void>
+    {
+        await this.host?.Close()
+        rmSync(this.parent, { recursive: true, force: true })
+    }
+}
+
+describe('ControlPlaneHost release routes', () =>
+{
+    let fx: HostFixture
+
+    beforeEach(async () =>
+    {
+        fx = await HostFixture.Create()
     })
 
     afterEach(async () =>
     {
-        await host?.Close()
-        host = undefined
-        rmSync(parent, { recursive: true, force: true })
+        await fx.Dispose()
     })
-
-    async function Start(releases: ReleaseRefresher | undefined): Promise<ControlPlaneHost>
-    {
-        const h = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, operator, false, directory, deployments, new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent),
-            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, releases)
-        await h.Listen(0, '127.0.0.1')
-        host = h
-        return h
-    }
 
     it('refreshes the catalogue for a Full operator and answers its result', async () =>
     {
         const catalog = new FakeCatalog()
-        const h = await Start(new ReleaseRefresher(catalog))
-        const reply = await Fx.Send(h, 'POST', Fx.RefreshPath)
+        const h = await fx.Start(new ReleaseRefresher(catalog))
+        const reply = await Fx.Send(h, Fx.Post, Fx.RefreshPath)
         assert.equal(reply.status, 200)
         assert.deepEqual(JSON.parse(reply.body), FakeCatalog.Result)
         assert.equal(catalog.Calls, 1)
@@ -189,61 +239,81 @@ describe('ControlPlaneHost release routes', () =>
     it('refuses an Observer (ReadOnly) with 403 through the central gate and never refreshes', async () =>
     {
         const catalog = new FakeCatalog()
-        const h = await Start(new ReleaseRefresher(catalog))
-        operator.Role = OperatorRole.ReadOnly
-        const reply = await Fx.Send(h, 'POST', Fx.RefreshPath)
+        const h = await fx.Start(new ReleaseRefresher(catalog))
+        fx.Operator.Role = OperatorRole.ReadOnly
+        const reply = await Fx.Send(h, Fx.Post, Fx.RefreshPath)
         assert.equal(reply.status, 403)
         assert.equal(catalog.Calls, 0)
     })
 
     it('answers 409 with a plain sentence when no release registry is configured', async () =>
     {
-        const h = await Start(undefined)
-        const reply = await Fx.Send(h, 'POST', Fx.RefreshPath)
+        const h = await fx.Start(undefined)
+        const reply = await Fx.Send(h, Fx.Post, Fx.RefreshPath)
         assert.equal(reply.status, 409)
         assert.deepEqual(JSON.parse(reply.body), { error: Fx.NotConfigured })
     })
 
-    it('answers 502 with the fixed sentence when the registry is unreachable, never echoing the token', async () =>
+    it('answers 502 with the fixed sentence when the registry is unreachable, never echoing or logging the token', async () =>
     {
         // A lower layer whose failure text carries the token: the catalogue's fixed sentence must be all that reaches the body.
         const leaky = async (_url: string, _init: OciRequestInit): Promise<Response> =>
         {
             throw new Error('connect failed with bearer ' + Fx.Token)
         }
-        const registry = new OciRegistryClient('https://ghcr.example', leaky, { username: 'bot', token: Fx.Token })
-        const catalog = new ReleaseCatalog(registry, 'pragmatic-tech-ai', ReleaseTrustKeys.FromDirectory(join(import.meta.dirname, '..', '..', '..', 'release-keys')), deployments)
-        const h = await Start(new ReleaseRefresher(catalog))
-        const reply = await Fx.Send(h, 'POST', Fx.RefreshPath)
+        const registry = new OciRegistryClient(Fx.RegistryUrl, leaky, { username: 'bot', token: Fx.Token })
+        const catalog = new ReleaseCatalog(registry, Fx.Namespace, ReleaseTrustKeys.FromDirectory(Fx.TrustDir), fx.Deployments)
+        const h = await fx.Start(new ReleaseRefresher(catalog))
+        let reply: Reply = { status: 0, body: '' }
+        const logged = await Fx.CapturingErrors(async () =>
+        {
+            reply = await Fx.Send(h, Fx.Post, Fx.RefreshPath)
+        })
         assert.equal(reply.status, 502)
         assert.deepEqual(JSON.parse(reply.body), { error: Fx.Unavailable })
         assert.ok(!reply.body.includes(Fx.Token))
-        assert.deepEqual(deployments.AllManifests(), [])
+        assert.ok(!logged.join().includes(Fx.Token))
+        assert.deepEqual(fx.Deployments.AllManifests(), [])
+    })
+
+    it('answers any other refresh failure with a plain 500 and logs only the error name', async () =>
+    {
+        const h = await fx.Start(new ReleaseRefresher(new FakeCatalog(new Error('write failed: ' + Fx.InnerPath))))
+        let reply: Reply = { status: 0, body: '' }
+        const logged = await Fx.CapturingErrors(async () =>
+        {
+            reply = await Fx.Send(h, Fx.Post, Fx.RefreshPath)
+        })
+        assert.equal(reply.status, 500)
+        assert.deepEqual(JSON.parse(reply.body), { error: Fx.RefreshFailed })
+        assert.equal(logged.length, 1)
+        assert.ok(logged[0]!.endsWith('release refresh failed: Error'), logged[0])
+        assert.ok(!logged.join().includes(Fx.InnerPath))
     })
 
     it('no longer publishes on POST /api/manifests (an unknown route), and stores nothing', async () =>
     {
-        const h = await Start(undefined)
-        const reply = await Fx.Send(h, 'POST', '/api/manifests', { version: '1.0.0', image: 'img:1' })
+        const h = await fx.Start(undefined)
+        const reply = await Fx.Send(h, Fx.Post, Fx.ManifestsPath, { version: '1.0.0', image: 'img:1' })
         assert.equal(reply.status, 404)
-        assert.deepEqual(deployments.AllManifests(), [])
+        assert.deepEqual(fx.Deployments.AllManifests(), [])
     })
 
     it('lists an imported release on GET /api/manifests with its release provenance', async () =>
     {
-        await deployments.ImportRelease(Fx.Verified(Fx.Version))
-        const h = await Start(undefined)
-        const reply = await Fx.Send(h, 'GET', '/api/manifests')
+        await fx.Deployments.ImportRelease(Fx.Verified(Fx.Version))
+        const h = await fx.Start(undefined)
+        const reply = await Fx.Send(h, Fx.Get, Fx.ManifestsPath)
         assert.equal(reply.status, 200)
         assert.deepEqual(JSON.parse(reply.body), [Fx.Verified(Fx.Version)])
     })
 
     it('answers gating a rejected release with 409 and the error sentence', async () =>
     {
-        await deployments.ImportRelease(Fx.Rejected(Fx.Version))
-        const h = await Start(undefined)
-        const reply = await Fx.Send(h, 'POST', '/api/tenants/t1/gating', { version: Fx.Version })
+        await fx.Deployments.ImportRelease(Fx.Rejected(Fx.Version))
+        const h = await fx.Start(undefined)
+        const reply = await Fx.Send(h, Fx.Post, Fx.GatingPath, { version: Fx.Version })
         assert.equal(reply.status, 409)
-        assert.deepEqual(JSON.parse(reply.body), { error: 'Release rejected on import: ' + Fx.Version })
+        assert.deepEqual(JSON.parse(reply.body), { error: Fx.RejectedPrefix + Fx.Version })
     })
 })

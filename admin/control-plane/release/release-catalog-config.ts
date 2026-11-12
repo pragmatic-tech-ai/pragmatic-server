@@ -21,7 +21,11 @@ export class ReleaseConfigError extends Error
 }
 
 /** The platform-admin release services: the single-flight refresher, and its poll unless the poll is off. */
-export type ReleaseServices = { Refresher: ReleaseRefresher; Poll: ReleasePoll | undefined }
+export interface IReleaseServices
+{
+    Refresher: ReleaseRefresher
+    Poll: ReleasePoll | undefined
+}
 
 /**
  * Reads the release settings from the environment and composes the catalogue over them. No credential file means no
@@ -41,15 +45,19 @@ export class ReleaseCatalogConfig
     private static readonly MaxPollSeconds = 2147483
     private static readonly MsPerSecond = 1000
     private static readonly WholeNumber = /^[0-9]+$/
-    private static readonly HttpProtocols: ReadonlySet<string> = new Set(['http:', 'https:'])
+    private static readonly HttpsProtocol = 'https:'
+    private static readonly HttpProtocol = 'http:'
+    /** The only hosts a plain-http registry may name: the credential never leaves the machine in clear. */
+    private static readonly LoopbackHosts: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]'])
     private static readonly Utf8 = 'utf8'
-    private static readonly BadPollMessage = 'PRAGMATIC_RELEASE_POLL_SECONDS must be a whole number of seconds from 0 to 2147483 (0 turns the poll off)'
-    private static readonly BadCredentialMessage = 'PRAGMATIC_RELEASE_CREDENTIAL_FILE must name a readable JSON file holding { "username": "...", "token": "..." }'
-    private static readonly BadRegistryMessage = 'PRAGMATIC_RELEASE_REGISTRY must be an absolute http(s) URL'
-    private static readonly BadTrustDirMessage = 'PRAGMATIC_RELEASE_TRUST_DIR must name a readable directory of release public keys'
+    private static readonly BadPollMessage = ReleaseCatalogConfig.PollSecondsEnvVar + ' must be a whole number of seconds from 0 to '
+        + String(ReleaseCatalogConfig.MaxPollSeconds) + ' (0 turns the poll off)'
+    private static readonly BadCredentialMessage = ReleaseCatalogConfig.CredentialFileEnvVar + ' must name a readable JSON file holding { "username": "...", "token": "..." }'
+    private static readonly BadRegistryMessage = ReleaseCatalogConfig.RegistryEnvVar + ' must be an absolute https URL (http only for a loopback registry)'
+    private static readonly BadTrustDirMessage = ReleaseCatalogConfig.TrustDirEnvVar + ' must name a readable directory of release public keys'
 
     /** Composes the release services, or undefined when no credential file is configured. The poll interval is always validated. */
-    public static Compose(env: NodeJS.ProcessEnv, repoRoot: string, deployments: PlatformDeploymentRegistry, fetchFn?: OciFetch): ReleaseServices | undefined
+    public static Compose(env: NodeJS.ProcessEnv, repoRoot: string, deployments: PlatformDeploymentRegistry, fetchFn?: OciFetch): IReleaseServices | undefined
     {
         const C = ReleaseCatalogConfig
         const pollSeconds = C.PollSecondsOf(env)
@@ -117,16 +125,18 @@ export class ReleaseCatalogConfig
     {
         const C = ReleaseCatalogConfig
         const raw = C.ValueOr(env, C.RegistryEnvVar, ReleaseRegistry.DefaultBaseUrl)
+        let url: URL
         try
         {
-            if (C.HttpProtocols.has(new URL(raw).protocol))
-            {
-                return raw
-            }
+            url = new URL(raw)
         }
         catch
         {
-            // Falls through to the refusal below.
+            throw new ReleaseConfigError(C.BadRegistryMessage)
+        }
+        if (url.protocol === C.HttpsProtocol || (url.protocol === C.HttpProtocol && C.LoopbackHosts.has(url.hostname)))
+        {
+            return raw
         }
         throw new ReleaseConfigError(C.BadRegistryMessage)
     }

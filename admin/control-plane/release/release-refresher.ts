@@ -1,3 +1,4 @@
+import { ReleaseRegistryUnavailableError } from '../rollout-errors.js'
 import type { ReleaseRefreshResult } from './release-catalog.js'
 
 /** What the refresher serializes: the release catalogue (or a test stand-in). */
@@ -30,6 +31,19 @@ export class ReleaseRefresher
             .finally(() => this.Release(run))
         this.inFlight = run
         return run
+    }
+
+    /**
+     * The loggable text of a refresh failure: the fixed, token-free sentence of a registry failure, else the error's name
+     * only (inner text could carry a credential or a path).
+     */
+    public static FailureText(err: unknown): string
+    {
+        if (err instanceof ReleaseRegistryUnavailableError)
+        {
+            return err.message
+        }
+        return err instanceof Error ? err.name : typeof err
     }
 
     private Release(run: Promise<ReleaseRefreshResult>): void

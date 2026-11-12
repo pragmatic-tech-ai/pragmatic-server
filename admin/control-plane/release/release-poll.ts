@@ -1,6 +1,5 @@
-import { ReleaseRegistryUnavailableError } from '../rollout-errors.js'
 import type { ReleaseRefreshResult } from './release-catalog.js'
-import type { ReleaseRefresher } from './release-refresher.js'
+import { ReleaseRefresher } from './release-refresher.js'
 
 /** Where the poll reports: counts on success, a fixed sentence on failure. */
 export interface IReleasePollLog
@@ -37,6 +36,7 @@ export class ReleasePoll
     private static readonly FailedPrefix = 'Release poll failed: '
 
     private timer: ReturnType<typeof setInterval> | undefined
+    private ticking = false
 
     public constructor(
         private readonly refresher: ReleaseRefresher,
@@ -64,16 +64,25 @@ export class ReleasePoll
         }
     }
 
-    /** One refresh and its log line; never throws. */
+    /** One refresh and its log line; never throws. Skipped while the previous tick is still pending, so each refresh logs once. */
     public async Tick(): Promise<void>
     {
+        if (this.ticking)
+        {
+            return
+        }
+        this.ticking = true
         try
         {
             this.log.Info(ReleasePoll.CountsLine(await this.refresher.Refresh()))
         }
         catch (err)
         {
-            this.log.Warn(ReleasePoll.FailedPrefix + ReleasePoll.FailureText(err))
+            this.log.Warn(ReleasePoll.FailedPrefix + ReleaseRefresher.FailureText(err))
+        }
+        finally
+        {
+            this.ticking = false
         }
     }
 
@@ -82,14 +91,5 @@ export class ReleasePoll
         const P = ReleasePoll
         return P.CountsPrefix + String(result.imported.length) + P.RejectedLabel + String(result.rejected.length)
             + P.UnchangedLabel + String(result.unchanged) + P.ShadowedLabel + String(result.shadowed.length)
-    }
-
-    private static FailureText(err: unknown): string
-    {
-        if (err instanceof ReleaseRegistryUnavailableError)
-        {
-            return err.message
-        }
-        return err instanceof Error ? err.name : typeof err
     }
 }
