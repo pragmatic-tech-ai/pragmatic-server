@@ -14,7 +14,7 @@
  * admin-token Secret, never the IdP TLS Secret) and check it over a kubectl port-forward; (5) create two hive-bound environments
  * through the real EnvironmentService (each federates to the tenant IdP and is reached through its TLS-terminating Ingress host);
  * (6) drive a real Playwright browser (host-resolver MAP idp-<tenant>.<baseDomain> and <env>.<baseDomain> to 127.0.0.1,
- * ignoreHTTPSErrors) through a full OIDC login at env A, assert /auth/session carries email + name, then env B rides the IdP SSO
+ * ignoreHTTPSErrors) through a full OIDC login at env A, assert /auth/session names the IdP account's principal, then env B rides the IdP SSO
  * cookie with NO second login form; (7) tear everything down (envs, kind cluster, temp dir). Secrets are never printed.
  */
 import { spawn } from 'node:child_process'
@@ -183,8 +183,11 @@ export class InClusterFederationSmoke
     private static readonly CookieJoin = '='
     private static readonly TokenSep = '.'
     private static readonly TokenKey = 'token'
-    private static readonly EmailKey = 'email'
-    private static readonly NameKey = 'name'
+    private static readonly PrincipalIdKey = 'principalId'
+    private static readonly TenantKey = 'tenant'
+    private static readonly DetailStatus = 'status '
+    private static readonly DetailPrincipal = ', principalId '
+    private static readonly DetailTenant = ', tenant '
     private static readonly BodySelector = 'body'
     private static readonly CookieHeader = 'cookie'
     private static readonly FormWaitMs = 30000
@@ -207,9 +210,9 @@ export class InClusterFederationSmoke
         EnvA: 'env A created in-cluster and federated to the tenant IdP',
         EnvB: 'env B created in-cluster and federated to the tenant IdP',
         LoginForm: 'env A: browser redirected to the IdP host and the login form rendered',
-        SessionA: 'env A: full OIDC login; /auth/session carries email + name',
+        SessionA: 'env A: full OIDC login; /auth/session names the IdP account principal in env A',
         Sso: 'env B: rode the IdP SSO cookie with NO login form',
-        SessionB: 'env B: /auth/session carries the same email + name',
+        SessionB: 'env B: /auth/session names the same IdP account principal in env B',
     }
 
     private failed = false
@@ -429,7 +432,11 @@ export class InClusterFederationSmoke
         }
     }
 
-    /** The callback page body is JSON carrying the session token; /auth/session with that cookie must expose email + name. */
+    /**
+     * The callback page body is JSON carrying the session token; /auth/session with that cookie must name the IdP account's principal
+     * (its subject, seeded as OwnerPrincipal) in this environment. The env server's whoami carries tenant + principal + expiry only;
+     * the email + name claims themselves are proven on the id_token by idp-sso-smoke.
+     */
     private async AssertSession(context: BrowserContext, page: Page, envName: string, label: string): Promise<void>
     {
         const S = InClusterFederationSmoke
@@ -438,8 +445,8 @@ export class InClusterFederationSmoke
         const cookie = S.SessionCookieName + S.CookieJoin + envName + S.TokenSep + String(token)
         const session = await context.request.get(this.EnvOrigin(envName) + S.SessionPath, { headers: { [S.CookieHeader]: cookie } })
         const info = (await session.json()) as Record<string, unknown>
-        const ok = session.ok() && info[S.EmailKey] === S.OwnerEmail && typeof info[S.NameKey] === 'string' && info[S.NameKey] !== ''
-        this.Expect(label, ok)
+        const ok = session.ok() && info[S.PrincipalIdKey] === S.OwnerPrincipal && info[S.TenantKey] === envName
+        this.Expect(label, ok, S.DetailStatus + String(session.status()) + S.DetailPrincipal + String(info[S.PrincipalIdKey]) + S.DetailTenant + String(info[S.TenantKey]))
     }
 
     private EnvOrigin(envName: string): string
