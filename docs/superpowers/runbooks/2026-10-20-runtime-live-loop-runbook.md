@@ -2,83 +2,131 @@
 
 ## What it proves
 
-The live-loop e2e drives the whole author-to-serve path on one machine. A local Plexus authors a simple graph (Contoso and Northwind ontologies) and contributes it to a Development environment graph. An admin promotes that graph from Development into the Runtime environment. The test then publishes an environment-bound app, the Runtime serves it, and a real browser on the second monitor reads the promoted graph live. Connectors and provisioned databases are Stage 2 and are out of scope for this run.
+The live-loop e2e drives the whole author-to-serve path the way a customer works, on one machine:
+
+1. A local Plexus signs in to a tenant on a local control plane.
+2. Plexus authors a simple graph from the Contoso and Northwind ontologies and contributes it to a Development environment graph. The contribution goes through the tenant's console relay to an environment on the tenant's hive.
+3. The operator promotes that graph into the Runtime environment, and the tenant's security setting grants the reader access.
+4. Plexus publishes an environment-bound app. A real browser on the second monitor reads the promoted graph live from it.
+5. A second app, Catalog, reads live from the Runtime environment's own Postgres.
+
+## The stack
+
+The test runs against a dedicated stack. It never touches the developer's own control-plane data in `admin/control-plane/data/`.
+
+`admin/control-plane/live-loop/live-loop-stack.ts up` stands up:
+
+- A kind cluster `pragmatic-e2e`, with:
+  - host ports 443 and the in-cluster registry port 30500 mapped;
+  - ingress-nginx with SSL passthrough;
+  - the `pragmatic-server:dev`, `registry:2` and `postgres:16` images loaded.
+- A control plane:
+  - The operator API is on `http://localhost:7000`. The tenant plane, which serves as the tenant's console, is on `http://e2e.lvh.me:7100`.
+  - Its state lives in `~/.pragmatic/e2e-stack/data`.
+- Through the operator API:
+  - client `e2e-client`;
+  - tenant `e2e` with owner `o@t.io`, plus its IdP container;
+  - hive `e2e-hive`, attached to the kind cluster.
+- The owner's one-time password, replaced through the tenant plane with the short test password `e2e-password`. The tenant plane requires at least 12 characters.
+
+`up` writes `~/.pragmatic/e2e-stack/stack.json`. It records:
+
+- the addresses;
+- the owner and operator emails;
+- the paths of the files holding their passwords;
+- the IdP's development CA file.
+
+No password is ever printed. `down` removes everything again: it stops the control plane, removes the IdP container and volume, and deletes the cluster and the stack folder.
 
 ## One-time prerequisites
 
-1. Docker is running. If the Docker daemon is not running, the image build and the suite both fail immediately. Start Docker Desktop, or the Docker service, and confirm with `docker info`.
+1. **Docker is running.** Check with `docker info`. `kind` and `kubectl` must be on PATH. On this machine, winget installs kind under `%LOCALAPPDATA%\Microsoft\WinGet\Packages\Kubernetes.kind_*`.
 
-2. Build the server image `pragmatic-server:dev`. From the workspace root `architecture-agent/` (the directory that holds `pragmatic-server` and all sibling packages), run the build with the context set to `.`. The image tag must be `pragmatic-server:dev`, because the control-plane path requires it. The build needs a private `.npmrc` that holds a GitHub Packages token with the `read:packages` scope. Keep that file outside the repo and never commit it. In the command below, `<path>` is the directory that contains your `.npmrc` (the command appends `/.npmrc`), and it goes in the `src=` argument of the `--secret` flag:
+2. **Build a fresh `pragmatic-server:dev` image.** From the workspace root `architecture-agent/`, with a private `.npmrc` that holds a GitHub Packages token with the `read:packages` scope. Keep that file outside the repo.
 
-```
-DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<path>/.npmrc -t pragmatic-server:dev .
-```
+   ```
+   DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<path>/.npmrc -t pragmatic-server:dev .
+   ```
 
-The token is mounted only during the `npm install` steps and is never written into an image layer.
+3. **Install Playwright's Chromium**, in both the server repo and `apps/plexus`:
 
-3. Install the Chromium build that Playwright uses:
+   ```
+   npx playwright install chromium
+   ```
 
-```
-npx playwright install chromium
-```
+4. **Build Plexus** so `apps/plexus/out/main/index.js` exists. From `apps/plexus`, run `npm run build`.
 
-4. Build Plexus so that `apps/plexus/out/main/index.js` exists. Rebuild any sibling `dist` that the build consumes before you build Plexus. From `apps/plexus` in the Plexus repo:
-
-```
-npm run build
-```
+5. **Free the host ports** 443, 30500, 7000 and 7100. In particular, do not run `dev-up.sh` at the same time, because it also uses 443 and 7000.
 
 ## Run
 
-The spec is `apps/plexus/e2e/runtime-live-loop.spec.ts` in the Plexus repo. Issue the run command from `apps/plexus`. Set the gate `SP_RUNTIME_LOOP_E2E=1`. On Windows PowerShell use `$env:SP_RUNTIME_LOOP_E2E = '1'` before the command. On Git Bash use the inline form shown below.
+From the pragmatic-server repo:
 
 ```
-SP_RUNTIME_LOOP_E2E=1 npx playwright test runtime-live-loop.spec.ts
+npx tsx admin/control-plane/live-loop/live-loop-stack.ts up
 ```
 
-The suite skips unless `SP_RUNTIME_LOOP_E2E=1` is set, so it never runs in normal unit or CI runs. When it runs, it spawns the control-plane orchestrator automatically. The orchestrator lives at `admin/control-plane/loop-orchestrator.ts` relative to the pragmatic-server repo root. Do not run that file by hand. The suite locates the pragmatic-server repo through `SP_SERVER_REPO`, and when that is unset it uses the sibling location. The orchestrator creates real Docker containers, and the suite tears them down at the end, including when a step fails.
+From `apps/plexus` in the Plexus repo (Git Bash):
+
+```
+SP_RUNTIME_LOOP_E2E=1 PLEXUS_E2E_STACK=~/.pragmatic/e2e-stack/stack.json npx playwright test e2e/runtime-live-loop.spec.ts
+```
+
+The suite skips unless `SP_RUNTIME_LOOP_E2E=1` is set, so it never runs in unit or CI runs.
+
+`PLEXUS_E2E_STACK` gives the scripted desktop sign-in its inputs: the owner email, the password file, the platform address, the tenant and the IdP CA. Any `PLEXUS_E2E_*` variable that is set explicitly still wins.
+
+The suite spawns the orchestrator, `admin/control-plane/live-loop/loop-orchestrator.ts`, for each step, locating the server repo through `SP_SERVER_REPO` or the sibling default. Do not run it by hand except to clean up (`teardown`).
+
+The orchestrator acts as the people involved:
+
+- **As the tenant owner**, signed in at the tenant plane through the IdP in a headless browser, it creates:
+  - the `loop-dev` and `loop-rt` environments on the hive;
+  - the dev graph;
+  - the reader `r@t.io` and the ungranted `u@t.io` accounts, each with a random password;
+  - the reader's role;
+  - after each promote, the runtime's security setting.
+- **As the operator**, it promotes.
+
+The runtime environment is reached through a `kubectl port-forward` on a free localhost port. That forward outlives the orchestrator process, and teardown stops it.
+
+Afterwards, take the stack down:
+
+```
+npx tsx admin/control-plane/live-loop/live-loop-stack.ts down
+```
 
 Optional environment variables:
 
-- `SP_SERVER_REPO` is the path to the pragmatic-server repo. When unset, the suite uses the sibling location of the repo relative to Plexus.
-- `SP_E2E_WINDOW_ORIGIN` is an `x,y` screen origin that overrides where the Plexus and chromium windows open. Without it, the windows open on the first non-primary display, and fall back to the origin (0,0) when only one display is present. Set it when your second monitor is not the first non-primary display.
+- `SP_SERVER_REPO`: the path to the pragmatic-server repo. When unset, the suite uses the sibling location.
+- `SP_E2E_WINDOW_ORIGIN`: an `x,y` screen origin for the Plexus and Chromium windows. Without it, they open on the first non-primary display.
 
 ## What the test does
 
-1. Setup: clone the Contoso fixture into a throwaway temp directory and seed the Plexus session to point at it.
-2. Launch Plexus and place its window on the second monitor.
-3. Open Contoso and run Generate UI for the entrypoint concept.
-4. Create the Development environment, then contribute the solution packages into its dev graph. Then create the Runtime environment with its container and provisioning only. No promote happens at this point.
-5. Pre-promote check: run one Cypher read against the empty Runtime environment graph. The read must fail with a clean NoEnvironmentGraphError, not a crash or blank result.
-6. Promote the dev graph into the existing Runtime environment.
-7. Configure the tenant and publish the Contoso app bound to the environment.
-8. Milestone: a real chromium browser on the second monitor signs in as a reader and reads the promoted value from the served app.
-9. Ungranted read: a user without a grant must be denied by RBAC. The denial must be a permission refusal, not the no-graph error.
-10. Re-promote: change the one seeded assert value to a distinct v2 string, re-contribute into the same dev graph, promote again, and reload the already-served app. The v2 value must render and the original must be gone, with no redeploy.
-11. Teardown: tear down the containers and restore the seeded session. Each teardown action runs independently, so a failure in one does not skip the others.
-
-## What to watch
-
-Three checks carry the most operator risk, so look at them first when a run fails.
-
-Step 5, the pre-promote check, is unconditional. It must reject with NoEnvironmentGraphError. If it returns rows, something was already promoted into the Runtime, so the environment was not clean when the run started. If it hangs or crashes, the Runtime container or its connection is more likely at fault than the graph, though that is not a definitive diagnosis.
-
-Step 9, the ungranted read, must fail with a permission refusal. If the error is the no-graph message instead, first confirm that promote actually ran, then confirm the grant state is what the test expects.
-
-Step 10, the re-promote, depends on the second build picking up the rewritten `.todl` source. The test changes the seeded value in the cloned solution, re-contributes, and promotes again. If the reloaded app still shows the original value, check that the re-contribute step reported success and that the promote step rebuilt from the rewritten source, not a cached build.
+1. **Setup.** Clone the Contoso and Catalog fixtures into temp directories, then launch Plexus on an isolated temporary profile on the second monitor.
+2. **Sign-in.** Sign Plexus in to tenant `e2e` with the scripted desktop sign-in. No real browser is used: the IdP login runs over Node https and trusts the IdP's development CA.
+3. **Generate UI.** Generate UI for the Contoso entrypoint concept.
+4. **Contribute.** Create the Development environment and its graph, then contribute the solution packages through the tenant plane's relay.
+5. **Runtime.** Create the Runtime environment with Postgres, plus the reader and ungranted accounts. Nothing is promoted yet.
+6. **Pre-promote check.** A Cypher read against the empty runtime environment graph must fail with a clean NoEnvironmentGraphError.
+7. **Promote.** Promote, and secure the runtime: the reader reads every promoted concept.
+8. **Publish.** Publish the Contoso app bound to the environment. The publish goes through the relay.
+9. **Milestone.** A real Chromium on the second monitor signs in as the reader and reads the promoted value from the served app.
+10. **Ungranted read.** The ungranted account is refused by RBAC. This must be a permission refusal, not the no-graph error.
+11. **Re-promote.** Change the seeded assert value, re-contribute, promote again and reload. The new value renders with no redeploy.
+12. **Postgres read-through.**
+    - Insert a row into the runtime's Postgres.
+    - Generate, contribute, promote and publish Catalog, then see the row in the browser.
+    - Update the row and reload only: the new value renders.
+13. **Teardown.** Sign Plexus out, then delete both environments and stop the port-forward. Each teardown action runs independently.
 
 ## Troubleshooting
 
-If the Docker daemon is not running, the suite and the image build both fail at the first Docker call. Start Docker, confirm with `docker info`, and run again.
-
-If the image build fails at the BuildKit secret step, the `.npmrc` path is probably wrong, or the token lacks the `read:packages` scope. Check that the `src=` path points to an existing `.npmrc` file, and that its GitHub Packages token has `read:packages`. Then rebuild.
-
-If the suite fails with a message that the `pragmatic-server:dev` image is missing, run the image build step from the prerequisites. Confirm that the tag is exactly `pragmatic-server:dev`.
-
-If the chromium executable is missing, run `npx playwright install chromium`.
-
-If the Plexus or chromium windows open on the wrong monitor, set `SP_E2E_WINDOW_ORIGIN` to the `x,y` origin of your second monitor and run again.
-
-If the suite fails with a message that `out/main/index.js` is missing, run `npm run build` in `apps/plexus` of the Plexus repo.
-
-If the step 9 ungranted read fails with the no-graph error where a permission refusal was expected, the promote step may not have run. Check the earlier steps first, then the grant state, then run again.
+- **The suite skips naming the sign-in variables.** `PLEXUS_E2E_STACK` is unset or names a missing file. Run `live-loop-stack.ts up` first.
+- **`up` refuses with "the e2e stack is already up".** `stack.json` exists. Run `down` first.
+- **`create-dev` fails with 409, or "listed as failed".** A previous run left the environments behind. Run `npx tsx admin/control-plane/live-loop/loop-orchestrator.ts teardown` and run again.
+- **An environment create fails with `localhost:5000/pragmatic-server:dev` missing.** The hive was seeded with registry mode `provision`. The stack seeds `attach`, so take the stack down and up again.
+- **The control plane does not answer.** Read `~/.pragmatic/e2e-stack/control-plane.log`.
+- **The pre-promote check returns rows.** Something was promoted before the run, so tear down and run again.
+- **The ungranted read fails with the no-graph error.** Check that the promote step ran.
+- **The re-promote still shows the original value.** Check that the re-contribute step reported success.
