@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { parse } from 'yaml'
 import { ClosureCheck } from '../../../docker/images/closure-check.js'
+import { ImportWalker } from '../../../admin/control-plane/tests/import-walker.js'
 
 class Workflows
 {
@@ -116,6 +117,111 @@ test('ci and release workflows clone exactly the siblings the Dockerfiles copy',
     assert.deepEqual([...ClosureCheck.Siblings].sort(), copied, 'the closure check knows every sibling the image build copies')
     assert.deepEqual(SiblingLists.Cloned('ci.yml'), copied)
     assert.deepEqual(SiblingLists.Cloned('release.yml'), copied)
+})
+
+class WorkflowCommands
+{
+    private static readonly CloneFlagsPattern = /git clone((?:\s+--?[a-z-]+(?:\s+\d+)?)*)\s+"https:\/\/github\.com\/pragmatic-tech-ai\//
+    private static readonly NpxPattern = /\bnpx((?:\s+--?[a-z-]+)*)\s+(\S+)/g
+    private static readonly DownloadFlag = /--yes|(?:^|\s)-y\b/
+    private static readonly VersionMarker = '@'
+    private static readonly ExactVersion =/^(?:@[a-z0-9-]+\/)?[a-z0-9.-]+@\d+\.\d+\.\d+$/
+    private static readonly TestFilesPattern = /--test((?:\s+"?pragmatic-server\/\S+?\.test\.ts"?)+)/
+    private static readonly Quote = /"/g
+    private static readonly LockFile = 'package-lock.json'
+    private static readonly TsxLockKey = 'node_modules/tsx'
+
+    /** The options of the workflow's sibling `git clone` (everything between `git clone` and the repository URL). */
+    public static CloneFlags(workflow: string): string
+    {
+        const match = WorkflowCommands.CloneFlagsPattern.exec(Workflows.Text(workflow))
+        assert.ok(match !== null, `no sibling git clone in ${workflow}`)
+        return match[1].trim()
+    }
+
+    /**
+     * Every `npx` invocation in the workflow: the package as written (`tsx`, `tsx@4.23.15`), whether npx may download it
+     * (`--yes`), and whether it names a version.
+     */
+    public static NpxInvocations(workflow: string): { Package: string; Downloads: boolean; Versioned: boolean }[]
+    {
+        const S = WorkflowCommands
+        return [...Workflows.Text(workflow).matchAll(S.NpxPattern)].map(m => ({
+            Package: m[2],
+            Downloads: S.DownloadFlag.test(m[1]),
+            Versioned: m[2].includes(S.VersionMarker, 1),
+        }))
+    }
+
+    public static IsExact(spec: string): boolean
+    {
+        return WorkflowCommands.ExactVersion.test(spec)
+    }
+
+    /** The tsx version the server's package-lock resolves. */
+    public static LockedTsx(): string
+    {
+        const lock = JSON.parse(readFileSync(join(Workflows.Dir(), '..', '..', WorkflowCommands.LockFile), 'utf8')) as { packages: Record<string, { version: string }> }
+        return lock.packages[WorkflowCommands.TsxLockKey].version
+    }
+
+    /** The test files a workflow step passes to `tsx --test`, relative to the workspace root. */
+    public static TestFiles(run: string): string[]
+    {
+        const match = WorkflowCommands.TestFilesPattern.exec(run)
+        return match === null ? [] : match[1].replace(WorkflowCommands.Quote, '').trim().split(/\s+/)
+    }
+}
+
+test('release workflow clones every sibling exactly as ci does: the default branch, never a named one', () =>
+{
+    const ci = WorkflowCommands.CloneFlags('ci.yml')
+    assert.equal(WorkflowCommands.CloneFlags('release.yml'), ci)
+    assert.doesNotMatch(ci, /--branch|-b\b/)
+    const release = Workflows.Text('release.yml')
+    assert.doesNotMatch(release, /--branch/)
+    assert.match(release, /rev-parse HEAD[\s\S]*siblings\.json/, 'each clone records its HEAD commit in siblings.json')
+})
+
+test('every package a workflow runs with npx --yes is pinned to an exact version, and release uses the locked tsx', () =>
+{
+    for (const name of Workflows.Files())
+    {
+        for (const npx of WorkflowCommands.NpxInvocations(name))
+        {
+            if (npx.Downloads || npx.Versioned)
+            {
+                assert.ok(WorkflowCommands.IsExact(npx.Package), `${name}: npx package not pinned to an exact version: ${npx.Package}`)
+            }
+        }
+    }
+    const tsx = WorkflowCommands.NpxInvocations('release.yml').map(npx => npx.Package)
+    assert.ok(tsx.length >= 3)
+    assert.deepEqual([...new Set(tsx)], [`tsx@${WorkflowCommands.LockedTsx()}`])
+})
+
+test('release workflow runs the builtin-only release toolkit tests before it bakes, and the image build runs the closure check', () =>
+{
+    const doc = parse(Workflows.Text('release.yml')) as { jobs: Record<string, { steps?: IWorkflowStep[] }> }
+    const runs = Object.values(doc.jobs).flatMap(job => job.steps ?? []).map(step => step.run ?? '')
+    const tests = runs.findIndex(run => WorkflowCommands.TestFiles(run).length > 0)
+    const bake = runs.findIndex(run => /docker buildx bake/.test(run))
+    assert.ok(tests !== -1 && tests < bake, 'the release toolkit tests run before the images are built')
+    const workspace = join(Workflows.Dir(), '..', '..', '..')
+    for (const file of WorkflowCommands.TestFiles(runs[tests]))
+    {
+        assert.deepEqual(ImportWalker.Offenders(join(workspace, file)), [], `${file} runs without npm install, so it may import only builtins`)
+    }
+    const dockerfile = readFileSync(join(Workflows.Dir(), '..', '..', 'docker', 'images', 'Dockerfile'), 'utf8')
+    assert.match(dockerfile, /^RUN cd pragmatic-server && npx tsx docker\/images\/closure-check\.ts$/m, 'the shared build stage runs the closure check, so no image ships an unchecked closure')
+})
+
+test('ci workflow runs the control-plane and image-tooling suites beside the server suite', () =>
+{
+    const text = Workflows.Text('ci.yml')
+    assert.match(text, /npx tsx --test "src\/\*\*\/\*\.test\.ts"/)
+    assert.match(text, /npx tsx --test "admin\/control-plane\/\*\*\/\*\.test\.ts"/)
+    assert.match(text, /npx tsx --test "docker\/images\/tests\/\*\.test\.ts"/)
 })
 
 test('ci workflow clones the graph engine and points TODL at it before the server builds', () =>

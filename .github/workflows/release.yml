@@ -1,7 +1,10 @@
 # Publishes a release from a `release/X.Y.Z` (stable) or `release/X.Y.Z-early.N` (early access) tag on this repo:
 # builds the eight app images (docker/docker-bake.hcl), pushes them to ghcr.io/pragmatic-tech-ai tagged :X.Y.Z and
 # :git-<server sha>, then signs each image digest and pushes the signed release descriptor (pragmatic-release:X.Y.Z).
-# Only this repo is tagged: every sibling builds from its `main` head and its commit is recorded in the descriptor.
+# Only this repo is tagged: every sibling builds from its default-branch head (cloned exactly as ci.yml clones it; some
+# siblings' default branch is `master`) and its commit is recorded in the descriptor.
+# The publish-side release toolkit tests run first (they import only node builtins, so no npm install is needed); the
+# image closure check runs inside the shared build stage of docker/images/Dockerfile. tsx is pinned to the server's locked version.
 # Secrets: PACKAGES_TOKEN (read:packages, for the build's npm installs) and RELEASE_SIGNING_KEY (the Ed25519 private
 # key PEM whose public half is release-keys/release-2026-11.pub.pem). Neither is echoed, put on a command line or
 # baked into a layer; both files are removed whatever the outcome.
@@ -30,21 +33,24 @@ jobs:
         env:
           RELEASE_REGISTRY_USER: ${{ github.actor }}
           RELEASE_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx --yes tsx@4 pragmatic-server/admin/control-plane/bin/pragmatic-release-publish.ts check --tag "$GITHUB_REF"
+        run: npx --yes tsx@4.23.15 pragmatic-server/admin/control-plane/bin/pragmatic-release-publish.ts check --tag "$GITHUB_REF"
+      - name: Test the release toolkit
+        working-directory: ${{ github.workspace }}
+        run: npx --yes tsx@4.23.15 --test "pragmatic-server/admin/control-plane/release/tests/release-descriptor.test.ts" "pragmatic-server/admin/control-plane/release/tests/release-publisher.test.ts" "pragmatic-server/admin/control-plane/release/tests/release-signature.test.ts" "pragmatic-server/admin/control-plane/release/tests/release-tag.test.ts" "pragmatic-server/admin/control-plane/release/tests/release-trust-keys.test.ts"
       # The version is the tag's X.Y.Z[-early.N] (already validated above); the server commit is the tagged checkout.
       - name: Resolve version and server commit
         working-directory: ${{ github.workspace }}
         run: |
           echo "VERSION=${GITHUB_REF#refs/tags/release/}" >> "$GITHUB_ENV"
           echo "SERVER_SHA=$(git -C pragmatic-server rev-parse HEAD)" >> "$GITHUB_ENV"
-      - name: Clone siblings at main
+      - name: Clone siblings at their default-branch head
         working-directory: ${{ github.workspace }}
         run: |
           siblings='{}'
           for pair in pragmatic-graph:pragmatic-graph todl-runtime:todl-runtime todl:TODL mural:Mural pragmatic-protocol:pragmatic-protocol todl-identity:todl-identity todl-identity-local:todl-identity-local todl-identity-host:todl-identity-host todl-identity-cloud:todl-identity-cloud todl-identity-engine:todl-identity-engine todl-connectors-host:todl-connectors-host todl-platform-node:todl-platform-node todl-platform-cloud:todl-platform-cloud todl-platform-aws:todl-platform-aws todl-platform-azure:todl-platform-azure todl-platform-gcp:todl-platform-gcp todl-identity-node:todl-identity-node; do
             repo="${pair%%:*}"
             dir="${pair#*:}"
-            git clone --depth 1 --branch main "https://github.com/pragmatic-tech-ai/${repo}.git" "$dir"
+            git clone --depth 1 "https://github.com/pragmatic-tech-ai/${repo}.git" "$dir"
             siblings=$(jq -c --arg repo "$repo" --arg sha "$(git -C "$dir" rev-parse HEAD)" '. + {($repo): $sha}' <<< "$siblings")
           done
           printf '%s\n' "$siblings" > "$RUNNER_TEMP/siblings.json"
@@ -78,7 +84,7 @@ jobs:
           RELEASE_SIGNING_KEY_FILE: ${{ runner.temp }}/release.key
           RELEASE_REGISTRY_USER: ${{ github.actor }}
           RELEASE_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx --yes tsx@4 pragmatic-server/admin/control-plane/bin/pragmatic-release-publish.ts publish --tag "$GITHUB_REF" --server-commit "$SERVER_SHA" --siblings-file "$RUNNER_TEMP/siblings.json" --key-id release-2026-11
+        run: npx --yes tsx@4.23.15 pragmatic-server/admin/control-plane/bin/pragmatic-release-publish.ts publish --tag "$GITHUB_REF" --server-commit "$SERVER_SHA" --siblings-file "$RUNNER_TEMP/siblings.json" --key-id release-2026-11
       - name: Remove credentials
         if: always()
         run: rm -f "$RUNNER_TEMP/release.key" "$RUNNER_TEMP/npmrc"

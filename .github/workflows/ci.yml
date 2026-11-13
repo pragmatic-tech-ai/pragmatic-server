@@ -46,6 +46,15 @@ jobs:
       - name: Test
         working-directory: ${{ github.workspace }}/pragmatic-server
         run: npx tsx --test "src/**/*.test.ts"
+      # The control-plane suite (release toolkit, catalogue, tenant-admin closure guard) and the image tooling. Every test
+      # that needs a local-only resource is gated (the dev-ca-trust.ps1 suite runs on Windows only; the POSIX-mode checks
+      # skip where modes are unsupported); docker, kubectl and kind are faked throughout, and openssl is on the runner.
+      - name: Test the control plane
+        working-directory: ${{ github.workspace }}/pragmatic-server
+        run: npx tsx --test "admin/control-plane/**/*.test.ts"
+      - name: Test the image tooling
+        working-directory: ${{ github.workspace }}/pragmatic-server
+        run: npx tsx --test "docker/images/tests/*.test.ts"
       - name: IdP sign-in app (unit tests + typecheck)
         working-directory: ${{ github.workspace }}/pragmatic-server/idp-login
         run: |
