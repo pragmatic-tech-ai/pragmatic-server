@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { CreateAccountParams, GrantMutationDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CreateAccountParams, GrantMutationDto, SecurityCatalogDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { BaseRole } from '@pragmatic-tech-ai/todl-identity'
 import type { AdminConnectInfo } from '../admin-proxy.js'
 import type { GraphDto, PromotionResultDto } from '../control-plane-host.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
@@ -69,6 +70,26 @@ class FakeEnvs implements ILoopEnvironments
     public async AdminGrantRole(_name: string, mutation: GrantMutationDto): Promise<void>
     {
         this.grants.push(mutation)
+    }
+
+    public securityModel: SecurityModelDto | undefined
+    public readonly securitySets: SecurityModelDto[] = []
+    public catalogConcepts: string[] = ['contoso.Customer', 'northwind.Order']
+
+    public async AdminGetSecurityModel(_name: string): Promise<SecurityModelDto | undefined>
+    {
+        return this.securityModel
+    }
+
+    public async AdminSetSecurityModel(_name: string, securityModel: SecurityModelDto): Promise<void>
+    {
+        this.securityModel = securityModel
+        this.securitySets.push(securityModel)
+    }
+
+    public async AdminGetSecurityCatalog(_name: string): Promise<SecurityCatalogDto>
+    {
+        return { roles: [], concepts: this.catalogConcepts.map(name => ({ name, package: 'p', owned: false })), securedFields: [], profiles: [] }
     }
 }
 
@@ -176,6 +197,32 @@ test('CreateRuntime descriptor has the exact contract keys, grants only the read
     assert.equal(h.envs.grants[0].subject, 'loop-reader')
     assert.deepEqual(h.graphs.promoted, [])
     assert.notEqual(round.reader.password, round.ungranted.password)
+})
+
+// A Runtime environment created without a creator is unseeded, so tier-1 security denies every read: each promote must
+// leave the admin as System Administrator and the reader (never the ungranted user) as a Reader of every promoted concept.
+test('Promote secures the runtime: admin is System Administrator, the reader reads every catalog concept, the ungranted user gets nothing', async () =>
+{
+    const h = new Harness()
+    await h.orchestrator.CreateRuntime()
+    await h.orchestrator.Promote(Fixture.Graph)
+    const model = h.envs.securityModel
+    assert.ok(model !== undefined)
+    assert.deepEqual(model.roleAssignments.find(a => a.role === BaseRole.SystemAdministrator)?.principalIds, ['admin'])
+    assert.deepEqual(model.roleAssignments.find(a => a.role === BaseRole.Reader)?.principalIds, ['loop-reader'])
+    assert.deepEqual(model.roleOverrides.map(o => o.concept), h.envs.catalogConcepts)
+    assert.ok(!model.users.some(u => u.principalId === 'loop-ungranted'))
+})
+
+test('a re-promote re-secures the runtime over the concepts the catalog now holds', async () =>
+{
+    const h = new Harness()
+    await h.orchestrator.CreateRuntime()
+    await h.orchestrator.Promote(Fixture.Graph)
+    h.envs.catalogConcepts = [...h.envs.catalogConcepts, 'contoso.Product']
+    await h.orchestrator.Promote(Fixture.Graph)
+    assert.equal(h.envs.securitySets.length, 2)
+    assert.deepEqual(h.envs.securityModel?.roleOverrides.map(o => o.concept), ['contoso.Customer', 'northwind.Order', 'contoso.Product'])
 })
 
 test('Teardown deletes created envs and reports ok', async () =>

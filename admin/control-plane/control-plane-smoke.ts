@@ -21,9 +21,9 @@ import { Repository, toJSON } from '@pragmatic-tech-ai/todl'
 import type { PackageDocument } from '@pragmatic-tech-ai/todl'
 import { RemoteBindMode } from '@pragmatic-tech-ai/todl/build-system-core'
 import { AdminProtocol, AppWriteStatus, CypherProtocol, GraphProtocol, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { ContributedPackageDto, GraphLoadedDto, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AccessLevel, BaseRole, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
+import type { ContributedPackageDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { BundleBuilder } from '../../environments/seed/bundle.js'
+import { RuntimeReaderSecurity } from './runtime-reader-security.js'
 import type { BuiltHelloApp } from '../../src/tests/e2e/hello-app-builder.js'
 import { HelloAppBuilder } from '../../src/tests/e2e/hello-app-builder.js'
 import { DockerEnv } from '../../environments/seed/docker.js'
@@ -147,9 +147,7 @@ export class ControlPlaneSmoke
     private static readonly PromoteBaseConcept = 'Element'
     private static readonly PromoteInstanceSuffix = '.one'
     private static readonly PromoteCypher = 'MATCH (w:Widget) RETURN count(w) AS n'
-    private static readonly ConceptSeparator = '.'
-    private static readonly RootUnitId = 'root'
-    private static readonly CatalogConceptsWord = 'not in the security catalog; it lists: '
+    private static readonly CatalogConceptsWord = ' not in the security catalog; it lists: '
     private static readonly RepromoteSolutionId = 'smoke-solution-2'
     private static readonly RepromoteNamespace = 'smokepromo2'
     private static readonly RepromoteConcept = 'Gadget'
@@ -551,15 +549,14 @@ export class ControlPlaneSmoke
         try
         {
             const catalog = await conn.sendRequest(AdminProtocol.GetSecurityCatalog)
-            const names = catalog.concepts.map(c => c.name)
-            const resolved = concepts.map(short => names.find(n => n === short || n.endsWith(S.ConceptSeparator + short)))
-            if (resolved.some(n => n === undefined))
+            const { resolved, missing } = RuntimeReaderSecurity.Resolve(catalog, concepts)
+            if (missing.length > 0)
             {
-                this.Expect(label, false, S.CatalogConceptsWord + names.join(S.Comma))
+                this.Expect(label, false, missing.join(S.Comma) + S.CatalogConceptsWord + catalog.concepts.map(c => c.name).join(S.Comma))
                 return
             }
             const current = await conn.sendRequest(AdminProtocol.GetSecurityModel)
-            const model = ControlPlaneSmoke.Secured(current, readers, resolved as string[])
+            const model = RuntimeReaderSecurity.Secured(current, BundleBuilder.AdminPrincipalId, readers, resolved, S.DemoTenant)
             const ack = await conn.sendRequest(AdminProtocol.SetSecurityModel, { securityModel: model })
             this.Expect(label, ack.ok === true, S.AckOkWord + String(ack.ok))
         }
@@ -567,40 +564,6 @@ export class ControlPlaneSmoke
         {
             conn.dispose()
         }
-    }
-
-    /** `current` plus the admin as System Administrator and `readers` as Readers with organization read on `concepts`. */
-    private static Secured(current: SecurityModelDto | undefined, readers: readonly string[], concepts: readonly string[]): SecurityModelDto
-    {
-        const S = ControlPlaneSmoke
-        const base: SecurityModelDto = current ?? { businessUnits: [], users: [], teams: [], roleAssignments: [], profileAssignments: [], roleOverrides: [], profileOverrides: [] }
-        const businessUnits = base.businessUnits.length > 0 ? base.businessUnits : [{ id: S.RootUnitId, name: S.DemoTenant }]
-        const root = (businessUnits.find(u => u.parent === undefined) ?? businessUnits[0]!).id
-        const placed = new Set([BundleBuilder.AdminPrincipalId, ...readers])
-        const users = [...base.users.filter(u => !placed.has(u.principalId)), ...[...placed].map(principalId => ({ principalId, businessUnitId: root }))]
-        const roleAssignments = base.roleAssignments
-            .filter(a => a.role !== BaseRole.SystemAdministrator && a.role !== BaseRole.Reader)
-            .concat(
-                { role: BaseRole.SystemAdministrator, principalIds: [BundleBuilder.AdminPrincipalId], teamIds: [] },
-                { role: BaseRole.Reader, principalIds: ControlPlaneSmoke.Merged(base, BaseRole.Reader, readers), teamIds: ControlPlaneSmoke.Teams(base, BaseRole.Reader) })
-            .filter(a => a.principalIds.length > 0 || a.teamIds.length > 0)
-        const overrides = base.roleOverrides
-            .filter(o => !(o.role === BaseRole.Reader && concepts.includes(o.concept) && o.action === PrivilegeAction.Read))
-            .concat(concepts.map(concept => ({ role: BaseRole.Reader, concept, action: PrivilegeAction.Read, level: AccessLevel.Organization })))
-        return { ...base, businessUnits, users, roleAssignments, roleOverrides: overrides }
-    }
-
-    /** The principals `role` already holds in `model`, plus `extra`, without duplicates. */
-    private static Merged(model: SecurityModelDto, role: string, extra: readonly string[]): string[]
-    {
-        const existing = model.roleAssignments.filter(a => a.role === role).flatMap(a => a.principalIds)
-        return [...new Set([...existing, ...extra])]
-    }
-
-    /** The teams `role` already holds in `model`. */
-    private static Teams(model: SecurityModelDto, role: string): string[]
-    {
-        return [...new Set(model.roleAssignments.filter(a => a.role === role).flatMap(a => a.teamIds))]
     }
 
     /** The concept the first promoted package defines; SecureRuntime resolves its full name in the security catalog. */

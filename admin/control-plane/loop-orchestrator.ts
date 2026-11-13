@@ -17,8 +17,10 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import pg from 'pg'
-import type { CreateAccountParams, GrantMutationDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { CreateAccountParams, GrantMutationDto, SecurityCatalogDto, SecurityModelDto, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { BundleBuilder } from '../../environments/seed/bundle.js'
 import type { EnvDatabase } from '../../environments/seed/bundle.js'
+import { RuntimeReaderSecurity } from './runtime-reader-security.js'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
@@ -130,6 +132,9 @@ export interface ILoopEnvironments
     AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
     AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
     AdminGrantRole(name: string, mutation: GrantMutationDto): Promise<void>
+    AdminGetSecurityModel(name: string): Promise<SecurityModelDto | undefined>
+    AdminSetSecurityModel(name: string, securityModel: SecurityModelDto): Promise<void>
+    AdminGetSecurityCatalog(name: string): Promise<SecurityCatalogDto>
 }
 
 export interface ILoopGraphs
@@ -244,6 +249,7 @@ export class LoopOrchestrator
     private static readonly MsgCreatingDev = 'creating development environment'
     private static readonly MsgCreatingRuntime = 'creating runtime environment'
     private static readonly MsgPromoting = 'promoting graph to runtime environment'
+    private static readonly MsgSecuring = 'granting the runtime admin and reader access in the security setting'
     private static readonly MsgProvisioning = 'provisioning reader and ungranted accounts'
     private static readonly UsageMessage = 'usage: loop-orchestrator <create-dev|create-runtime|promote|teardown|db-exec> --data-root <dir> [--graph <name>] [--sql <sql>] (--graph is required for promote, --sql for db-exec)'
     private static readonly MissingDataRoot = 'missing --data-root'
@@ -394,7 +400,23 @@ export class LoopOrchestrator
     {
         this.logger.Log(LoopOrchestrator.MsgPromoting)
         const result = await this.graphs.Promote(LoopOrchestrator.DevEnvName, graphName, LoopOrchestrator.RuntimeEnvName)
+        await this.SecureRuntime()
         return { graphName: result.graphName, packageCount: result.packageCount, targetEnv: result.targetEnv }
+    }
+
+    /**
+     * The runtime env is created without a creator, so it is left unseeded and tier-1 security denies every read. After each
+     * promote, as a tenant administrator would: the bootstrap admin becomes System Administrator and the reader a Reader of
+     * every concept the environment now holds. The ungranted user is given nothing, so its read stays refused.
+     */
+    private async SecureRuntime(): Promise<void>
+    {
+        const name = LoopOrchestrator.RuntimeEnvName
+        this.logger.Log(LoopOrchestrator.MsgSecuring)
+        const catalog = await this.envs.AdminGetSecurityCatalog(name)
+        const current = await this.envs.AdminGetSecurityModel(name)
+        const concepts = catalog.concepts.map(c => c.name)
+        await this.envs.AdminSetSecurityModel(name, RuntimeReaderSecurity.Secured(current, BundleBuilder.AdminPrincipalId, [LoopOrchestrator.ReaderPrincipal], concepts))
     }
 
     /** Runs the SQL against the runtime env's provisioned Postgres. The statement text is never logged. */
