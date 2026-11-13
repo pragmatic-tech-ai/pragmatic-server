@@ -34,15 +34,19 @@ registry, and the platform admin sees them there.
 5. **The admin portal only reads the registry.** It shows the releases found in GHCR with their
    images and digests; the platform admin gates and selects from them as today. The portal never
    starts builds and holds no GitHub write access.
-6. **One platform registry: GHCR under `pragmatic-tech-ai`, private.** No laptop registry, no
+6. **One platform registry: GHCR under `pragmatic-tech-ai`.** No laptop registry, no
    mirrors, no per-hive copies. No local image builds: every image comes from this path, also during
-   development.
+   development. *Amended 2026-11-13 (user decision): the packages are public for now.* Packages a
+   workflow pushes from a public repository inherit its visibility, and GitHub cannot turn a public
+   container package private again. The images hold only code that is already public and no secrets.
+   Making them private later means deleting the nine packages and republishing them private.
 7. **The registry is not open; the platform is the proxy.** Hives never talk to GHCR. They pull
    from a registry endpoint the platform serves, with a per-hive pull credential (an image-pull
    Secret in the hive, separate from the agent token, revocable on its own). The proxy **serves only
    images listed in releases gated for the hive's tenant**, and reads GHCR with one read-only
    credential. It lives on the public front door (the agent channel listener today, the
-   `pragmatic-platform-edge` image after the split).
+   `pragmatic-platform-edge` image after the split). While the packages are public (item 6), the
+   proxy controls which releases a hive is offered; it does not keep the images secret.
 8. **No central tenant admin app.** Every hive runs its own. The control plane's tenant plane
    (listener B, `TenantPlaneHost`, `PRAGMATIC_TENANT_ADMIN_PORT` on the control plane, the centrally
    run console and its relay path) is removed.
@@ -212,7 +216,7 @@ Findings the builder must act on:
 ## 5. Goals, non-goals, anti-goals
 
 **Goals:** eight per-app images with only their closure; a tag-triggered GitHub workflow that builds,
-pushes to private GHCR with one uniform version, signs registry digests and records a release
+pushes to GHCR with one uniform version, signs registry digests and records a release
 descriptor with every commit; the admin portal listing verified releases from GHCR; releases as
 complete digest-pinned lists with patch-release hotfixes; verify-only apply; the platform as the
 hives' only, gating-aware registry; every in-hive workload rendered from the selected release; the
@@ -251,8 +255,8 @@ Each piece leaves the platform working end to end on the laptop.
 
 Each piece gets its own plan (writing-plans), executed subagent-driven, merged locally; pushing
 needs the user's say-so. Piece 1 needs, before its live check: GitHub repo secrets for the release
-signing key and the npm packages token (the latter already exists for CI), GHCR package visibility
-set private, and a read-only GHCR token for platform-admin — created by the user.
+signing key and the npm packages token (the latter already exists for CI), and a read-only GHCR
+token for platform-admin — created by the user. (Package visibility: public for now, see §2 item 6.)
 
 ## 7. Constraints
 

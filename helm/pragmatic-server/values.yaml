@@ -15,7 +15,8 @@ image:
   # running the old version.
   tag: ""
   pullPolicy: IfNotPresent
-  # The images are private: names of docker-registry Secrets (in the release namespace) able to pull from ghcr.io, e.g.
+  # The images are public for now, so no secret is needed; if they become private, list docker-registry Secrets (in the
+  # release namespace) able to pull from ghcr.io, e.g.
   # [ghcr-pull]. Wired into every workload's imagePullSecrets; the default empty list renders nothing.
   pullSecrets: []
 
