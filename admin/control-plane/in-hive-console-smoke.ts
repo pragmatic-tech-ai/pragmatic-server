@@ -1,5 +1,5 @@
 /**
- * GATED live smoke for the in-hive tenant console on the local docker-desktop cluster. OPERATOR-RUN ONLY: NOT a *.test.ts, NOT part of
+ * GATED live smoke for the in-hive tenant console on a local kind cluster (default `docker-desktop`; see SmokeCluster). OPERATOR-RUN ONLY: NOT a *.test.ts, NOT part of
  * `tsx --test` / `npm test`, never executed by CI, excluded from the tenant-admin build by its `-smoke.ts` name.
  *
  * Requires: a control plane running from this checkout (operator API on --control-plane, agent channel on), hive
@@ -28,6 +28,7 @@
  * Owner email is read from the operator API and never printed (it is scrubbed like a secret).
  */
 import { readFileSync } from 'node:fs'
+import { SmokeCluster } from './smoke-cluster.js'
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import type { TLSSocket } from 'node:tls'
@@ -50,7 +51,7 @@ type PageAnswer = { status: number; text: string }
 
 export class InHiveConsoleSmoke
 {
-    private static readonly Context = 'docker-desktop'
+    private static readonly Context = SmokeCluster.Context()
     private static readonly TenantId = 'pragmatic-default'
     private static readonly DefaultHive = 'default-pragmatic-hive'
     private static readonly DefaultBaseDomain = 'localtest.me'
@@ -247,7 +248,7 @@ export class InHiveConsoleSmoke
         Preflight: 'preflight: pragmatic-system and the hive agent token Secret exist',
         Ingress: 'preflight: ingress-nginx installed by the smoke and rolled out',
         IngressPresent: 'preflight: IngressClass nginx already present (not installed by the smoke)',
-        Image: 'preflight: pragmatic-server:dev streamed into the docker-desktop node',
+        Image: 'preflight: pragmatic-server:dev streamed into the smoke cluster node',
         Login: 'operator login returns 200 and a session cookie',
         Settings: 'PUT console settings (development TLS) returns 200',
         InstallStart: 'POST console-install returns 202',
@@ -390,7 +391,7 @@ export class InHiveConsoleSmoke
             this.Expect(S.Labels.IngressPresent, true)
         }
 
-        await new KindImageLoader().Load(S.Image)
+        await new KindImageLoader(SmokeCluster.Node()).Load(S.Image)
         this.Expect(S.Labels.Image, true)
     }
 

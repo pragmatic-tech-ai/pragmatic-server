@@ -1,7 +1,7 @@
 /**
  * GATED real-cluster smoke for the k8s Hive Orchestrator. NOT part of `tsx --test`.
  *
- * Requires Docker Desktop's built-in Kubernetes (context `docker-desktop`) and the
+ * Requires a kind cluster (default Docker Desktop's, `docker-desktop`; see SmokeCluster) and the
  * `pragmatic-server:dev` image in the local docker image store (shared with the cluster;
  * the manifest uses imagePullPolicy IfNotPresent). Run with:
  *
@@ -14,6 +14,7 @@
  * CryptoImageVerifier + trust root, exactly as registry-provenance-smoke.ts does.
  */
 import { spawn } from 'node:child_process'
+import { SmokeCluster } from './smoke-cluster.js'
 import type { ChildProcess } from 'node:child_process'
 import { generateKeyPairSync, randomBytes } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
@@ -43,7 +44,7 @@ import { FileSignatureStore } from './signature-store.js'
 
 export class K8sHiveSmoke
 {
-    private static readonly Context = 'docker-desktop'
+    private static readonly Context = SmokeCluster.Context()
     private static readonly EnvPrefix = 'k8s-smoke-'
     private static readonly SuffixBytes = 3
     private static readonly Hex = 'hex'
@@ -255,7 +256,7 @@ export class K8sHiveSmoke
         }
     }
 
-    /** A local/attach hive pointing at the docker-desktop context. */
+    /** A local/attach hive pointing at the smoke cluster's context. */
     private static Hive(): HiveRecord
     {
         const S = K8sHiveSmoke

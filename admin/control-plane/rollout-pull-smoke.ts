@@ -1,7 +1,7 @@
 /**
  * GATED real-cluster smoke for the SP-HIVE-4 rollout PULL path. NOT part of `tsx --test`.
  *
- * Requires Docker Desktop's built-in Kubernetes (context `docker-desktop`), docker, and a
+ * Requires a kind cluster (default Docker Desktop's, `docker-desktop`; see SmokeCluster), docker, and a
  * `pragmatic-server:dev` image built AFTER the pull agent landed (it must contain
  * `dist/bin/pragmatic-agentd.js`; rebuild with the invocation in docker/Dockerfile's header). Run with:
  *
@@ -14,6 +14,7 @@
  * v2 on its own and reports its whole-hive snapshot back so the environment is no longer obsolete.
  */
 import { generateKeyPairSync, randomBytes } from 'node:crypto'
+import { SmokeCluster } from './smoke-cluster.js'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -69,7 +70,7 @@ class UnreachableFactory extends PlatformHiveOrchestratorFactory
 
 export class RolloutPullSmoke
 {
-    private static readonly Context = 'docker-desktop'
+    private static readonly Context = SmokeCluster.Context()
     private static readonly EnvPrefix = 'pull-smoke-'
     private static readonly SuffixBytes = 3
     private static readonly Hex = 'hex'

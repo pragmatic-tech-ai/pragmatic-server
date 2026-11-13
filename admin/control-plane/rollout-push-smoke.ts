@@ -1,7 +1,7 @@
 /**
  * GATED real-cluster smoke for the SP-HIVE-4 rollout PUSH path. NOT part of `tsx --test`.
  *
- * Requires Docker Desktop's built-in Kubernetes (context `docker-desktop`), docker, and the
+ * Requires a kind cluster (default Docker Desktop's, `docker-desktop`; see SmokeCluster), docker, and the
  * `pragmatic-server:dev` image in the local docker image store. Run with:
  *
  *   npx tsx admin/control-plane/rollout-push-smoke.ts
@@ -13,6 +13,7 @@
  * SelectTarget(v1) rolls back. The running image is read from the live Deployment after each step.
  */
 import { generateKeyPairSync, randomBytes } from 'node:crypto'
+import { SmokeCluster } from './smoke-cluster.js'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -58,7 +59,7 @@ class NoContainerProbe implements IContainerProbe
 
 export class RolloutPushSmoke
 {
-    private static readonly Context = 'docker-desktop'
+    private static readonly Context = SmokeCluster.Context()
     private static readonly EnvPrefix = 'push-smoke-'
     private static readonly SuffixBytes = 3
     private static readonly Hex = 'hex'
@@ -234,7 +235,7 @@ export class RolloutPushSmoke
         this.tagged = true
         await this.exec.Run(S.Docker, [S.TagVerb, S.BaseImage, S.ImageV1])
         await this.exec.Run(S.Docker, [S.TagVerb, S.BaseImage, S.ImageV2])
-        await new KindImageLoader().Load(S.ImageV1, S.ImageV2)
+        await new KindImageLoader(SmokeCluster.Node()).Load(S.ImageV1, S.ImageV2)
     }
 
     /** Signs both bare refs (the hive has no registry endpoint, so the effective ref is unchanged) into the factory dataRoot stores. */

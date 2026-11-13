@@ -1,7 +1,7 @@
 /**
  * GATED real-login browser e2e smoke (SP-HIVE-7 deferral #11). NOT a *.test.ts and NOT in any test glob.
  *
- * Requires Docker Desktop with its built-in Kubernetes (context `docker-desktop`), a FRESH `pragmatic-server:dev`
+ * Requires a kind cluster (default Docker Desktop's, `docker-desktop`; see SmokeCluster), a FRESH `pragmatic-server:dev`
  * image in the local image store (the per-tenant IdP container and the hive workload both run from it), and the
  * Playwright Chromium browser. Run with:
  *
@@ -24,6 +24,7 @@
  * proven rollout-push-smoke.ts, which is the real-cluster model for an observable roll.
  */
 import { generateKeyPairSync, randomBytes } from 'node:crypto'
+import { SmokeCluster } from './smoke-cluster.js'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -160,7 +161,7 @@ export class TenantLoginE2eSmoke
 
     private static readonly HiveId = 'acme-hive'
     private static readonly HiveDisplayName = 'Smoke Hive'
-    private static readonly K8sContext = 'docker-desktop'
+    private static readonly K8sContext = SmokeCluster.Context()
     private static readonly SigningKeyRef = 'smoke-signing'
 
     private static readonly BaseImage = 'pragmatic-server:dev'
@@ -534,7 +535,7 @@ export class TenantLoginE2eSmoke
         this.tagged = true
         await this.exec.Run(S.Docker, [S.TagVerb, S.BaseImage, S.ImageV1])
         await this.exec.Run(S.Docker, [S.TagVerb, S.BaseImage, S.ImageV2])
-        await new KindImageLoader().Load(S.ImageV1, S.ImageV2)
+        await new KindImageLoader(SmokeCluster.Node()).Load(S.ImageV1, S.ImageV2)
     }
 
     /** Signs both bare image refs with a throwaway dev key into the orchestrator dataRoot stores; the private PEM is never logged. */

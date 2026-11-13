@@ -23,6 +23,7 @@
  * non-docker environment driver that does not exist yet (see the task report).
  */
 import { randomBytes, generateKeyPairSync } from 'node:crypto'
+import { SmokeCluster } from './smoke-cluster.js'
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
 import { request } from 'node:http'
@@ -74,10 +75,8 @@ type HttpResult = { status: number; headers: Record<string, string | string[] | 
 
 export class TenantAdminSmoke
 {
-    private static readonly ContextEnv = 'PRAGMATIC_SMOKE_CONTEXT'
     private static readonly ImageEnv = 'PRAGMATIC_SMOKE_IMAGE'
     private static readonly ChannelHostEnv = 'PRAGMATIC_SMOKE_CHANNEL_HOST'
-    private static readonly DefaultContext = 'docker-desktop'
     private static readonly DefaultImage = 'pragmatic-server:dev'
     private static readonly DefaultChannelHost = 'host.docker.internal'
     private static readonly ClientId = 'ta-client'
@@ -213,7 +212,7 @@ export class TenantAdminSmoke
     private systemNamespacePreExisted = true
     private bootstrap: TenantBootstrap | undefined
     private readonly exec = new NodeExecFile()
-    private readonly context = process.env[TenantAdminSmoke.ContextEnv] ?? TenantAdminSmoke.DefaultContext
+    private readonly context = SmokeCluster.Context()
     private readonly image = process.env[TenantAdminSmoke.ImageEnv] ?? TenantAdminSmoke.DefaultImage
     private readonly channelHost = process.env[TenantAdminSmoke.ChannelHostEnv] ?? TenantAdminSmoke.DefaultChannelHost
     private readonly tenantHost = TenantAdminSmoke.TenantId + '.' + TenantAdminSmoke.BaseDomain

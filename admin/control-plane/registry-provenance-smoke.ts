@@ -1,7 +1,7 @@
 /**
  * GATED real-cluster smoke for SP-HIVE-3 image provenance. NOT part of `tsx --test`.
  *
- * Requires Docker Desktop's built-in Kubernetes (context `docker-desktop`), docker, and the
+ * Requires a kind cluster (default Docker Desktop's, `docker-desktop`; see SmokeCluster), docker, and the
  * `pragmatic-server:dev` image in the local docker image store. Run with:
  *
  *   npx tsx admin/control-plane/registry-provenance-smoke.ts
@@ -12,6 +12,7 @@
  * separately with a wrong trust root) a further Apply is refused before anything reaches the cluster.
  */
 import { generateKeyPairSync, randomBytes } from 'node:crypto'
+import { SmokeCluster } from './smoke-cluster.js'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -38,7 +39,7 @@ import { FileSignatureStore } from './signature-store.js'
 
 export class RegistryProvenanceSmoke
 {
-    private static readonly Context = 'docker-desktop'
+    private static readonly Context = SmokeCluster.Context()
     private static readonly EnvPrefix = 'prov-smoke-'
     private static readonly SuffixBytes = 3
     private static readonly Hex = 'hex'

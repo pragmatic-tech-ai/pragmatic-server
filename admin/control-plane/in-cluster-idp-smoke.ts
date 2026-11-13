@@ -1,7 +1,7 @@
 /**
  * GATED real-cluster smoke for the in-cluster per-tenant IdP apply. NOT part of `tsx --test`.
  *
- * Requires Docker Desktop's built-in Kubernetes (context `docker-desktop`) and the `pragmatic-server:dev` image
+ * Requires a kind cluster (default Docker Desktop's, `docker-desktop`; see SmokeCluster) and the `pragmatic-server:dev` image
  * (which carries the `pragmatic-idpd` binary the IdP pod runs) in the local image store. Run with:
  *
  *   npx tsx admin/control-plane/in-cluster-idp-smoke.ts
@@ -14,6 +14,7 @@
  * DevCa.EnsureAt does not re-mint against that read-only mount. Operator-run only (needs a cluster). Finally re-applies (idempotency) and deletes the namespace.
  */
 import { spawn } from 'node:child_process'
+import { SmokeCluster } from './smoke-cluster.js'
 import type { ChildProcess } from 'node:child_process'
 import { request } from 'node:https'
 import { fileURLToPath } from 'node:url'
@@ -32,7 +33,7 @@ interface HttpsResponse
 
 export class InClusterIdpSmoke
 {
-    private static readonly Context = 'docker-desktop'
+    private static readonly Context = SmokeCluster.Context()
     private static readonly HiveId = 'icc-hive'
     private static readonly TenantId = 'icc-idp'
     private static readonly Image = 'pragmatic-server:dev'

@@ -1,6 +1,6 @@
 /**
  * GATED real-cluster smoke for in-cluster environment creation through the tenant-admin orchestration
- * path. NOT part of `tsx --test`. Requires Docker Desktop's Kubernetes (context `docker-desktop`) and the
+ * path. NOT part of `tsx --test`. Requires a kind cluster (default `docker-desktop`; see SmokeCluster) and the
  * `pragmatic-server:dev` image in the node's image store. Run with:
  *
  *   npx tsx admin/control-plane/in-cluster-env-create-smoke.ts
@@ -22,11 +22,12 @@
  * `data/contoso/` (marker `.env-seeded`), and over a `kubectl port-forward` tunnel + the tenant WS the smoke asserts
  * northwind is registered and its graph is queryable (reads succeed under app-private governance). It then writes a
  * live-data probe file, restarts the pod (init-container re-runs) and asserts the marker and probe survive, i.e. a
- * restart does NOT re-seed. OPERATOR-RUN ONLY: it needs a live docker-desktop cluster and is never executed by CI.
+ * restart does NOT re-seed. OPERATOR-RUN ONLY: it needs a live local cluster and is never executed by CI.
  * Image provenance fails closed, so the effective image ref is signed with a throwaway Ed25519 key into temp stores
  * that the real factory reads.
  */
 import { spawn } from 'node:child_process'
+import { SmokeCluster } from './smoke-cluster.js'
 import type { ChildProcess } from 'node:child_process'
 import { generateKeyPairSync, randomBytes } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -103,7 +104,7 @@ class UncontactedIdpService implements IIdpService
 
 export class InClusterEnvCreateSmoke
 {
-    private static readonly Context = 'docker-desktop'
+    private static readonly Context = SmokeCluster.Context()
     private static readonly EnvPrefix = 'icc-smoke-'
     private static readonly SuffixBytes = 3
     private static readonly Hex = 'hex'
@@ -577,7 +578,7 @@ export class InClusterEnvCreateSmoke
         return { id: S.TenantId, clientId: S.TenantId, displayName: S.TenantId, createdAt: S.EpochIso }
     }
 
-    /** A local/attach hive pointing at the docker-desktop context, trusting the throwaway signing key. */
+    /** A local/attach hive pointing at the smoke cluster's context, trusting the throwaway signing key. */
     private static Hive(): HiveRecord
     {
         const S = InClusterEnvCreateSmoke
