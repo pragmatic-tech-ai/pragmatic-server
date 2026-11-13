@@ -185,6 +185,19 @@ test('in-cluster UrlsFor tunnels to the server Service and returns 127.0.0.1:<lo
     h.Pool.CloseAll()
 })
 
+// A deleted-and-recreated environment (same name, new workload) must never ride the old one's pooled tunnel: that tunnel
+// still forwards to the deleted pod, so the first call through it would fail before the pool retires it.
+test('in-cluster UrlsFor opens a fresh tunnel for a recreated environment of the same name', async () =>
+{
+    const h = new Harness()
+    const first = await h.Endpoints.UrlsFor(Fx.InCluster())
+    first.Release()
+    const recreated = await h.Endpoints.UrlsFor({ ...Fx.InCluster(), createdAt: '2026-11-13T18:00:00.000Z' })
+    assert.equal(h.Kubectl.Forwards.length, 2)
+    recreated.Release()
+    h.Pool.CloseAll()
+})
+
 test('in-cluster UrlsFor on a hive with no kubectl context throws EnvironmentUnreachableError', async () =>
 {
     const h = new Harness(new PlainKubectl())

@@ -96,7 +96,10 @@ export class EnvironmentEndpoints implements IEnvironmentReach
         {
             throw new EnvironmentUnreachableError()
         }
-        const lease = await this.tunnels.Acquire(hive.id + EnvironmentEndpoints.KeySeparator + rec.name, () => this.Forward(kubectl, rec))
+        // Keyed by the environment INSTANCE (its creation time too): a deleted-and-recreated environment of the same name gets a
+        // fresh tunnel, never the old one still forwarding to the deleted pod (that one idles out on its own).
+        const key = hive.id + EnvironmentEndpoints.KeySeparator + rec.name + EnvironmentEndpoints.KeySeparator + rec.createdAt
+        const lease = await this.tunnels.Acquire(key, () => this.Forward(kubectl, rec))
         return {
             httpUrl: EnvironmentEndpoints.TunnelHttpPrefix + String(lease.LocalPort),
             wsUrl: EnvironmentEndpoints.TunnelWsPrefix + String(lease.LocalPort),
