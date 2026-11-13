@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { EnvKind, TenantPurposeName, type EnvDefinition } from '../../environments/seed/bundle.js'
 import { EnvConventions } from '../../environments/seed/env-conventions.js'
 import { Template, EnvType } from './environment-record.js'
+import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 
 export class InvalidEnvironmentNameError extends Error
 {
@@ -88,7 +89,11 @@ export class TemplateCatalog
         return up <= TemplateCatalog.MaxPort ? up : hostPort - TemplateCatalog.DbHostPortOffset
     }
 
-    public static Resolve(template: Template, name: string, hostPort: number, type: EnvType): { def: EnvDefinition; seedDir: string }
+    /**
+     * The env definition for a template. `inCluster` places the provisioned database on the env's Postgres Service (cluster DNS);
+     * otherwise it is the Docker sidecar container on the env's network.
+     */
+    public static Resolve(template: Template, name: string, hostPort: number, type: EnvType, inCluster: boolean = false): { def: EnvDefinition; seedDir: string }
     {
         const safe = TemplateCatalog.SanitizeName(name)
         const purpose = TemplateCatalog.PurposeFor(type)
@@ -104,7 +109,7 @@ export class TemplateCatalog
             const def: EnvDefinition = { name: safe, kind: EnvKind.Dev, environmentId: safe, purpose, hostPort }
             def.database = {
                 connectionName: TemplateCatalog.DbConnectionName,
-                host: EnvConventions.DbContainerName(def),
+                host: inCluster ? K8sManifestBuilder.DatabaseOf(def.name) : EnvConventions.DbContainerName(def),
                 port: TemplateCatalog.DbPort,
                 database: TemplateCatalog.DbName,
                 user: TemplateCatalog.DbUser,

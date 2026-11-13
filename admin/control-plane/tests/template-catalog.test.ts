@@ -6,6 +6,7 @@ import { TemplateCatalog, InvalidEnvironmentNameError } from '../template-catalo
 import { Template, EnvType } from '../environment-record.js'
 import { EnvConventions } from '../../../environments/seed/env-conventions.js'
 import { EnvKind, TenantPurposeName } from '../../../environments/seed/bundle.js'
+import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 
 class CatalogFixture
 {
@@ -107,5 +108,15 @@ describe('TemplateCatalog', () =>
         assert.ok(db.password.length > 0)
         assert.notEqual(db.hostPort, r.def.hostPort)
         assert.ok(CatalogFixture.Norm(r.seedDir).endsWith(CatalogFixture.DevBlankSeedSuffix))
+    })
+
+    // In a cluster the database is the env's Postgres Service, not the Docker sidecar container: the Docker name does not
+    // resolve there, so every live connector read failed.
+    it('RuntimePostgres in a cluster points the database at the env Postgres Service', () =>
+    {
+        const r = TemplateCatalog.Resolve(Template.RuntimePostgres, 'rt1', 0, EnvType.Runtime, true)
+        assert.equal(r.def.database?.host, 'pragmatic-env-rt1-postgres')
+        assert.equal(r.def.database?.host, K8sManifestBuilder.DatabaseOf('rt1'))
+        assert.equal(TemplateCatalog.Resolve(Template.RuntimePostgres, 'rt1', 8080, EnvType.Runtime).def.database?.host, 'pragmatic-env-rt1-db')
     })
 })

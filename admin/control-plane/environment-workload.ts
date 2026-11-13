@@ -66,7 +66,7 @@ export class EnvironmentWorkloadFactory
     public static From(record: EnvironmentRecord, hive: HiveRecord, ingressTls?: IngressTls): EnvironmentWorkload
     {
         const type = record.type ?? TemplateCatalog.DefaultTypeFor(record.template)
-        const def = TemplateCatalog.Resolve(record.template, record.name, record.hostPort as number, type).def
+        const def = TemplateCatalog.Resolve(record.template, record.name, record.hostPort as number, type, true).def
         const secretRefs = [def.environmentId + BundleBuilder.AdminSecretSuffix]
         const workload: EnvironmentWorkload = {
             environmentName: record.name,

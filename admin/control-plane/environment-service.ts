@@ -289,7 +289,7 @@ export class EnvironmentService implements IAdminAccess
 
             // Only a host-port backend (Docker) allocates a host port; an in-cluster env is reached by cluster DNS.
             const port = hostShaped ? await this.AllocatePort(hostPort) : undefined
-            const { def, seedDir } = TemplateCatalog.Resolve(template, safe, port ?? EnvironmentService.NoHostPort, type)
+            const { def, seedDir } = TemplateCatalog.Resolve(template, safe, port ?? EnvironmentService.NoHostPort, type, !hostShaped)
             const bundleDir = join(this.dataRoot, def.name)
 
             // Host-port backends federate over localhost; in-cluster backends federate over the env's browser host (when a base domain is known).
@@ -870,7 +870,8 @@ export class EnvironmentService implements IAdminAccess
     /** Re-derives the definition from the stored type, falling back to the template default (DefaultTypeFor) for legacy records with no type. */
     private static DefOf(rec: EnvironmentRecord): EnvDefinition
     {
-        return TemplateCatalog.Resolve(rec.template, rec.name, rec.hostPort as number, rec.type ?? TemplateCatalog.DefaultTypeFor(rec.template)).def
+        // A hive-bound record runs in a cluster (only an unbound one runs on Docker), so its database is the Postgres Service.
+        return TemplateCatalog.Resolve(rec.template, rec.name, rec.hostPort as number, rec.type ?? TemplateCatalog.DefaultTypeFor(rec.template), rec.hiveId !== undefined).def
     }
 
     private async SeedDemoUsers(def: EnvDefinition, bundleDir: string, seedDir: string, port: number): Promise<void>
