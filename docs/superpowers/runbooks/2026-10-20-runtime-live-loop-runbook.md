@@ -36,7 +36,11 @@ The test runs against a dedicated stack. It never touches the developer's own co
 - the paths of the files holding their passwords;
 - the IdP's development CA file.
 
-No password is ever printed. `down` removes everything again: it stops the control plane, removes the IdP container and volume, and deletes the cluster and the stack folder.
+No password is ever printed. Be honest about what this protects: the owner and operator passwords are fixed test values in the source (`LiveLoopStackNames`). The files keep them out of command lines and logs, nothing more, and the `0600` mode they are written with has no effect on Windows. The reader and ungranted passwords are random per run.
+
+The stack is written for Windows. Processes are stopped with `taskkill /T` there, and with a signal to their process group elsewhere. `up` refuses to start when port 7000 or 7100 is already taken, so it never seeds someone else's control plane.
+
+`down` removes everything again: it stops the control plane, removes the IdP container and volume, and deletes the cluster and the stack folder.
 
 ## One-time prerequisites
 

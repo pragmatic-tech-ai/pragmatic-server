@@ -986,9 +986,14 @@ test('Admin methods throw when the admin secret is missing and never call the pr
 
 class DefOfProbe
 {
-    public static Purpose(rec: EnvironmentRecord): TenantPurposeName
+    public static Def(service: EnvironmentService, rec: EnvironmentRecord): EnvDefinition
     {
-        return ((EnvironmentService as any).DefOf(rec) as EnvDefinition).purpose
+        return (service as any).DefOf(rec) as EnvDefinition
+    }
+
+    public static Purpose(service: EnvironmentService, rec: EnvironmentRecord): TenantPurposeName
+    {
+        return DefOfProbe.Def(service, rec).purpose
     }
 }
 
@@ -1000,16 +1005,29 @@ test('Create stores the chosen type on the record', async () =>
     assert.equal(h.Registry.Get('e1')?.type, EnvType.Runtime)
 })
 
-test('DefOf re-derives purpose from the stored type, not the template default', () =>
+test('DefOf re-derives purpose from the stored type, not the template default', async () =>
 {
+    const h = await Harness.Make()
     const rec = { ...Harness.Record('r1', EnvStatus.Stopped), template: Template.DevBlank, type: EnvType.Runtime }
-    assert.equal(DefOfProbe.Purpose(rec), TenantPurposeName.Runtime)
+    assert.equal(DefOfProbe.Purpose(h.Service, rec), TenantPurposeName.Runtime)
 })
 
-test('DefOf falls back to the template default when a legacy record has no type', () =>
+test('DefOf falls back to the template default when a legacy record has no type', async () =>
 {
+    const h = await Harness.Make()
     const rec = { ...Harness.Record('l1', EnvStatus.Stopped), template: Template.DemoContoso, type: undefined } as unknown as EnvironmentRecord
-    assert.equal(DefOfProbe.Purpose(rec), TenantPurposeName.Runtime)
+    assert.equal(DefOfProbe.Purpose(h.Service, rec), TenantPurposeName.Runtime)
+})
+
+// The database host follows the record's runtime, with the same rule Create applies: a runtime that publishes no host port
+// (in-cluster) reaches its database by the Postgres Service; a host-port runtime (Docker) by the sidecar container.
+test('DefOf places the database by the record runtime: the Postgres Service when no host port is published, else the container', async () =>
+{
+    const h = await Harness.Make()
+    const rec = { ...Harness.Record('pg1', EnvStatus.Stopped), template: Template.RuntimePostgres, type: EnvType.Runtime }
+    assert.equal(DefOfProbe.Def(h.Service, rec).database?.host, 'pragmatic-env-pg1-db')
+    const dns = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, false), SingleBackendResolver.Of(new DnsReachedFakeRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => new IdpAdminClient(c))
+    assert.equal(DefOfProbe.Def(dns, rec).database?.host, 'pragmatic-env-pg1-postgres')
 })
 
 test('two overlapping Creates for the same name yield one environment and one EnvironmentExistsError', async () =>

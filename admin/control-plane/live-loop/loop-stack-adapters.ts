@@ -14,6 +14,7 @@ import type { LiveLoopStackDescriptor } from './live-loop-stack.js'
 import type { ILoopComposition, ILoopDatabase, ILoopEnvironments, ILoopGraphs, ILoopReach, LoopEnvironment } from './loop-orchestrator.js'
 import type { ApiAnswer, IOperatorApi } from './operator-api-client.js'
 import { OperatorApiClient } from './operator-api-client.js'
+import { ProcessTree } from './process-tree.js'
 import { TenantOwnerSession } from './tenant-owner-session.js'
 
 /** A JSON API answering `ApiAnswer`s: the owner's tenant API session or the operator API. */
@@ -188,6 +189,10 @@ export class KubectlLoopDatabase implements ILoopDatabase
     private static readonly ShellCommandFlag = '-c'
     private static readonly PsqlScript = 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "$1"'
     private static readonly ScriptName = 'loop-db-exec'
+    private static readonly ExecFailedMessage = 'psql in the environment database failed: '
+    private static readonly ErrorLinePrefix = 'ERROR:'
+    private static readonly ErrorJoin = ' | '
+    private static readonly LinePattern = /\r?\n/
     private static readonly CountPattern = /(?:INSERT \d+|UPDATE|DELETE|SELECT|CREATE TABLE AS|MERGE|COPY) (\d+)\s*$/
 
     public constructor(private readonly kubeContext: string, private readonly exec: IExecFile = new NodeExecFile())
@@ -198,8 +203,24 @@ export class KubectlLoopDatabase implements ILoopDatabase
     {
         const D = KubectlLoopDatabase
         const pod = K8sManifestBuilder.DatabaseOf(env) + D.PodOrdinalSuffix
-        const { stdout } = await this.exec.Run(D.Kubectl, [D.ContextFlag, this.kubeContext, D.NamespaceFlag, K8sManifestBuilder.NamespaceOf(env), D.ExecVerb, pod, D.ArgsSeparator, D.Shell, D.ShellCommandFlag, D.PsqlScript, D.ScriptName, sql])
+        let stdout: string
+        try
+        {
+            stdout = (await this.exec.Run(D.Kubectl, [D.ContextFlag, this.kubeContext, D.NamespaceFlag, K8sManifestBuilder.NamespaceOf(env), D.ExecVerb, pod, D.ArgsSeparator, D.Shell, D.ShellCommandFlag, D.PsqlScript, D.ScriptName, sql])).stdout
+        }
+        catch (err)
+        {
+            // The exec failure's message carries the whole command line, SQL included: report only psql's own ERROR lines.
+            throw new Error(D.ExecFailedMessage + KubectlLoopDatabase.ErrorLinesOf(err instanceof Error ? err.message : String(err)))
+        }
         return KubectlLoopDatabase.RowCountOf(stdout)
+    }
+
+    /** psql's `ERROR:` lines from a failure text, joined; never the command line or the statement. */
+    public static ErrorLinesOf(text: string): string
+    {
+        const D = KubectlLoopDatabase
+        return text.split(D.LinePattern).map(l => l.trim()).filter(l => l.startsWith(D.ErrorLinePrefix)).join(D.ErrorJoin)
     }
 
     /** The count in psql's last command tag (`INSERT 0 1` -> 1, `UPDATE 3` -> 3); 0 for a tag without one (`CREATE TABLE`). */
@@ -232,14 +253,16 @@ export class PortForwardLoopReach implements ILoopReach
     private static readonly ReadyDeadlineMs = 30_000
     private static readonly PollMs = 500
     private static readonly Utf8 = 'utf8'
-    private static readonly TaskKill = 'taskkill'
-    private static readonly TaskKillArgs = ['/T', '/F', '/PID']
+    private static readonly SpawnFailedPrefix = 'kubectl port-forward could not start: '
     private static readonly NotReadyMessage = 'the port-forward to the environment did not open in time'
     private static readonly ConnectEvent = 'connect'
     private static readonly ErrorEvent = 'error'
 
-    public constructor(private readonly kubeContext: string, private readonly recordDir: string, private readonly exec: IExecFile = new NodeExecFile())
+    private readonly tree: ProcessTree
+
+    public constructor(private readonly kubeContext: string, private readonly recordDir: string, exec: IExecFile = new NodeExecFile())
     {
+        this.tree = new ProcessTree(exec)
     }
 
     public async Open(envName: string): Promise<string>
@@ -250,22 +273,31 @@ export class PortForwardLoopReach implements ILoopReach
         {
             return R.OriginPrefix + String(record.port)
         }
+        // A record whose forward no longer answers is stale: stop whatever is left of it before opening a new one.
+        await this.Close(envName)
         const port = await new PortAllocator(R.PortFloor, new NetPortProbe()).Allocate([])
         const child = spawn(R.Kubectl, [R.ContextFlag, this.kubeContext, R.NamespaceFlag, K8sManifestBuilder.NamespaceOf(envName), R.PortForwardVerb,
             R.ServicePrefix + K8sManifestBuilder.ServerDeploymentOf(envName), String(port) + R.PortSep + String(EnvironmentWorkloadFactory.ServerPort), R.AddressFlag, R.Loopback],
             { detached: true, stdio: 'ignore', windowsHide: true })
+        let spawnError: Error | undefined
+        child.once(R.ErrorEvent, err => { spawnError = err })
         child.unref()
-        writeFileSync(this.RecordPath(envName), JSON.stringify({ pid: child.pid, port }), R.Utf8)
         const deadline = Date.now() + R.ReadyDeadlineMs
-        while (Date.now() < deadline)
+        while (Date.now() < deadline && spawnError === undefined && child.exitCode === null)
         {
             if (await R.Listening(port))
             {
+                // Recorded only once it answers, so a record always names a forward that worked.
+                writeFileSync(this.RecordPath(envName), JSON.stringify({ pid: child.pid, port }), R.Utf8)
                 return R.OriginPrefix + String(port)
             }
             await new Promise<void>(r => setTimeout(r, R.PollMs))
         }
-        throw new Error(R.NotReadyMessage)
+        if (child.pid !== undefined && child.exitCode === null)
+        {
+            await this.tree.Kill(child.pid)
+        }
+        throw new Error(spawnError === undefined ? R.NotReadyMessage : R.SpawnFailedPrefix + spawnError.message)
     }
 
     public async Close(envName: string): Promise<void>
@@ -276,13 +308,10 @@ export class PortForwardLoopReach implements ILoopReach
         {
             return
         }
-        try
+        // Only a forward that still answers on its recorded port is ours to stop; a dead one's pid may have been reused.
+        if (await R.Listening(record.port))
         {
-            await this.exec.Run(R.TaskKill, [...R.TaskKillArgs, String(record.pid)])
-        }
-        catch
-        {
-            // already gone
+            await this.tree.Kill(record.pid)
         }
         rmSync(this.RecordPath(envName), { force: true })
     }
@@ -329,11 +358,20 @@ export class LazyOwnerApi implements ILoopApi
         return (await this.session).Call(method, path, body)
     }
 
+    /** Never throws: a sign-in that failed was already reported (redacted) by the caller, and Close must not re-raise it raw. */
     public async Close(): Promise<void>
     {
-        if (this.session !== undefined)
+        if (this.session === undefined)
+        {
+            return
+        }
+        try
         {
             await (await this.session).Close()
+        }
+        catch
+        {
+            // the sign-in failed, or the browser is already gone
         }
     }
 }

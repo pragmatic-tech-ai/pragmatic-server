@@ -18,7 +18,7 @@
  * Requires docker, kind and kubectl on PATH, a FRESH `pragmatic-server:dev` image, free host ports 443, 30500, 7000 and 7100, and
  * the Playwright Chromium browser.
  */
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -26,6 +26,8 @@ import { fileURLToPath } from 'node:url'
 import { InClusterRegistry } from '../in-cluster-registry.js'
 import { KindCli } from '../kind.js'
 import { NodeExecFile } from '../kubectl.js'
+import { NetPortProbe } from '../port-allocator.js'
+import { ProcessTree } from './process-tree.js'
 import type { IOperatorApi } from './operator-api-client.js'
 import { OperatorApiClient } from './operator-api-client.js'
 import { TenantOwnerSession } from './tenant-owner-session.js'
@@ -184,8 +186,15 @@ export class LiveLoopStack
     private static readonly PingDeadlineMs = 180_000
     private static readonly PollMs = 2_000
     private static readonly Utf8 = 'utf8'
-    private static readonly TaskKill = 'taskkill'
-    private static readonly TaskKillArgs = ['/T', '/F', '/PID']
+    private static readonly GetVerb = 'get'
+    private static readonly OutputFlag = '-o'
+    private static readonly ArgsJsonPath = 'jsonpath={.spec.template.spec.containers[0].args}'
+    private static readonly PassthroughArg = '--enable-ssl-passthrough'
+    private static readonly OwnerOnlyMode = 0o600
+    private static readonly Redacted = '***'
+    private static readonly PortBusyPrefix = 'port '
+    private static readonly PortBusySuffix = ' is in use (is another control plane, e.g. dev-up.sh, running?); stop it before bringing the e2e stack up'
+    private static readonly ExitedMessage = 'the control plane exited during start; see the log in the stack folder'
     private static readonly AlreadyUpMessage = 'the e2e stack is already up (stack.json exists); run down first'
     private static readonly NotReadyMessage = 'the control plane did not answer /api/ping in time; see the log in the stack folder'
     private static readonly Steps = {
@@ -199,23 +208,32 @@ export class LiveLoopStack
     }
 
     private readonly exec = new NodeExecFile()
+    private readonly secrets: string[] = [LiveLoopStackNames.OwnerPassword, LiveLoopStackNames.OperatorPassword]
     private readonly kind = new KindCli(new NodeExecFile(), new NodeExecFile(KindCli.ImageLoadTimeoutMs))
 
     public static async Main(): Promise<void>
     {
         const verb = process.argv[2]
         const stack = new LiveLoopStack()
-        if (verb === LiveLoopStack.UpVerb)
+        try
         {
-            await stack.Up()
+            if (verb === LiveLoopStack.UpVerb)
+            {
+                await stack.Up()
+            }
+            else if (verb === LiveLoopStack.DownVerb)
+            {
+                await stack.Down()
+            }
+            else
+            {
+                throw new Error(LiveLoopStack.UsageMessage)
+            }
         }
-        else if (verb === LiveLoopStack.DownVerb)
+        catch (err)
         {
-            await stack.Down()
-        }
-        else
-        {
-            throw new Error(LiveLoopStack.UsageMessage)
+            // Any failure (a Playwright sign-in error included) is redacted before it can reach the console.
+            throw new Error(stack.Redact(err instanceof Error ? err.message : String(err)))
         }
     }
 
@@ -253,20 +271,26 @@ export class LiveLoopStack
 
         console.log(L.Steps.Ingress)
         await this.Kubectl([L.ApplyVerb, L.FileFlag, L.IngressManifestUrl])
-        await this.Kubectl([L.PatchVerb, L.DeploymentKind, L.IngressDeployment, L.NamespaceFlag, L.IngressNamespace, L.TypeFlag, L.JsonPatchType, L.PatchFlag, L.PassthroughPatch])
+        // Patch only when passthrough is not on yet: a re-run of up after a partial failure reuses the cluster.
+        const args = await this.Kubectl([L.GetVerb, L.DeploymentKind, L.IngressDeployment, L.NamespaceFlag, L.IngressNamespace, L.OutputFlag, L.ArgsJsonPath])
+        if (!args.includes(L.PassthroughArg))
+        {
+            await this.Kubectl([L.PatchVerb, L.DeploymentKind, L.IngressDeployment, L.NamespaceFlag, L.IngressNamespace, L.TypeFlag, L.JsonPatchType, L.PatchFlag, L.PassthroughPatch])
+        }
         await this.Kubectl([L.RolloutVerb, L.StatusVerb, L.DeploymentPrefix + L.IngressDeployment, L.NamespaceFlag, L.IngressNamespace, L.WaitTimeout])
         await this.Kubectl([L.WaitVerb, L.NamespaceFlag, L.IngressNamespace, L.ReadyCondition, L.PodKind, L.SelectorFlag + L.ControllerSelector, L.WaitTimeout])
 
         console.log(L.Steps.ControlPlane)
         const operatorPasswordFile = join(N.StackDir, L.OperatorPasswordFileName)
-        writeFileSync(operatorPasswordFile, N.OperatorPassword, { encoding: L.Utf8, mode: 0o600 })
-        this.StartControlPlane(dataRoot)
-        await this.WaitForPing()
+        writeFileSync(operatorPasswordFile, N.OperatorPassword, { encoding: L.Utf8, mode: L.OwnerOnlyMode })
+        await this.RequireFreePorts()
+        await this.WaitForPing(this.StartControlPlane(dataRoot))
 
         console.log(L.Steps.Seed)
         const api = new OperatorApiClient(N.OperatorBase)
         await api.Login(N.OperatorEmail, N.OperatorPassword)
         const oneTime = await new LiveLoopStackSeed(api).Seed()
+        this.secrets.push(oneTime)
 
         console.log(L.Steps.Owner)
         const owner = await TenantOwnerSession.Open(N.TenantPlaneOrigin, N.OwnerEmail, oneTime)
@@ -279,7 +303,7 @@ export class LiveLoopStack
             await owner.Close()
         }
         const ownerPasswordFile = join(N.StackDir, L.OwnerPasswordFileName)
-        writeFileSync(ownerPasswordFile, N.OwnerPassword, { encoding: L.Utf8, mode: 0o600 })
+        writeFileSync(ownerPasswordFile, N.OwnerPassword, { encoding: L.Utf8, mode: L.OwnerOnlyMode })
 
         const descriptor: LiveLoopStackDescriptor = {
             platformAddress: N.PlatformAddress,
@@ -307,9 +331,10 @@ export class LiveLoopStack
         const N = LiveLoopStackNames
         console.log(L.Steps.Down)
         const pidFile = join(N.StackDir, L.PidFileName)
-        if (existsSync(pidFile))
+        // Only a control plane that still answers is ours to stop; a dead one's pid may have been reused by another process.
+        if (existsSync(pidFile) && await LiveLoopStack.Pings())
         {
-            await this.BestEffort(() => this.exec.Run(L.TaskKill, [...L.TaskKillArgs, readFileSync(pidFile, L.Utf8).trim()]))
+            await this.BestEffort(() => new ProcessTree(this.exec).Kill(Number(readFileSync(pidFile, L.Utf8).trim())))
         }
         await this.BestEffort(() => this.exec.Run(L.Docker, [L.RmVerb, L.ForceFlag, L.IdpContainerPrefix + N.TenantId]))
         await this.BestEffort(() => this.exec.Run(L.Docker, [L.VolumeVerb, L.RmVerb, L.ForceFlag, L.IdpVolumePrefix + N.TenantId]))
@@ -318,7 +343,7 @@ export class LiveLoopStack
     }
 
     /** Starts `server.ts` detached with the stack's settings; its output goes to the log file in the stack folder. */
-    private StartControlPlane(dataRoot: string): void
+    private StartControlPlane(dataRoot: string): ChildProcess
     {
         const L = LiveLoopStack
         const N = LiveLoopStackNames
@@ -340,30 +365,62 @@ export class LiveLoopStack
         const child = spawn(process.execPath, [resolve(here, ...L.TsxCliRelative), L.ServerScript], { cwd: controlPlaneDir, env, detached: true, stdio: ['ignore', log, log], windowsHide: true })
         writeFileSync(join(N.StackDir, L.PidFileName), String(child.pid), L.Utf8)
         child.unref()
+        return child
     }
 
-    private async WaitForPing(): Promise<void>
+    /** The stack's ports must be free: a control plane already listening (the developer's own) must never be seeded. */
+    private async RequireFreePorts(): Promise<void>
+    {
+        const L = LiveLoopStack
+        const probe = new NetPortProbe()
+        for (const port of [LiveLoopStackNames.OperatorPort, LiveLoopStackNames.TenantPlanePort])
+        {
+            if (!await probe.Free(port))
+            {
+                throw new Error(L.PortBusyPrefix + String(port) + L.PortBusySuffix)
+            }
+        }
+    }
+
+    /** True when a control plane answers /api/ping on the stack's operator port. */
+    private static async Pings(): Promise<boolean>
+    {
+        try
+        {
+            const response = await fetch(LiveLoopStackNames.OperatorBase + LiveLoopStack.PingPath)
+            await response.text()
+            return response.ok
+        }
+        catch
+        {
+            return false
+        }
+    }
+
+    /** Waits for OUR control plane: an exited child fails at once (its log in the stack folder says why). */
+    private async WaitForPing(child: ChildProcess): Promise<void>
     {
         const L = LiveLoopStack
         const deadline = Date.now() + L.PingDeadlineMs
         while (Date.now() < deadline)
         {
-            try
+            if (child.exitCode !== null)
             {
-                const response = await fetch(LiveLoopStackNames.OperatorBase + L.PingPath)
-                await response.text()
-                if (response.ok)
-                {
-                    return
-                }
+                throw new Error(L.ExitedMessage)
             }
-            catch
+            if (await LiveLoopStack.Pings())
             {
-                // not listening yet
+                return
             }
             await new Promise<void>(r => setTimeout(r, L.PollMs))
         }
         throw new Error(L.NotReadyMessage)
+    }
+
+    /** The text with every secret this run handled replaced by a placeholder. */
+    public Redact(text: string): string
+    {
+        return this.secrets.reduce((out, secret) => secret === '' ? out : out.split(secret).join(LiveLoopStack.Redacted), text)
     }
 
     private async EnsureLocalImage(image: string): Promise<void>

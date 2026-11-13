@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { LiveLoopStackNames, LiveLoopStackSeed } from '../live-loop-stack.js'
+import { LiveLoopStack, LiveLoopStackNames, LiveLoopStackSeed } from '../live-loop-stack.js'
 import type { ApiAnswer, IOperatorApi } from '../operator-api-client.js'
 
 class FakeOperatorApi implements IOperatorApi
@@ -65,5 +65,14 @@ describe('LiveLoopStackSeed', () =>
         const answers = SeedFx.Answers()
         answers['/api/tenants'] = { status: 201, body: {} }
         await assert.rejects(new LiveLoopStackSeed(new FakeOperatorApi(answers)).Seed(), /seed step failed: \/api\/tenants/)
+    })
+})
+
+describe('LiveLoopStack.Redact', () =>
+{
+    it('replaces the stack passwords in any failure text', () =>
+    {
+        const out = new LiveLoopStack().Redact('login failed for ' + LiveLoopStackNames.OwnerPassword + ' and ' + LiveLoopStackNames.OperatorPassword)
+        assert.equal(out, 'login failed for *** and ***')
     })
 })

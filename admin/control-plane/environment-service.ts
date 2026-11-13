@@ -794,20 +794,20 @@ export class EnvironmentService implements IAdminAccess
     public async DatabaseInfoFor(name: string): Promise<EnvDatabase>
     {
         const rec = this.Require(name)
-        const db = EnvironmentService.DefOf(rec).database
+        const db = this.DefOf(rec).database
         if (db === undefined)
         {
             throw new Error(EnvironmentService.NoDatabasePrefix + name)
         }
         const secrets = await EnvironmentService.ReadSecrets(rec.bundleDir)
-        return { ...db, password: EnvironmentService.Secret(secrets, BundleBuilder.DbSecretRef(EnvironmentService.DefOf(rec), db)) }
+        return { ...db, password: EnvironmentService.Secret(secrets, BundleBuilder.DbSecretRef(this.DefOf(rec), db)) }
     }
 
     private CtxOf(rec: EnvironmentRecord): EnvRuntimeContext
     {
         // An in-cluster record carries no bundleDir field (that field marks the Docker local bundle), but its boot
         // bundle is generated at the same data-root path in Create, so a later Start/Restart recovers it here.
-        return { def: EnvironmentService.DefOf(rec), record: rec, bundleDir: rec.bundleDir ?? join(this.dataRoot, rec.name) }
+        return { def: this.DefOf(rec), record: rec, bundleDir: rec.bundleDir ?? join(this.dataRoot, rec.name) }
     }
 
     private static StoredEndpoint(endpoint: EnvEndpoint): { httpUrl: string; wsUrl: string }
@@ -868,10 +868,10 @@ export class EnvironmentService implements IAdminAccess
     }
 
     /** Re-derives the definition from the stored type, falling back to the template default (DefaultTypeFor) for legacy records with no type. */
-    private static DefOf(rec: EnvironmentRecord): EnvDefinition
+    private DefOf(rec: EnvironmentRecord): EnvDefinition
     {
-        // A hive-bound record runs in a cluster (only an unbound one runs on Docker), so its database is the Postgres Service.
-        return TemplateCatalog.Resolve(rec.template, rec.name, rec.hostPort as number, rec.type ?? TemplateCatalog.DefaultTypeFor(rec.template), rec.hiveId !== undefined).def
+        // The same rule Create applies: a runtime that publishes no host port reaches its database by cluster DNS (the Postgres Service).
+        return TemplateCatalog.Resolve(rec.template, rec.name, rec.hostPort as number, rec.type ?? TemplateCatalog.DefaultTypeFor(rec.template), !this.runtimes.For(rec).PublishesHostPort()).def
     }
 
     private async SeedDemoUsers(def: EnvDefinition, bundleDir: string, seedDir: string, port: number): Promise<void>

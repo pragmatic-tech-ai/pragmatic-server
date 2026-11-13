@@ -74,3 +74,10 @@ test('KubectlLoopDatabase runs psql in the env database pod with the SQL as an a
     assert.equal(KubectlLoopDatabase.RowCountOf('UPDATE 3\n'), 3)
     assert.equal(KubectlLoopDatabase.RowCountOf('CREATE TABLE\n'), 0)
 })
+
+test('KubectlLoopDatabase reports only psql ERROR lines on failure, never the command line or the statement', async () =>
+{
+    const sql = "INSERT INTO t VALUES ('secretish')"
+    const db = new KubectlLoopDatabase('kind-x', { Run: async () => { throw new Error('Command failed: kubectl exec ... ' + sql + '\nERROR:  relation "t" does not exist\nLINE 1: ' + sql) } })
+    await assert.rejects(db.Exec('loop-rt', sql), (err: Error) => err.message === 'psql in the environment database failed: ERROR:  relation "t" does not exist' && !err.message.includes(sql))
+})

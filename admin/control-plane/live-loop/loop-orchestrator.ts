@@ -147,9 +147,11 @@ export interface ILoopComposition
 
 export class StderrLoopLogger implements ILoopLogger
 {
+    private static readonly LineEnd = '\n'
+
     public Log(message: string): void
     {
-        process.stderr.write(message + '\n')
+        process.stderr.write(message + StderrLoopLogger.LineEnd)
     }
 }
 
@@ -199,6 +201,7 @@ export class LoopOrchestrator
     private static readonly NotRunningPrefix = 'environment did not reach running: '
     private static readonly MsgTearingDownPrefix = 'tearing down environment '
     private static readonly MsgAbsentSuffix = ' (absent)'
+    private static readonly NoSuffix = ''
     private static readonly UnhandledCommand = 'unhandled command: '
 
     private readonly secrets = new Set<string>()
@@ -337,7 +340,7 @@ export class LoopOrchestrator
         for (const name of [L.DevEnvName, L.RuntimeEnvName])
         {
             const deleted = await this.envs.Delete(name)
-            this.logger.Log(L.MsgTearingDownPrefix + name + (deleted ? '' : L.MsgAbsentSuffix))
+            this.logger.Log(L.MsgTearingDownPrefix + name + (deleted ? L.NoSuffix : L.MsgAbsentSuffix))
         }
         return { ok: true }
     }
