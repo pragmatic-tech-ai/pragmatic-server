@@ -2,7 +2,7 @@ import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { AccessDefault, AccessScope, Compare, CompareOp, Cypher, Not } from '@pragmatic-tech-ai/graph'
 import type { GraphEngine } from '@pragmatic-tech-ai/graph'
-import { ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { DataSourceUnavailableError, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
 import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { DevGraphEngineHost } from '../dev-graph-engine-host.js'
@@ -125,7 +125,7 @@ describe('dev external bindings', () =>
             // the failure is a data source's, and reaches the wire typed, naming the datasource and not the cause
             const failure = await ExternalFx.Strings(engine, ExternalFx.Names).then(() => undefined, (error: unknown) => error)
             const wire = DataSourceFailure.ToResponseError(failure)
-            assert.equal(wire?.code, DataSourceFailure.Code)
+            assert.equal(wire?.code, DataSourceUnavailableError.Code)
             assert.deepEqual(wire?.data, { dataSource: ExternalFx.DataSourceName })
             assert.ok(!(wire?.message ?? '').includes(ExternalFx.Unreachable))
             // the source recovers: the next query opens it again

@@ -90,7 +90,7 @@ export class ServerConnectionHandler
     private static readonly ApplicationsUnavailableMessage = 'pragmatic applications are not available on this connection'
     public static readonly RateLimitedCode = -32029
     public static readonly CypherTimeoutCode = EngineCypherQuery.TimeoutCode
-    // -32031 (protocol DrainingError) and -32032 (protocol wire error) are reserved; -32033 is RevokedCode, distinct from the draining code Revoke() also sets; -32034 is DataSourceFailure.Code. -32040..-32045 are the graph error codes (GraphErrorCode).
+    // -32031 (protocol DrainingError) and -32032 (protocol wire error) are reserved; -32033 is RevokedCode, distinct from the draining code Revoke() also sets; -32034 is protocol DataSourceUnavailableError (DataSourceFailure). -32040..-32045 are the graph error codes (GraphErrorCode).
     public static readonly RevokedCode = -32033
     private static readonly RevokedMessage = 'connection authorization has been revoked'
 

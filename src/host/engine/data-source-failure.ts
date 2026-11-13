@@ -1,22 +1,15 @@
 import { ConnectorError, ConnectorPhase } from '@pragmatic-tech-ai/graph'
-import { ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
-
-/** The wire data of a DataSourceFailure: the data source (the model's connector name) that did not answer. */
-export interface IDataSourceFailureData
-{
-    dataSource: string
-}
+import { DataSourceUnavailableError } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { DataSourceUnavailableData, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /**
  * A read that needed an External data source which did not answer (the graph engine's ConnectorError in the Fetch
- * phase, e.g. its database host does not resolve) as a typed wire error: code {@link DataSourceFailure.Code}, a message
- * and data naming the source, never the cause (it can carry hosts, paths or credentials; the server log has it).
+ * phase, e.g. its database host does not resolve) as the protocol's DataSourceUnavailableError: a message and data
+ * naming the source, never the cause (it can carry hosts, paths or credentials; the server log has it).
  * Writes map their connector failures themselves (EngineWriteFailure), so only fetches reach here.
  */
 export class DataSourceFailure
 {
-    public static readonly Code = -32034
-    public static readonly MessageStart = 'data source unavailable: '
     /** TODL names a datasource's connector node `<namespace>@connector:<name>`. */
     private static readonly ConnectorIdInfix = '@connector:'
     private static readonly QualifiedSeparator = '.'
@@ -28,14 +21,9 @@ export class DataSourceFailure
     }
 
     /** The wire error for a data source's failed fetch; undefined for any other error. */
-    public static ToResponseError(error: unknown): ResponseError<IDataSourceFailureData> | undefined
+    public static ToResponseError(error: unknown): ResponseError<DataSourceUnavailableData> | undefined
     {
-        if (!DataSourceFailure.Is(error))
-        {
-            return undefined
-        }
-        const name = DataSourceFailure.NameOf(error.Connector)
-        return new ResponseError<IDataSourceFailureData>(DataSourceFailure.Code, DataSourceFailure.MessageStart + name, { dataSource: name })
+        return DataSourceFailure.Is(error) ? DataSourceUnavailableError.Create(DataSourceFailure.NameOf(error.Connector)) : undefined
     }
 
     /** The datasource's qualified TODL name (`<namespace>.<name>`) for a connector node id; any other name as is. */

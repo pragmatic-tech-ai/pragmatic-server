@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { InMemoryMessageSocket, PragmaticClient, ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, PragmaticClient, ResponseError, ErrorCodes, DataSourceUnavailableError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
@@ -217,8 +217,9 @@ test('a data source that fails to fetch reaches the client typed, naming the sou
     const diagnostics = new RecordedDiagnostics()
     const thrown = new ConnectorError(Fixtures.DataSource, ConnectorPhase.Fetch, new Error(Fixtures.Secret))
     const failure = await Fixtures.Failure(thrown, undefined, diagnostics)
-    assert.equal(failure.code, DataSourceFailure.Code)
-    assert.equal(failure.message, DataSourceFailure.MessageStart + Fixtures.DataSourceName)
+    assert.equal(failure.code, DataSourceUnavailableError.Code)
+    assert.equal(failure.message, DataSourceUnavailableError.MessageStart + Fixtures.DataSourceName)
+    assert.equal(DataSourceUnavailableError.DataSourceOf(failure), Fixtures.DataSourceName)
     assert.deepEqual(failure.data, { dataSource: Fixtures.DataSourceName })
     assert.ok(!failure.serialized.includes(Fixtures.Secret))
     assert.equal(diagnostics.DataSources.length, 1)
