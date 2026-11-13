@@ -41,7 +41,16 @@ export class KindCli implements IKind
     private static readonly Get = 'get'
     private static readonly Clusters = 'clusters'
     private static readonly Load = 'load'
-    private static readonly DockerImage = 'docker-image'
+    private static readonly ImageArchive = 'image-archive'
+    private static readonly Docker = 'docker'
+    private static readonly SaveVerb = 'save'
+    private static readonly PlatformFlag = '--platform'
+    private static readonly OutputFlag = '-o'
+    private static readonly ImageTmpPrefix = 'kind-img-'
+    private static readonly ImageArchiveName = 'image.tar'
+    private static readonly Arm64Arch = 'arm64'
+    private static readonly LinuxArm64 = 'linux/arm64'
+    private static readonly LinuxAmd64 = 'linux/amd64'
     private static readonly NoClustersSentinel = 'No kind clusters found.'
     private static readonly Newline = '\n'
     private static readonly ConfigFlag = '--config'
@@ -66,7 +75,7 @@ export class KindCli implements IKind
     ]
 
     /**
-     * Upper bound on one `kind load docker-image`: the agent image is ~2 GB, well past NodeExecFile's default, and a
+     * Upper bound on one image load (save + `kind load image-archive`): the agent image is ~2 GB, well past NodeExecFile's default, and a
      * load cut short leaves the node to pull an image it cannot reach.
      */
     public static readonly ImageLoadTimeoutMs = 20 * 60 * 1000
@@ -121,16 +130,40 @@ export class KindCli implements IKind
             .filter(line => line.length > 0 && line !== KindCli.NoClustersSentinel)
     }
 
+    /**
+     * Saves the image's host-platform variant to a temporary archive and loads that. `kind load docker-image` imports with
+     * --all-platforms, which fails ("content digest ... not found") when Docker's containerd image store holds only the
+     * host platform of a multi-platform image (e.g. `registry:2` pulled on this machine).
+     */
     public async LoadImage(image: string, clusterName: string): Promise<void>
     {
-        await this.Invoke([KindCli.Load, KindCli.DockerImage, image, KindCli.NameFlag, clusterName], this.imageExec)
+        const dir = mkdtempSync(join(tmpdir(), KindCli.ImageTmpPrefix))
+        const archive = join(dir, KindCli.ImageArchiveName)
+        try
+        {
+            await this.Invoke(
+                [KindCli.SaveVerb, KindCli.PlatformFlag, KindCli.HostPlatform(), KindCli.OutputFlag, archive, image],
+                this.imageExec,
+                KindCli.Docker)
+            await this.Invoke([KindCli.Load, KindCli.ImageArchive, archive, KindCli.NameFlag, clusterName], this.imageExec)
+        }
+        finally
+        {
+            rmSync(dir, { recursive: true, force: true })
+        }
     }
 
-    private async Invoke(args: readonly string[], exec: IExecFile = this.exec): Promise<string>
+    /** The host's Linux platform (`linux/amd64` or `linux/arm64`): the variant a local kind node runs. */
+    public static HostPlatform(): string
+    {
+        return process.arch === KindCli.Arm64Arch ? KindCli.LinuxArm64 : KindCli.LinuxAmd64
+    }
+
+    private async Invoke(args: readonly string[], exec: IExecFile = this.exec, program: string = KindCli.Kind): Promise<string>
     {
         try
         {
-            const result = await exec.Run(KindCli.Kind, args)
+            const result = await exec.Run(program, args)
             return result.stdout
         }
         catch (e: unknown)

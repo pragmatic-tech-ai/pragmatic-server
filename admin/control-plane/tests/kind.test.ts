@@ -7,6 +7,7 @@ class FakeExecFile implements IExecFile
 {
     public LastFile = ''
     public LastArgs: readonly string[] = []
+    public readonly Calls: { file: string; args: readonly string[] }[] = []
     public Stdout = ''
     public FailStderr: string | undefined
     public FailError: Error | undefined
@@ -15,6 +16,7 @@ class FakeExecFile implements IExecFile
     {
         this.LastFile = file
         this.LastArgs = args
+        this.Calls.push({ file, args })
         if (this.FailError !== undefined)
         {
             throw this.FailError
@@ -65,11 +67,34 @@ test('DeleteCluster runs kind delete cluster --name <n>', async () =>
     assert.deepEqual(fake.LastArgs, ['delete', 'cluster', '--name', 'c1'])
 })
 
-test('LoadImage runs kind load docker-image <image> --name <n>', async () =>
+// `kind load docker-image` imports with --all-platforms, which fails ("content digest ... not found") when Docker's
+// containerd image store holds only the host platform of a multi-platform image. So LoadImage saves the host platform
+// alone to an archive and loads that.
+test('LoadImage saves the host platform to an archive, then runs kind load image-archive <archive> --name <n>', async () =>
 {
     const fake = new FakeExecFile()
     await new KindCli(fake).LoadImage('img:1', 'c1')
-    assert.deepEqual(fake.LastArgs, ['load', 'docker-image', 'img:1', '--name', 'c1'])
+    assert.equal(fake.Calls.length, 2)
+    const [save, load] = fake.Calls
+    assert.equal(save.file, 'docker')
+    assert.deepEqual(save.args.slice(0, 3), ['save', '--platform', KindCli.HostPlatform()])
+    assert.equal(save.args[3], '-o')
+    assert.equal(save.args[5], 'img:1')
+    assert.equal(load.file, 'kind')
+    assert.deepEqual(load.args, ['load', 'image-archive', save.args[4], '--name', 'c1'])
+})
+
+test('the host platform is linux on the host CPU', () =>
+{
+    assert.match(KindCli.HostPlatform(), /^linux\/(amd64|arm64)$/)
+})
+
+test('a failed image save surfaces as KindError and never runs kind load', async () =>
+{
+    const fake = new FakeExecFile()
+    fake.FailStderr = 'No such image: img:1'
+    await assert.rejects(new KindCli(fake).LoadImage('img:1', 'c1'), (e: unknown) => e instanceof KindError && /No such image/.test(e.message))
+    assert.equal(fake.Calls.length, 1)
 })
 
 test('LoadImage runs on the image-load exec (its own, longer timeout); every other call on the main one', async () =>
@@ -79,7 +104,7 @@ test('LoadImage runs on the image-load exec (its own, longer timeout); every oth
     const cli = new KindCli(main, images)
     await cli.LoadImage('img:1', 'c1')
     await cli.DeleteCluster('c1')
-    assert.deepEqual(images.LastArgs, ['load', 'docker-image', 'img:1', '--name', 'c1'])
+    assert.deepEqual(images.Calls.map(c => c.file), ['docker', 'kind'])
     assert.deepEqual(main.LastArgs, ['delete', 'cluster', '--name', 'c1'])
 })
 
