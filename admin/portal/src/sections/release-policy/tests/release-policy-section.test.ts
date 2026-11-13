@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { OperatorContext } from '../../../operator-context.js'
+import { ReleaseVerification } from '../../../portal-types.js'
 import { PageState } from '../../../shell/portal-page-view-model.js'
 import { FakeControlPlane, PortalTestHost, TestRail, Tick, type FakeDialogService } from '../../../shell/tests/portal-test-fixtures.js'
 import { HiveDetailPageViewModel } from '../../hives/hive-detail-page-view-model.js'
@@ -198,6 +199,19 @@ describe('Release Policy section', () =>
         const dialog = fx.Dialogs.Last as GateDialogViewModel
         dialog.SelectedTenant = dialog.Tenants.ToArray().find(t => t.Value === 'acme-prod')
         assert.deepEqual(dialog.Versions.ToArray().map(v => v.Value), ['1.5.0'])
+        dialog.SelectedTenant = dialog.Tenants.ToArray().find(t => t.Value === 'acme-dev')
+        assert.deepEqual(dialog.Versions.ToArray().map(v => v.Value), ['1.5.0', '1.4.0'])
+    })
+
+    it('the Gate dialog never offers a release rejected on import (the server refuses to gate one)', async () =>
+    {
+        const fx = new PolicyFixture()
+        fx.Api.WithManifest('1.6.0', '', { signed: false, release: { state: ReleaseVerification.Rejected, rejectedReason: 'image missing: pragmatic-env-server' } })
+        fx.Api.WithManifest('1.5.0', 'img:new', { release: { state: ReleaseVerification.Verified } })
+        const page = await fx.Page()
+        page.GateCommand.Execute()
+        await Tick.Settle()
+        const dialog = fx.Dialogs.Last as GateDialogViewModel
         dialog.SelectedTenant = dialog.Tenants.ToArray().find(t => t.Value === 'acme-dev')
         assert.deepEqual(dialog.Versions.ToArray().map(v => v.Value), ['1.5.0', '1.4.0'])
     })

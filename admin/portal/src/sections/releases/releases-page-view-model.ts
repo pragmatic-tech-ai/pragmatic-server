@@ -149,6 +149,16 @@ export class ReleasesPageViewModel extends PortalPageViewModel
     private static readonly ShadowedToken = '{shadowed}'
     private static readonly NoText = ''
 
+    // "Imported N, rejected M", plus ", shadowed K" when local manifests hid some registry versions.
+    public static ResultText(result: ReleaseRefreshDto): string
+    {
+        const P = ReleasesPageViewModel
+        const text = P.ResultTemplate
+            .replace(P.ImportedToken, String(result.imported.length))
+            .replace(P.RejectedToken, String(result.rejected.length))
+        return result.shadowed.length > 0 ? text + P.ShadowedTemplate.replace(P.ShadowedToken, String(result.shadowed.length)) : text
+    }
+
     private readonly rows = new ObservableCollection<ReleaseRowViewModel>()
     private readonly openCommand: RelayCommand
     private readonly refreshFromRegistryCommand: RelayCommand
@@ -165,16 +175,6 @@ export class ReleasesPageViewModel extends PortalPageViewModel
     public get RefreshResultText(): string
     {
         return this.refreshResultText
-    }
-
-    // "Imported N, rejected M", plus ", shadowed K" when local manifests hid some registry versions.
-    public static ResultText(result: ReleaseRefreshDto): string
-    {
-        const P = ReleasesPageViewModel
-        const text = P.ResultTemplate
-            .replace(P.ImportedToken, String(result.imported.length))
-            .replace(P.RejectedToken, String(result.rejected.length))
-        return result.shadowed.length > 0 ? text + P.ShadowedTemplate.replace(P.ShadowedToken, String(result.shadowed.length)) : text
     }
 
     public get Rows(): ObservableCollection<ReleaseRowViewModel>

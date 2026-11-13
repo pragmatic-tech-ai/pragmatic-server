@@ -407,10 +407,10 @@ export class ReleaseDetailPageViewModel extends PortalPageViewModel
                 this.imageRows.Add(new ReleaseImageRowViewModel(app, image.repository, image.digest))
             }
         }
-        const siblings = release.siblingCommits ?? {}
-        for (const repo of Object.keys(siblings).sort((a, b) => a.localeCompare(b)))
+        const siblings = Object.entries(release.siblingCommits ?? {}).sort(([a], [b]) => a.localeCompare(b))
+        for (const [repo, commit] of siblings)
         {
-            this.siblingCommitRows.Add(new ReleaseSiblingCommitRowViewModel(repo, siblings[repo] as string))
+            this.siblingCommitRows.Add(new ReleaseSiblingCommitRowViewModel(repo, commit))
         }
     }
 

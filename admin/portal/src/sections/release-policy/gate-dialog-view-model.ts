@@ -1,6 +1,6 @@
 import { ObservableCollection } from '@pragmatic-tech-ai/mural/runtime'
 import type { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
-import type { GatingDto } from '../../portal-types.js'
+import { ReleaseVerification, type GatingDto, type ManifestDto } from '../../portal-types.js'
 import { OptionViewModel } from '../../shell/option-view-model.js'
 import { PortalDialogViewModel } from '../../shell/portal-dialog-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
@@ -9,7 +9,8 @@ import { PolicyOwnerLabels } from './policy-owner-labels.js'
 
 // Gate a version for a tenant: allows the tenant's hives to adopt it, subject
 // to the tenant's release policy. Offers every tenant and, newest first, every
-// version that is not withdrawn and not already gated for the chosen tenant.
+// version that is not withdrawn, not rejected on import and not already gated
+// for the chosen tenant.
 export class GateDialogViewModel extends PortalDialogViewModel<boolean>
 {
     private static readonly SelectedTenantProperty = 'SelectedTenant'
@@ -38,9 +39,15 @@ export class GateDialogViewModel extends PortalDialogViewModel<boolean>
         {
             this.tenants.Add(new OptionViewModel(tenant.id, labels.For(tenant.id)))
         }
-        this.offered = manifests.filter(m => m.withdrawn !== true).map(m => m.id).sort((a, b) => VersionOrder.Compare(b, a))
+        this.offered = manifests.filter(m => GateDialogViewModel.IsGateable(m)).map(m => m.id).sort((a, b) => VersionOrder.Compare(b, a))
         this.gating = gating
         this.FillVersions()
+    }
+
+    // A version can be gated unless it is withdrawn or a registry release rejected on import (the server refuses those).
+    private static IsGateable(manifest: ManifestDto): boolean
+    {
+        return manifest.withdrawn !== true && manifest.release?.state !== ReleaseVerification.Rejected
     }
 
     // The offered versions, less those already gated for the chosen tenant.
