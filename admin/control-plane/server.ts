@@ -116,7 +116,8 @@ interface IOperatorSideStart
 /** The agent-channel listener; `raw` is the port variable as given, for the invalid-port warning. */
 interface IAgentChannelStart
 {
-    host: AgentChannelHost
+    /** Undefined for a role that never serves the channel (admin): nothing is composed for it. */
+    host: AgentChannelHost | undefined
     port: number
     raw: string | undefined
     bind: string
@@ -153,6 +154,10 @@ class ComposedListeners implements IControlPlaneListenerStarts
     {
         const L = ComposedListeners
         const c = this.channel
+        if (c.host === undefined)
+        {
+            return
+        }
         if (c.port === ControlPlaneServer.AgentChannelDisabled)
         {
             if (c.raw !== undefined && c.raw !== '')
@@ -208,7 +213,8 @@ export class ControlPlaneServer
     private static readonly RegistrationsFile = 'rollout-registrations.json'
     private static readonly ReleasePoliciesFile = 'release-policies.json'
     private static readonly AdoptionLedgerFile = 'adoption-ledger.json'
-    private static readonly PortalSegment = 'portal'
+    /** The operator portal SPA is served from `<compiled control plane>/../portal/dist`. */
+    public static readonly PortalSegment = 'portal'
     private static readonly MasterKeyEnvVar = 'PRAGMATIC_ADMIN_MASTER_KEY_FILE'
     private static readonly OperatorEmailEnvVar = 'PRAGMATIC_ADMIN_OPERATOR_EMAIL'
     private static readonly OperatorPasswordEnvVar = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD'
@@ -330,7 +336,7 @@ export class ControlPlaneServer
         // channel receives, over the shared adverts and approvals.
         const domainVerifier = new DomainTxtVerifier(new NodeTxtResolver())
         const emailDomains = new PlatformEmailDomains(directory, adverts, approvals, domainVerifier)
-        const channel = new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, ownerResets, emailDomains))
+        const channel = ControlPlaneServer.AgentChannelOf(role, deployments, directory, adverts, ownerResets, emailDomains)
         const agentBind = ControlPlaneServer.ParseAgentChannelBind(process.env[ControlPlaneServer.AgentChannelBindEnvVar])
         const channelStart: IAgentChannelStart = { host: channel, port: agentChannelPort, raw: agentChannelRaw, bind: agentBind }
         if (operator === undefined || masterKey === undefined)
@@ -395,6 +401,17 @@ export class ControlPlaneServer
             releases.Poll.Start()
             ControlPlaneServer.StopOnShutdown(releases.Poll)
         }
+    }
+
+    /** The agent-channel host (over its console advert receiver) for a role that serves the channel; undefined for the admin role. */
+    public static AgentChannelOf(role: ControlPlaneRole, deployments: PlatformDeploymentRegistry, directory: PlatformDirectory, adverts: ConsoleAdvertRegistry,
+        ownerResets: ConsoleOwnerResets, emailDomains: PlatformEmailDomains): AgentChannelHost | undefined
+    {
+        if (!ControlPlaneRoles.ServesAgentChannel(role))
+        {
+            return undefined
+        }
+        return new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, ownerResets, emailDomains))
     }
 
     /**

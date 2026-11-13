@@ -92,6 +92,12 @@ export class ControlPlaneRoles
         return role !== ControlPlaneRole.Edge
     }
 
+    /** Pure: whether the role composes the agent channel at all (its host and the console advert receiver behind it). */
+    public static ServesAgentChannel(role: ControlPlaneRole): boolean
+    {
+        return ControlPlaneRoles.ListenersOf(role).AgentChannel
+    }
+
     /** Refuses an edge process with no agent-channel port: it would serve nothing. */
     public static RequireListener(role: ControlPlaneRole, agentChannelEnabled: boolean): void
     {
