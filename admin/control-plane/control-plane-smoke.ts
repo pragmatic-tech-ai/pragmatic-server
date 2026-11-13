@@ -19,7 +19,6 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Repository, toJSON } from '@pragmatic-tech-ai/todl'
 import type { PackageDocument } from '@pragmatic-tech-ai/todl'
-import { RemoteBindMode } from '@pragmatic-tech-ai/todl/build-system-core'
 import { AdminProtocol, AppWriteStatus, CypherProtocol, GraphProtocol, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ContributedPackageDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { BundleBuilder } from '../../environments/seed/bundle.js'
@@ -420,7 +419,7 @@ export class ControlPlaneSmoke
     }
 
     /**
-     * FR6 proof: deploy an environment-bound remote app to the runtime env, then read the PROMOTED env graph as a real
+     * FR6 proof: deploy a remote app to the runtime env, then read the PROMOTED env graph as a real
      * runtime account granted Viewer at Tenant scope and, in the tier-1 security setting, the Reader role with read on the
      * promoted concepts (no OpenApplication). Re-promote a changed graph and re-read on the
      * same connection (live, no redeploy); a bundled app on the same tenant still reads its own per-app graph.
@@ -445,7 +444,7 @@ export class ControlPlaneSmoke
                 return
             }
             step = L.EnvAppDeploy
-            envApp = await HelloAppBuilder.Build(RemoteBindMode.Environment, S.EnvAppName)
+            envApp = await HelloAppBuilder.Build(S.EnvAppName)
             bundledApp = await HelloAppBuilder.Build()
             adminClient = await PragmaticClient.ConnectAsync(wsUrl, { bearerToken: adminToken })
             const envDeployed = await adminClient.DeployApplication(envApp.DeployParams())

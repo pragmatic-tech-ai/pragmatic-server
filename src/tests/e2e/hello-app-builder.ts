@@ -6,7 +6,7 @@ import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { parseManifest, DtoGenerator, ProjectModelProvider, GeneratorTrigger } from '@pragmatic-tech-ai/todl'
 import type { IPackageSource, ProjectManifest } from '@pragmatic-tech-ai/todl'
-import { DiagnosticSink, RemoteBindMode } from '@pragmatic-tech-ai/todl/build-system-core'
+import { DiagnosticSink } from '@pragmatic-tech-ai/todl/build-system-core'
 import type { BuildOptions, IBuildStorageProvider, OpenedOutput } from '@pragmatic-tech-ai/todl/build-system-core'
 import { TodlProjectBuildManager } from '@pragmatic-tech-ai/todl/todl-build-system'
 import type { CypherAppDeployParamsDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -112,10 +112,10 @@ export class HelloAppBuilder
 
     /**
      * Runs the build and returns the deploy request source. The caller disposes the result to remove the scratch directory.
-     * Application bind (default) emits a client that opens its own per-app graph; Environment bind emits one that reads the
-     * tenant's promoted environment graph with no OpenApplication. appName overrides the deployed app name.
+     * The emitted client opens its application on connect and reads the environment graph. appName overrides the deployed
+     * app name.
      */
-    public static async Build(bind: RemoteBindMode = RemoteBindMode.Application, appName: string = HelloAppBuilder.AppName): Promise<BuiltHelloApp>
+    public static async Build(appName: string = HelloAppBuilder.AppName): Promise<BuiltHelloApp>
     {
         const root = mkdtempSync(join(tmpdir(), HelloAppBuilder.ScratchPrefix))
         const projectDir = join(root, HelloAppBuilder.ProjectDir)
@@ -132,7 +132,7 @@ export class HelloAppBuilder
             BuildSystemId: HelloAppBuilder.BuildSystemId,
             BuildFlavorId: HelloAppBuilder.FlavorId,
             Source: source,
-            Options: { Remote: { AppName: appName, Bind: bind } },
+            Options: { Remote: { AppName: appName } },
         })
         if (!result.Ok || result.OutputPath === undefined)
         {

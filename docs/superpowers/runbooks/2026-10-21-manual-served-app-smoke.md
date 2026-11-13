@@ -133,8 +133,9 @@ routes now; to see data render you need step 3.
 
 Launch the built Plexus app. Open a solution (the Contoso fixture under
 `apps/plexus/e2e/fixtures/contoso` is the one the e2e uses), run **Generate UI** for
-the entrypoint concept, then run the **Publish-env** command for that project
-(the `tenant.publish-env` relay command). It needs the runtime's WebSocket URL
+the entrypoint concept, then run the **Publish to tenant** command for that project
+(`tenant.publish`; the separate environment-graph publish was retired 2026-11-13, since every
+published app reads the environment graph). It needs the runtime's WebSocket URL
 (`ws://localhost:PORT/?tenant=contoso`) and a **deploy token** for the environment —
 both come from the control plane when the environment is created. This publish step
 is the one the e2e automates end-to-end; doing it by hand is the fiddly part, so if
