@@ -12,7 +12,7 @@ Needs Docker with Buildx and every sibling checked out beside pragmatic-server i
 2. From the workspace root, build all eight images into the local Docker store:
 
    ```
-   NPMRC_FILE=<path-to>/.npmrc VERSION=0.0.0-local SERVER_SHA=local docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --set "*.output=type=docker"
+   NPMRC_FILE=<path-to>/.npmrc VERSION=0.0.0-local SERVER_SHA=local docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --set "*.output=type=docker" --allow=fs.read=<path-to>/.npmrc
    ```
 
    Expected: the build finishes without error and no token appears in the output.

@@ -70,7 +70,7 @@ jobs:
       - name: Build and push the app images
         working-directory: ${{ github.workspace }}
         run: |
-          NPMRC_FILE="$RUNNER_TEMP/npmrc" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --push
+          NPMRC_FILE="$RUNNER_TEMP/npmrc" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --push --allow=fs.read="$RUNNER_TEMP/npmrc"
           rm -f "$RUNNER_TEMP/npmrc"
       - name: Write the release signing key
         env:

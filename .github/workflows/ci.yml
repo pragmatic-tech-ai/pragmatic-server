@@ -67,7 +67,7 @@ jobs:
         run: |
           trap 'rm -f "$RUNNER_TEMP/npmrc"' EXIT
           (umask 077 && printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$PACKAGES_TOKEN" > "$RUNNER_TEMP/npmrc")
-          NPMRC_FILE="$RUNNER_TEMP/npmrc" VERSION=ci SERVER_SHA="$GITHUB_SHA" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl
+          NPMRC_FILE="$RUNNER_TEMP/npmrc" VERSION=ci SERVER_SHA="$GITHUB_SHA" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --allow=fs.read="$RUNNER_TEMP/npmrc"
       - name: Helm lint + template
         working-directory: ${{ github.workspace }}
         run: |

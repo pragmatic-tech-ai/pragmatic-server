@@ -133,7 +133,7 @@ Point PRAGMATIC_RELEASE_CREDENTIAL_FILE at it. The same token, written as an `.n
 Run the local build from the workspace root `architecture-agent/`:
 
 ```
-NPMRC_FILE=<path-to>/.npmrc VERSION=0.1.0 SERVER_SHA=<server sha> docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --set "*.output=type=docker"
+NPMRC_FILE=<path-to>/.npmrc VERSION=0.1.0 SERVER_SHA=<server sha> docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --set "*.output=type=docker" --allow=fs.read=<path-to>/.npmrc
 ```
 
 Trust keys and rotation. The control plane trusts a release only when its descriptor and every image are signed by a key whose public half is in the trust directory (`release-keys/`, one `<key id>.pub.pem` per key; today `release-2026-11`). The private key exists only as the `RELEASE_SIGNING_KEY` GitHub Actions secret, and only the workflow signs. To rotate: add the new `<id>.pub.pem` to `release-keys/`, change the workflow's `--key-id` to the new id, replace the `RELEASE_SIGNING_KEY` secret, and keep the old public key for as long as releases signed with it are in use.

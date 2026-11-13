@@ -42,6 +42,7 @@ test('ci workflow runs tests, checks the image closures and bakes the app images
     assert.match(text, /npx tsx docker\/images\/closure-check\.ts/)
     assert.match(text, /docker buildx bake -f pragmatic-server\/docker\/docker-bake\.hcl/)
     assert.doesNotMatch(text, /--push/)
+    assert.match(text, WorkflowCommands.BakeAllowsNpmrc,'bake is granted read access to the npmrc secret file')
 })
 
 interface IWorkflowStep
@@ -65,6 +66,7 @@ test('release workflow publishes on release tags only, and never leaks its crede
     const clone = runs.findIndex(run => /git clone/.test(run))
     assert.ok(check !== -1 && check < clone, 'the tag is checked before any sibling is cloned')
     assert.ok(runs.some(run => /docker buildx bake -f pragmatic-server\/docker\/docker-bake\.hcl --push/.test(run)))
+    assert.ok(runs.some(run => WorkflowCommands.BakeAllowsNpmrc.test(run)), 'bake is granted read access to the npmrc secret file')
     assert.ok(runs.some(run => /publish --tag .* --key-id release-2026-11/.test(run)))
     assert.ok(runs.some(run => /umask 077[\s\S]*release\.key/.test(run)), 'the signing key is written under umask 077')
     const cleanup = steps.find(step => step.if === 'always()' && /rm -f .*release\.key.*npmrc/.test(step.run ?? ''))
@@ -139,6 +141,8 @@ class WorkflowCommands
     public static readonly LongBranchFlag = /--branch/
     public static readonly RecordsHeads = /rev-parse HEAD[\s\S]*siblings\.json/
     public static readonly Bake = /docker buildx bake/
+    /** Buildx 0.20+ refuses a secret file outside the context unless bake is granted read access to it. */
+    public static readonly BakeAllowsNpmrc = /docker buildx bake [^\n]*--allow=fs\.read="\$RUNNER_TEMP\/npmrc"/
     public static readonly ClosureCheckRun = /^RUN cd pragmatic-server && npx tsx docker\/images\/closure-check\.ts$/m
     public static readonly CiSuites: readonly RegExp[] = [
         /npx tsx --test "src\/\*\*\/\*\.test\.ts"/,
