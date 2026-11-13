@@ -102,7 +102,8 @@ export class PlatformDeploymentRegistry
 
     /**
      * Replaces a Rejected release record with its re-inspected import (a refresh found the version now verifies). Safe because
-     * a Rejected record can never be gated or selected; anything else (verified, local, withdrawn) is refused, never overwritten.
+     * a Rejected record can never be gated or selected; any other record (verified, local) is refused, never overwritten. An
+     * operator's withdrawal of the Rejected record is carried over, reason and all, so the verified record stays withdrawn.
      */
     public async ReplaceRejectedRelease(record: ManifestRecord): Promise<void>
     {
@@ -115,7 +116,11 @@ export class PlatformDeploymentRegistry
         {
             throw new ReleaseNotRejectedError(record.id)
         }
-        await this.manifests.Put(record)
+        const { withdrawn: _withdrawn, withdrawal: _withdrawal, ...fresh } = record
+        const replacement: ManifestRecord = existing.withdrawn === true
+            ? { ...fresh, withdrawn: true, ...(existing.withdrawal === undefined ? {} : { withdrawal: existing.withdrawal }) }
+            : fresh
+        await this.manifests.Put(replacement)
     }
 
     /** Every published manifest, including withdrawn versions. */

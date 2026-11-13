@@ -67,6 +67,7 @@ class CatalogFixture
     public static readonly BadAnnotations = 'descriptor artifact invalid: manifest annotations are not strings'
     public static readonly OtherHost = 'registry.example:5000'
     public static readonly Rebuilt = 'rebuilt'
+    public static readonly ManifestsPath = '/manifests/'
     public static readonly Unreachable = 'connect ECONNREFUSED '
 
     public readonly Registry = new FakeOciRegistry()
@@ -429,6 +430,25 @@ describe('ReleaseCatalog.Refresh', () =>
             assert.equal(fx.Reason(CatalogFixture.V1), undefined)
             assert.equal(fx.Deployments.AllManifests().length, 1)
             assert.deepEqual(await fx.Catalog().Refresh(), { imported: [], rejected: [], unchanged: 1, shadowed: [] })
+        })
+    })
+
+    it('throws ReleaseRegistryUnavailableError and leaves the Rejected record as it was when the registry drops during its re-inspection', async () =>
+    {
+        await CatalogFixture.Run(async fx =>
+        {
+            await fx.Publish(CatalogFixture.V1)
+            const gateway = CatalogFixture.Repo(ReleaseApp.EnvGateway)
+            const original = CatalogFixture.ImageBytes(ReleaseApp.EnvGateway, CatalogFixture.V1)
+            fx.Registry.PutManifest(gateway, CatalogFixture.V1, new TextEncoder().encode(CatalogFixture.Rebuilt), CatalogFixture.ManifestType)
+            await fx.Catalog().Refresh()
+            const rejected = structuredClone(fx.Release(CatalogFixture.V1))
+            assert.equal(rejected?.release?.state, ReleaseState.Rejected)
+            fx.Registry.PutManifest(gateway, CatalogFixture.V1, original, CatalogFixture.ManifestType)
+            fx.FailOn = CatalogFixture.Repo(ReleaseApp.EnvServer) + CatalogFixture.ManifestsPath
+            await assert.rejects(() => fx.Catalog().Refresh(), ReleaseRegistryUnavailableError)
+            assert.deepEqual(fx.Release(CatalogFixture.V1), rejected)
+            assert.equal(fx.Deployments.AllManifests().length, 1)
         })
     })
 

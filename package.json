@@ -14,7 +14,7 @@
     "pragmatic-agentd": "dist/bin/pragmatic-agentd.js",
     "pragmatic-idp": "dist/bin/pragmatic-idpd.js",
     "pragmatic-tenant-admind": "dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-admind.js",
-    "pragmatic-ui-unpack": "dist-ui-unpack/admin/control-plane/bin/pragmatic-ui-unpack.js"
+    "pragmatic-ui-unpack": "dist-tenant-admin/admin/control-plane/bin/pragmatic-ui-unpack.js"
   },
   "exports": {
     ".": {

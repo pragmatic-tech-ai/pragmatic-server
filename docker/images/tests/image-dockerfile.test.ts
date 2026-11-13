@@ -310,6 +310,18 @@ describe('image contents', () =>
         assert.equal(tsconfig.files.length, 1)
     })
 
+    it('every package bin points into a tree an npm build script emits (dist, dist-tenant-admin), not the image-only ui-unpack compile', () =>
+    {
+        const pkg = JSON.parse(ImageFiles.Text('package.json')) as { bin: Record<string, string>; scripts: Record<string, string> }
+        const trees: Record<string, string> = { 'dist/': pkg.scripts.build, 'dist-tenant-admin/': pkg.scripts['build:tenant-admin'] }
+        for (const [name, path] of Object.entries(pkg.bin))
+        {
+            const tree = Object.keys(trees).find(t => path.startsWith(t))
+            assert.ok(tree !== undefined && trees[tree] !== undefined, `${name}: ${path}`)
+        }
+        assert.deepEqual(ImageFiles.Closure()[ImageFiles.UiUnpack].entrypoint, ['node', 'dist-ui-unpack/admin/control-plane/bin/pragmatic-ui-unpack.js'])
+    })
+
     it('the build stage stages every asset set at the path the compiled code reads it from', () =>
     {
         const build = ImageFiles.Stage(ImageFiles.BuildStage).join('\n')

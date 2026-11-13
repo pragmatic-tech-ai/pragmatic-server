@@ -1046,6 +1046,8 @@ class ReleaseFx
     public static readonly BuiltAt = '2026-11-12T10:00:00.000Z'
     public static readonly Reason = 'image digest mismatch: pragmatic-env-gateway'
     public static readonly KeyId = 'release-2026'
+    public static readonly WithdrawReason = 'pulled while rejected'
+    public static readonly Actor = 'operator-a'
     public static readonly ImagePrefix = 'ghcr.io/pragmatic-tech-ai/pragmatic-env-server@'
 
     public static Verified(version: string): ManifestRecord
@@ -1086,6 +1088,20 @@ test('release: ReplaceRejectedRelease swaps a Rejected record for the re-verifie
         await reg.ImportRelease(ReleaseFx.Rejected(ReleaseFx.Version))
         await reg.ReplaceRejectedRelease(ReleaseFx.Verified(ReleaseFx.Version))
         assert.deepEqual(reg.AllManifests(), [ReleaseFx.Verified(ReleaseFx.Version)])
+    })
+})
+
+test('release: ReplaceRejectedRelease keeps an operator withdrawal of the Rejected record, reason and all', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await reg.ImportRelease(ReleaseFx.Rejected(ReleaseFx.Version))
+        const withdrawn = await reg.SetWithdrawn(ReleaseFx.Version, true, ReleaseFx.WithdrawReason, ReleaseFx.Actor)
+        await reg.ReplaceRejectedRelease(ReleaseFx.Verified(ReleaseFx.Version))
+        const record = reg.AllManifests().find(m => m.id === ReleaseFx.Version)
+        assert.equal(record?.release?.state, ReleaseState.Verified)
+        assert.equal(record?.withdrawn, true)
+        assert.deepEqual(record?.withdrawal, withdrawn.withdrawal)
     })
 })
 
