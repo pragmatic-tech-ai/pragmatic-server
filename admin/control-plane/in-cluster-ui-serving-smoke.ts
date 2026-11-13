@@ -176,6 +176,9 @@ export class InClusterUiServingSmoke
     private static readonly PageWaitMs = 60000
     private static readonly NotReadyWindowMs = 120000
     private static readonly NotReadyPollMs = 5000
+    private static readonly ScaledDownWindowMs = 120000
+    private static readonly ZeroReplicas = 0
+    private static readonly ScaleDownTimeoutMessage = 'tamper env pods did not go away after scaling to zero'
     private static readonly TamperSignatureBytes = 64
     private static readonly Base64 = 'base64'
     private static readonly NoDetail = ''
@@ -273,7 +276,7 @@ export class InClusterUiServingSmoke
             })
 
             service = await this.ComposeService(connection, adminClient)
-            await service.Create(S.EnvName, Template.DevBlank, EnvType.Development, undefined, S.HiveId)
+            const env = await service.Create(S.EnvName, Template.DevBlank, EnvType.Development, undefined, S.HiveId)
             created.push(S.EnvName)
             this.Expect(S.Labels.Env, true)
             await service.DeployAppToEnvironment(S.EnvName, NorthwindUiBundle.Load())
@@ -283,7 +286,7 @@ export class InClusterUiServingSmoke
             try
             {
                 const context = await browser.newContext({ ignoreHTTPSErrors: true })
-                await this.AssertServed(context, S.EnvName)
+                await this.AssertServed(context, env)
                 await this.AssertTampered(service, context, created)
             }
             finally
@@ -322,11 +325,11 @@ export class InClusterUiServingSmoke
     }
 
     /** Serve assertion: the shell page carries the marker and the asset is fetched with its body. */
-    private async AssertServed(context: BrowserContext, envName: string): Promise<void>
+    private async AssertServed(context: BrowserContext, env: EnvironmentRecord): Promise<void>
     {
         const S = InClusterUiServingSmoke
         const page = await context.newPage()
-        const url = this.AppUrl(envName)
+        const url = this.AppUrl(env)
         const response = await this.Retry(async () =>
         {
             const r = await page.goto(url, { timeout: S.PageWaitMs })
@@ -368,6 +371,11 @@ export class InClusterUiServingSmoke
         const packed = UiArtifact.Pack(bundle.config, bundle.files)
         await oci.PushBlob(repo, packed.configBlob)
         await oci.PushBlob(repo, packed.layerBlob)
+        // Scale to zero first and wait for the clean pod to go: a rolling restart would keep it ready and serving, so 'never ready' could not be observed.
+        const namespace = K8sManifestBuilder.NamespaceOf(S.TamperEnvName)
+        const deployment = K8sManifestBuilder.ServerDeploymentOf(S.TamperEnvName)
+        await this.kubectl.Scale(namespace, deployment, S.ZeroReplicas)
+        await this.WaitForNoPods(namespace)
         const pushedDigest = await oci.PushManifest(repo, tamperTag, packed.manifestBytes)
         await this.PushBadSignature(oci, repo, tamperTag + UiArtifact.SignatureTagSuffix)
         this.Expect(S.Labels.TamperInjected, true)
@@ -376,16 +384,14 @@ export class InClusterUiServingSmoke
         await EnvServerSeedSource.ApplyUiTrust(this.kubectl, S.TamperEnvName, trustRef, Buffer.from(publicPem, S.Utf8))
         const deployed: EnvironmentRecord = { ...rec, appDeployment: { appName: bundle.config.appName, appVersion: S.TamperAppVersion, repo, artifactTag: tamperTag, manifestDigest: pushedDigest } }
         await this.records.Put(deployed)
-        const namespace = K8sManifestBuilder.NamespaceOf(S.TamperEnvName)
-        const deployment = K8sManifestBuilder.ServerDeploymentOf(S.TamperEnvName)
+        // The applied manifest carries the running replica count again, so this scales the env back up with the tampered artifact.
         await this.kubectl.Apply(new K8sManifestBuilder().Render(EnvironmentWorkloadFactory.From(deployed, hive)))
-        await this.kubectl.RolloutRestart(namespace, deployment)
         this.Expect(S.Labels.TamperEnv, true)
 
         const outcome = await this.ObserveTamperOutcome(namespace, deployment)
         this.Expect(S.Labels.TamperRejected, outcome.rejected)
         this.Expect(S.Labels.TamperNotReady, !outcome.becameReady)
-        this.Expect(S.Labels.TamperNotServed, !(await this.ServesMarker(context, S.TamperEnvName)))
+        this.Expect(S.Labels.TamperNotServed, !(await this.ServesMarker(context, rec)))
     }
 
     /** Mirrors UiDeployActuator.PushSignature, but the signature layer is random bytes, so verification must fail. */
@@ -424,6 +430,23 @@ export class InClusterUiServingSmoke
             await new Promise<void>(resolve => setTimeout(resolve, S.NotReadyPollMs))
         }
         return { rejected, becameReady: false }
+    }
+
+    /** Waits until the namespace has no pods left; throws after the bounded window. */
+    private async WaitForNoPods(namespace: string): Promise<void>
+    {
+        const S = InClusterUiServingSmoke
+        const deadline = Date.now() + S.ScaledDownWindowMs
+        while (Date.now() < deadline)
+        {
+            const items = (JSON.parse(await this.kubectl.Get(namespace, S.PodsResource)) as Record<string, unknown>)[S.ItemsKey]
+            if (Array.isArray(items) && items.length === 0)
+            {
+                return
+            }
+            await new Promise<void>(resolve => setTimeout(resolve, S.NotReadyPollMs))
+        }
+        throw new Error(S.ScaleDownTimeoutMessage)
     }
 
     /** True once any pod in the env namespace shows the ui-unpack init container with a non-zero exit (current or last state). */
@@ -466,12 +489,12 @@ export class InClusterUiServingSmoke
     }
 
     /** True only if the app URL answers 200 with the marker; connection errors and non-200s count as not served. */
-    private async ServesMarker(context: BrowserContext, envName: string): Promise<boolean>
+    private async ServesMarker(context: BrowserContext, env: EnvironmentRecord): Promise<boolean>
     {
         const S = InClusterUiServingSmoke
         try
         {
-            const response = await context.request.get(this.AppUrl(envName))
+            const response = await context.request.get(this.AppUrl(env))
             return response.status() === S.HttpOk && (await response.text()).includes(NorthwindUiBundle.Marker)
         }
         catch
@@ -480,11 +503,12 @@ export class InClusterUiServingSmoke
         }
     }
 
-    private AppUrl(envName: string): string
+    /** The served app route: the env browser host, then `/app/<environment id>/<app>/` (the env server routes by environment id, not the platform tenant). */
+    private AppUrl(env: EnvironmentRecord): string
     {
         const S = InClusterUiServingSmoke
-        return S.ExternalScheme + S.SchemeSeparator + K8sManifestBuilder.EnvBrowserHostOf(envName, S.BaseDomain)
-            + S.AppPathPrefix + S.TenantId + S.PathSeparator + S.AppName + S.PathSeparator
+        return S.ExternalScheme + S.SchemeSeparator + K8sManifestBuilder.EnvBrowserHostOf(env.name, S.BaseDomain)
+            + S.AppPathPrefix + env.environmentId + S.PathSeparator + S.AppName + S.PathSeparator
     }
 
     /** Applies the kind-flavoured ingress-nginx, turns on SSL passthrough on the controller, and waits for it. */

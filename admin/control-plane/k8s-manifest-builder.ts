@@ -355,6 +355,8 @@ export class K8sManifestBuilder
     private static readonly UiAppVersionVar = 'PRAGMATIC_UI_APP_VERSION'
     private static readonly UiTrustRootRefVar = 'PRAGMATIC_UI_TRUST_ROOT_REF'
     private static readonly UiDataDirVar = 'PRAGMATIC_UI_DATA_DIR'
+    /** The env server reads its apps from `<base dir>/<environment id>/applications` (TenantRegistry.OptionsFor), so the unpack writes there. */
+    private static readonly ApplicationsDir = 'applications'
     private static readonly UiTrustDirVar = 'PRAGMATIC_UI_TRUST_DIR'
     /**
      * Unpacks seed.json ({ relpath: base64 }) into the env data dir (argv[1]) unless the marker exists. Idempotent: a restart never clobbers live state.
@@ -1791,7 +1793,7 @@ export class K8sManifestBuilder
                 this.EnvLiteral(K8sManifestBuilder.UiAppNameVar, app.appName),
                 this.EnvLiteral(K8sManifestBuilder.UiAppVersionVar, app.appVersion),
                 this.EnvLiteral(K8sManifestBuilder.UiTrustRootRefVar, app.trustKeyRef),
-                this.EnvLiteral(K8sManifestBuilder.UiDataDirVar, K8sManifestBuilder.ServerDataMount),
+                this.EnvLiteral(K8sManifestBuilder.UiDataDirVar, this.MountedFile(this.MountedFile(K8sManifestBuilder.ServerDataMount, workload.environmentId), K8sManifestBuilder.ApplicationsDir)),
                 this.EnvLiteral(K8sManifestBuilder.UiTrustDirVar, K8sManifestBuilder.UiTrustMount),
             ],
             [K8sManifestBuilder.VolumeMountsKey]: [

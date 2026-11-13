@@ -7,6 +7,8 @@ class Fixture
 {
     public static readonly DataMount = '/pragmatic/data'
     public static readonly TrustKeyRef = 'hive-root'
+    /** Where the env server reads its apps: `<base dir>/<environment id>/applications` (TenantRegistry.OptionsFor). */
+    public static readonly AppsDir = '/pragmatic/data/env-dev1-id/applications'
 
     public static Workload(withApp: boolean): EnvironmentWorkload
     {
@@ -60,7 +62,7 @@ describe('K8sManifestBuilder UI unpack', () =>
             PRAGMATIC_UI_APP_NAME: 'crm',
             PRAGMATIC_UI_APP_VERSION: '1.2.3',
             PRAGMATIC_UI_TRUST_ROOT_REF: Fixture.TrustKeyRef,
-            PRAGMATIC_UI_DATA_DIR: Fixture.DataMount,
+            PRAGMATIC_UI_DATA_DIR: Fixture.AppsDir,
             PRAGMATIC_UI_TRUST_DIR: '/pragmatic/ui-trust',
         })
         const trustMount = init.volumeMounts.find((m: any) => m.mountPath === env.PRAGMATIC_UI_TRUST_DIR)
