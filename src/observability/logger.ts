@@ -33,6 +33,7 @@ export class StructuredLogger implements ILogger
     private static readonly ErrorNameKey = 'name'
     private static readonly ErrorMessageKey = 'message'
     private static readonly ErrorStackKey = 'stack'
+    private static readonly ErrorCauseKey = 'cause'
     private static readonly Newline = '\n'
     private static readonly ReservedKeys: ReadonlySet<string> = new Set<string>([
         StructuredLogger.LevelKey,
@@ -192,6 +193,8 @@ export class StructuredLogger implements ILogger
                 [StructuredLogger.ErrorNameKey]: value.name,
                 [StructuredLogger.ErrorMessageKey]: value.message,
                 [StructuredLogger.ErrorStackKey]: value.stack,
+                // own but not enumerable, so the spread above misses it; undefined drops out of the JSON
+                [StructuredLogger.ErrorCauseKey]: value.cause,
             }
             : value as LogFields
         const result: Record<string, unknown> = {}

@@ -8,6 +8,7 @@ import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { DevGraphEngineHost } from '../dev-graph-engine-host.js'
 import { EngineHostFx, FakeSolution, HeldFence, ManualTimer, MemoryStorage } from './engine-host-fixture.js'
 import { MemorySourceAdapterFactory } from './memory-source-adapter.js'
+import { DataSourceFailure } from '../data-source-failure.js'
 
 /**
  * The two-member shop fixture plus member `c` declaring crm.Customer, the `crm` SQL datasource and model crm.App
@@ -33,6 +34,7 @@ class ExternalFx
     public static readonly Colliding = 'namespace crm {\n  model Other : crm { connect crm; populate Customer key cust_id { name = "nm"; } }\n}\n'
     public static readonly CollidingFile = 'other.todl'
     public static readonly Unreachable = 'crm-db is unreachable'
+    public static readonly DataSourceName = 'crm.crm'
     public static readonly Collision = /both bind "crm\.Customer" to source "Customer"/
 
     public readonly Fx = new EngineHostFx()
@@ -120,6 +122,12 @@ describe('dev external bindings', () =>
             const engine = await x.Host.Engine()
             assert.deepEqual(await ExternalFx.Strings(engine, ExternalFx.ShopNames), ['Ada', 'Bo'])
             await assert.rejects(ExternalFx.Strings(engine, ExternalFx.Names), (error: unknown) => ExternalFx.Caused(error))
+            // the failure is a data source's, and reaches the wire typed, naming the datasource and not the cause
+            const failure = await ExternalFx.Strings(engine, ExternalFx.Names).then(() => undefined, (error: unknown) => error)
+            const wire = DataSourceFailure.ToResponseError(failure)
+            assert.equal(wire?.code, DataSourceFailure.Code)
+            assert.deepEqual(wire?.data, { dataSource: ExternalFx.DataSourceName })
+            assert.ok(!(wire?.message ?? '').includes(ExternalFx.Unreachable))
             // the source recovers: the next query opens it again
             x.Factory.OpenFailure = undefined
             assert.deepEqual(await ExternalFx.Strings(engine, ExternalFx.Names), [ExternalFx.Acme, ExternalFx.Bolt])

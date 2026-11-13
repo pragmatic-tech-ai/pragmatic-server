@@ -188,6 +188,18 @@ test('Error extra props are redacted while name and message survive', () =>
     assert.equal(err.name, 'Error')
 })
 
+test('an Error cause chain is logged, redacted as the error itself is', () =>
+{
+    const capture = new Capture()
+    const logger = StructuredLogger.ToSink(capture.Sink)
+    const root = Object.assign(new Error('getaddrinfo ENOTFOUND db-host'), { code: 'ENOTFOUND', password: 'cause-pw' })
+    logger.Error('failed', { err: new Error('Connector Catalog failed in Fetch', { cause: root }) })
+    assert.ok(!capture.Lines[0]!.includes('cause-pw'))
+    const cause = (capture.Last().err as Record<string, unknown>).cause as Record<string, unknown>
+    assert.equal(cause.message, 'getaddrinfo ENOTFOUND db-host')
+    assert.equal(cause.password, undefined)
+})
+
 test('circular references are guarded and do not loop', () =>
 {
     const capture = new Capture()

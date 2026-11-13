@@ -33,6 +33,9 @@ import type { IGraphConnectorService } from './engine/engine-connector-service.j
 import { EngineCypherQuery } from './engine/engine-cypher-query.js'
 import type { IGraphCypherQuery } from './engine/engine-cypher-query.js'
 import { GraphErrorCodes } from './graphs/graph-error-codes.js'
+import { DataSourceFailure } from './engine/data-source-failure.js'
+import { LoggerDispatchDiagnostics } from './dispatch-diagnostics.js'
+import type { IDispatchDiagnostics } from './dispatch-diagnostics.js'
 import type { IEnvironmentGraphHost } from './environment/environment-engine-host.js'
 import type { PragmaticAppsRegistry } from './apps/pragmatic-apps-registry.js'
 import { CypherLimits } from '../config/cypher-limits.js'
@@ -87,7 +90,7 @@ export class ServerConnectionHandler
     private static readonly ApplicationsUnavailableMessage = 'pragmatic applications are not available on this connection'
     public static readonly RateLimitedCode = -32029
     public static readonly CypherTimeoutCode = EngineCypherQuery.TimeoutCode
-    // -32031 (protocol DrainingError) and -32032 (protocol wire error) are reserved; -32033 is the first free server-error code and stays distinct from the draining code Revoke() also sets. -32040..-32045 are the graph error codes (GraphErrorCode).
+    // -32031 (protocol DrainingError) and -32032 (protocol wire error) are reserved; -32033 is RevokedCode, distinct from the draining code Revoke() also sets; -32034 is DataSourceFailure.Code. -32040..-32045 are the graph error codes (GraphErrorCode).
     public static readonly RevokedCode = -32033
     private static readonly RevokedMessage = 'connection authorization has been revoked'
 
@@ -122,14 +125,17 @@ export class ServerConnectionHandler
     private readonly modelView: IGraphModelView | undefined
     /** The `data/changed` push of a runtime connection (ruling S16); undefined on dev tenants and without a feed. */
     private readonly dataSubscription: IDisposable | undefined
+    /** Where the dispatch reports the failures the client sees scrubbed (an unexpected error, a failed data source). */
+    private readonly diagnostics: IDispatchDiagnostics
     private boundApp: PragmaticAppSummaryDto | undefined
     private inFlight = 0
     private draining = false
     private revoked = false
     private disposed = false
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectors: IGraphConnectorService | undefined, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, data?: IEnvironmentDataService, paging?: PagingLimits, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, modelView?: IGraphModelView, dataChanges?: IEnvironmentDataChanges)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectors: IGraphConnectorService | undefined, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, data?: IEnvironmentDataService, paging?: PagingLimits, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, modelView?: IGraphModelView, dataChanges?: IEnvironmentDataChanges, diagnostics?: IDispatchDiagnostics)
     {
+        this.diagnostics = diagnostics ?? new LoggerDispatchDiagnostics()
         this.cypherLimits = cypherLimits ?? new CypherLimits()
         this.paging = paging ?? new PagingLimits()
         this.purpose = purpose
@@ -244,10 +250,10 @@ export class ServerConnectionHandler
         return { devGraphService: server.GraphService(), cypherQuery: server.DevCypher(), cypherExecute: server.DevExecute(), modelView: server.DevModelView(), connectors: server.DevConnectors() }
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectors: IGraphConnectorService | undefined, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, data?: IEnvironmentDataService, paging?: PagingLimits, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, modelView?: IGraphModelView, dataChanges?: IEnvironmentDataChanges): ServerConnectionHandler
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectors: IGraphConnectorService | undefined, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: TenantPurpose = TenantPurpose.Development, applications?: PragmaticAppsRegistry, data?: IEnvironmentDataService, paging?: PagingLimits, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, modelView?: IGraphModelView, dataChanges?: IEnvironmentDataChanges, diagnostics?: IDispatchDiagnostics): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
-        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectors, cypherQuery, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, data, paging, cypherExecute, deployProvider, devGraphService, environmentGraphHost, modelView, dataChanges)
+        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectors, cypherQuery, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, data, paging, cypherExecute, deployProvider, devGraphService, environmentGraphHost, modelView, dataChanges, diagnostics)
         connection.listen()
         return handler
     }
@@ -361,7 +367,18 @@ export class ServerConnectionHandler
                 throw error
             }
             const graphError = GraphErrorCodes.ToResponseError(error)
-            throw graphError ?? new ResponseError(ErrorCodes.InternalError, ServerConnectionHandler.GenericInternalMessage)
+            if (graphError !== undefined)
+            {
+                throw graphError
+            }
+            const dataSource = DataSourceFailure.ToResponseError(error)
+            if (dataSource !== undefined)
+            {
+                this.diagnostics.DataSourceFailed(method, error)
+                throw dataSource
+            }
+            this.diagnostics.Unexpected(method, error)
+            throw new ResponseError(ErrorCodes.InternalError, ServerConnectionHandler.GenericInternalMessage)
         }
         try
         {
