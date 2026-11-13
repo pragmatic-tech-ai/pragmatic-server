@@ -1,5 +1,5 @@
 import { mkdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { AuditRegistry } from './audit-record.js'
 import { AuditThrottle } from './audit-throttle.js'
 import { DesktopDiscoveryEndpoint } from './desktop-discovery-endpoint.js'
@@ -195,6 +195,7 @@ export class ControlPlaneServer
     private static readonly MaxPort = TenantPlaneComposer.MaxPort
     private static readonly BadPortPrefix = 'Invalid PRAGMATIC_ADMIN_PORT: '
     private static readonly DataDir = 'data'
+    private static readonly DataRootEnvVar = 'PRAGMATIC_ADMIN_DATA_ROOT'
     private static readonly KeysDirName = PlatformHiveOrchestratorFactory.KeysDirName
     private static readonly SigningKeyRefEnvVar = 'PRAGMATIC_ADMIN_SIGNING_KEY_REF'
     private static readonly SignaturesFileName = PlatformHiveOrchestratorFactory.SignaturesFileName
@@ -266,7 +267,7 @@ export class ControlPlaneServer
         // domains) is composed for every role (R3: the real split is piece 3).
         const servesOperators = ControlPlaneRoles.ServesOperators(role)
         const here = dirname(fileURLToPath(import.meta.url))
-        const dataRoot = join(here, ControlPlaneServer.DataDir)
+        const dataRoot = ControlPlaneServer.DataRootOf(process.env, here)
         mkdirSync(dataRoot, { recursive: true })
         const opts = ControlPlaneServer.ReadOperatorOptions(process.env, dataRoot)
         const operator = servesOperators ? await OperatorIdentity.Compose(opts) : undefined
@@ -489,6 +490,13 @@ export class ControlPlaneServer
         // The control plane's tenant plane is the one Plexus talks to, so it carries the desktop surface.
         return TenantPlaneComposer.BuildTenantPlane(dataRoot, idpService, directory, secureCookie, service, rollout, orchestrators, placement,
             masterKey, adminClientRegistry, secretTtlHours, sessions, principals, TenantPlaneComposer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]), true, relay, emailDomains, undefined, graphs)
+    }
+
+    /** Pure: the state folder; PRAGMATIC_ADMIN_DATA_ROOT (resolved) when set, so a test stack never shares the developer's `data` folder beside the server. */
+    public static DataRootOf(env: NodeJS.ProcessEnv, here: string): string
+    {
+        const raw = env[ControlPlaneServer.DataRootEnvVar]
+        return raw !== undefined && raw !== '' ? resolve(raw) : join(here, ControlPlaneServer.DataDir)
     }
 
     /** Pure: the agent-channel port, or AgentChannelDisabled when unset, blank, or not an integer in 1..65535. */
