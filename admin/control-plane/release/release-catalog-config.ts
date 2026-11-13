@@ -40,7 +40,7 @@ export class ReleaseCatalogConfig
     public static readonly PollSecondsEnvVar = 'PRAGMATIC_RELEASE_POLL_SECONDS'
     public static readonly DefaultPollSeconds = 300
     /** The trust directory under the repository root (the image places it beside the compiled control plane the same way). */
-    public static readonly TrustDirName = 'release-keys'
+    public static readonly TrustDirName = ReleaseTrustKeys.DirName
     /** setInterval holds at most 2^31-1 ms; anything longer would fire at once. */
     private static readonly MaxPollSeconds = 2147483
     private static readonly MsPerSecond = 1000
@@ -66,8 +66,10 @@ export class ReleaseCatalogConfig
         {
             return undefined
         }
-        const registry = new OciRegistryClient(C.RegistryOf(env), fetchFn, credential)
-        const catalog = new ReleaseCatalog(registry, C.ValueOr(env, C.NamespaceEnvVar, ReleaseRegistry.DefaultNamespace), C.TrustOf(env, repoRoot), deployments)
+        const registryUrl = C.RegistryOf(env)
+        const registry = new OciRegistryClient(registryUrl, fetchFn, credential)
+        const namespace = C.ValueOr(env, C.NamespaceEnvVar, ReleaseRegistry.DefaultNamespace)
+        const catalog = new ReleaseCatalog(registry, namespace, C.TrustOf(env, repoRoot), deployments, ReleaseRegistry.HostOf(registryUrl))
         const refresher = new ReleaseRefresher(catalog)
         const poll = pollSeconds === 0 ? undefined : new ReleasePoll(refresher, pollSeconds * C.MsPerSecond)
         return { Refresher: refresher, Poll: poll }

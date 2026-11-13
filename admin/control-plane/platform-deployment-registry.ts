@@ -18,7 +18,7 @@ import { Channel } from './channel.js'
 import type { IManifestSigner } from './manifest-signer.js'
 import { ReleasePolicyRegistry } from './release-policy-record.js'
 import type { ReleasePolicyRecord } from './release-policy-record.js'
-import { PolicyStoreUnavailableError, AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError, ManifestWithdrawnError, TenantOnHoldError, ChannelNotSubscribedError, VersionBelowFloorError, ReleaseRejectedError, ReleaseNotRunnableYetError } from './rollout-errors.js'
+import { PolicyStoreUnavailableError, AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError, ManifestWithdrawnError, TenantOnHoldError, ChannelNotSubscribedError, VersionBelowFloorError, ReleaseRejectedError, ReleaseNotRejectedError, ReleaseNotRunnableYetError } from './rollout-errors.js'
 import type { AdoptionLedgerRegistry, AdoptionLedgerRecord, LedgerAction } from './adoption-ledger-record.js'
 import { VersionOrder } from './version-order.js'
 
@@ -96,6 +96,24 @@ export class PlatformDeploymentRegistry
         if (this.manifests.Get(record.id) !== undefined)
         {
             throw new ManifestExistsError(record.id)
+        }
+        await this.manifests.Put(record)
+    }
+
+    /**
+     * Replaces a Rejected release record with its re-inspected import (a refresh found the version now verifies). Safe because
+     * a Rejected record can never be gated or selected; anything else (verified, local, withdrawn) is refused, never overwritten.
+     */
+    public async ReplaceRejectedRelease(record: ManifestRecord): Promise<void>
+    {
+        const existing = this.manifests.Get(record.id)
+        if (existing === undefined)
+        {
+            throw new UnknownManifestError(record.id)
+        }
+        if (existing.release?.state !== ReleaseState.Rejected)
+        {
+            throw new ReleaseNotRejectedError(record.id)
         }
         await this.manifests.Put(record)
     }

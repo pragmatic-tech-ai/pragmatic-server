@@ -18,9 +18,15 @@ export class ReleaseRegistry
         return namespace + ReleaseRegistry.PathSeparator + name
     }
 
-    /** `ghcr.io/<repository>@<digest>`, the by-digest image reference the platform records. */
-    public static DigestReference(repository: string, digest: string): string
+    /** `<host>/<repository>@<digest>` (host `ghcr.io` by default), the by-digest image reference the platform records. */
+    public static DigestReference(host: string, repository: string, digest: string): string
     {
-        return ReleaseRegistry.DefaultHost + ReleaseRegistry.PathSeparator + repository + ReleaseRegistry.DigestSeparator + digest
+        return host + ReleaseRegistry.PathSeparator + repository + ReleaseRegistry.DigestSeparator + digest
+    }
+
+    /** The image host of a registry API base URL: `https://ghcr.io` gives `ghcr.io`, `http://127.0.0.1:5000` gives `127.0.0.1:5000`. */
+    public static HostOf(baseUrl: string): string
+    {
+        return new URL(baseUrl).host
     }
 }

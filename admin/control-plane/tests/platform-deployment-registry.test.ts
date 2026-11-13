@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { ManifestRegistry, ReleaseState } from '../manifest-record.js'
 import type { ManifestRecord } from '../manifest-record.js'
-import { ReleaseNotRunnableYetError, ReleaseRejectedError } from '../rollout-errors.js'
+import { ReleaseNotRejectedError, ReleaseNotRunnableYetError, ReleaseRejectedError } from '../rollout-errors.js'
 import { GatingRegistry } from '../gating-record.js'
 import { SelectionRegistry } from '../selection-record.js'
 import { RolloutRegistrationRegistry } from '../rollout-registration-record.js'
@@ -1076,6 +1076,30 @@ test('release: ImportRelease stores the record as given and refuses an existing 
         await assert.rejects(reg.ImportRelease(ReleaseFx.Verified(ReleaseFx.Version)), ManifestExistsError)
         await reg.Publish(Fx.V1, Fx.Image(Fx.V1))
         await assert.rejects(reg.ImportRelease(ReleaseFx.Verified(Fx.V1)), ManifestExistsError)
+    })
+})
+
+test('release: ReplaceRejectedRelease swaps a Rejected record for the re-verified one', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await reg.ImportRelease(ReleaseFx.Rejected(ReleaseFx.Version))
+        await reg.ReplaceRejectedRelease(ReleaseFx.Verified(ReleaseFx.Version))
+        assert.deepEqual(reg.AllManifests(), [ReleaseFx.Verified(ReleaseFx.Version)])
+    })
+})
+
+test('release: ReplaceRejectedRelease refuses every record that is not Rejected, and an unknown id', async () =>
+{
+    await Fx.Run(async reg =>
+    {
+        await reg.ImportRelease(ReleaseFx.Verified(ReleaseFx.Version))
+        await assert.rejects(reg.ReplaceRejectedRelease(ReleaseFx.Verified(ReleaseFx.Version)), ReleaseNotRejectedError)
+        await reg.Publish(Fx.V1, Fx.Image(Fx.V1))
+        await assert.rejects(reg.ReplaceRejectedRelease(ReleaseFx.Verified(Fx.V1)), ReleaseNotRejectedError)
+        await assert.rejects(reg.ReplaceRejectedRelease(ReleaseFx.Verified(ReleaseFx.OldStyle)), UnknownManifestError)
+        assert.equal(reg.AllManifests().find(m => m.id === Fx.V1)?.release, undefined)
+        assert.equal(reg.AllManifests().find(m => m.id === ReleaseFx.OldStyle), undefined)
     })
 })
 

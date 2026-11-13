@@ -46,7 +46,7 @@ class Fx
 {
     public static readonly Secret = 'ghp_SECRET_in_an_inner_message'
     public static readonly CountsLine = 'Release poll: imported 2, rejected 1, unchanged 3, shadowed 1'
-    public static readonly Result: ReleaseRefreshResult ={ imported: ['4.0.0', '4.1.0'], rejected: ['4.2.0'], unchanged: 3, shadowed: ['1.0.0'] }
+    public static readonly Result: ReleaseRefreshResult = { imported: ['4.0.0', '4.1.0'], rejected: ['4.2.0'], unchanged: 3, shadowed: ['1.0.0'] }
 }
 
 describe('ReleasePoll', () =>

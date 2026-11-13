@@ -60,7 +60,13 @@ class CatalogFixture
     public static readonly TempPrefix = 'release-catalog-'
     public static readonly KeysDir = 'keys'
     public static readonly LocalImage = 'registry/pragmatic-server:1.4.0'
-    public static readonly ArtifactInvalid = 'descriptor artifact invalid'
+    public static readonly RegistryText = 'registry-supplied text'
+    public static readonly SomeDigest = 'sha256:' + 'a'.repeat(64)
+    public static readonly BadManifest = 'descriptor artifact invalid: not a single-layer manifest'
+    public static readonly LayerMismatch = 'descriptor artifact invalid: layer bytes do not match the manifest digest'
+    public static readonly BadAnnotations = 'descriptor artifact invalid: manifest annotations are not strings'
+    public static readonly OtherHost = 'registry.example:5000'
+    public static readonly Rebuilt = 'rebuilt'
     public static readonly Unreachable = 'connect ECONNREFUSED '
 
     public readonly Registry = new FakeOciRegistry()
@@ -125,9 +131,9 @@ class CatalogFixture
         return new OciRegistryClient(this.Registry.Origin, fetchFn, credential)
     }
 
-    public Catalog(credential?: { username: string; token: string }): ReleaseCatalog
+    public Catalog(credential?: { username: string; token: string }, imageHost?: string): ReleaseCatalog
     {
-        return new ReleaseCatalog(this.Client(credential), CatalogFixture.Namespace, this.trust, this.Deployments)
+        return new ReleaseCatalog(this.Client(credential), CatalogFixture.Namespace, this.trust, this.Deployments, imageHost)
     }
 
     public SeedImages(version: string): void
@@ -149,6 +155,7 @@ class CatalogFixture
             siblingCommits: { [CatalogFixture.SiblingRepo]: CatalogFixture.SiblingCommit },
             signingKeyId: key.Id,
             privateKeyPem: key.Private,
+            trustedPublicKeyPem: key.Public,
         })
     }
 
@@ -375,7 +382,66 @@ describe('ReleaseCatalog.Refresh', () =>
             fx.Registry.TamperBlobs(true)
             const result = await fx.Catalog().Refresh()
             assert.deepEqual(result, { imported: [], rejected: [CatalogFixture.V1], unchanged: 0, shadowed: [] })
-            assert.equal(fx.Reason(CatalogFixture.V1), CatalogFixture.ArtifactInvalid)
+            assert.equal(fx.Reason(CatalogFixture.V1), CatalogFixture.LayerMismatch)
+        })
+    })
+
+    it('rejects a descriptor whose annotations are not strings with its own fixed sentence, never the registry text', async () =>
+    {
+        await CatalogFixture.Run(async fx =>
+        {
+            const leak = CatalogFixture.RegistryText
+            fx.PutRawDescriptorManifest(CatalogFixture.V1, { schemaVersion: 2, layers: [{ digest: CatalogFixture.SomeDigest }], annotations: { [ReleasePublisher.KeyAnnotation]: [leak] } })
+            const result = await fx.Catalog().Refresh()
+            assert.deepEqual(result, { imported: [], rejected: [CatalogFixture.V1], unchanged: 0, shadowed: [] })
+            assert.equal(fx.Reason(CatalogFixture.V1), CatalogFixture.BadAnnotations)
+            assert.ok(!fx.Reason(CatalogFixture.V1)?.includes(leak))
+        })
+    })
+
+    it('records the by-digest image under the configured registry host, not always ghcr.io', async () =>
+    {
+        await CatalogFixture.Run(async fx =>
+        {
+            const { descriptor } = await fx.Publish(CatalogFixture.V1)
+            await fx.Catalog(undefined, CatalogFixture.OtherHost).Refresh()
+            const server = descriptor.images[ReleaseApp.EnvServer]
+            assert.equal(fx.Release(CatalogFixture.V1)?.image, CatalogFixture.OtherHost + CatalogFixture.PathSeparator + server.repository + CatalogFixture.DigestSeparator + server.digest)
+        })
+    })
+
+    it('re-inspects a rejected version on every refresh and replaces it once it verifies, counting it imported', async () =>
+    {
+        await CatalogFixture.Run(async fx =>
+        {
+            await fx.Publish(CatalogFixture.V1)
+            const gateway = CatalogFixture.Repo(ReleaseApp.EnvGateway)
+            const original = CatalogFixture.ImageBytes(ReleaseApp.EnvGateway, CatalogFixture.V1)
+            fx.Registry.PutManifest(gateway, CatalogFixture.V1, new TextEncoder().encode(CatalogFixture.Rebuilt), CatalogFixture.ManifestType)
+            assert.deepEqual(await fx.Catalog().Refresh(), { imported: [], rejected: [CatalogFixture.V1], unchanged: 0, shadowed: [] })
+            // Still failing: the rejected record stays as it is and counts unchanged.
+            assert.deepEqual(await fx.Catalog().Refresh(), { imported: [], rejected: [], unchanged: 1, shadowed: [] })
+            assert.equal(fx.Release(CatalogFixture.V1)?.release?.state, ReleaseState.Rejected)
+            // The tag points at the signed image again: the next refresh imports the verified record in its place.
+            fx.Registry.PutManifest(gateway, CatalogFixture.V1, original, CatalogFixture.ManifestType)
+            assert.deepEqual(await fx.Catalog().Refresh(), { imported: [CatalogFixture.V1], rejected: [], unchanged: 0, shadowed: [] })
+            assert.equal(fx.Release(CatalogFixture.V1)?.release?.state, ReleaseState.Verified)
+            assert.equal(fx.Reason(CatalogFixture.V1), undefined)
+            assert.equal(fx.Deployments.AllManifests().length, 1)
+            assert.deepEqual(await fx.Catalog().Refresh(), { imported: [], rejected: [], unchanged: 1, shadowed: [] })
+        })
+    })
+
+    it('never re-inspects a verified version: only rejected ones are retried', async () =>
+    {
+        await CatalogFixture.Run(async fx =>
+        {
+            await fx.Publish(CatalogFixture.V1)
+            await fx.Catalog().Refresh()
+            const before = fx.Registry.Requests.length
+            assert.deepEqual(await fx.Catalog().Refresh(), { imported: [], rejected: [], unchanged: 1, shadowed: [] })
+            const pulls = fx.Registry.Requests.slice(before).filter(r => r.url.includes('/manifests/') || r.url.includes('/blobs/'))
+            assert.deepEqual(pulls, [])
         })
     })
 
@@ -394,7 +460,7 @@ describe('ReleaseCatalog.Refresh', () =>
             assert.deepEqual(result, { imported: [CatalogFixture.V1], rejected: [sha512, nullManifest, nullLayer], unchanged: 0, shadowed: [] })
             for (const version of [sha512, nullManifest, nullLayer])
             {
-                assert.equal(fx.Reason(version), CatalogFixture.ArtifactInvalid)
+                assert.equal(fx.Reason(version), CatalogFixture.BadManifest)
             }
         })
     })

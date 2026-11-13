@@ -33,7 +33,8 @@ export class ReleaseDescriptorCodec
     private static readonly SchemaVersion = 1
     private static readonly DigestPattern = /^sha256:[0-9a-f]{64}$/
     private static readonly CommitPattern = /^[0-9a-f]{40}$/
-    private static readonly RepoNamePattern = /^(?!__proto__$)[A-Za-z0-9._-]+$/
+    /** A plain repository name: no separators, never a dot segment (`.`, `..`) nor `__proto__`. */
+    private static readonly RepoNamePattern = /^(?!__proto__$)(?!\.{1,2}$)[A-Za-z0-9._-]+$/
     private static readonly NotObject = 'not an object'
     private static readonly NotJson = 'not valid JSON'
     private static readonly BadSchema = 'schema must be 1'
@@ -48,6 +49,18 @@ export class ReleaseDescriptorCodec
     private static readonly FieldBuiltAt = 'builtAt'
     private static readonly FieldSigningKeyId = 'signingKeyId'
     private static readonly FieldImages = 'images'
+
+    /** The sibling-name rule the descriptor and the publish CLI's siblings file share. */
+    public static IsRepoName(name: string): boolean
+    {
+        return ReleaseDescriptorCodec.RepoNamePattern.test(name)
+    }
+
+    /** A sibling commit: exactly 40 lowercase hex characters. */
+    public static IsCommit(commit: unknown): commit is string
+    {
+        return typeof commit === 'string' && ReleaseDescriptorCodec.CommitPattern.test(commit)
+    }
 
     public static Encode(d: ReleaseDescriptor): Uint8Array
     {
@@ -108,7 +121,11 @@ export class ReleaseDescriptorCodec
         const result: Record<string, string> = {}
         for (const [name, commit] of Object.entries(value))
         {
-            if (!ReleaseDescriptorCodec.RepoNamePattern.test(name) || typeof commit !== 'string' || !ReleaseDescriptorCodec.CommitPattern.test(commit))
+            if (!ReleaseDescriptorCodec.IsRepoName(name))
+            {
+                throw new ReleaseDescriptorInvalidError(ReleaseDescriptorCodec.BadSiblingCommits)
+            }
+            if (!ReleaseDescriptorCodec.IsCommit(commit))
             {
                 throw new ReleaseDescriptorInvalidError(ReleaseDescriptorCodec.BadSiblingCommits)
             }

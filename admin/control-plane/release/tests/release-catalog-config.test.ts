@@ -1,8 +1,15 @@
 import { describe, it, beforeEach, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { generateKeyPairSync } from 'node:crypto'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { OciRegistryClient } from '../../oci-registry-client.js'
+import { FakeOciRegistry } from '../../tests/fake-oci-registry.js'
+import { ReleasePublisher } from '../release-publisher.js'
+import { ReleaseRegistry } from '../release-registry.js'
+import { ReleaseApps, ReleaseTag } from '../release-tag.js'
+import { ReleaseTrustKeys } from '../release-trust-keys.js'
 import { ReleaseCatalogConfig, ReleaseConfigError } from '../release-catalog-config.js'
 import { ClientRegistry } from '../../client-registry.js'
 import { TenantRegistry } from '../../tenant-registry.js'
@@ -26,6 +33,18 @@ class ConfigFixture
     public static readonly TrustDirVar = 'PRAGMATIC_RELEASE_TRUST_DIR'
     public static readonly CredentialFile = 'credential.json'
     public static readonly MissingFile = 'missing.json'
+    /** Plain-http registries that only look like loopback: a loopback-named subdomain, a dotted suffix, loopback as userinfo. */
+    public static readonly LoopbackLookalikes: readonly string[] = ['http://127.0.0.1.evil.com', 'http://localhost.evil', 'http://localhost@evil.com']
+    public static readonly OtherRegistry = 'https://registry.example:5000'
+    public static readonly OtherHost = 'registry.example:5000'
+    public static readonly KeysDir = 'keys'
+    public static readonly KeyId = 'release-test'
+    public static readonly Version = '1.4.0'
+    public static readonly Namespace = 'pragmatic-tech-ai'
+    public static readonly ManifestType = 'application/vnd.oci.image.manifest.v1+json'
+    public static readonly ImagePrefix = 'image '
+    public static readonly PathSeparator = '/'
+    public static readonly Commit = 'a'.repeat(40)
 
     private constructor(public readonly Dir: string, public readonly Deployments: PlatformDeploymentRegistry)
     {
@@ -156,7 +175,7 @@ describe('ReleaseCatalogConfig', () =>
     it('refuses a registry that is not an absolute URL, and plain http to any host but loopback', () =>
     {
         const file = fx.ValidCredential()
-        for (const registry of ['ghcr.io', 'http://ghcr.example', 'http://10.0.0.5:5000', 'ftp://127.0.0.1'])
+        for (const registry of ['ghcr.io', 'http://ghcr.example', 'http://10.0.0.5:5000', 'ftp://127.0.0.1', ...F.LoopbackLookalikes])
         {
             assert.throws(() => ReleaseCatalogConfig.Compose({ [F.CredentialVar]: file, [F.RegistryVar]: registry }, F.RepoRoot, fx.Deployments),
                 (err: unknown) => F.Refuses(err, F.RegistryVar, registry), registry)
@@ -170,6 +189,30 @@ describe('ReleaseCatalogConfig', () =>
         {
             assert.ok(ReleaseCatalogConfig.Compose({ [F.CredentialVar]: file, [F.RegistryVar]: registry }, F.RepoRoot, fx.Deployments) !== undefined, registry)
         }
+    })
+
+    it('records imported image references under the host of the configured registry', async () =>
+    {
+        const registry = new FakeOciRegistry(F.OtherRegistry)
+        const pair = generateKeyPairSync('ed25519')
+        const privateKeyPem = pair.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString()
+        const trustedPublicKeyPem = pair.publicKey.export({ type: 'spki', format: 'pem' }).toString()
+        const keys = join(fx.Dir, F.KeysDir)
+        mkdirSync(keys)
+        writeFileSync(join(keys, F.KeyId + ReleaseTrustKeys.Suffix), trustedPublicKeyPem)
+        for (const app of ReleaseApps.All)
+        {
+            registry.PutManifest(F.Namespace + F.PathSeparator + app, F.Version, new TextEncoder().encode(F.ImagePrefix + app), F.ManifestType)
+        }
+        await new ReleasePublisher(new OciRegistryClient(F.OtherRegistry, registry.Fetch), F.Namespace).Publish({
+            tag: ReleaseTag.FromVersion(F.Version), serverCommit: F.Commit, siblingCommits: {}, signingKeyId: F.KeyId, privateKeyPem, trustedPublicKeyPem,
+        })
+        const env = { [F.CredentialVar]: fx.ValidCredential(), [F.RegistryVar]: F.OtherRegistry, [F.TrustDirVar]: keys, [F.PollVar]: '0' }
+        const releases = ReleaseCatalogConfig.Compose(env, F.RepoRoot, fx.Deployments, registry.Fetch)
+        assert.deepEqual((await releases!.Refresher.Refresh()).imported, [F.Version])
+        const record = fx.Deployments.AllManifests().find(m => m.id === F.Version)
+        assert.ok(record?.image.startsWith(F.OtherHost + F.PathSeparator + F.Namespace + F.PathSeparator), record?.image)
+        assert.equal(ReleaseRegistry.HostOf(ReleaseRegistry.DefaultBaseUrl), ReleaseRegistry.DefaultHost)
     })
 
     it('refuses a trust directory that cannot be read', () =>

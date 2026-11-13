@@ -30,7 +30,12 @@ export class FakeOciRegistry
     private static readonly UserTokenSeparator = ':'
     private static readonly TokenPath = '/token'
     private static readonly V2Prefix = '/v2/'
-    private static readonly RepoPattern = /^\/v2\/(.+?)\/(blobs|manifests|tags)\//
+    /** The registry origin when none is given. */
+    public static readonly DefaultOrigin = 'https://registry.test'
+    private static readonly RegexSpecials = /[.*+?^${}()|[\]\\/]/g
+    private static readonly EscapedMatch = '\\$&'
+    private static readonly RepoPattern = new RegExp('^' + FakeOciRegistry.V2Prefix.replace(FakeOciRegistry.RegexSpecials, FakeOciRegistry.EscapedMatch)
+        + '(.+?)\\/(blobs|manifests|tags)\\/')
     private static readonly UploadsPath = '/blobs/uploads/'
     private static readonly BlobsPath = '/blobs/'
     private static readonly ManifestsPath = '/manifests/'
@@ -77,7 +82,7 @@ export class FakeOciRegistry
     private uploadCounter = 0
     private readonly issuedBearer: string
 
-    public constructor(public readonly Origin: string = 'https://registry.test')
+    public constructor(public readonly Origin: string = FakeOciRegistry.DefaultOrigin)
     {
         const S = FakeOciRegistry
         this.issuedBearer = S.BearerLabel + createHash(S.HashAlgorithm).update(S.BearerSeed).digest(S.Hex).slice(0, S.BearerLength)

@@ -144,6 +144,22 @@ export class ReleaseRejectedError extends Error
     }
 }
 
+/**
+ * Only a Rejected release record may be replaced (by its re-verified import): a verified, gated, withdrawn or locally
+ * published record never is.
+ */
+export class ReleaseNotRejectedError extends Error
+{
+    private static readonly ErrorName = 'ReleaseNotRejectedError'
+    private static readonly MessagePrefix = 'Release record is not rejected and cannot be replaced: '
+
+    public constructor(version: string)
+    {
+        super(ReleaseNotRejectedError.MessagePrefix + version)
+        this.name = ReleaseNotRejectedError.ErrorName
+    }
+}
+
 /** The version is an imported registry release; hives cannot select it until registry releases are runnable (plan ruling R4). */
 export class ReleaseNotRunnableYetError extends Error
 {

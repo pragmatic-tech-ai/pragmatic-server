@@ -1,9 +1,9 @@
-import { OciProtocolError, OciResponseError, OciUnavailableError } from '../oci-registry-client.js'
+import { OciProtocolError, OciProtocolFault, OciResponseError, OciUnavailableError } from '../oci-registry-client.js'
 import type { OciRegistryClient } from '../oci-registry-client.js'
 import { ReleaseState } from '../manifest-record.js'
 import type { ManifestRecord, ManifestRelease } from '../manifest-record.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
-import { ManifestExistsError, ReleaseRegistryUnavailableError } from '../rollout-errors.js'
+import { ManifestExistsError, ReleaseNotRejectedError, ReleaseRegistryUnavailableError, UnknownManifestError } from '../rollout-errors.js'
 import { ReleaseDescriptorCodec, ReleaseDescriptorInvalidError } from './release-descriptor.js'
 import type { ReleaseDescriptor } from './release-descriptor.js'
 import { ReleasePublisher } from './release-publisher.js'
@@ -32,7 +32,16 @@ export class ReleaseCatalog
     private static readonly StatusNotFound = 404
     /** An untrusted key id comes from the registry; it is named in the reason only when it has a plain identifier shape. */
     private static readonly PlainKeyId = /^[A-Za-z0-9._-]{1,64}$/
+    /** One fixed sentence per way a descriptor artifact breaks the OCI protocol; never the registry's own text. */
     private static readonly ArtifactInvalid = 'descriptor artifact invalid'
+    private static readonly BadManifestReason = ReleaseCatalog.ArtifactInvalid + ': not a single-layer manifest'
+    private static readonly LayerMismatchReason = ReleaseCatalog.ArtifactInvalid + ': layer bytes do not match the manifest digest'
+    private static readonly BadAnnotationsReason = ReleaseCatalog.ArtifactInvalid + ': manifest annotations are not strings'
+    private static readonly ArtifactReasons: ReadonlyMap<OciProtocolFault, string> = new Map([
+        [OciProtocolFault.BadManifest, ReleaseCatalog.BadManifestReason],
+        [OciProtocolFault.LayerMismatch, ReleaseCatalog.LayerMismatchReason],
+        [OciProtocolFault.BadAnnotations, ReleaseCatalog.BadAnnotationsReason],
+    ])
     private static readonly DescriptorInvalid = 'descriptor invalid: '
     private static readonly KeyMissing = 'signing key missing'
     private static readonly KeyUntrusted = 'untrusted signing key'
@@ -46,19 +55,30 @@ export class ReleaseCatalog
     private static readonly DigestMismatch = 'image digest mismatch: '
     private static readonly ImageSignatureInvalid = 'image signature invalid: '
 
+    /**
+     * @param imageHost the registry host the by-digest image references are recorded under (`ghcr.io`, or the host of
+     * PRAGMATIC_RELEASE_REGISTRY): the same registry the descriptors and images are read from.
+     */
     public constructor(
         private readonly registry: OciRegistryClient,
         private readonly namespace: string,
         private readonly trust: ReleaseTrustKeys,
         private readonly deployments: PlatformDeploymentRegistry,
+        private readonly imageHost: string = ReleaseRegistry.DefaultHost,
     )
     {
     }
 
+    /**
+     * Imports every listed version not yet recorded, and re-inspects every Rejected one: a version that now verifies (its
+     * image tags restored, its key added to the trust dir) replaces the Rejected record and counts as imported; one still
+     * failing keeps its record and counts as unchanged.
+     */
     public async Refresh(): Promise<ReleaseRefreshResult>
     {
         const result: ReleaseRefreshResult = { imported: [], rejected: [], unchanged: 0, shadowed: [] }
         const pending: ManifestRecord[] = []
+        const retried: ManifestRecord[] = []
         const known = new Map(this.deployments.AllManifests().map(m => [m.id, m]))
         try
         {
@@ -70,22 +90,33 @@ export class ReleaseCatalog
                     continue
                 }
                 const existing = known.get(release.Version)
-                if (existing !== undefined)
+                if (existing === undefined)
                 {
-                    if (existing.release === undefined)
+                    const record = await this.Inspect(release)
+                    if (record !== undefined)
                     {
-                        result.shadowed.push(release.Version)
+                        pending.push(record)
+                    }
+                }
+                else if (existing.release === undefined)
+                {
+                    result.shadowed.push(release.Version)
+                }
+                else if (existing.release.state === ReleaseState.Rejected)
+                {
+                    const record = await this.Inspect(release)
+                    if (record?.release?.state === ReleaseState.Verified)
+                    {
+                        retried.push(record)
                     }
                     else
                     {
                         result.unchanged++
                     }
-                    continue
                 }
-                const record = await this.Inspect(release)
-                if (record !== undefined)
+                else
                 {
-                    pending.push(record)
+                    result.unchanged++
                 }
             }
         }
@@ -116,6 +147,24 @@ export class ReleaseCatalog
             const outcome = record.release?.state === ReleaseState.Verified ? result.imported : result.rejected
             outcome.push(record.id)
         }
+        for (const record of retried)
+        {
+            try
+            {
+                await this.deployments.ReplaceRejectedRelease(record)
+            }
+            catch (error)
+            {
+                if (error instanceof ReleaseNotRejectedError || error instanceof UnknownManifestError)
+                {
+                    // A concurrent refresh replaced (or an operator removed) the record since the listing: nothing changes here.
+                    result.unchanged++
+                    continue
+                }
+                throw error
+            }
+            result.imported.push(record.id)
+        }
         return result
     }
 
@@ -138,9 +187,9 @@ export class ReleaseCatalog
             {
                 throw error
             }
-            // Anything else is this artifact's own fault (bad shape, bad layer digest, altered bytes): reject it with a fixed
-            // sentence, so one malformed descriptor neither blocks every refresh nor echoes registry-supplied text.
-            return S.Rejected(tag, S.ArtifactInvalid)
+            // Anything else is this artifact's own fault (bad shape, bad annotations, altered bytes): reject it with the fixed
+            // sentence for its cause, so one malformed descriptor neither blocks every refresh nor echoes registry-supplied text.
+            return S.Rejected(tag, S.ArtifactReasonOf(error))
         }
         let descriptor: ReleaseDescriptor
         try
@@ -237,7 +286,7 @@ export class ReleaseCatalog
         return {
             id: descriptor.version,
             channel: descriptor.channel,
-            image: ReleaseRegistry.DigestReference(server.repository, server.digest),
+            image: ReleaseRegistry.DigestReference(this.imageHost, server.repository, server.digest),
             digest: server.digest,
             signed: true,
             publishedAt: descriptor.builtAt,
@@ -263,6 +312,13 @@ export class ReleaseCatalog
             publishedAt: new Date().toISOString(),
             release: { state: ReleaseState.Rejected, rejectedReason: reason },
         }
+    }
+
+    /** The fixed sentence for a descriptor artifact that failed to pull for a reason of its own. */
+    private static ArtifactReasonOf(error: unknown): string
+    {
+        const S = ReleaseCatalog
+        return error instanceof OciProtocolError ? S.ArtifactReasons.get(error.Fault) ?? S.ArtifactInvalid : S.ArtifactInvalid
     }
 
     /** The release tag for a descriptor tag that is a release version; undefined for anything else (`latest`, `release-notes`). */

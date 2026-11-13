@@ -1,8 +1,12 @@
 import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { OciRegistryClient, type OciFetch } from '../oci-registry-client.js'
+import { ReleaseDescriptorCodec } from './release-descriptor.js'
 import { ReleasePublisher } from './release-publisher.js'
 import { ReleaseRegistry } from './release-registry.js'
 import { ReleaseTag } from './release-tag.js'
+import { ReleaseTrustKeyInvalidError, ReleaseTrustKeys } from './release-trust-keys.js'
 
 export type ReleaseCliOutput = { Out: (line: string) => void; Err: (line: string) => void }
 
@@ -11,9 +15,11 @@ class ReleaseCliUsageError extends Error
 }
 
 /**
- * `check --tag <ref>` and `publish --tag <ref> --server-commit <sha> --siblings-file <path> --key-id <id>`. Secrets come from
- * the environment (key file path, registry credential); only the version and digests are printed, failures print the error
- * sentence. Imports only node builtins and builtin-only relative modules: the release workflow runs it without npm install.
+ * `check --tag <ref>` and `publish --tag <ref> --server-commit <sha> --siblings-file <path> --key-id <id> [--trust-dir <dir>]`.
+ * Secrets come from the environment (key file path, registry credential); only the version and digests are printed, failures
+ * print the error sentence. Before anything is pushed, publish verifies every signature against the trusted public key
+ * `<trust dir>/<key id>.pub.pem` (default: this checkout's release-keys). Imports only node builtins and builtin-only relative
+ * modules: the release workflow runs it without npm install.
  */
 export class ReleasePublishCli
 {
@@ -24,14 +30,24 @@ export class ReleasePublishCli
     private static readonly FlagServerCommit = 'server-commit'
     private static readonly FlagSiblingsFile = 'siblings-file'
     private static readonly FlagKeyId = 'key-id'
-    private static readonly KnownFlags: readonly string[] = [
-        ReleasePublishCli.FlagTag,
-        ReleasePublishCli.FlagServerCommit,
-        ReleasePublishCli.FlagSiblingsFile,
-        ReleasePublishCli.FlagKeyId,
-    ]
-    private static readonly RepoNamePattern = /^(?!__proto__$)[A-Za-z0-9._-]+$/
-    private static readonly CommitPattern = /^[0-9a-f]{40}$/
+    private static readonly FlagTrustDir = 'trust-dir'
+    /** The options each command accepts: `check` refuses the publish-only ones. */
+    private static readonly CommandFlags: ReadonlyMap<string, readonly string[]> = new Map([
+        [ReleasePublishCli.CommandCheck, [ReleasePublishCli.FlagTag]],
+        [ReleasePublishCli.CommandPublish, [
+            ReleasePublishCli.FlagTag,
+            ReleasePublishCli.FlagServerCommit,
+            ReleasePublishCli.FlagSiblingsFile,
+            ReleasePublishCli.FlagKeyId,
+            ReleasePublishCli.FlagTrustDir,
+        ]],
+    ])
+    private static readonly ParentSegment = '..'
+    /** This checkout's release-keys: the CLI sits at admin/control-plane/release/, three levels below the repo root. */
+    public static readonly DefaultTrustDir = resolve(dirname(fileURLToPath(import.meta.url)), ReleasePublishCli.ParentSegment,
+        ReleasePublishCli.ParentSegment, ReleasePublishCli.ParentSegment, ReleaseTrustKeys.DirName)
+    private static readonly UnreadableTrustDirMessage = 'The directory named by --trust-dir (default: release-keys) cannot be read'
+    private static readonly UntrustedKeyPrefix = 'No trusted public key for --key-id in the trust directory: expected '
     private static readonly UnknownFlagPrefix = 'Unknown option: --'
     private static readonly DuplicateFlagPrefix = 'Option given more than once: --'
     private static readonly UnreadableKeyMessage = 'The signing key file named by RELEASE_SIGNING_KEY_FILE cannot be read'
@@ -47,7 +63,7 @@ export class ReleasePublishCli
     private static readonly Utf8 = 'utf8'
     private static readonly OkExitCode = 0
     private static readonly FailExitCode = 1
-    private static readonly UsageMessage = 'Usage: pragmatic-release-publish check --tag <ref> | publish --tag <ref> --server-commit <sha> --siblings-file <path> --key-id <id>'
+    private static readonly UsageMessage = 'Usage: pragmatic-release-publish check --tag <ref> | publish --tag <ref> --server-commit <sha> --siblings-file <path> --key-id <id> [--trust-dir <dir>]'
     private static readonly MissingFlagPrefix = 'Missing required option: --'
     private static readonly MissingEnvPrefix = 'Missing required environment variable: '
     private static readonly BadSiblingsMessage = 'The siblings file must be a JSON object mapping plain repository names to 40-hex commit shas'
@@ -63,7 +79,12 @@ export class ReleasePublishCli
         try
         {
             const command = argv[0]
-            const flags = S.ParseFlags(argv.slice(1))
+            const allowed = command === undefined ? undefined : S.CommandFlags.get(command)
+            if (allowed === undefined)
+            {
+                throw new ReleaseCliUsageError(S.UsageMessage)
+            }
+            const flags = S.ParseFlags(argv.slice(1), allowed)
             if (command === S.CommandCheck)
             {
                 await S.Check(flags, env, output, fetchFn)
@@ -100,8 +121,10 @@ export class ReleasePublishCli
         const serverCommit = S.Flag(flags, S.FlagServerCommit)
         const siblingCommits = S.ReadSiblings(S.Flag(flags, S.FlagSiblingsFile))
         const signingKeyId = S.Flag(flags, S.FlagKeyId)
+        const trustedPublicKeyPem = S.TrustedKey(flags.get(S.FlagTrustDir) ?? S.DefaultTrustDir, signingKeyId)
         const privateKeyPem = S.ReadFile(S.Env(env, S.EnvKeyFile), S.UnreadableKeyMessage)
-        const { descriptor, descriptorDigest } = await S.NewPublisher(env, fetchFn).Publish({ tag, serverCommit, siblingCommits, signingKeyId, privateKeyPem })
+        const input = { tag, serverCommit, siblingCommits, signingKeyId, privateKeyPem, trustedPublicKeyPem }
+        const { descriptor, descriptorDigest } = await S.NewPublisher(env, fetchFn).Publish(input)
         output.Out(S.PublishedPrefix + descriptor.version)
         for (const [app, image] of Object.entries(descriptor.images))
         {
@@ -138,12 +161,37 @@ export class ReleasePublishCli
         }
         for (const [name, commit] of Object.entries(parsed))
         {
-            if (!S.RepoNamePattern.test(name) || typeof commit !== 'string' || !S.CommitPattern.test(commit))
+            if (!ReleaseDescriptorCodec.IsRepoName(name) || !ReleaseDescriptorCodec.IsCommit(commit))
             {
                 throw new ReleaseCliUsageError(S.BadSiblingsMessage)
             }
         }
         return parsed as Record<string, string>
+    }
+
+    /** The trusted public key `<dir>/<key id>.pub.pem`; an unreadable directory or an absent key is a clear sentence. */
+    private static TrustedKey(dir: string, keyId: string): string
+    {
+        const S = ReleasePublishCli
+        let trust: ReleaseTrustKeys
+        try
+        {
+            trust = ReleaseTrustKeys.FromDirectory(dir)
+        }
+        catch (err)
+        {
+            if (err instanceof ReleaseTrustKeyInvalidError)
+            {
+                throw err
+            }
+            throw new ReleaseCliUsageError(S.UnreadableTrustDirMessage)
+        }
+        const key = trust.KeyFor(keyId)
+        if (key === undefined)
+        {
+            throw new ReleaseCliUsageError(S.UntrustedKeyPrefix + keyId + ReleaseTrustKeys.Suffix)
+        }
+        return key
     }
 
     /** Reads a file; an unreadable one becomes the given sentence (never the raw OS error). */
@@ -165,7 +213,7 @@ export class ReleasePublishCli
         return value === undefined || value.length === 0 ? fallback : value
     }
 
-    private static ParseFlags(args: readonly string[]): Map<string, string>
+    private static ParseFlags(args: readonly string[], allowed: readonly string[]): Map<string, string>
     {
         const S = ReleasePublishCli
         const flags = new Map<string, string>()
@@ -177,7 +225,7 @@ export class ReleasePublishCli
                 throw new ReleaseCliUsageError(S.UsageMessage)
             }
             const name = arg.slice(S.FlagPrefix.length)
-            if (!S.KnownFlags.includes(name))
+            if (!allowed.includes(name))
             {
                 throw new ReleaseCliUsageError(S.UnknownFlagPrefix + name)
             }

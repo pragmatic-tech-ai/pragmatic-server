@@ -17,7 +17,10 @@ export class ReleaseTrustKeyInvalidError extends Error
 /** The set of release-signing public keys, loaded from `<id>.pub.pem` files. */
 export class ReleaseTrustKeys
 {
-    private static readonly Suffix = '.pub.pem'
+    /** The repo directory holding the trusted keys: the platform-admin default trust dir and the publish CLI's default. */
+    public static readonly DirName = 'release-keys'
+    /** The file name suffix of a trusted key: `<key id>.pub.pem`. */
+    public static readonly Suffix = '.pub.pem'
     private static readonly Utf8 = 'utf8'
     private static readonly Ed25519 = 'ed25519'
 

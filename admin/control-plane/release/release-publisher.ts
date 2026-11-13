@@ -3,6 +3,7 @@ import { ReleaseDescriptorCodec, type ReleaseDescriptor, type ReleaseImage } fro
 import { ReleaseRegistry } from './release-registry.js'
 import { ReleaseSignature } from './release-signature.js'
 import { ReleaseApps, type ReleaseApp, type ReleaseTag } from './release-tag.js'
+import { ReleaseTrustKeys } from './release-trust-keys.js'
 
 /** The published descriptor and the digest of its encoded bytes (the layer digest the registry records and the signature covers). */
 export type ReleasePublishResult = { descriptor: ReleaseDescriptor; descriptorDigest: string }
@@ -13,6 +14,27 @@ export type ReleasePublishInput = {
     siblingCommits: Record<string, string>
     signingKeyId: string
     privateKeyPem: string
+    /** The trusted public key for `signingKeyId` (`release-keys/<id>.pub.pem`): every signature is checked against it before the push. */
+    trustedPublicKeyPem: string
+}
+
+/**
+ * The signing key does not produce signatures the trusted public key verifies. Publishing anyway would record a descriptor
+ * every platform rejects, burning the version, so nothing is pushed.
+ */
+export class ReleaseSigningKeyMismatchError extends Error
+{
+    private static readonly ErrorName = 'ReleaseSigningKeyMismatchError'
+    private static readonly MessagePrefix = 'The signing key does not match the trusted public key '
+    private static readonly MessageSuffix = '; nothing was published'
+    private static readonly PathSeparator = '/'
+
+    public constructor(public readonly KeyId: string)
+    {
+        super(ReleaseSigningKeyMismatchError.MessagePrefix + ReleaseTrustKeys.DirName + ReleaseSigningKeyMismatchError.PathSeparator
+            + KeyId + ReleaseTrustKeys.Suffix + ReleaseSigningKeyMismatchError.MessageSuffix)
+        this.name = ReleaseSigningKeyMismatchError.ErrorName
+    }
 }
 
 /** A release descriptor already exists for the version; releases are immutable. */
@@ -101,11 +123,34 @@ export class ReleasePublisher
         const bytes = ReleaseDescriptorCodec.Encode(descriptor)
         const descriptorDigest = OciRegistryClient.DigestOf(bytes)
         const signature = ReleaseSignature.Sign(descriptorDigest, input.privateKeyPem)
+        S.AssertVerifies(bytes, descriptorDigest, signature, input)
         await this.registry.PushArtifact(this.repo(S.DescriptorRepository), version, S.ArtifactType, S.LayerMediaType, bytes, {
             [S.SignatureAnnotation]: signature,
             [S.KeyAnnotation]: input.signingKeyId,
         })
         return { descriptor, descriptorDigest }
+    }
+
+    /**
+     * What the platform's catalogue will check, run on the bytes about to be pushed: the descriptor decodes, and its signature
+     * and every image signature verify against the trusted public key. Throws before any push when one does not.
+     */
+    private static AssertVerifies(bytes: Uint8Array, descriptorDigest: string, signature: string, input: ReleasePublishInput): void
+    {
+        const decoded = ReleaseDescriptorCodec.Decode(bytes)
+        const key = input.trustedPublicKeyPem
+        if (!ReleaseSignature.Verifies(descriptorDigest, signature, key))
+        {
+            throw new ReleaseSigningKeyMismatchError(input.signingKeyId)
+        }
+        for (const app of ReleaseApps.All)
+        {
+            const image = decoded.images[app]
+            if (!ReleaseSignature.Verifies(image.digest, image.signature, key))
+            {
+                throw new ReleaseSigningKeyMismatchError(input.signingKeyId)
+            }
+        }
     }
 
     private repo(name: string): string

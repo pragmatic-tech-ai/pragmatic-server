@@ -26,9 +26,27 @@ class DescriptorFixture
         }
     }
 
+    public static readonly Commit = 'e'.repeat(40)
+    public static readonly ShortCommit = 'e'.repeat(39)
+    public static readonly Proto = '__proto__'
+    public static readonly ProtoSiblings = `{"${DescriptorFixture.Proto}":"${DescriptorFixture.Commit}"}`
+    public static readonly BadNames: readonly string[] = ['a b', 'a/b', '.', '..', '']
+    public static readonly GoodNames: readonly string[] = ['todl', 'TODL', 'todl-identity', 'pragmatic.graph', 'a_b', '.github']
+    private static readonly SiblingsKey = 'siblingCommits'
+    private static readonly ObjectClose = '}'
+
     public static Bytes(value: unknown): Uint8Array
     {
         return new TextEncoder().encode(JSON.stringify(value))
+    }
+
+    /** The descriptor's JSON with `siblingsJson` spliced in verbatim as its siblingCommits value. */
+    public static RawWithSiblings(rest: object, siblingsJson: string): Uint8Array
+    {
+        const S = DescriptorFixture
+        const body = JSON.stringify(rest)
+        const raw = body.slice(0, -S.ObjectClose.length) + `,${JSON.stringify(S.SiblingsKey)}:${siblingsJson}` + S.ObjectClose
+        return new TextEncoder().encode(raw)
     }
 }
 
@@ -97,10 +115,36 @@ describe('ReleaseDescriptorCodec', () =>
 
     it('rejects sibling names that are not plain repo names', () =>
     {
-        const json = JSON.stringify(DescriptorFixture.Make()).replace('"siblingCommits":{', `"siblingCommits":{"__proto__":"${'e'.repeat(40)}",`)
-        assert.throws(() => ReleaseDescriptorCodec.Decode(new TextEncoder().encode(json)), ReleaseDescriptorInvalidError)
-        const spaced = { ...DescriptorFixture.Make(), siblingCommits: { 'a b': 'e'.repeat(40) } }
-        assert.throws(() => ReleaseDescriptorCodec.Decode(DescriptorFixture.Bytes(spaced)), ReleaseDescriptorInvalidError)
+        // JSON.parse keeps a literal "__proto__" key as an own property, so the raw JSON is assembled from its parts.
+        const { siblingCommits: _siblings, ...rest } = DescriptorFixture.Make()
+        const proto = DescriptorFixture.RawWithSiblings(rest, DescriptorFixture.ProtoSiblings)
+        assert.throws(() => ReleaseDescriptorCodec.Decode(proto), ReleaseDescriptorInvalidError)
+        for (const name of DescriptorFixture.BadNames)
+        {
+            const bad = { ...DescriptorFixture.Make(), siblingCommits: { [name]: DescriptorFixture.Commit } }
+            assert.throws(() => ReleaseDescriptorCodec.Decode(DescriptorFixture.Bytes(bad)), ReleaseDescriptorInvalidError, name)
+        }
+    })
+
+    it('rejects a sibling commit that is not 40 hex, and a non-string commit', () =>
+    {
+        for (const commit of [DescriptorFixture.ShortCommit, 7])
+        {
+            const bad = { ...DescriptorFixture.Make(), siblingCommits: { todl: commit } }
+            assert.throws(() => ReleaseDescriptorCodec.Decode(DescriptorFixture.Bytes(bad)), /siblingCommits/)
+        }
+    })
+
+    it('shares one repository-name rule: plain names pass, dot segments, __proto__ and separators fail', () =>
+    {
+        for (const name of DescriptorFixture.GoodNames)
+        {
+            assert.ok(ReleaseDescriptorCodec.IsRepoName(name), name)
+        }
+        for (const name of [...DescriptorFixture.BadNames, DescriptorFixture.Proto])
+        {
+            assert.ok(!ReleaseDescriptorCodec.IsRepoName(name), name)
+        }
     })
 
     it('reports the first failure in the documented field order', () =>

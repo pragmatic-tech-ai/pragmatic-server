@@ -43,13 +43,26 @@ export class OciResponseError extends Error
     }
 }
 
+/** Which part of the content broke the protocol, so a caller can name the cause with its own fixed sentence. */
+export enum OciProtocolFault
+{
+    /** The manifest is not a single-layer artifact (bad JSON, no layer, several layers, a non-sha256 digest). */
+    BadManifest = 'bad-manifest',
+    /** The layer bytes do not hash to the digest the manifest names. */
+    LayerMismatch = 'layer-mismatch',
+    /** The manifest annotations are not a map of strings. */
+    BadAnnotations = 'bad-annotations',
+    /** Anything else (an unreadable tag list, ...). */
+    Other = 'other',
+}
+
 /** The registry answered 2xx but the content breaks the OCI protocol (not a transport status). Still an OciResponseError. */
 export class OciProtocolError extends OciResponseError
 {
     private static readonly ProtocolErrorName = 'OciProtocolError'
     private static readonly NoStatus = 0
 
-    public constructor(message: string)
+    public constructor(message: string, public readonly Fault: OciProtocolFault = OciProtocolFault.Other)
     {
         super(OciProtocolError.NoStatus, message)
         this.name = OciProtocolError.ProtocolErrorName
@@ -438,7 +451,10 @@ export class OciRegistryClient
         return this.PushManifest(repo, tag, encoder.encode(JSON.stringify(manifest)))
     }
 
-    /** Pulls the artifact's manifest then its single layer, verifying the layer bytes against the manifest's digest. */
+    /**
+     * Pulls the artifact's manifest then its single layer, verifying the layer bytes against the manifest's digest. The
+     * manifest (shape and annotations) is validated in full before the blob is fetched.
+     */
     public async PullArtifactLayer(repo: string, tag: string): Promise<{ layer: Uint8Array; layerDigest: string; annotations: Record<string, string> }>
     {
         const S = OciRegistryClient
@@ -450,22 +466,22 @@ export class OciRegistryClient
         }
         catch
         {
-            throw new OciProtocolError(S.BadManifestMessage)
+            throw new OciProtocolError(S.BadManifestMessage, OciProtocolFault.BadManifest)
         }
         const layerDigest = S.SingleLayerDigest(manifest)
         if (layerDigest === undefined)
         {
-            throw new OciProtocolError(S.BadManifestMessage)
-        }
-        const layer = await this.PullBlob(repo, layerDigest)
-        if (S.DigestOf(layer) !== layerDigest)
-        {
-            throw new OciProtocolError(S.LayerMismatchMessage)
+            throw new OciProtocolError(S.BadManifestMessage, OciProtocolFault.BadManifest)
         }
         const annotations = (manifest as { annotations?: unknown }).annotations ?? {}
         if (!S.IsPlainObject(annotations) || Object.values(annotations).some(v => typeof v !== 'string'))
         {
-            throw new OciProtocolError(S.BadAnnotationsMessage)
+            throw new OciProtocolError(S.BadAnnotationsMessage, OciProtocolFault.BadAnnotations)
+        }
+        const layer = await this.PullBlob(repo, layerDigest)
+        if (S.DigestOf(layer) !== layerDigest)
+        {
+            throw new OciProtocolError(S.LayerMismatchMessage, OciProtocolFault.LayerMismatch)
         }
         return { layer, layerDigest, annotations: annotations as Record<string, string> }
     }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { OciProtocolError, OciRegistryClient, OciResponseError, type OciFetch } from '../oci-registry-client.js'
+import { OciProtocolError, OciProtocolFault, OciRegistryClient, OciResponseError, type OciFetch } from '../oci-registry-client.js'
 import { FakeOciRegistry } from './fake-oci-registry.js'
 
 const Base = 'https://registry.test'
@@ -121,9 +121,9 @@ test('a second 401 after the bearer retry is refused, without looping', async ()
     const stubborn: OciFetch = async (url) =>
     {
         calls++
-        return url.includes('/token')
-            ? new Response(JSON.stringify({ token: 'b' }), { status: 200 })
-            : new Response(null, { status: 401, headers: { 'WWW-Authenticate': `Bearer realm="${Base}/token",service="s",scope="repository:r:pull"` } })
+        return url.includes(ChallengeStub.TokenPath)
+            ? ChallengeStub.TokenResponse()
+            : ChallengeStub.Unauthorized(ChallengeStub.StubbornChallenge)
     }
     const client = new OciRegistryClient(Base, stubborn, { username: User, token: Token })
 
@@ -139,24 +139,44 @@ test('a 401 without any credential is refused', async () =>
 
 class ChallengeStub
 {
+    public static readonly TokenPath = '/token'
+    public static readonly IssuedToken = 'b'
+    public static readonly IssuedAuthorization = 'Bearer ' + ChallengeStub.IssuedToken
+    public static readonly Tag = 't'
+    public static readonly ChallengeHeader = 'WWW-Authenticate'
+    public static readonly StubbornChallenge = `Bearer realm="${Base}/token",service="s",scope="repository:r:pull"`
+    private static readonly StatusOk = 200
+    private static readonly StatusUnauthorized = 401
+
     public readonly Urls: string[] = []
 
     public constructor(private readonly challenge: string)
     {
     }
 
+    public static TokenResponse(): Response
+    {
+        return new Response(JSON.stringify({ token: ChallengeStub.IssuedToken }), { status: ChallengeStub.StatusOk })
+    }
+
+    public static Unauthorized(challenge: string): Response
+    {
+        return new Response(null, { status: ChallengeStub.StatusUnauthorized, headers: { [ChallengeStub.ChallengeHeader]: challenge } })
+    }
+
     public get Fetch(): OciFetch
     {
+        const S = ChallengeStub
         return async (url, init) =>
         {
             this.Urls.push(url)
-            if (url.includes('/token'))
+            if (url.includes(S.TokenPath))
             {
-                return new Response(JSON.stringify({ token: 'b' }), { status: 200 })
+                return S.TokenResponse()
             }
-            return init.headers?.Authorization === 'Bearer b'
-                ? new Response(JSON.stringify({ tags: ['t'] }), { status: 200 })
-                : new Response(null, { status: 401, headers: { 'WWW-Authenticate': this.challenge } })
+            return init.headers?.Authorization === S.IssuedAuthorization
+                ? new Response(JSON.stringify({ tags: [S.Tag] }), { status: S.StatusOk })
+                : S.Unauthorized(this.challenge)
         }
     }
 }
@@ -252,13 +272,15 @@ class MalformedManifests
 {
     public static readonly ManifestType = 'application/vnd.oci.image.manifest.v1+json'
     public static readonly Message = 'The OCI manifest is not a single-layer artifact'
+    public static readonly DigestA = 'sha256:' + 'a'.repeat(64)
+    public static readonly DigestB = 'sha256:' + 'b'.repeat(64)
     public static readonly Cases: ReadonlyArray<[string, unknown]> = [
         ['a null manifest', null],
         ['an array manifest', []],
         ['a null layer', { schemaVersion: 2, layers: [null] }],
-        ['a string layer', { schemaVersion: 2, layers: ['sha256:' + 'a'.repeat(64)] }],
-        ['layers that are not an array', { schemaVersion: 2, layers: { length: 1, 0: { digest: 'sha256:' + 'a'.repeat(64) } } }],
-        ['two layers', { schemaVersion: 2, layers: [{ digest: 'sha256:' + 'a'.repeat(64) }, { digest: 'sha256:' + 'b'.repeat(64) }] }],
+        ['a string layer', { schemaVersion: 2, layers: [MalformedManifests.DigestA] }],
+        ['layers that are not an array', { schemaVersion: 2, layers: { length: 1, 0: { digest: MalformedManifests.DigestA } } }],
+        ['two layers', { schemaVersion: 2, layers: [{ digest: MalformedManifests.DigestA }, { digest: MalformedManifests.DigestB }] }],
         ['a sha512 layer digest', { schemaVersion: 2, layers: [{ digest: 'sha512:' + 'a'.repeat(128) }] }],
     ]
 }
@@ -275,3 +297,39 @@ for (const [label, manifest] of MalformedManifests.Cases)
         assert.equal(fake.Requests.some(r => r.url.includes('/blobs/')), false)
     })
 }
+
+class BadAnnotations
+{
+    public static readonly Message = 'The OCI manifest annotations are not string values'
+    public static readonly Cases: ReadonlyArray<[string, unknown]> = [
+        ['a non-string annotation value', { 'org.pragmatic.release.key': 7 }],
+        ['an array of annotations', ['x']],
+    ]
+}
+
+for (const [label, annotations] of BadAnnotations.Cases)
+{
+    test('PullArtifactLayer refuses ' + label + ' before any blob pull, with the BadAnnotations fault', async () =>
+    {
+        const fake = new FakeOciRegistry(Base)
+        const client = new OciRegistryClient(Base, fake.Fetch)
+        const manifest = { schemaVersion: 2, layers: [{ digest: MalformedManifests.DigestA }], annotations }
+        fake.PutManifest('r', 't', new TextEncoder().encode(JSON.stringify(manifest)), MalformedManifests.ManifestType)
+
+        await assert.rejects(client.PullArtifactLayer('r', 't'), (e: unknown) =>
+            e instanceof OciProtocolError && e.message === BadAnnotations.Message && e.Fault === OciProtocolFault.BadAnnotations)
+        assert.equal(fake.Requests.some(r => r.url.includes('/blobs/')), false)
+    })
+}
+
+test('PullArtifactLayer names the fault: a bad manifest shape and altered layer bytes are told apart', async () =>
+{
+    const fake = new FakeOciRegistry(Base)
+    const client = new OciRegistryClient(Base, fake.Fetch)
+    fake.PutManifest('r', 'bad', new TextEncoder().encode(JSON.stringify(null)), MalformedManifests.ManifestType)
+    await assert.rejects(client.PullArtifactLayer('r', 'bad'), (e: unknown) => e instanceof OciProtocolError && e.Fault === OciProtocolFault.BadManifest)
+    await client.PushArtifact('r', 'good', 'application/vnd.test', 'application/vnd.test+json', new TextEncoder().encode('{}'), {})
+    fake.TamperBlobs(true)
+    await assert.rejects(client.PullArtifactLayer('r', 'good'), (e: unknown) => e instanceof OciProtocolError && e.Fault === OciProtocolFault.LayerMismatch)
+    assert.equal(new OciProtocolError('x').Fault, OciProtocolFault.Other)
+})

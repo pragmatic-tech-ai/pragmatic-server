@@ -1,0 +1,7 @@
+import a from 'x1'
+import 'x2'
+export { b } from 'x3'
+const c = await import('x4')
+const d = require('x5')
+const e = await import(`x6`)
+/** loaded from `<id>.pub.pem` (a comment, not an import) */
