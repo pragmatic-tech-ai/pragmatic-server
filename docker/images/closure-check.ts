@@ -207,11 +207,21 @@ export class ClosureCheck
     private static readonly Utf8 = 'utf8'
     private static readonly Slash = '/'
     private static readonly ParentSegment = '..'
-    private static readonly DistPrefix = 'dist/'
-    private static readonly SrcPrefix = 'src/'
-    private static readonly TenantAdminDistPrefix = 'dist-tenant-admin/'
+    /**
+     * Each compiled tree and the source dir it mirrors: dist/ is the server build of src/, dist-tenant-admin/ (the control
+     * plane, tsconfig.tenant-admin.json) and dist-ui-unpack/ (the UI-unpack init container, tsconfig.ui-unpack.json) mirror the repo.
+     */
+    private static readonly CompiledRoots: ReadonlyArray<readonly [string, string]> = [
+        ['dist/', 'src/'],
+        ['dist-tenant-admin/', ''],
+        ['dist-ui-unpack/', ''],
+    ]
     private static readonly JsExtension = /\.js$/
+    private static readonly TsSourceExtension = /\.ts$/
     private static readonly TsExtension = '.ts'
+    private static readonly JsOutExtension = '.js'
+    private static readonly NotCompiledPrefix = 'not compiled into the entry\'s tree: '
+    private static readonly MixedRootsPrefix = 'closure.json entry runs commands from different compiled trees: '
     private static readonly Platform = 'node'
     private static readonly Format = 'esm'
     private static readonly LogLevel = 'silent'
@@ -291,8 +301,11 @@ export class ClosureCheck
             logLevel: C.LogLevel,
         })
         const reached = new Set<string>()
+        const compiled = new Set<string>()
         let serverModules = false
         const serverModulesDir = join(server, C.NodeModules) + sep
+        const serverDir = server + sep
+        const compiledRoot = C.CompiledRootOf(app, runs)
         for (const input of Object.keys(result.metafile.inputs))
         {
             const file = resolve(server, input)
@@ -309,6 +322,10 @@ export class ClosureCheck
             else if (file.startsWith(serverModulesDir))
             {
                 serverModules = true
+            }
+            else if (file.startsWith(serverDir) && C.TsSourceExtension.test(file))
+            {
+                compiled.add(C.CompiledOf(relative(server, file).split(sep).join(C.Slash), compiledRoot))
             }
         }
         const listed = new Set(entry.packages)
@@ -328,7 +345,17 @@ export class ClosureCheck
         for (const run of runs)
         {
             const path = C.ServerDir + C.Slash + run
-            if (!entry.files.some(f => path === f || path.startsWith(f + C.Slash)))
+            if (!C.Covered(entry, path))
+            {
+                missing.push(path)
+            }
+        }
+        // Every server module the entry loads must be shipped: its compiled file lies inside a copied dir. The entry files
+        // themselves are reported above.
+        const entries = new Set(runs.map(run => C.ServerDir + C.Slash + run))
+        for (const path of [...compiled].sort())
+        {
+            if (!entries.has(path) && !C.Covered(entry, path))
             {
                 missing.push(path)
             }
@@ -355,20 +382,52 @@ export class ClosureCheck
         }
     }
 
-    /** The TypeScript source a compiled entry was emitted from: dist/ mirrors src/, dist-tenant-admin/ mirrors the repo. */
+    /** True when the workspace path is one of the entry's `files` or lies inside one. */
+    private static Covered(entry: IClosureEntry, path: string): boolean
+    {
+        return entry.files.some(f => path === f || path.startsWith(f + ClosureCheck.Slash))
+    }
+
+    /** The compiled tree (and the source dir it mirrors) a compiled path lies in. */
+    private static RootOf(compiled: string): readonly [string, string]
+    {
+        const root = ClosureCheck.CompiledRoots.find(([prefix]) => compiled.startsWith(prefix))
+        if (root === undefined)
+        {
+            throw new ClosureManifestError(ClosureCheck.BadEntrypointPrefix + compiled)
+        }
+        return root
+    }
+
+    /** The one compiled tree every command of the entry runs from. */
+    private static CompiledRootOf(app: string, runs: readonly string[]): readonly [string, string]
+    {
+        const roots = new Set(runs.map(run => ClosureCheck.RootOf(run)))
+        if (roots.size !== 1)
+        {
+            throw new ClosureManifestError(ClosureCheck.MixedRootsPrefix + app)
+        }
+        return [...roots][0]
+    }
+
+    /** The TypeScript source a compiled entry was emitted from: dist/ mirrors src/, the other trees mirror the repo. */
     private static SourceOf(compiled: string): string
     {
         const C = ClosureCheck
-        const ts = compiled.replace(C.JsExtension, C.TsExtension)
-        if (ts.startsWith(C.DistPrefix))
+        const [prefix, source] = C.RootOf(compiled)
+        return source + compiled.slice(prefix.length).replace(C.JsExtension, C.TsExtension)
+    }
+
+    /** The workspace path a server source file compiles to in the given tree; a file the tree does not mirror is named as such. */
+    private static CompiledOf(source: string, root: readonly [string, string]): string
+    {
+        const C = ClosureCheck
+        const [prefix, sourceDir] = root
+        if (!source.startsWith(sourceDir))
         {
-            return C.SrcPrefix + ts.slice(C.DistPrefix.length)
+            return C.NotCompiledPrefix + C.ServerDir + C.Slash + source
         }
-        if (ts.startsWith(C.TenantAdminDistPrefix))
-        {
-            return ts.slice(C.TenantAdminDistPrefix.length)
-        }
-        throw new ClosureManifestError(C.BadEntrypointPrefix + compiled)
+        return C.ServerDir + C.Slash + prefix + source.slice(sourceDir.length).replace(C.TsSourceExtension, C.JsOutExtension)
     }
 
     /** The name in the nearest package.json that has one, walking up from `dir` to the workspace root. */

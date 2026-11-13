@@ -14,7 +14,7 @@
     "pragmatic-agentd": "dist/bin/pragmatic-agentd.js",
     "pragmatic-idp": "dist/bin/pragmatic-idpd.js",
     "pragmatic-tenant-admind": "dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-admind.js",
-    "pragmatic-ui-unpack": "dist-tenant-admin/admin/control-plane/bin/pragmatic-ui-unpack.js"
+    "pragmatic-ui-unpack": "dist-ui-unpack/admin/control-plane/bin/pragmatic-ui-unpack.js"
   },
   "exports": {
     ".": {
@@ -25,6 +25,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "build:tenant-admin": "tsc -p tsconfig.tenant-admin.json",
+    "build:ui-unpack": "tsc -p tsconfig.ui-unpack.json",
     "typecheck:tools": "tsc -p tsconfig.tools.json && tsc -p admin/portal/tsconfig.json --noEmit && tsc -p admin/tenant-portal/tsconfig.json --noEmit && tsc -p idp-login/tsconfig.json --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\""
   },

@@ -1,6 +1,7 @@
 node_modules
 dist
 dist-tenant-admin
+dist-ui-unpack
 docker/master.key
 docker/*.key
 environments/*/master.key

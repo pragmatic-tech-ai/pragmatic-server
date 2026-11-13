@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.tools.json",
+  "compilerOptions": { "noEmit": false, "outDir": "dist-ui-unpack", "paths": { "@pragmatic-tech-ai/todl-runtime": ["./node_modules/@pragmatic-tech-ai/todl-runtime/dist/index.d.ts"] } },
+  "files": ["admin/control-plane/bin/pragmatic-ui-unpack.ts"],
+  "include": []
+}

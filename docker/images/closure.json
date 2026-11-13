@@ -2,12 +2,28 @@
   "pragmatic-platform-admin": {
     "entrypoint": ["node", "dist-tenant-admin/admin/control-plane/server.js"],
     "packages": ["Mural", "TODL", "pragmatic-protocol", "todl-identity", "todl-identity-cloud", "todl-identity-host", "todl-identity-local", "todl-identity-node", "todl-runtime"],
-    "files": ["pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist-tenant-admin"]
+    "files": [
+      "pragmatic-server/package.json",
+      "pragmatic-server/node_modules",
+      "pragmatic-server/dist-tenant-admin/admin/control-plane",
+      "pragmatic-server/dist-tenant-admin/environments/seed",
+      "pragmatic-server/dist-tenant-admin/src",
+      "pragmatic-server/dist-tenant-admin/admin/portal",
+      "pragmatic-server/dist-tenant-admin/release-keys",
+      "pragmatic-server/dist-tenant-admin/environments/demo",
+      "pragmatic-server/dist-tenant-admin/environments/sample-apps"
+    ]
   },
   "pragmatic-platform-edge": {
     "entrypoint": ["node", "dist-tenant-admin/admin/control-plane/server.js"],
     "packages": ["Mural", "TODL", "pragmatic-protocol", "todl-identity", "todl-identity-cloud", "todl-identity-host", "todl-identity-local", "todl-identity-node", "todl-runtime"],
-    "files": ["pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist-tenant-admin"]
+    "files": [
+      "pragmatic-server/package.json",
+      "pragmatic-server/node_modules",
+      "pragmatic-server/dist-tenant-admin/admin/control-plane",
+      "pragmatic-server/dist-tenant-admin/environments/seed",
+      "pragmatic-server/dist-tenant-admin/src"
+    ]
   },
   "pragmatic-env-server": {
     "entrypoint": ["node", "dist/bin/pragmatic-serverd.js"],
@@ -28,7 +44,16 @@
   "pragmatic-tenant-admin": {
     "entrypoint": ["node", "dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-admind.js"],
     "packages": ["Mural", "TODL", "pragmatic-protocol", "todl-identity", "todl-identity-cloud", "todl-identity-host", "todl-identity-local", "todl-identity-node", "todl-runtime"],
-    "files": ["pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist-tenant-admin"]
+    "files": [
+      "pragmatic-server/package.json",
+      "pragmatic-server/node_modules",
+      "pragmatic-server/dist-tenant-admin/admin/control-plane",
+      "pragmatic-server/dist-tenant-admin/environments/seed",
+      "pragmatic-server/dist-tenant-admin/src",
+      "pragmatic-server/dist-tenant-admin/admin/tenant-portal",
+      "pragmatic-server/dist-tenant-admin/environments/demo",
+      "pragmatic-server/dist-tenant-admin/environments/sample-apps"
+    ]
   },
   "pragmatic-tenant-idp": {
     "entrypoint": ["node", "dist/bin/pragmatic-idpd.js"],
@@ -36,8 +61,8 @@
     "files": ["pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist", "pragmatic-server/idp-login/dist"]
   },
   "pragmatic-ui-unpack": {
-    "entrypoint": ["node", "dist-tenant-admin/admin/control-plane/bin/pragmatic-ui-unpack.js"],
+    "entrypoint": ["node", "dist-ui-unpack/admin/control-plane/bin/pragmatic-ui-unpack.js"],
     "packages": ["todl-runtime"],
-    "files": ["pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist-tenant-admin"]
+    "files": ["pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist-ui-unpack"]
   }
 }

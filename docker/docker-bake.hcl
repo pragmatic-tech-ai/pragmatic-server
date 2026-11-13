@@ -44,10 +44,10 @@ target "_app" {
   platforms  = ["linux/amd64"]
   # Without NPMRC_FILE the build stops at its first `required=true` secret mount, naming the missing secret.
   secret     = NPMRC_FILE == "" ? [] : ["id=npmrc,src=${NPMRC_FILE}"]
+  # No version or revision label: either would change every image's config (so its digest) on each release, and a hotfix
+  # could no longer leave an unchanged app's digest as it was. The release descriptor records the version and every commit.
   labels = {
-    "org.opencontainers.image.source"   = "https://github.com/pragmatic-tech-ai/pragmatic-server"
-    "org.opencontainers.image.version"  = "${VERSION}"
-    "org.opencontainers.image.revision" = "${SERVER_SHA}"
+    "org.opencontainers.image.source" = "https://github.com/pragmatic-tech-ai/pragmatic-server"
   }
 }
 

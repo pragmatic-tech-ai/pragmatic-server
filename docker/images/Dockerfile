@@ -5,7 +5,7 @@
 # Build: docker buildx bake -f pragmatic-server/docker/docker-bake.hcl   (NPMRC_FILE names an .npmrc with read:packages)
 FROM node:22@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb AS build
 WORKDIR /workspace
-# Native addons (argon2/bcrypt in identity) need a C toolchain.
+# The one native addon (lmdb, reached by the env server) needs a C toolchain; hashing is hash-wasm, no argon2/bcrypt.
 RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
 
 # Copy each package, then install+build in dependency order (the graph engine first).
@@ -65,15 +65,24 @@ COPY pragmatic-server/ ./pragmatic-server/
 # the image holds ONE engine (the server itself depends on file:../pragmatic-graph).
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     sh pragmatic-server/docker/link-graph-engine.sh /workspace && cd pragmatic-server && npm install --no-audit --no-fund && npm run build
+# closure.json, this file and the code must agree (docker/images/closure-check.ts); checked here on the very tree the images
+# are cut from, so no build (CI's or the release's) produces an image with an unchecked closure.
+RUN cd pragmatic-server && npx tsx docker/images/closure-check.ts
 
-# The control plane (platform-admin / platform-edge: dist-tenant-admin/admin/control-plane/server.js), the tenant admin and
-# ui-unpack all run from the tenant-admin compile. It emits only JavaScript, so the assets those modules read relative to
-# themselves are placed beside them here: the operator portal (admin/portal/dist) and the tenant portal
-# (admin/tenant-portal/dist) SPAs, the environment templates (TemplateCatalog), the Demo seed and the Northwind sample
-# (BundleBuilder / NorthwindApp.Compile), and the release trust keys (release-keys, the default PRAGMATIC_RELEASE_TRUST_DIR,
-# resolved two levels above the compiled control plane).
+# The control plane (platform-admin / platform-edge: dist-tenant-admin/admin/control-plane/server.js) and the tenant admin
+# run from the tenant-admin compile; ui-unpack has its own compile of only what its entry imports (dist-ui-unpack). tsc
+# emits only JavaScript, so the assets those modules read relative to themselves are staged beside them, each set at its
+# own path, so that every image copies only the sets its app reads (closure.json `files`):
+#   dist-tenant-admin/admin/portal/dist         operator portal SPA (ControlPlaneServer's static root)    platform-admin
+#   dist-tenant-admin/admin/tenant-portal/dist  tenant portal SPA (the tenant admin's static root)        tenant-admin
+#   dist-tenant-admin/release-keys              release trust keys (default PRAGMATIC_RELEASE_TRUST_DIR,  platform-admin
+#                                               two levels above the compiled control plane)
+#   dist-tenant-admin/environments/demo/seed,   Demo seed and Northwind sample (BundleBuilder,            platform-admin,
+#   dist-tenant-admin/environments/sample-apps  NorthwindApp.Compile), read when an environment is made   tenant-admin
+#   dist-tenant-admin/admin/control-plane/templates  environment templates (TemplateCatalog): inside the compiled
+#                                               control plane, which every control-plane image copies whole
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
-    cd pragmatic-server && npm run build:tenant-admin \
+    cd pragmatic-server && npm run build:tenant-admin && npm run build:ui-unpack \
     && cd admin/tenant-portal && npm install --no-audit --no-fund && npm run build \
     && mkdir -p ../../dist-tenant-admin/admin/tenant-portal \
     && cp -r dist ../../dist-tenant-admin/admin/tenant-portal/dist \
@@ -84,8 +93,9 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     && cp -r dist ../../dist-tenant-admin/admin/portal/dist \
     && rm -rf node_modules dist
 RUN cd pragmatic-server \
-    && mkdir -p dist-tenant-admin/environments \
-    && cp -r environments/demo environments/dev environments/sample-apps dist-tenant-admin/environments/ \
+    && mkdir -p dist-tenant-admin/environments/demo \
+    && cp -r environments/demo/seed dist-tenant-admin/environments/demo/seed \
+    && cp -r environments/sample-apps dist-tenant-admin/environments/sample-apps \
     && cp -r admin/control-plane/templates dist-tenant-admin/admin/control-plane/templates \
     && cp -r release-keys dist-tenant-admin/release-keys
 
@@ -94,7 +104,7 @@ RUN cd pragmatic-server \
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd pragmatic-server/idp-login && npm install --no-audit --no-fund && npm run build && rm -rf node_modules
 
-# Drop dev dependencies workspace-wide; prod deps (incl. native argon2) and the file: sibling links are kept.
+# Drop dev dependencies workspace-wide; prod deps (incl. the native lmdb addon) and the file: sibling links are kept.
 # TODL declares esbuild and typescript as devDependencies, yet its html-bundle build system (reached through the
 # project-system import) imports both at module load, so they are stashed across TODL's prune and restored.
 # The engine is a TODL devDependency (optional peer), so the prune drops TODL's link to it; the link is removed
@@ -122,6 +132,9 @@ ENV NODE_ENV=production
 RUN groupadd --system --gid 10001 pragmatic && useradd --system --create-home --uid 10001 --gid 10001 pragmatic
 WORKDIR /workspace/pragmatic-server
 
+# The operator part of the control plane (PRAGMATIC_CONTROL_PLANE_ROLE=admin: everything but the agent channel), with the
+# operator portal and the release trust keys. The operator listener binds 127.0.0.1 only (ComposedListeners in server.ts), so
+# EXPOSE 7000 documents the port but it is not reachable from outside the container until piece 3 fronts it.
 FROM runtime AS pragmatic-platform-admin
 COPY --from=build --chown=10001:10001 /workspace/Mural /workspace/Mural
 COPY --from=build --chown=10001:10001 /workspace/TODL /workspace/TODL
@@ -134,14 +147,22 @@ COPY --from=build --chown=10001:10001 /workspace/todl-identity-node /workspace/t
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin /workspace/pragmatic-server/dist-tenant-admin
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/seed /workspace/pragmatic-server/dist-tenant-admin/environments/seed
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/src /workspace/pragmatic-server/dist-tenant-admin/src
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/admin/portal /workspace/pragmatic-server/dist-tenant-admin/admin/portal
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/release-keys /workspace/pragmatic-server/dist-tenant-admin/release-keys
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/demo /workspace/pragmatic-server/dist-tenant-admin/environments/demo
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/sample-apps /workspace/pragmatic-server/dist-tenant-admin/environments/sample-apps
+ENV PRAGMATIC_CONTROL_PLANE_ROLE=admin
 USER 10001
 EXPOSE 7000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD node -e "const r=require('node:http').request({host:'127.0.0.1',port:process.env.PRAGMATIC_ADMIN_PORT||7000,path:'/healthz'},x=>process.exit(x.statusCode===200?0:1));r.on('error',()=>process.exit(1));r.end()"
 ENTRYPOINT ["node", "dist-tenant-admin/admin/control-plane/server.js"]
 
-# The same control plane, started as the agent-channel listener only (PRAGMATIC_CONTROL_PLANE_ROLE=edge).
+# The same control plane, started as the agent-channel listener only (PRAGMATIC_CONTROL_PLANE_ROLE=edge): the compiled code
+# alone, no SPA, seed or trust key.
 FROM runtime AS pragmatic-platform-edge
 COPY --from=build --chown=10001:10001 /workspace/Mural /workspace/Mural
 COPY --from=build --chown=10001:10001 /workspace/TODL /workspace/TODL
@@ -154,7 +175,9 @@ COPY --from=build --chown=10001:10001 /workspace/todl-identity-node /workspace/t
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin /workspace/pragmatic-server/dist-tenant-admin
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/seed /workspace/pragmatic-server/dist-tenant-admin/environments/seed
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/src /workspace/pragmatic-server/dist-tenant-admin/src
 ENV PRAGMATIC_CONTROL_PLANE_ROLE=edge
 USER 10001
 ENTRYPOINT ["node", "dist-tenant-admin/admin/control-plane/server.js"]
@@ -219,13 +242,19 @@ COPY --from=build --chown=10001:10001 /workspace/todl-identity-node /workspace/t
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin /workspace/pragmatic-server/dist-tenant-admin
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/seed /workspace/pragmatic-server/dist-tenant-admin/environments/seed
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/src /workspace/pragmatic-server/dist-tenant-admin/src
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/admin/tenant-portal /workspace/pragmatic-server/dist-tenant-admin/admin/tenant-portal
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/demo /workspace/pragmatic-server/dist-tenant-admin/environments/demo
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/sample-apps /workspace/pragmatic-server/dist-tenant-admin/environments/sample-apps
 USER 10001
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD node -e "const r=require('node:http').request({host:'127.0.0.1',port:process.env.PRAGMATIC_TENANT_ADMIN_PORT,path:'/healthz'},x=>process.exit(x.statusCode===200?0:1));r.on('error',()=>process.exit(1));r.end()"
 ENTRYPOINT ["node", "dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-admind.js"]
 
-# The tenant IdP; its CA tooling shells out to the openssl CLI.
+# The tenant IdP; its CA tooling shells out to the openssl CLI. It serves HTTPS only (its certificate is issued for the
+# tenant's host, not 127.0.0.1), so the health probe speaks TLS without verifying the peer: it checks liveness, not identity.
 FROM runtime AS pragmatic-tenant-idp
 RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
 COPY --from=build --chown=10001:10001 /workspace/todl-identity /workspace/todl-identity
@@ -240,14 +269,15 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/idp-login/dist
 USER 10001
 EXPOSE 7100
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD node -e "const r=require('node:http').request({host:'127.0.0.1',port:process.env.PRAGMATIC_IDP_PORT||7100,path:'/healthz'},x=>process.exit(x.statusCode===200?0:1));r.on('error',()=>process.exit(1));r.end()"
+  CMD node -e "const r=require('node:https').request({host:'127.0.0.1',port:process.env.PRAGMATIC_IDP_PORT||7100,path:'/healthz',rejectUnauthorized:false},x=>process.exit(x.statusCode===200?0:1));r.on('error',()=>process.exit(1));r.end()"
 ENTRYPOINT ["node", "dist/bin/pragmatic-idpd.js"]
 
-# The UI-unpack init container: pulls, verifies and unpacks a signed UI artifact, then exits.
+# The UI-unpack init container: pulls, verifies and unpacks a signed UI artifact, then exits. Only its own compile
+# (dist-ui-unpack: the entry and the few modules it imports), no control plane, SPA or seed.
 FROM runtime AS pragmatic-ui-unpack
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin /workspace/pragmatic-server/dist-tenant-admin
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-ui-unpack /workspace/pragmatic-server/dist-ui-unpack
 USER 10001
-ENTRYPOINT ["node", "dist-tenant-admin/admin/control-plane/bin/pragmatic-ui-unpack.js"]
+ENTRYPOINT ["node", "dist-ui-unpack/admin/control-plane/bin/pragmatic-ui-unpack.js"]

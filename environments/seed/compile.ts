@@ -13,7 +13,8 @@ export class NorthwindApp
     public static readonly Version = '1.0.0'
     public static readonly AppName = 'northwind'
     private static readonly SourceUri = 'northwind.todl'
-    private static readonly SourcePath = join(dirname(fileURLToPath(import.meta.url)), '..', 'sample-apps', 'northwind', 'northwind.todl')
+    /** The Northwind sample, read relative to this module: the images stage environments/sample-apps beside the compiled seed. */
+    public static readonly SourcePath = join(dirname(fileURLToPath(import.meta.url)), '..', 'sample-apps', 'northwind', 'northwind.todl')
     private static readonly OrderNoField = 'orderNo'
     private static readonly CompileFailedPrefix = 'northwind compile failed: '
 

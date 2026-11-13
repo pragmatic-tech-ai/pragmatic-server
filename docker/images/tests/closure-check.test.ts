@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { after, describe, it } from 'node:test'
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { ClosureCheck, type ClosureReport } from '../closure-check.js'
 
 /** A throwaway workspace: three tiny sibling packages a, b, c and a server whose one app imports `a`. */
@@ -39,6 +39,14 @@ class FixtureWorkspace
         return root
     }
 
+    /** Adds a server source file (path relative to the server dir). */
+    public static Source(root: string, relative: string, text: string): void
+    {
+        const file = join(root, 'pragmatic-server', relative)
+        mkdirSync(dirname(file), { recursive: true })
+        writeFileSync(file, text)
+    }
+
     public static Report(root: string): ClosureReport
     {
         return ClosureCheck.Run(root, { Siblings: FixtureWorkspace.Siblings, Apps: [FixtureWorkspace.App] })
@@ -63,7 +71,13 @@ class FixtureWorkspace
 const ImportsA = "import { Value } from 'a'\nconsole.log(Value)\n"
 const ImportsThird = "import { Third } from 'third'\nconsole.log(Third)\n"
 const ImportsNothing = "console.log(1)\n"
+const ImportsLib = "import { Lib } from '../lib/util.js'\nconsole.log(Lib)\n"
+const LibSource = 'src/lib/util.ts'
+const LibText = 'export const Lib = 2\n'
 const Dist = 'pragmatic-server/dist'
+const DistBin = 'pragmatic-server/dist/bin'
+const DistLib = 'pragmatic-server/dist/lib'
+const LibCompiled = 'pragmatic-server/dist/lib/util.js'
 const Modules = 'pragmatic-server/node_modules'
 
 describe('ClosureCheck', () =>
@@ -129,5 +143,16 @@ describe('ClosureCheck', () =>
     {
         const report = FixtureWorkspace.Report(FixtureWorkspace.Make(['a'], [Modules], ImportsA))
         assert.deepEqual(report.Apps[0].Missing, ['pragmatic-server/dist/bin/app.js'])
+    })
+
+    it('requires the compiled output of every server module the entry reaches to sit inside a copied dir', () =>
+    {
+        const root = FixtureWorkspace.Make([], [DistBin], ImportsLib)
+        FixtureWorkspace.Source(root, LibSource, LibText)
+        const report = FixtureWorkspace.Report(root)
+        assert.deepEqual(report.Apps[0].Missing, [LibCompiled])
+        const covered = FixtureWorkspace.Make([], [DistBin, DistLib], ImportsLib)
+        FixtureWorkspace.Source(covered, LibSource, LibText)
+        assert.equal(FixtureWorkspace.Report(covered).Ok, true)
     })
 })

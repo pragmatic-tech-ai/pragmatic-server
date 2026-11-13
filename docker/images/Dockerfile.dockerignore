@@ -25,6 +25,7 @@
 **/node_modules
 **/dist
 **/dist-tenant-admin
+**/dist-ui-unpack
 **/.git
 **/*.log
 **/tests/**/tmp
