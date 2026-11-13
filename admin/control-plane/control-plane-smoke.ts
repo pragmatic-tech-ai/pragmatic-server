@@ -21,7 +21,9 @@ import { Repository, toJSON } from '@pragmatic-tech-ai/todl'
 import type { PackageDocument } from '@pragmatic-tech-ai/todl'
 import { RemoteBindMode } from '@pragmatic-tech-ai/todl/build-system-core'
 import { AdminProtocol, AppWriteStatus, CypherProtocol, GraphProtocol, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { ContributedPackageDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ContributedPackageDto, GraphLoadedDto, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { AccessLevel, BaseRole, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
+import { BundleBuilder } from '../../environments/seed/bundle.js'
 import type { BuiltHelloApp } from '../../src/tests/e2e/hello-app-builder.js'
 import { HelloAppBuilder } from '../../src/tests/e2e/hello-app-builder.js'
 import { DockerEnv } from '../../environments/seed/docker.js'
@@ -145,6 +147,9 @@ export class ControlPlaneSmoke
     private static readonly PromoteBaseConcept = 'Element'
     private static readonly PromoteInstanceSuffix = '.one'
     private static readonly PromoteCypher = 'MATCH (w:Widget) RETURN count(w) AS n'
+    private static readonly ConceptSeparator = '.'
+    private static readonly RootUnitId = 'root'
+    private static readonly CatalogConceptsWord = 'not in the security catalog; it lists: '
     private static readonly RepromoteSolutionId = 'smoke-solution-2'
     private static readonly RepromoteNamespace = 'smokepromo2'
     private static readonly RepromoteConcept = 'Gadget'
@@ -192,7 +197,10 @@ export class ControlPlaneSmoke
         PromoteCreateRuntime: 'promote: runtime env create succeeds and reaches running',
         PromoteResult: 'promote: promote returns 200 with graph name, package count and target env',
         PromoteLoaded: 'promote: loaded-graph on the runtime reflects the promoted graph',
+        PromoteSecurity: 'promote: runtime security setting makes the bootstrap admin System Administrator',
         PromoteCypherRead: 'promote: cypher query on the runtime env graph returns the promoted content',
+        EnvAppReaderSecurity: 'env-app: runtime security setting gives the reader the Reader role with read on the promoted concepts',
+        EnvAppRepromoteSecurity: 'env-app: runtime security setting extends the reader\'s read to the re-promoted concept',
         EnvAppAdminLogin: 'env-app: runtime admin login',
         EnvAppNoAdminPw: 'env-app: provisioned runtime admin password is present',
         EnvAppError: 'env-app: step failed with an unexpected error',
@@ -401,6 +409,9 @@ export class ControlPlaneSmoke
         const loaded = loadedRes.json as GraphLoadedDto | null | undefined
         const loadedOk = loadedRes.status === S.StatusOk && loaded?.name === graph && loaded.packages.length === S.PromotedPackageCount && (loaded.promotedAt ?? S.EmptyString) !== S.EmptyString
         this.Expect(L.PromoteLoaded, loadedOk, S.StatusWord + String(loadedRes.status))
+        // A Runtime environment created without a creator (as here) is left unseeded: tier-1 security denies every data
+        // read until an administrator is assigned, as one would in tenant-admin. Assign the bootstrap admin.
+        await this.SecureRuntime(dataRoot, rtRunning.hostPort as number, [], [], L.PromoteSecurity)
         await this.CheckRuntimeGraphRead(dataRoot, rtRunning.hostPort as number)
         await this.RemoteEnvAppRoundTrip(dataRoot, devRunning.hostPort as number, rtRunning.hostPort as number, makerToken)
 
@@ -412,7 +423,8 @@ export class ControlPlaneSmoke
 
     /**
      * FR6 proof: deploy an environment-bound remote app to the runtime env, then read the PROMOTED env graph as a real
-     * runtime account granted Viewer at Tenant scope (no OpenApplication). Re-promote a changed graph and re-read on the
+     * runtime account granted Viewer at Tenant scope and, in the tier-1 security setting, the Reader role with read on the
+     * promoted concepts (no OpenApplication). Re-promote a changed graph and re-read on the
      * same connection (live, no redeploy); a bundled app on the same tenant still reads its own per-app graph.
      */
     private async RemoteEnvAppRoundTrip(dataRoot: string, devPort: number, rtPort: number, makerToken: string): Promise<void>
@@ -456,6 +468,9 @@ export class ControlPlaneSmoke
                 adminConn.dispose()
             }
 
+            step = L.EnvAppReaderSecurity
+            await this.SecureRuntime(dataRoot, rtPort, [S.EnvReaderPrincipal], [S.PromotedConcept()], L.EnvAppReaderSecurity)
+
             step = L.EnvAppRead
             const readerToken = await seeder.Login(http, S.DemoTenant, S.EnvReaderEmail, S.EnvReaderPassword)
             readerClient = await PragmaticClient.ConnectAsync(wsUrl, { bearerToken: readerToken })
@@ -465,6 +480,9 @@ export class ControlPlaneSmoke
             step = L.EnvAppRepromote
             const repromoted = await this.Repromote(devPort, makerToken)
             this.Expect(L.EnvAppRepromote, repromoted.ok, repromoted.detail)
+            // The re-promoted concept is new to the environment, so its read is granted only now that it is deployed.
+            step = L.EnvAppRepromoteSecurity
+            await this.SecureRuntime(dataRoot, rtPort, [S.EnvReaderPrincipal], [S.PromotedConcept(), S.RepromotedConcept()], L.EnvAppRepromoteSecurity)
             step = L.EnvAppLiveRead
             const widgets = await ControlPlaneSmoke.ScalarCount(readerClient, S.PromoteCypher)
             const gadgets = await ControlPlaneSmoke.ScalarCount(readerClient, S.RepromoteCypher)
@@ -512,6 +530,89 @@ export class ControlPlaneSmoke
             return undefined
         }
         return seeder.Login(S.HttpPrefix + String(port), S.DemoTenant, S.AdminEmail, adminPw)
+    }
+
+    /**
+     * Extends the runtime environment's security setting as a tenant administrator would: the bootstrap admin becomes
+     * System Administrator, each reader is placed in the root business unit with the Reader role, and Reader reads each
+     * given concept organization-wide (the smoke's concepts have no owner, so organization is their only read depth). The
+     * demo users and assignments the environment already carries are kept.
+     */
+    private async SecureRuntime(dataRoot: string, port: number, readers: readonly string[], concepts: readonly string[], label: string): Promise<void>
+    {
+        const S = ControlPlaneSmoke
+        const seeder = new UserSeeder()
+        const token = await this.RuntimeAdminToken(dataRoot, port, seeder, label)
+        if (token === undefined)
+        {
+            return
+        }
+        const conn = await seeder.Connect(S.WsPrefix + String(port), S.DemoTenant, token)
+        try
+        {
+            const catalog = await conn.sendRequest(AdminProtocol.GetSecurityCatalog)
+            const names = catalog.concepts.map(c => c.name)
+            const resolved = concepts.map(short => names.find(n => n === short || n.endsWith(S.ConceptSeparator + short)))
+            if (resolved.some(n => n === undefined))
+            {
+                this.Expect(label, false, S.CatalogConceptsWord + names.join(S.Comma))
+                return
+            }
+            const current = await conn.sendRequest(AdminProtocol.GetSecurityModel)
+            const model = ControlPlaneSmoke.Secured(current, readers, resolved as string[])
+            const ack = await conn.sendRequest(AdminProtocol.SetSecurityModel, { securityModel: model })
+            this.Expect(label, ack.ok === true, S.AckOkWord + String(ack.ok))
+        }
+        finally
+        {
+            conn.dispose()
+        }
+    }
+
+    /** `current` plus the admin as System Administrator and `readers` as Readers with organization read on `concepts`. */
+    private static Secured(current: SecurityModelDto | undefined, readers: readonly string[], concepts: readonly string[]): SecurityModelDto
+    {
+        const S = ControlPlaneSmoke
+        const base: SecurityModelDto = current ?? { businessUnits: [], users: [], teams: [], roleAssignments: [], profileAssignments: [], roleOverrides: [], profileOverrides: [] }
+        const businessUnits = base.businessUnits.length > 0 ? base.businessUnits : [{ id: S.RootUnitId, name: S.DemoTenant }]
+        const root = (businessUnits.find(u => u.parent === undefined) ?? businessUnits[0]!).id
+        const placed = new Set([BundleBuilder.AdminPrincipalId, ...readers])
+        const users = [...base.users.filter(u => !placed.has(u.principalId)), ...[...placed].map(principalId => ({ principalId, businessUnitId: root }))]
+        const roleAssignments = base.roleAssignments
+            .filter(a => a.role !== BaseRole.SystemAdministrator && a.role !== BaseRole.Reader)
+            .concat(
+                { role: BaseRole.SystemAdministrator, principalIds: [BundleBuilder.AdminPrincipalId], teamIds: [] },
+                { role: BaseRole.Reader, principalIds: ControlPlaneSmoke.Merged(base, BaseRole.Reader, readers), teamIds: ControlPlaneSmoke.Teams(base, BaseRole.Reader) })
+            .filter(a => a.principalIds.length > 0 || a.teamIds.length > 0)
+        const overrides = base.roleOverrides
+            .filter(o => !(o.role === BaseRole.Reader && concepts.includes(o.concept) && o.action === PrivilegeAction.Read))
+            .concat(concepts.map(concept => ({ role: BaseRole.Reader, concept, action: PrivilegeAction.Read, level: AccessLevel.Organization })))
+        return { ...base, businessUnits, users, roleAssignments, roleOverrides: overrides }
+    }
+
+    /** The principals `role` already holds in `model`, plus `extra`, without duplicates. */
+    private static Merged(model: SecurityModelDto, role: string, extra: readonly string[]): string[]
+    {
+        const existing = model.roleAssignments.filter(a => a.role === role).flatMap(a => a.principalIds)
+        return [...new Set([...existing, ...extra])]
+    }
+
+    /** The teams `role` already holds in `model`. */
+    private static Teams(model: SecurityModelDto, role: string): string[]
+    {
+        return [...new Set(model.roleAssignments.filter(a => a.role === role).flatMap(a => a.teamIds))]
+    }
+
+    /** The concept the first promoted package defines; SecureRuntime resolves its full name in the security catalog. */
+    private static PromotedConcept(): string
+    {
+        return ControlPlaneSmoke.PromoteConcept
+    }
+
+    /** The concept the re-promoted package defines. */
+    private static RepromotedConcept(): string
+    {
+        return ControlPlaneSmoke.RepromoteConcept
     }
 
     /** Runs a single-row count query and returns the first cell (undefined when absent). */
