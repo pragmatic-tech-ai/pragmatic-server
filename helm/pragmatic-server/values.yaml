@@ -10,10 +10,14 @@ image:
   repository: ghcr.io/pragmatic-tech-ai/pragmatic-env-server
   # The gateway Deployment (cluster.enabled) runs this one.
   gatewayRepository: ghcr.io/pragmatic-tech-ai/pragmatic-env-gateway
-  # Set to the release version to run (e.g. "0.1.0"; both images carry the same :X.Y.Z tag). Empty falls back to the
-  # chart's appVersion. The images are private: supply a pull secret for ghcr.io in the cluster.
+  # The release version to run (e.g. "0.1.0"; both images carry the same :X.Y.Z tag). An empty tag falls back to
+  # Chart.appVersion, so per release either set this tag or bump appVersion in Chart.yaml: left as is, an upgrade keeps
+  # running the old version.
   tag: ""
   pullPolicy: IfNotPresent
+  # The images are private: names of docker-registry Secrets (in the release namespace) able to pull from ghcr.io, e.g.
+  # [ghcr-pull]. Wired into every workload's imagePullSecrets; the default empty list renders nothing.
+  pullSecrets: []
 
 service:
   type: ClusterIP

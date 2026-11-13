@@ -28,6 +28,12 @@ spec:
       {{- if .Values.drain.terminationGracePeriodSeconds }}
       terminationGracePeriodSeconds: {{ .Values.drain.terminationGracePeriodSeconds }}
       {{- end }}
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

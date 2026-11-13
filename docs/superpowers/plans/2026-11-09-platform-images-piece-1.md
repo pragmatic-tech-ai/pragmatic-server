@@ -21,6 +21,7 @@
 - Uniform version: every image of release `X.Y.Z` is tagged `:X.Y.Z` (plus `:git-<server sha>`).
 - Registry: `ghcr.io`, namespace `pragmatic-tech-ai`, private. Image names exactly: `pragmatic-platform-admin`, `pragmatic-platform-edge`, `pragmatic-env-server`, `pragmatic-env-gateway`, `pragmatic-hive-agent`, `pragmatic-tenant-admin`, `pragmatic-tenant-idp`, `pragmatic-ui-unpack`; descriptor repository `pragmatic-release`.
 - Only pragmatic-server is tagged; siblings build from their `main` head and their commits are recorded.
+  (Final-review note: ten siblings have only `master`, so `release.yml` clones each sibling's default-branch head, exactly as `ci.yml` does; "`main` head" here and in spec §4.2 means that.)
 - Commit identity: `-c user.name="Eugene Napryaglo" -c user.email="evgen.napryaglo@gmail.com"`; trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Stage by explicit path. Never push.
 
 ## Rulings against the spec (made while planning)
