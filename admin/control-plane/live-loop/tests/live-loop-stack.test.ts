@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { LiveLoopStack, LiveLoopStackNames, LiveLoopStackSeed } from '../live-loop-stack.js'
+import { LiveLoopStack, LiveLoopStackAgent, LiveLoopStackNames, LiveLoopStackSeed } from '../live-loop-stack.js'
 import type { ApiAnswer, IOperatorApi } from '../operator-api-client.js'
 
 class FakeOperatorApi implements IOperatorApi
@@ -65,6 +65,70 @@ describe('LiveLoopStackSeed', () =>
         const answers = SeedFx.Answers()
         answers['/api/tenants'] = { status: 201, body: {} }
         await assert.rejects(new LiveLoopStackSeed(new FakeOperatorApi(answers)).Seed(), /seed step failed: \/api\/tenants/)
+    })
+})
+
+/** An operator API that answers each call to a path from that path's queue (the last answer repeats). */
+class ScriptedOperatorApi implements IOperatorApi
+{
+    public readonly Calls: { method: string; path: string }[] = []
+
+    public constructor(private readonly answers: Record<string, ApiAnswer[]>)
+    {
+    }
+
+    public async Login(): Promise<void>
+    {
+    }
+
+    public async Call(method: string, path: string): Promise<ApiAnswer>
+    {
+        this.Calls.push({ method, path })
+        const queue = this.answers[method + ' ' + path] ?? []
+        return (queue.length > 1 ? queue.shift() : queue[0]) ?? { status: 404, body: undefined }
+    }
+}
+
+class AgentFx
+{
+    public static readonly Path = '/api/hives/e2e-hive/agent-install'
+    public static readonly Started: ApiAnswer = { status: 202, body: { state: 'installing', step: 'preparing-cluster' } }
+    public static readonly Waiting: ApiAnswer = { status: 200, body: { state: 'installing', step: 'waiting-for-check-in' } }
+    public static readonly Connected: ApiAnswer = { status: 200, body: { state: 'connected', step: 'waiting-for-check-in' } }
+
+    public static Agent(api: IOperatorApi, deadlineMs: number = 1_000): LiveLoopStackAgent
+    {
+        return new LiveLoopStackAgent(api, { pollMs: 1, deadlineMs })
+    }
+}
+
+describe('LiveLoopStackAgent', () =>
+{
+    it('starts the hive agent install and waits until the hive has checked in', async () =>
+    {
+        const api = new ScriptedOperatorApi({ ['POST ' + AgentFx.Path]: [AgentFx.Started], ['GET ' + AgentFx.Path]: [AgentFx.Waiting, AgentFx.Waiting, AgentFx.Connected] })
+        await AgentFx.Agent(api).Install()
+        assert.deepEqual(api.Calls.map(c => c.method), ['POST', 'GET', 'GET', 'GET'])
+        assert.ok(api.Calls.every(c => c.path === AgentFx.Path))
+    })
+
+    it('fails with the installer\'s own error when the install fails', async () =>
+    {
+        const failed: ApiAnswer = { status: 200, body: { state: 'failed', step: 'applying-agent', error: 'kubectl apply refused' } }
+        const api = new ScriptedOperatorApi({ ['POST ' + AgentFx.Path]: [AgentFx.Started], ['GET ' + AgentFx.Path]: [failed] })
+        await assert.rejects(AgentFx.Agent(api).Install(), /hive agent install failed at applying-agent: kubectl apply refused/)
+    })
+
+    it('fails naming the status when the install cannot start (e.g. the agent channel is off)', async () =>
+    {
+        const api = new ScriptedOperatorApi({ ['POST ' + AgentFx.Path]: [{ status: 409, body: { error: 'channel off' } }] })
+        await assert.rejects(AgentFx.Agent(api).Install(), /hive agent install did not start: status 409: channel off/)
+    })
+
+    it('gives up after its deadline when the hive never checks in', async () =>
+    {
+        const api = new ScriptedOperatorApi({ ['POST ' + AgentFx.Path]: [AgentFx.Started], ['GET ' + AgentFx.Path]: [AgentFx.Waiting] })
+        await assert.rejects(AgentFx.Agent(api, 20).Install(), /hive agent did not check in in time; last step waiting-for-check-in/)
     })
 })
 

@@ -4,9 +4,10 @@
  *
  *   - a kind cluster `pragmatic-e2e` (host ports 443 and the in-cluster registry's node port mapped, ingress-nginx with SSL
  *     passthrough, the server, registry and Postgres images loaded);
- *   - a control plane on :7000 (operator) and :7100 (tenant plane) whose state lives in ~/.pragmatic/e2e-stack/data, never in
- *     admin/control-plane/data;
- *   - client `e2e-client`, tenant `e2e` (owner `o@t.io`, its IdP container) and hive `e2e-hive` attached to the kind cluster;
+ *   - a control plane on :7000 (operator), :7100 (tenant plane) and :7001 (agent channel) whose state lives in
+ *     ~/.pragmatic/e2e-stack/data, never in admin/control-plane/data;
+ *   - client `e2e-client`, tenant `e2e` (owner `o@t.io`, its IdP container) and hive `e2e-hive` attached to the kind cluster,
+ *     with its agent installed (as the operator's install button does) and checked in;
  *   - the owner's one-time password replaced by the short test password, through the tenant plane as the owner would.
  *
  * `up` writes ~/.pragmatic/e2e-stack/stack.json (addresses, emails, password FILE paths, the IdP CA file) for the live-loop
@@ -15,7 +16,7 @@
  *
  *   npx tsx admin/control-plane/live-loop/live-loop-stack.ts up|down
  *
- * Requires docker, kind and kubectl on PATH, a FRESH `pragmatic-server:dev` image, free host ports 443, 30500, 7000 and 7100, and
+ * Requires docker, kind and kubectl on PATH, a FRESH `pragmatic-server:dev` image, free host ports 443, 30500, 7000, 7001 and 7100, and
  * the Playwright Chromium browser.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
@@ -65,6 +66,8 @@ export class LiveLoopStackNames
     public static readonly OperatorPassword = 'e2e-operator'
     public static readonly OperatorPort = 7000
     public static readonly TenantPlanePort = 7100
+    /** The agent channel the hive agent dials home to; its pods reach this machine at http://host.docker.internal:<port>. */
+    public static readonly AgentChannelPort = 7001
     public static readonly TenantBaseDomain = 'lvh.me'
     public static readonly PlatformAddress = 'http://localhost:7000'
     public static readonly OperatorBase = 'http://127.0.0.1:7000'
@@ -125,6 +128,75 @@ export class LiveLoopStackSeed
             throw new Error(S.FailedPrefix + path + S.StatusWord + String(answer.status))
         }
         return answer.body ?? {}
+    }
+}
+
+/** How long the agent install is polled, and how often. */
+export interface AgentInstallTiming
+{
+    pollMs: number
+    deadlineMs: number
+}
+
+/**
+ * Installs the hive agent the way the operator's "install agent" button does (POST /api/hives/ID/agent-install), then
+ * polls the install until the agent has dialed home, so the hive shows as checked in. Fails with the installer's own
+ * error, or when the hive has not checked in by the deadline.
+ */
+export class LiveLoopStackAgent
+{
+    public static readonly DefaultTiming: AgentInstallTiming = { pollMs: 2_000, deadlineMs: 600_000 }
+    private static readonly MethodPost = 'POST'
+    private static readonly MethodGet = 'GET'
+    private static readonly HivesPrefix = '/api/hives/'
+    private static readonly InstallSuffix = '/agent-install'
+    private static readonly StatusAccepted = 202
+    private static readonly StatusOk = 200
+    private static readonly StateKey = 'state'
+    private static readonly StepKey = 'step'
+    private static readonly ErrorKey = 'error'
+    private static readonly Connected = 'connected'
+    private static readonly Failed = 'failed'
+    private static readonly NotStartedPrefix = 'hive agent install did not start: status '
+    private static readonly FailedPrefix = 'hive agent install failed at '
+    private static readonly TimeoutPrefix = 'hive agent did not check in in time; last step '
+    private static readonly Separator = ': '
+
+    public constructor(private readonly api: IOperatorApi, private readonly timing: AgentInstallTiming = LiveLoopStackAgent.DefaultTiming)
+    {
+    }
+
+    public async Install(): Promise<void>
+    {
+        const A = LiveLoopStackAgent
+        const path = A.HivesPrefix + encodeURIComponent(LiveLoopStackNames.HiveId) + A.InstallSuffix
+        const started = await this.api.Call(A.MethodPost, path)
+        if (started.status !== A.StatusAccepted)
+        {
+            throw new Error(A.NotStartedPrefix + String(started.status) + A.Separator + String(started.body?.[A.ErrorKey] ?? ''))
+        }
+        const deadline = Date.now() + this.timing.deadlineMs
+        let step = String(started.body?.[A.StepKey] ?? '')
+        while (Date.now() < deadline)
+        {
+            await new Promise<void>(done => setTimeout(done, this.timing.pollMs))
+            const status = await this.api.Call(A.MethodGet, path)
+            if (status.status !== A.StatusOk)
+            {
+                continue
+            }
+            step = String(status.body?.[A.StepKey] ?? step)
+            const state = status.body?.[A.StateKey]
+            if (state === A.Connected)
+            {
+                return
+            }
+            if (state === A.Failed)
+            {
+                throw new Error(A.FailedPrefix + step + A.Separator + String(status.body?.[A.ErrorKey] ?? ''))
+            }
+        }
+        throw new Error(A.TimeoutPrefix + step)
     }
 }
 
@@ -200,8 +272,9 @@ export class LiveLoopStack
     private static readonly Steps = {
         Cluster: '[stack] kind cluster pragmatic-e2e (443 + registry node port) and images',
         Ingress: '[stack] ingress-nginx with SSL passthrough',
-        ControlPlane: '[stack] control plane on :7000 / :7100 (state in the stack folder)',
+        ControlPlane: '[stack] control plane on :7000 / :7100, agent channel :7001 (state in the stack folder)',
         Seed: '[stack] operator seed: client, tenant e2e (IdP), hive e2e-hive',
+        Agent: '[stack] hive agent install; the hive checks in over the agent channel on :7001',
         Owner: '[stack] owner sign-in and short test password',
         Done: '[stack] up; descriptor written to ',
         Down: '[stack] down',
@@ -292,6 +365,9 @@ export class LiveLoopStack
         const oneTime = await new LiveLoopStackSeed(api).Seed()
         this.secrets.push(oneTime)
 
+        console.log(L.Steps.Agent)
+        await new LiveLoopStackAgent(api).Install()
+
         console.log(L.Steps.Owner)
         const owner = await TenantOwnerSession.Open(N.TenantPlaneOrigin, N.OwnerEmail, oneTime)
         try
@@ -361,6 +437,7 @@ export class LiveLoopStack
             PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: N.TenantBaseDomain,
             PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME: L.HttpScheme,
             PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT: String(N.TenantPlanePort),
+            PRAGMATIC_AGENT_CHANNEL_PORT: String(N.AgentChannelPort),
         }
         const child = spawn(process.execPath, [resolve(here, ...L.TsxCliRelative), L.ServerScript], { cwd: controlPlaneDir, env, detached: true, stdio: ['ignore', log, log], windowsHide: true })
         writeFileSync(join(N.StackDir, L.PidFileName), String(child.pid), L.Utf8)
@@ -373,7 +450,7 @@ export class LiveLoopStack
     {
         const L = LiveLoopStack
         const probe = new NetPortProbe()
-        for (const port of [LiveLoopStackNames.OperatorPort, LiveLoopStackNames.TenantPlanePort])
+        for (const port of [LiveLoopStackNames.OperatorPort, LiveLoopStackNames.TenantPlanePort, LiveLoopStackNames.AgentChannelPort])
         {
             if (!await probe.Free(port))
             {
