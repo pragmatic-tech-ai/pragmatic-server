@@ -1,7 +1,7 @@
 /**
  * GATED real-cluster smoke for the in-cluster per-tenant IdP apply. NOT part of `tsx --test`.
  *
- * Requires a kind cluster (default Docker Desktop's, `docker-desktop`; see SmokeCluster) and the `pragmatic-server:dev` image
+ * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster) and the `pragmatic-server:dev` image
  * (which carries the `pragmatic-idpd` binary the IdP pod runs) in the local image store. Run with:
  *
  *   npx tsx admin/control-plane/in-cluster-idp-smoke.ts

@@ -1,7 +1,7 @@
 /**
  * GATED real-login browser e2e smoke (SP-HIVE-7 deferral #11). NOT a *.test.ts and NOT in any test glob.
  *
- * Requires a kind cluster (default Docker Desktop's, `docker-desktop`; see SmokeCluster), a FRESH `pragmatic-server:dev`
+ * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster), a FRESH `pragmatic-server:dev`
  * image in the local image store (the per-tenant IdP container and the hive workload both run from it), and the
  * Playwright Chromium browser. Run with:
  *

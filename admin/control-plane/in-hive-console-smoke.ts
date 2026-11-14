@@ -1,10 +1,12 @@
 /**
- * GATED live smoke for the in-hive tenant console on a local kind cluster (default `docker-desktop`; see SmokeCluster). OPERATOR-RUN ONLY: NOT a *.test.ts, NOT part of
+ * GATED live smoke for the in-hive tenant console on a local kind cluster (default `kind-pragmatic-dev`; see SmokeCluster). OPERATOR-RUN ONLY: NOT a *.test.ts, NOT part of
  * `tsx --test` / `npm test`, never executed by CI, excluded from the tenant-admin build by its `-smoke.ts` name.
  *
  * Requires: a control plane running from this checkout (operator API on --control-plane, agent channel on), hive
- * `default-pragmatic-hive` (tenant `pragmatic-default`) with its agent connected on context `docker-desktop`, a FRESH
- * `pragmatic-server:dev` image in the host docker store (the smoke streams it into the docker-desktop node), host port 443 free,
+ * `default-pragmatic-hive` (tenant `pragmatic-default`) with its agent connected on that context, a FRESH
+ * `pragmatic-server:dev` image in the host docker store (the smoke streams it into the cluster's node), an ingress answering on
+ * 127.0.0.1:443 (the dev cluster maps no host port, since dev-up's Caddy holds :443: use a cluster created with a :443 mapping,
+ * e.g. the live-loop stack's `kind-pragmatic-e2e`, or Docker Desktop's `docker-desktop`),
  * openssl on PATH, and the Playwright Chromium browser. Desktop discovery must answer, so the control plane needs a tenant-plane URL
  * (PRAGMATIC_DESKTOP_TENANT_PLANE_URL, or both PRAGMATIC_TENANT_ADMIN_PORT and PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN); without one
  * discovery answers 503 and the smoke stops at its discovery preflight. The console reaches the agent channel at the control plane's

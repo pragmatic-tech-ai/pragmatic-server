@@ -1,12 +1,14 @@
 import { spawn } from 'node:child_process'
 import { KubectlError } from './kubectl.js'
+import { LocalDevCluster } from './local-dev-cluster.js'
 
 /**
- * Loads host docker image refs into the kind-based Docker Desktop Kubernetes node's containerd store, the
- * same way `kind load docker-image` does (`docker save <refs> | docker exec -i <node> ctr -n k8s.io images import -`).
+ * Loads host docker image refs into a kind node's containerd store (by default the local development cluster's,
+ * LocalDevCluster), the same way `kind load docker-image` does
+ * (`docker save <refs> | docker exec -i <node> ctr -n k8s.io images import -`).
  *
- * Docker Desktop's built-in Kubernetes runs on a kind node (providerID `kind://docker/desktop/desktop-control-plane`)
- * whose containerd image store is SEPARATE from the host docker store. A host `docker tag` is invisible to the node,
+ * A kind node (Docker Desktop's built-in Kubernetes is one too, node `desktop-control-plane`) keeps a containerd image
+ * store SEPARATE from the host docker store. A host `docker tag` is invisible to the node,
  * and because the server Deployment pulls with `imagePullPolicy: IfNotPresent` and the local hive has no registry to
  * pull from, the node keeps serving whatever bits it first cached for a tag -- so a freshly rebuilt `pragmatic-server`
  * never reaches a pod that references a tag the node already holds (it runs the stale cached copy instead). Streaming
@@ -17,8 +19,7 @@ import { KubectlError } from './kubectl.js'
  */
 export class KindImageLoader
 {
-    // Docker Desktop fixes the kind node container name; the smokes already hard-assume the `docker-desktop` context.
-    private static readonly DefaultNode = 'desktop-control-plane'
+    private static readonly DefaultNode = LocalDevCluster.Node
     private static readonly Docker = 'docker'
     private static readonly SaveVerb = 'save'
     private static readonly ExecVerb = 'exec'

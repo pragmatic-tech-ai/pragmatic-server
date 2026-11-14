@@ -1,7 +1,7 @@
 /**
  * GATED real-cluster smoke for the SP-HIVE-4 rollout PULL path. NOT part of `tsx --test`.
  *
- * Requires a kind cluster (default Docker Desktop's, `docker-desktop`; see SmokeCluster), docker, and a
+ * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster), docker, and a
  * `pragmatic-server:dev` image built AFTER the pull agent landed (it must contain
  * `dist/bin/pragmatic-agentd.js`; rebuild with the invocation in docker/Dockerfile's header). Run with:
  *

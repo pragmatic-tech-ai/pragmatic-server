@@ -1,15 +1,19 @@
+import { LocalDevCluster } from './local-dev-cluster.js'
+
 /**
- * Which local cluster the gated real-cluster smokes run against. They default to Docker Desktop's built-in Kubernetes
- * (context `docker-desktop`, a kind node named `desktop-control-plane`), which is itself a kind cluster; any other kind
- * cluster works the same way. Set PRAGMATIC_SMOKE_CONTEXT to its kubectl context (e.g. `kind-pragmatic-images`) and the
- * node container follows (`<name>-control-plane`); PRAGMATIC_SMOKE_NODE overrides the node when it does not.
+ * Which local cluster the gated real-cluster smokes run against. They default to the local development kind cluster
+ * (LocalDevCluster: context `kind-pragmatic-dev`, node `pragmatic-dev-control-plane`; `dev/dev-cluster.ts up` creates
+ * it). Any other kind cluster works the same way. Set PRAGMATIC_SMOKE_CONTEXT to its kubectl context (e.g.
+ * `kind-pragmatic-images`) and the node container follows (`<name>-control-plane`); PRAGMATIC_SMOKE_NODE overrides the
+ * node when it does not. Docker Desktop's built-in Kubernetes still works: context `docker-desktop`, node
+ * `desktop-control-plane`.
  */
 export class SmokeCluster
 {
     public static readonly ContextEnv = 'PRAGMATIC_SMOKE_CONTEXT'
     public static readonly NodeEnv = 'PRAGMATIC_SMOKE_NODE'
-    public static readonly DefaultContext = 'docker-desktop'
-    public static readonly DefaultNode = 'desktop-control-plane'
+    public static readonly DefaultContext = LocalDevCluster.Context
+    public static readonly DefaultNode = LocalDevCluster.Node
     private static readonly KindContextPrefix = 'kind-'
     private static readonly ControlPlaneSuffix = '-control-plane'
 

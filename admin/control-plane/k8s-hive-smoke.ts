@@ -1,8 +1,8 @@
 /**
  * GATED real-cluster smoke for the k8s Hive Orchestrator. NOT part of `tsx --test`.
  *
- * Requires a kind cluster (default Docker Desktop's, `docker-desktop`; see SmokeCluster) and the
- * `pragmatic-server:dev` image in the local docker image store (shared with the cluster;
+ * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster) and the
+ * `pragmatic-server:dev` image on the cluster's node (`dev/dev-cluster.ts up` loads it there;
  * the manifest uses imagePullPolicy IfNotPresent). Run with:
  *
  *   npx tsx admin/control-plane/k8s-hive-smoke.ts

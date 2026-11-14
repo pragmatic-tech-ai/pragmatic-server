@@ -1,7 +1,7 @@
 /**
  * GATED real-cluster smoke for the extracted tenant-admin container. NOT part of `tsx --test`.
  *
- * Requires a local Kubernetes context (default `docker-desktop`; override with PRAGMATIC_SMOKE_CONTEXT) and a
+ * Requires a local Kubernetes context (default `kind-pragmatic-dev`; override with PRAGMATIC_SMOKE_CONTEXT) and a
  * `pragmatic-server:dev` image built AFTER the tenant-admin packaging landed (it must contain
  * `dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-admind.js` and `dist-tenant-admin/admin/tenant-portal/dist`; rebuild with
  * the invocation in docker/Dockerfile's header, and on a kind cluster `kind load docker-image pragmatic-server:dev`).

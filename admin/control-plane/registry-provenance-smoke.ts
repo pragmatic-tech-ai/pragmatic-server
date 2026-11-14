@@ -1,7 +1,7 @@
 /**
  * GATED real-cluster smoke for SP-HIVE-3 image provenance. NOT part of `tsx --test`.
  *
- * Requires a kind cluster (default Docker Desktop's, `docker-desktop`; see SmokeCluster), docker, and the
+ * Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster), docker, and the
  * `pragmatic-server:dev` image in the local docker image store. Run with:
  *
  *   npx tsx admin/control-plane/registry-provenance-smoke.ts

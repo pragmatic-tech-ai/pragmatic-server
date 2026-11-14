@@ -22,9 +22,11 @@ echo "[seed] tenant acme (provisions its IdP container; this can take ~30s)"
 RESP="$(curl -sS -b "$JAR" $ORIGIN -X POST "$OP/api/tenants" -H 'Content-Type: application/json' \
 	-d '{"id":"acme","clientId":"dev-client","displayName":"Acme","ownerEmail":"owner@acme.test"}')"
 
-echo "[seed] local hive acme-hive (backend=local, mode=attach)"
+# The hive attaches to the dev kind cluster (dev-up.sh creates it) and pulls the images dev-cluster.ts loaded onto its
+# node, as the live-loop e2e hive does (a host registry on localhost:5000 is not reachable from a kind node).
+echo "[seed] local hive acme-hive (backend=local, mode=attach, cluster kind-pragmatic-dev)"
 curl -sS -b "$JAR" $ORIGIN -X POST "$OP/api/hives" -H 'Content-Type: application/json' \
-	-d '{"id":"acme-hive","tenantId":"acme","displayName":"Acme Local Hive","cluster":{"backend":"local","mode":"attach"},"registry":{"mode":"provision"}}' >/dev/null || true
+	-d '{"id":"acme-hive","tenantId":"acme","displayName":"Acme Local Hive","cluster":{"backend":"local","mode":"attach","configRef":"kind-pragmatic-dev"},"registry":{"mode":"attach"}}' >/dev/null || true
 
 OWNER_PW="$(printf '%s' "$RESP" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const o=JSON.parse(s);process.stdout.write(o?.owner?.password??"")}catch{process.stdout.write("")}})')"
 {

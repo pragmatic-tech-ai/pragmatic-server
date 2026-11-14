@@ -12,7 +12,15 @@ admin panel over TLS on a real subdomain, and a seeded tenant with a local hive.
   so every tenant subdomain works with no hosts-file edits.
 - **Tenant IdP:** each tenant runs its own `pragmatic-idp` container (acme: `https://host.docker.internal:12100`).
   Login redirects from the tenant panel land on it.
-- **Local hive:** `acme-hive` (`backend=local, mode=attach`) bound to tenant `acme`, on docker-desktop Kubernetes.
+- **Local hive:** `acme-hive` (`backend=local, mode=attach`) bound to tenant `acme`, on the dev kind cluster
+  `pragmatic-dev` (context `kind-pragmatic-dev`). `dev-up.sh` creates it when missing and loads `pragmatic-server:dev`,
+  `registry:2` and `postgres:16` onto its node on every run, so a rebuilt server image reaches the hive. It maps no host
+  port, so it runs beside Caddy and the live-loop e2e cluster. Docker Desktop's built-in Kubernetes is not used; you can
+  turn it off. Manage the cluster on its own with `npx tsx admin/control-plane/dev/dev-cluster.ts up|down` (needs
+  `kind` on PATH). A hive seeded before this change keeps its stored settings: one without a `configRef` now lands on
+  `kind-pragmatic-dev`, but a `registry.mode` of `provision` still points its workloads at `localhost:5000`, which a kind
+  node cannot reach. Recreate such a hive with `registry.mode` `attach` (re-running `dev-seed.sh` does not
+  replace an existing hive).
 
 Durable state lives in `admin/control-plane/data/` (gitignored): tenants, clients, hives, the IdP registry,
 sessions, and the master key. Stop and restart anytime — state (and the IdP container + volume) persists.

@@ -1,6 +1,6 @@
 /**
  * GATED real-cluster smoke for in-cluster environment creation through the tenant-admin orchestration
- * path. NOT part of `tsx --test`. Requires a kind cluster (default `docker-desktop`; see SmokeCluster) and the
+ * path. NOT part of `tsx --test`. Requires a kind cluster (default `kind-pragmatic-dev`; see SmokeCluster) and the
  * `pragmatic-server:dev` image in the node's image store. Run with:
  *
  *   npx tsx admin/control-plane/in-cluster-env-create-smoke.ts

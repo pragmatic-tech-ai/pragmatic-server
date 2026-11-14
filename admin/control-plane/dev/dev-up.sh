@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Brings up the durable local dev deployment:
+#   - the dev kind cluster `pragmatic-dev` (context kind-pragmatic-dev) the local hive runs on
 #   - operator (platform admin) panel  : http://127.0.0.1:7000     (loopback)
 #   - tenant admin panel               : https://<tenant>.lvh.me   (Caddy :443 -> tenant plane :7100)
 # Durable state lives under admin/control-plane/data (gitignored). Re-run anytime; state persists.
@@ -11,6 +12,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CP="$(cd "$HERE/.." && pwd)"
 CERTS_WIN="$(cd "$HERE/certs" && pwd -W)"
 CADDYFILE_WIN="$(cd "$HERE" && pwd -W)/Caddyfile"
+
+# 0) The dev kind cluster `pragmatic-dev` the local hive runs on (created when missing; the images re-loaded each run).
+(cd "$CP" && npx tsx dev/dev-cluster.ts up)
 
 # 1) Caddy TLS terminator on :443 -> tenant plane (host.docker.internal:7100).
 docker rm -f pragmatic-dev-caddy >/dev/null 2>&1 || true

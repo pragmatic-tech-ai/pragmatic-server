@@ -11,10 +11,10 @@ class SmokeClusterFx
     public static readonly Empty = ''
 }
 
-test('with nothing set, the smokes target Docker Desktop\'s built-in Kubernetes as before', () =>
+test('with nothing set, the smokes target the local development kind cluster', () =>
 {
-    assert.equal(SmokeCluster.Context({}), SmokeCluster.DefaultContext)
-    assert.equal(SmokeCluster.Node({}), SmokeCluster.DefaultNode)
+    assert.equal(SmokeCluster.Context({}), 'kind-pragmatic-dev')
+    assert.equal(SmokeCluster.Node({}), 'pragmatic-dev-control-plane')
 })
 
 test('an empty setting counts as unset', () =>

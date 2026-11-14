@@ -59,10 +59,10 @@ test('configRef is used as the kubectl context', () =>
     assert.equal((orchestrator.Kubectl as KubectlCli).Context, 'kind-hive')
 })
 
-test('without a configRef the default docker-desktop context is used', () =>
+test('without a configRef the local development kind cluster is used', () =>
 {
     const orchestrator = new HiveOrchestratorFactory().For(FactoryFixture.Hive(HiveBackend.Local, InfraMode.Attach)) as KubectlHiveOrchestrator
-    assert.equal((orchestrator.Kubectl as KubectlCli).Context, 'docker-desktop')
+    assert.equal((orchestrator.Kubectl as KubectlCli).Context, 'kind-pragmatic-dev')
 })
 
 test('the wired registry rewrites images to the hive effective registry', () =>

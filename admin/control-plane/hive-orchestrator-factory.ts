@@ -7,6 +7,7 @@ import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KubectlCli } from './kubectl.js'
 import { KubectlHiveOrchestrator } from './kubectl-hive-orchestrator.js'
+import { LocalDevCluster } from './local-dev-cluster.js'
 import { PinnedImageVerifier } from './pinned-image-verifier.js'
 import { HiveBackend, InfraMode } from './platform-records.js'
 import type { HiveRecord } from './platform-records.js'
@@ -20,7 +21,8 @@ import type { HiveRecord } from './platform-records.js'
  */
 export class HiveOrchestratorFactory
 {
-    private static readonly DefaultLocalContext = 'docker-desktop'
+    /** An attached Local hive without a configRef runs on the local development kind cluster. */
+    private static readonly DefaultLocalContext = LocalDevCluster.Context
 
     private static readonly DefaultDataRoot = resolve('.pragmatic-data/control-plane')
 
