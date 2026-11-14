@@ -2,6 +2,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { PragmaticAppManifestParser } from './pragmatic-app-manifest.js'
 import type { PragmaticAppManifest } from './pragmatic-app-manifest.js'
+import type { IAppSessionCheck } from './app-session-check.js'
+import { SignInPage } from '../sign-in-page.js'
 
 /** The slice of a per-tenant server the endpoint needs: its applications storage. */
 export interface IAppStorageSource
@@ -29,7 +31,8 @@ interface AppRoute
  * Serves a deployed app's SPA shell and UI bundle at `GET /app/<tenant>/<app>/...`, same-origin so the session cookie and
  * the app's own same-origin WebSocket reach this host. The shell never carries a tenant (the tenant is resolved from the
  * session cookie at WS auth); only the non-secret app name is injected. Only files the manifest lists (`ui.entry` and
- * `ui.assets`) are served, every path segment is validated, and anything else answers a bare 404.
+ * `ui.assets`) are served, every path segment is validated, and anything else answers a bare 404. With a session check, a
+ * page load without a session for the environment is redirected (302) to the environment's sign-in page, which comes back here.
  */
 export class AppServingEndpoint
 {
@@ -64,6 +67,9 @@ export class AppServingEndpoint
     private static readonly Utf8 = 'utf8'
     private static readonly OkStatus = 200
     private static readonly RedirectStatus = 308
+    /** Temporary: once signed in, the same URL serves the page. */
+    private static readonly SignInStatus = 302
+    private static readonly NoStore = 'no-store'
     private static readonly NotFoundStatus = 404
     private static readonly MethodNotAllowedStatus = 405
     private static readonly OctetStream = 'application/octet-stream'
@@ -89,10 +95,13 @@ export class AppServingEndpoint
     ])
 
     private readonly servers: IAppServerResolver
+    private readonly sessions: IAppSessionCheck | undefined
 
-    public constructor(servers: IAppServerResolver)
+    /** `sessions`: when given, a page load without a session for the environment is sent to its sign-in page. */
+    public constructor(servers: IAppServerResolver, sessions?: IAppSessionCheck)
     {
         this.servers = servers
+        this.sessions = sessions
     }
 
     /** True when `path` belongs to this endpoint (the caller must not route it further). */
@@ -155,6 +164,16 @@ export class AppServingEndpoint
         if (!isAsset && !isShell)
         {
             this.Fail(res, AppServingEndpoint.NotFoundStatus)
+            return
+        }
+        // The page needs a session (its WebSocket is refused without one); its assets are public code and are not gated.
+        if (isShell && this.sessions !== undefined && !await this.sessions.HasSession(req, route.tenant))
+        {
+            res.writeHead(AppServingEndpoint.SignInStatus, {
+                [AppServingEndpoint.LocationHeader]: SignInPage.Location(route.tenant, req.url ?? AppServingEndpoint.RoutePrefix),
+                [AppServingEndpoint.CacheControlHeader]: AppServingEndpoint.NoStore,
+            })
+            res.end()
             return
         }
         const file = isShell ? ui.entry : route.rest

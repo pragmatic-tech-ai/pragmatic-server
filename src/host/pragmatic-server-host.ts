@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { AppServingEndpoint } from './apps/app-serving-endpoint.js'
+import { CookieAppSessionCheck } from './apps/app-session-check.js'
 import { createServer } from 'node:http'
 import { createServer as httpsCreateServer } from 'node:https'
 import type { Server as HttpsServer } from 'node:https'
@@ -587,7 +588,7 @@ export class PragmaticServerHost
             }
             if (AppServingEndpoint.Matches(path))
             {
-                await new AppServingEndpoint(this.registry).Handle(req, res)
+                await new AppServingEndpoint(this.registry, new CookieAppSessionCheck(this.browserAuth, this.registry)).Handle(req, res)
                 return
             }
             const environmentId = this.TenantHint(req)

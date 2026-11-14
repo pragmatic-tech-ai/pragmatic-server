@@ -10,6 +10,7 @@ import { NullAccessAuditSink, AuditSurface, AuditOutcome } from './access-audit.
 import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
 import type { RequestInstrumentation } from '../observability/request-instrumentation.js'
 import type { ICallerCredentialRevoker } from './connectors/caller-credentials.js'
+import { SignInPage } from './sign-in-page.js'
 
 /** The OIDC surface the auth endpoint needs: begin an authorization and look up the OIDC authenticator.
  *  Satisfied structurally by the cloud OIDC identity-provider packs. */
@@ -74,6 +75,12 @@ export class AuthHttpEndpoint
     private static readonly ErrorKey = 'error'
     private static readonly CacheControlHeader = 'Cache-Control'
     private static readonly NoStore = 'no-store'
+    private static readonly HtmlContentType = 'text/html; charset=utf-8'
+    private static readonly CspHeader = 'Content-Security-Policy'
+    private static readonly NoSniffHeader = 'X-Content-Type-Options'
+    private static readonly NoSniffValue = 'nosniff'
+    private static readonly ReferrerPolicyHeader = 'Referrer-Policy'
+    private static readonly NoReferrer = 'no-referrer'
 
     private readonly pack: ServerIdentityPack
     private readonly tenant: Tenant
@@ -148,6 +155,16 @@ export class AuthHttpEndpoint
             await this.Login(req, res, true)
             return
         }
+        if (url.pathname === SignInPage.Path)
+        {
+            if (method !== AuthHttpEndpoint.GetMethod)
+            {
+                this.WriteJson(res, AuthHttpEndpoint.MethodNotAllowedStatus, AuthHttpEndpoint.MethodNotAllowedError)
+                return
+            }
+            this.SignIn(url, res)
+            return
+        }
         if (url.pathname === AuthHttpEndpoint.OidcBeginPath)
         {
             if (this.oidc === undefined)
@@ -214,6 +231,19 @@ export class AuthHttpEndpoint
             return
         }
         this.WriteJson(res, AuthHttpEndpoint.NotFoundStatus, AuthHttpEndpoint.NotFoundError)
+    }
+
+    /** The sign-in page for this environment (its own id, never the query's text); the return path only if same-origin. */
+    private SignIn(url: URL, res: ServerResponse): void
+    {
+        const html = SignInPage.Render(this.tenant.Id, SignInPage.SafeReturn(url.searchParams.get(SignInPage.ReturnParam)))
+        res.statusCode = AuthHttpEndpoint.OkStatus
+        res.setHeader(AuthHttpEndpoint.ContentTypeHeader, AuthHttpEndpoint.HtmlContentType)
+        res.setHeader(AuthHttpEndpoint.CacheControlHeader, AuthHttpEndpoint.NoStore)
+        res.setHeader(AuthHttpEndpoint.CspHeader, SignInPage.ContentSecurityPolicy)
+        res.setHeader(AuthHttpEndpoint.NoSniffHeader, AuthHttpEndpoint.NoSniffValue)
+        res.setHeader(AuthHttpEndpoint.ReferrerPolicyHeader, AuthHttpEndpoint.NoReferrer)
+        res.end(html)
     }
 
     /** Cookie-authenticated whoami: 200 with the session's tenant + principal, else a clean 401 (never echoes the cookie). */
