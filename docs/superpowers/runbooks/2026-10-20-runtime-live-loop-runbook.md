@@ -22,11 +22,13 @@ The test runs against a dedicated stack. It never touches the developer's own co
   - the `pragmatic-server:dev`, `registry:2` and `postgres:16` images loaded.
 - A control plane:
   - The operator API is on `http://localhost:7000`. The tenant plane, which serves as the tenant's console, is on `http://e2e.lvh.me:7100`.
+  - The agent channel is on port 7001. The hive agent's pods dial home to it at `http://host.docker.internal:7001`.
   - Its state lives in `~/.pragmatic/e2e-stack/data`.
 - Through the operator API:
   - client `e2e-client`;
   - tenant `e2e` with owner `o@t.io`, plus its IdP container;
-  - hive `e2e-hive`, attached to the kind cluster.
+  - hive `e2e-hive`, attached to the kind cluster;
+  - the hive agent, installed as the platform admin's install button does it. `up` waits until the hive has checked in.
 - The owner's one-time password, replaced through the tenant plane with the short test password `e2e-password`. The tenant plane requires at least 12 characters.
 
 `up` writes `~/.pragmatic/e2e-stack/stack.json`. It records:
@@ -38,7 +40,7 @@ The test runs against a dedicated stack. It never touches the developer's own co
 
 No password is ever printed. Be honest about what this protects: the owner and operator passwords are fixed test values in the source (`LiveLoopStackNames`). The files keep them out of command lines and logs, nothing more, and the `0600` mode they are written with has no effect on Windows. The reader and ungranted passwords are random per run.
 
-The stack is written for Windows. Processes are stopped with `taskkill /T` there, and with a signal to their process group elsewhere. `up` refuses to start when port 7000 or 7100 is already taken, so it never seeds someone else's control plane.
+The stack is written for Windows. Processes are stopped with `taskkill /T` there, and with a signal to their process group elsewhere. `up` refuses to start when port 7000, 7001 or 7100 is already taken, so it never seeds someone else's control plane.
 
 `down` removes everything again: it stops the control plane, removes the IdP container and volume, and deletes the cluster and the stack folder.
 
@@ -60,7 +62,7 @@ The stack is written for Windows. Processes are stopped with `taskkill /T` there
 
 4. **Build Plexus** so `apps/plexus/out/main/index.js` exists. From `apps/plexus`, run `npm run build`.
 
-5. **Free the host ports** 443, 30500, 7000 and 7100. In particular, do not run `dev-up.sh` at the same time, because it also uses 443 and 7000.
+5. **Free the host ports** 443, 30500, 7000, 7001 and 7100. In particular, do not run `dev-up.sh` at the same time, because it also uses 443 and 7000.
 
 ## Run
 
