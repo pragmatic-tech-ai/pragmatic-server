@@ -18,7 +18,7 @@ export enum ScopeAxis
  */
 export class DevScopeFx
 {
-    public static readonly TenantId = 't1'
+    public static readonly EnvironmentId = 't1'
     public static readonly P1 = 'p1'
     public static readonly P2 = 'p2'
     public static readonly TeamA = 'team-a'
@@ -50,9 +50,9 @@ export class DevScopeFx
 
     public static Context(principalId: string, claims: ReadonlyMap<string, string> = new Map(), groups: readonly string[] = []): AccessContext
     {
-        const realm = new Realm(DevScopeFx.TenantId, RealmKind.SelfHosted, 'Tenant One')
-        const principal = new Principal(principalId, DevScopeFx.TenantId, PrincipalKind.User, claims, groups)
-        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Realm, DevScopeFx.TenantId, []))]
+        const realm = new Realm(DevScopeFx.EnvironmentId, RealmKind.SelfHosted, 'Tenant One')
+        const principal = new Principal(principalId, DevScopeFx.EnvironmentId, PrincipalKind.User, claims, groups)
+        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Realm, DevScopeFx.EnvironmentId, []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 

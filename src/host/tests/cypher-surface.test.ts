@@ -8,7 +8,7 @@ import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-s
 // SnapshotReader is not re-exported from the todl package root or an exports subpath; reach the built module directly.
 import { SnapshotReader } from '../../../node_modules/@pragmatic-tech-ai/todl/dist/reflection-client/index.js'
 import { CypherLimits } from '../../config/cypher-limits.js'
-import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
+import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
@@ -71,7 +71,7 @@ class CypherSurfaceFixture
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, CypherSurfaceFixture.Permissive(), undefined, server.DevCypher(), undefined, undefined, undefined, undefined, undefined, options.limits, TenantPurpose.Development)
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, CypherSurfaceFixture.Permissive(), undefined, server.DevCypher(), undefined, undefined, undefined, undefined, undefined, options.limits, EnvironmentPurpose.Development)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {
@@ -119,7 +119,7 @@ class CypherSurfaceFixture
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, CypherSurfaceFixture.Permissive(), undefined, server.DevCypher(), undefined, undefined, undefined, undefined, undefined, limits, TenantPurpose.Development)
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, CypherSurfaceFixture.Permissive(), undefined, server.DevCypher(), undefined, undefined, undefined, undefined, undefined, limits, EnvironmentPurpose.Development)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

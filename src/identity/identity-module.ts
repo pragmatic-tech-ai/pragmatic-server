@@ -7,7 +7,7 @@ import { FetchHttpClient, InMemoryOidcFlowStateStore, OidcSettingKeys } from '@p
 import type { OidcIdentityProviderPackBase } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { IdentityPackResolver } from './identity-pack-resolver.js'
 import { ServerBootstrap } from './server-bootstrap.js'
-import { TenantSecretProvisioner } from './tenant-secret-provisioner.js'
+import { EnvironmentSecretProvisioner } from './environment-secret-provisioner.js'
 import type { PragmaticServerIdentityOptions, OidcServerOptions } from '../pragmatic-server.js'
 import type { PlatformServices } from '../platform/platform-services.js'
 
@@ -29,7 +29,7 @@ export class IdentityModule
 
     public Realm(): Realm
     {
-        return new Realm(this.options.tenant.id, RealmKind.SelfHosted, this.options.tenant.displayName)
+        return new Realm(this.options.environment.id, RealmKind.SelfHosted, this.options.environment.displayName)
     }
 
     public async ComposeAsync(services: ServiceProvider): Promise<{ pack: ServerIdentityPack; realm: Realm; oidc: OidcIdentityProviderPackBase | undefined }>
@@ -38,13 +38,13 @@ export class IdentityModule
         const masterKey = this.platform.ResolveMasterKey(this.options.masterKey)
         const hasher = new Argon2PasswordHasher()
         const stores = await this.platform.CreateIdentityStores(this.options.identityRoot, masterKey)
-        const tenantConfig = await this.platform.CreateRealmConfigStore(this.options.identityRoot)
+        const environmentConfig = await this.platform.CreateRealmConfigStore(this.options.identityRoot)
         const seed = this.options.identityConfig ?? IdentityModule.LegacyOrLocal(this.options.oidc)
-        const stored = await tenantConfig.Get(realm.Id)
+        const stored = await environmentConfig.Get(realm.Id)
         const config = stored ?? seed
         if (stored === null)
         {
-            await tenantConfig.Save(realm.Id, seed)
+            await environmentConfig.Save(realm.Id, seed)
         }
         if (this.options.provisionedSecrets !== undefined)
         {
@@ -63,12 +63,12 @@ export class IdentityModule
                 refs.push(...this.options.additionalSecretRefs)
             }
             const unique = [...new Set(refs)]
-            await new TenantSecretProvisioner(this.options.provisionedSecrets).EnsureAsync(stores.Secrets, unique)
+            await new EnvironmentSecretProvisioner(this.options.provisionedSecrets).EnsureAsync(stores.Secrets, unique)
         }
         const resolver = new IdentityPackResolver(this.options.httpClient ?? new FetchHttpClient(), this.options.flowStateStore ?? new InMemoryOidcFlowStateStore())
         const resolved = resolver.Resolve(realm, config, stores, this.options.machine)
         const pack = resolved.Pack
-        services.registerInstance(RealmConfigStoreKey, tenantConfig)
+        services.registerInstance(RealmConfigStoreKey, environmentConfig)
         const registry = await ConfigurableIdentityProviderRegistry.SingleRealm(realm, config, pack)
         services.registerInstance(IdentityProviderRegistryKey, registry)
         services.registerInstance(SecretStoreKey, pack.Secrets)

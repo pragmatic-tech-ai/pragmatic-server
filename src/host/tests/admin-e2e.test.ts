@@ -9,17 +9,17 @@ import { WebSocket } from 'ws'
 import { AdminProtocol, WsMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, createMessageConnection, NullLogger, ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 
 class AdminHostFixture
 {
     private static readonly KeyEnv = 'PS_ADMIN_E2E_KEY'
-    private static readonly TenantId = 't1'
+    private static readonly EnvironmentId = 't1'
     private static readonly OwnerSubject = 'owner1'
     private static readonly ViewerSubject = 'viewer1'
     private static readonly NewSubject = 'bob'
-    private static readonly TenantDisplayName = 'Tenant One'
+    private static readonly EnvironmentDisplayName = 'Tenant One'
     public static readonly RoleEditorName = 'Editor'
     public static readonly RoleViewerName = 'Viewer'
     public static readonly AccountEmail = 'dave@example.com'
@@ -43,8 +43,8 @@ class AdminHostFixture
     public async StartAsync(): Promise<void>
     {
         process.env[AdminHostFixture.KeyEnv] = randomBytes(32).toString('base64')
-        const entries = new Map<string, TenantProvisioning>([[AdminHostFixture.TenantId, { displayName: AdminHostFixture.TenantDisplayName }]])
-        this.Host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir: this.Dir, masterKey: { base64Env: AdminHostFixture.KeyEnv }, provisioning: new InMemoryTenantProvisioning(entries) })
+        const entries = new Map<string, EnvironmentProvisioning>([[AdminHostFixture.EnvironmentId, { displayName: AdminHostFixture.EnvironmentDisplayName }]])
+        this.Host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir: this.Dir, masterKey: { base64Env: AdminHostFixture.KeyEnv }, provisioning: new InMemoryEnvironmentProvisioning(entries) })
     }
 
     public async ConnectAs(role: Role): Promise<MessageConnection>
@@ -55,11 +55,11 @@ class AdminHostFixture
     public async ConnectAsWithSocket(role: Role): Promise<{ connection: MessageConnection, ws: WebSocket }>
     {
         const subject = role === Role.Owner ? AdminHostFixture.OwnerSubject : AdminHostFixture.ViewerSubject
-        const pack = await this.Host.IdentityPackForTest(AdminHostFixture.TenantId)
-        await pack.Grants.Save(new Grant(subject, role, new ResourceRef(ResourceKind.Realm, AdminHostFixture.TenantId, [])))
-        const issued = await pack.Tokens.Issue(await this.Host.RealmForTest(AdminHostFixture.TenantId), subject, [], null)
+        const pack = await this.Host.IdentityPackForTest(AdminHostFixture.EnvironmentId)
+        await pack.Grants.Save(new Grant(subject, role, new ResourceRef(ResourceKind.Realm, AdminHostFixture.EnvironmentId, [])))
+        const issued = await pack.Tokens.Issue(await this.Host.RealmForTest(AdminHostFixture.EnvironmentId), subject, [], null)
         const address = this.Host.Address()
-        const ws = new WebSocket(`ws://${address.host}:${address.port}/?environment=${AdminHostFixture.TenantId}`, { headers: { authorization: `Bearer ${issued.Token}` } })
+        const ws = new WebSocket(`ws://${address.host}:${address.port}/?environment=${AdminHostFixture.EnvironmentId}`, { headers: { authorization: `Bearer ${issued.Token}` } })
         await new Promise<void>((resolve, reject) =>
         {
             ws.once(AdminHostFixture.WsOpenEvent, () => resolve())
@@ -101,8 +101,8 @@ class AdminHostFixture
 
     public async BobGrants(): Promise<readonly Grant[]>
     {
-        const pack = await this.Host.IdentityPackForTest(AdminHostFixture.TenantId)
-        return pack.Grants.GrantsFor(AdminHostFixture.NewSubject, await this.Host.RealmForTest(AdminHostFixture.TenantId))
+        const pack = await this.Host.IdentityPackForTest(AdminHostFixture.EnvironmentId)
+        return pack.Grants.GrantsFor(AdminHostFixture.NewSubject, await this.Host.RealmForTest(AdminHostFixture.EnvironmentId))
     }
 
     public async DisposeAsync(): Promise<void>

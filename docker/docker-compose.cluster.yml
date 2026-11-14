@@ -14,7 +14,7 @@ services:
       PRAGMATIC_BASE_DIR: /data
       PRAGMATIC_PORT: "8443"
       PRAGMATIC_HEALTH_PORT: "8081"
-      PRAGMATIC_TENANTS_FILE: /cfg/tenants.json
+      PRAGMATIC_ENVIRONMENTS_FILE: /cfg/environments.json
       PRAGMATIC_MASTER_KEY_FILE: /run/secrets/master_key
       PRAGMATIC_REDIS_URL: redis://redis:6379
       PRAGMATIC_WORKER_ADVERTISE_HOST: worker1
@@ -23,7 +23,7 @@ services:
       PRAGMATIC_TLS_KEY_FILE: /run/secrets/tls/server.key
       PRAGMATIC_TLS_CA_FILE: /run/secrets/tls/ca.pem
     volumes:
-      - ./tenants.example.json:/cfg/tenants.json:ro
+      - ./environments.example.json:/cfg/environments.json:ro
       - ./master.key:/run/secrets/master_key:ro
       - ./tls:/run/secrets/tls:ro
     depends_on:
@@ -37,7 +37,7 @@ services:
       PRAGMATIC_BASE_DIR: /data
       PRAGMATIC_PORT: "8443"
       PRAGMATIC_HEALTH_PORT: "8081"
-      PRAGMATIC_TENANTS_FILE: /cfg/tenants.json
+      PRAGMATIC_ENVIRONMENTS_FILE: /cfg/environments.json
       PRAGMATIC_MASTER_KEY_FILE: /run/secrets/master_key
       PRAGMATIC_REDIS_URL: redis://redis:6379
       PRAGMATIC_WORKER_ADVERTISE_HOST: worker2
@@ -46,7 +46,7 @@ services:
       PRAGMATIC_TLS_KEY_FILE: /run/secrets/tls/server.key
       PRAGMATIC_TLS_CA_FILE: /run/secrets/tls/ca.pem
     volumes:
-      - ./tenants.example.json:/cfg/tenants.json:ro
+      - ./environments.example.json:/cfg/environments.json:ro
       - ./master.key:/run/secrets/master_key:ro
       - ./tls:/run/secrets/tls:ro
     depends_on:

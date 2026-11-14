@@ -135,7 +135,7 @@ class ConnectorFx
 
     public static Context(fx: EnvironmentFixture, principal: string = ConnectorFx.P1): ReturnType<EnvironmentFixture['ContextFor']>
     {
-        return fx.ContextFor(new Principal(principal, EnvironmentFixture.TenantId, PrincipalKind.User, new Map(), []))
+        return fx.ContextFor(new Principal(principal, EnvironmentFixture.EnvironmentId, PrincipalKind.User, new Map(), []))
     }
 
     /** Every page of `concept` (pages of `pageSize`), concatenated. */
@@ -290,7 +290,7 @@ describe('connector endpoints on the engine', () =>
             ])
             assert.deepEqual(await service.Decisions(ConnectorFx.Context(fx), ConnectorFx.ModelId, undefined), [], 'nothing is merged (Q4)')
             // the handler serves the same service over the wire (RuntimeAttachArgs.connectors)
-            const client = await fx.Connect(new Principal(ConnectorFx.P1, EnvironmentFixture.TenantId, PrincipalKind.User, new Map(), []))
+            const client = await fx.Connect(new Principal(ConnectorFx.P1, EnvironmentFixture.EnvironmentId, PrincipalKind.User, new Map(), []))
             assert.deepEqual((await client.Connectors()).map(model => model.modelId), listed.map(model => model.modelId))
             assert.equal((await client.ReadEntitiesPage(ConnectorFx.ModelId, ConnectorFx.Customer, {}, [{ field: ConnectorFx.Name, op: ConnectorFilterOp.Eq, value: ConnectorFx.Bolt }])).items.length, 1)
             // p1 holds nothing on ext.Customer: connector data is outside platform security (A6); pages concatenate

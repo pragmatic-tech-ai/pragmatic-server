@@ -2,7 +2,7 @@ import { join } from 'node:path'
 import { ConnectorContext, StorageKind } from '@pragmatic-tech-ai/graph'
 import type { ISubscription } from '@pragmatic-tech-ai/graph'
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
-import { TenantPurpose } from './tenancy/tenant-purpose.js'
+import { EnvironmentPurpose } from './environments/environment-purpose.js'
 import type { ModuleStateProperty } from '@pragmatic-tech-ai/todl-runtime'
 import { DataSourceAdapterCatalog, SolutionManagerService, StoragePackageSource, StoragePackageStore, PackageStoreKey } from '@pragmatic-tech-ai/todl'
 import type { IDataSourceAdapterProvider, IDataSourceAdapterFactory } from '@pragmatic-tech-ai/todl'
@@ -109,7 +109,7 @@ export interface PragmaticServerIdentityOptions
 {
     identityRoot: string
     masterKey: MasterKeyRef
-    tenant: { id: string; displayName: string }
+    environment: { id: string; displayName: string }
     oidc?: OidcServerOptions
     bootstrap?: BootstrapOptions
     provisionedSecrets?: IProvisionedSecretSource
@@ -128,7 +128,7 @@ export interface PragmaticServerIdentityOptions
 
 export interface PragmaticServerOptions
 {
-    purpose?: TenantPurpose
+    purpose?: EnvironmentPurpose
     applicationsRoot?: string
     packagesRoot?: string
     graphsRoot?: string
@@ -293,7 +293,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
      */
     private StartDirectorySync(): void
     {
-        if (this.Purpose() !== TenantPurpose.Runtime || this.options.identity?.directorySyncOnStart === false)
+        if (this.Purpose() !== EnvironmentPurpose.Runtime || this.options.identity?.directorySyncOnStart === false)
         {
             return
         }
@@ -362,7 +362,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
      */
     public async SecurityAdmin(): Promise<ISecuritySettingAdmin | undefined>
     {
-        if (this.Purpose() !== TenantPurpose.Runtime)
+        if (this.Purpose() !== EnvironmentPurpose.Runtime)
         {
             return undefined
         }
@@ -422,9 +422,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return host
     }
 
-    public Purpose(): TenantPurpose
+    public Purpose(): EnvironmentPurpose
     {
-        return this.options.purpose ?? TenantPurpose.Development
+        return this.options.purpose ?? EnvironmentPurpose.Development
     }
 
     public AppsStorage(): IStorage
@@ -747,7 +747,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     /** Throws unless this is a Development tenant: the graph catalog exists only there. */
     private AssertDevelopmentPurpose(): void
     {
-        if (this.Purpose() !== TenantPurpose.Development)
+        if (this.Purpose() !== EnvironmentPurpose.Development)
         {
             throw new ResponseError(ErrorCodes.InvalidRequest, PragmaticServer.NotDevelopmentMessage)
         }
@@ -756,7 +756,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     /** Throws unless this is a Runtime tenant: deploy and the applications registry exist only there. */
     private AssertRuntimePurpose(): void
     {
-        if (this.Purpose() !== TenantPurpose.Runtime)
+        if (this.Purpose() !== EnvironmentPurpose.Runtime)
         {
             throw new Error(PragmaticServer.ApplicationsRuntimeOnlyError)
         }

@@ -83,7 +83,7 @@ export class ShareFx
 
     public static Principal(id: string): Principal
     {
-        return new Principal(id, EnvironmentFixture.TenantId, PrincipalKind.User, new Map(), [])
+        return new Principal(id, EnvironmentFixture.EnvironmentId, PrincipalKind.User, new Map(), [])
     }
 
     public static Context(fx: EnvironmentFixture, id: string): AccessContext

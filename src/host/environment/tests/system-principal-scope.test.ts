@@ -5,7 +5,7 @@ import type { CellValue } from '@pragmatic-tech-ai/graph'
 import { SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import { AccessLevel, BaseRole, PrivilegeAction, SystemPrincipal } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../../pragmatic-server.js'
-import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
+import { EnvironmentPurpose } from '../../../environments/environment-purpose.js'
 import { EnvironmentFixture } from './environment-fixture.js'
 import { Tier1Fx } from './tier1-fixture.js'
 
@@ -67,7 +67,7 @@ describe('system principal scope', () =>
             try
             {
                 const node = await reader.ReadNode(place.PublicId)
-                assert.equal(node?.Properties.get(SystemNames.Owner), SystemPrincipal.IdFor(EnvironmentFixture.TenantId))
+                assert.equal(node?.Properties.get(SystemNames.Owner), SystemPrincipal.IdFor(EnvironmentFixture.EnvironmentId))
                 assert.equal(node?.Properties.get(SystemNames.OwningBusinessUnit), Tier1Fx.Contoso, 'the root business unit (C7)')
             }
             finally
@@ -94,7 +94,7 @@ describe('system principal scope', () =>
 
     test('development tenant has no system scope', async () =>
     {
-        const server = new PragmaticServer({ purpose: TenantPurpose.Development })
+        const server = new PragmaticServer({ purpose: EnvironmentPurpose.Development })
         try
         {
             await assert.rejects(server.SystemScope(), SystemFx.RuntimeOnly)
@@ -110,7 +110,7 @@ describe('system principal scope', () =>
         await Tier1Fx.Run({ Identity: true, SecurityModel: Tier1Fx.Setting() }, async (_fx, server) =>
         {
             const scope = await server.SystemScope()
-            assert.equal(scope.Connector.Key, SystemPrincipal.IdFor(EnvironmentFixture.TenantId))
+            assert.equal(scope.Connector.Key, SystemPrincipal.IdFor(EnvironmentFixture.EnvironmentId))
         })
     })
 })

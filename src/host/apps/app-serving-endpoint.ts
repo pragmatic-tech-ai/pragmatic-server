@@ -14,14 +14,14 @@ export interface IAppStorageSource
 /** Resolves a tenant id to its server; the host registry satisfies this. Rejects for an unknown tenant. */
 export interface IAppServerResolver
 {
-    ServerFor(tenantId: string): Promise<IAppStorageSource>
+    ServerFor(environmentId: string): Promise<IAppStorageSource>
 }
 
 interface AppRoute
 {
-    tenant: string
+    environment: string
     app: string
-    tenantRaw: string
+    environmentRaw: string
     appRaw: string
     rest: string
     needsSlash: boolean
@@ -129,7 +129,7 @@ export class AppServingEndpoint
         let base: string
         try
         {
-            storage = (await this.servers.ServerFor(route.tenant)).AppsStorage()
+            storage = (await this.servers.ServerFor(route.environment)).AppsStorage()
             base = await AppServingEndpoint.ResolveBase(storage, route.app)
             const manifestPath = base + AppServingEndpoint.ManifestFile
             if (!await storage.Exists(manifestPath))
@@ -152,7 +152,7 @@ export class AppServingEndpoint
         }
         if (route.needsSlash)
         {
-            const location = AppServingEndpoint.RoutePrefix + route.tenantRaw + AppServingEndpoint.Separator + route.appRaw + AppServingEndpoint.Separator
+            const location = AppServingEndpoint.RoutePrefix + route.environmentRaw + AppServingEndpoint.Separator + route.appRaw + AppServingEndpoint.Separator
             res.writeHead(AppServingEndpoint.RedirectStatus, { [AppServingEndpoint.LocationHeader]: location })
             res.end()
             return
@@ -167,10 +167,10 @@ export class AppServingEndpoint
             return
         }
         // The page needs a session (its WebSocket is refused without one); its assets are public code and are not gated.
-        if (isShell && this.sessions !== undefined && !await this.sessions.HasSession(req, route.tenant))
+        if (isShell && this.sessions !== undefined && !await this.sessions.HasSession(req, route.environment))
         {
             res.writeHead(AppServingEndpoint.SignInStatus, {
-                [AppServingEndpoint.LocationHeader]: SignInPage.Location(route.tenant, req.url ?? AppServingEndpoint.RoutePrefix),
+                [AppServingEndpoint.LocationHeader]: SignInPage.Location(route.environment, req.url ?? AppServingEndpoint.RoutePrefix),
                 [AppServingEndpoint.CacheControlHeader]: AppServingEndpoint.NoStore,
             })
             res.end()
@@ -294,9 +294,9 @@ export class AppServingEndpoint
             decoded.push(segment)
         }
         return {
-            tenant: decoded[0]!,
+            environment: decoded[0]!,
             app: decoded[1]!,
-            tenantRaw: parts[0]!,
+            environmentRaw: parts[0]!,
             appRaw: parts[1]!,
             rest: decoded.slice(2).join(AppServingEndpoint.Separator),
             needsSlash: parts.length === 2,

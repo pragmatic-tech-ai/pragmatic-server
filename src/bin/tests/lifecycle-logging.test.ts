@@ -30,9 +30,25 @@ class Fixtures
 
     public static Config(): ServerConfig
     {
-        return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { keyFilePath: Fixtures.KeyPath }, deploymentMode: DeploymentMode.Local, singleTenant: { id: 't1', displayName: 'Tenant One' } }
+        return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { keyFilePath: Fixtures.KeyPath }, deploymentMode: DeploymentMode.Local, singleEnvironment: { id: 't1', displayName: 'Tenant One' } }
     }
 }
+
+test('the startup line counts environments, not tenants', () =>
+{
+    const line = ServerBootstrap.StartupLine(Fixtures.Config(), 2)
+    assert.match(line, / environments=2 /)
+    assert.doesNotMatch(line, /tenants=/)
+})
+
+test('each config deprecation is logged once as a warning', () =>
+{
+    const capture = new Capture()
+    ServerBootstrap.LogDeprecations({ ...Fixtures.Config(), deprecations: ['old name is deprecated'] }, capture.Logger())
+    assert.equal(capture.Records.length, 1)
+    assert.equal(capture.Records[0]!.message, 'old name is deprecated')
+    assert.equal(capture.Records[0]!.level, LogLevel.Warn)
+})
 
 test('the startup line is logged verbatim as the message through the logger', () =>
 {

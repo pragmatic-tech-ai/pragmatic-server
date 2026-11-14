@@ -72,7 +72,7 @@ export class SqlAuditAccessSink implements IAccessAuditSink
     {
         try
         {
-            await this.store.Record(new AuditEvent(SqlAuditAccessSink.KindOf(event), event.TenantId, event.PrincipalId ?? null, event.Timestamp, SqlAuditAccessSink.DetailOf(event)))
+            await this.store.Record(new AuditEvent(SqlAuditAccessSink.KindOf(event), event.EnvironmentId, event.PrincipalId ?? null, event.Timestamp, SqlAuditAccessSink.DetailOf(event)))
         }
         catch
         {

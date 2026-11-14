@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { parse } from 'yaml'
-import { FileTenantProvisioning } from '../../config/file-tenant-provisioning.js'
+import { FileEnvironmentProvisioning } from '../../config/file-environment-provisioning.js'
 
 class Artifacts
 {
@@ -18,9 +18,9 @@ class Artifacts
         return parse(readFileSync(join(Artifacts.Root(), 'docker-compose.yml'), 'utf8'))
     }
 
-    public static TenantsExample(): string
+    public static EnvironmentsExample(): string
     {
-        return readFileSync(join(Artifacts.Root(), 'docker', 'tenants.example.json'), 'utf8')
+        return readFileSync(join(Artifacts.Root(), 'docker', 'environments.example.json'), 'utf8')
     }
 }
 
@@ -39,8 +39,8 @@ test('the compose service builds from the parent context with the docker/Dockerf
     assert.match(build.dockerfile, /docker\/Dockerfile/)
 })
 
-test('the example tenants file parses through FileTenantProvisioning', () =>
+test('the example environments file parses through FileEnvironmentProvisioning', () =>
 {
-    const provisioning = FileTenantProvisioning.FromText(Artifacts.TenantsExample())
+    const provisioning = FileEnvironmentProvisioning.FromText(Artifacts.EnvironmentsExample())
     assert.ok(provisioning.OptionsFor('acme') !== null)
 })

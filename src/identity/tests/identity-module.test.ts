@@ -33,7 +33,7 @@ class IdentityFixture
             identity: {
                 identityRoot,
                 masterKey: { base64Env: keyEnv },
-                tenant: { id: 't1', displayName: 'Tenant One' },
+                environment: { id: 't1', displayName: 'Environment One' },
                 bootstrap: { adminEmail: 'admin@x.io', adminPrincipalId: 'admin', adminPasswordRef: 't1/bootstrap/admin', ownerGrant: true },
             },
         }

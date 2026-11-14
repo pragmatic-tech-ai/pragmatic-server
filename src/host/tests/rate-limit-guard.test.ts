@@ -58,15 +58,15 @@ class Points
     }
 }
 
-test('a rejection audits a RateLimited event and increments rate_limited_total with scope+tenant but no principal label', async () =>
+test('a rejection audits a RateLimited event and increments rate_limited_total with scope+environment but no principal label', async () =>
 {
     const reader = new PeriodicExportingMetricReader({ exporter: new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE), exportIntervalMillis: 2_147_483_647 })
     const observability = Observability.ForTest({ role: ObservabilityRole.Host, serviceName: 'svc' }, new InMemorySpanExporter(), reader)
     const sink = new CapturingSink()
     const clock = new FakeClock()
-    const guard = new RateLimitGuard(new TokenBucketRateLimiter({ perTenant: { Rps: 1, Burst: 1 } }, clock.Tick), sink, observability.Meter().createCounter(RateLimitGuard.MetricName()))
-    const request = { scope: RateLimitScope.Tenant, tenant: 't1', key: 't1' }
-    const context = { surface: AuditSurface.Upgrade, tenant: 't1', principal: 'p1', methodOrPath: 'ws-upgrade', correlationId: 'trace-1' }
+    const guard = new RateLimitGuard(new TokenBucketRateLimiter({ perEnvironment: { Rps: 1, Burst: 1 } }, clock.Tick), sink, observability.Meter().createCounter(RateLimitGuard.MetricName()))
+    const request = { scope: RateLimitScope.Environment, environment: 't1', key: 't1' }
+    const context = { surface: AuditSurface.Upgrade, environment: 't1', principal: 'p1', methodOrPath: 'ws-upgrade', correlationId: 'trace-1' }
     assert.equal(guard.Check(request, context).Allowed, true)
     assert.equal(guard.Check(request, context).Allowed, false)
     assert.equal(sink.Events.length, 1)
@@ -75,17 +75,17 @@ test('a rejection audits a RateLimited event and increments rate_limited_total w
     const pts = await Points.Of(reader, 'rate_limited_total')
     assert.equal(pts.length, 1)
     assert.equal(pts[0]!.value, 1)
-    assert.equal(pts[0]!.attributes.scope, 'tenant')
-    assert.equal(pts[0]!.attributes.tenant, 't1')
+    assert.equal(pts[0]!.attributes.scope, 'environment')
+    assert.equal(pts[0]!.attributes.environment, 't1')
     assert.equal(pts[0]!.attributes.principal, undefined)
     await observability.Shutdown()
 })
 
 test('a throwing audit sink never escapes and the rejection stands', () =>
 {
-    const guard = new RateLimitGuard(new TokenBucketRateLimiter({ perTenant: { Rps: 0.001, Burst: 1 } }), new ThrowingSink())
-    const request = { scope: RateLimitScope.Tenant, tenant: 't1', key: 't1' }
-    const context = { surface: AuditSurface.Upgrade, tenant: 't1', methodOrPath: 'ws' }
+    const guard = new RateLimitGuard(new TokenBucketRateLimiter({ perEnvironment: { Rps: 0.001, Burst: 1 } }), new ThrowingSink())
+    const request = { scope: RateLimitScope.Environment, environment: 't1', key: 't1' }
+    const context = { surface: AuditSurface.Upgrade, environment: 't1', methodOrPath: 'ws' }
     assert.equal(guard.Check(request, context).Allowed, true)
     assert.equal(guard.Check(request, context).Allowed, false)
 })
@@ -96,7 +96,7 @@ test('a disabled guard is pure pass-through: every request allowed, nothing audi
     const guard = new RateLimitGuard(new NullRateLimiter(), sink)
     for (let i = 0; i < 50; i++)
     {
-        assert.equal(guard.Check({ scope: RateLimitScope.Principal, tenant: 't1', key: 'p1' }, { surface: AuditSurface.Rpc, tenant: 't1', methodOrPath: 'm' }).Allowed, true)
+        assert.equal(guard.Check({ scope: RateLimitScope.Principal, environment: 't1', key: 'p1' }, { surface: AuditSurface.Rpc, environment: 't1', methodOrPath: 'm' }).Allowed, true)
     }
     assert.equal(sink.Events.length, 0)
 })
@@ -104,7 +104,7 @@ test('a disabled guard is pure pass-through: every request allowed, nothing audi
 test('a bare guard (no args) allows everything and never touches audit or metrics', () =>
 {
     const guard = new RateLimitGuard()
-    assert.equal(guard.Check({ scope: RateLimitScope.Tenant, tenant: 't1', key: 't1' }, { surface: AuditSurface.Upgrade, tenant: 't1', methodOrPath: 'ws' }).Allowed, true)
+    assert.equal(guard.Check({ scope: RateLimitScope.Environment, environment: 't1', key: 't1' }, { surface: AuditSurface.Upgrade, environment: 't1', methodOrPath: 'ws' }).Allowed, true)
 })
 
 class RejectingSink implements IAccessAuditSink
@@ -131,9 +131,9 @@ test('a rejecting audit sink leaves Check rejecting with a retry hint and raises
     process.on('unhandledRejection', listener)
     try
     {
-        const guard = new RateLimitGuard(new TokenBucketRateLimiter({ perTenant: { Rps: 0.001, Burst: 1 } }), new RejectingSink())
-        const request = { scope: RateLimitScope.Tenant, tenant: 't1', key: 't1' }
-        const context = { surface: AuditSurface.Upgrade, tenant: 't1', methodOrPath: 'ws' }
+        const guard = new RateLimitGuard(new TokenBucketRateLimiter({ perEnvironment: { Rps: 0.001, Burst: 1 } }), new RejectingSink())
+        const request = { scope: RateLimitScope.Environment, environment: 't1', key: 't1' }
+        const context = { surface: AuditSurface.Upgrade, environment: 't1', methodOrPath: 'ws' }
         guard.Check(request, context)
         const decision = guard.Check(request, context)
         assert.equal(decision.Allowed, false)
@@ -151,7 +151,7 @@ test('a rejecting audit sink leaves Check rejecting with a retry hint and raises
 test('Check is total: an unexpected limiter error allows the request instead of throwing', () =>
 {
     const guard = new RateLimitGuard(new ThrowingLimiter())
-    assert.equal(guard.Check({ scope: RateLimitScope.Tenant, tenant: 't1', key: 't1' }, { surface: AuditSurface.Upgrade, tenant: 't1', methodOrPath: 'ws' }).Allowed, true)
+    assert.equal(guard.Check({ scope: RateLimitScope.Environment, environment: 't1', key: 't1' }, { surface: AuditSurface.Upgrade, environment: 't1', methodOrPath: 'ws' }).Allowed, true)
 })
 
 class CapturingLogger implements ILogger
@@ -183,10 +183,10 @@ test('a limiter error fails open observably: allowed, one logged error, rate_lim
     const observability = Observability.ForTest({ role: ObservabilityRole.Host, serviceName: 'svc' }, new InMemorySpanExporter(), reader)
     const logger = new CapturingLogger()
     const guard = new RateLimitGuard(new ThrowingLimiter(), undefined, undefined, logger, observability.Meter().createCounter(RateLimitGuard.ErrorMetricName()))
-    const decision = guard.Check({ scope: RateLimitScope.Tenant, tenant: 't1', key: 't1' }, { surface: AuditSurface.Upgrade, tenant: 't1', methodOrPath: 'ws' })
+    const decision = guard.Check({ scope: RateLimitScope.Environment, environment: 't1', key: 't1' }, { surface: AuditSurface.Upgrade, environment: 't1', methodOrPath: 'ws' })
     assert.equal(decision.Allowed, true)
     assert.equal(logger.Errors.length, 1)
-    assert.equal(logger.Errors[0]!.fields?.tenant, 't1')
+    assert.equal(logger.Errors[0]!.fields?.environment, 't1')
     const pts = await Points.Of(reader, 'rate_limit_errors_total')
     assert.equal(pts.length, 1)
     assert.equal(pts[0]!.value, 1)

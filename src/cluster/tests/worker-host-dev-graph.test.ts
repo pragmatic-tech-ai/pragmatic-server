@@ -12,15 +12,15 @@ import { MachineTls } from '../machine-tls.js'
 import type { MachineTlsRef } from '../machine-tls.js'
 import { DevGraphEngineHost } from '../../host/engine/dev-graph-engine-host.js'
 import { WorkerHost } from '../worker-host.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
-import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
+import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 
 /** One dev tenant on a worker, its solution holding one widget instance in model acme.Shop. */
 class DevWorkerFx
 {
-    public static readonly Tenant = 'dev1'
+    public static readonly Environment = 'dev1'
     public static readonly KeyEnv = 'PS_WORKER_DEV_GRAPH_KEY'
     public static readonly Prefix = 'ps-whdg-'
     public static readonly SolutionDir = 'solution'
@@ -58,25 +58,25 @@ class DevWorkerFx
     public static Start(): string
     {
         const baseDir = mkdtempSync(join(tmpdir(), DevWorkerFx.Prefix))
-        const solution = join(baseDir, DevWorkerFx.Tenant, DevWorkerFx.SolutionDir)
-        mkdirSync(join(baseDir, DevWorkerFx.Tenant), { recursive: true })
+        const solution = join(baseDir, DevWorkerFx.Environment, DevWorkerFx.SolutionDir)
+        mkdirSync(join(baseDir, DevWorkerFx.Environment), { recursive: true })
         cpSync(DevWorkerFx.Fixtures(DevWorkerFx.SampleSolution), solution, { recursive: true })
         writeFileSync(join(solution, DevWorkerFx.ModelsDir, DevWorkerFx.ModelFile), DevWorkerFx.Model)
         process.env[DevWorkerFx.KeyEnv] = randomBytes(32).toString('base64')
         return baseDir
     }
 
-    public static Provisioning(): InMemoryTenantProvisioning
+    public static Provisioning(): InMemoryEnvironmentProvisioning
     {
-        return new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>([[DevWorkerFx.Tenant, { displayName: DevWorkerFx.Tenant, purpose: TenantPurpose.Development }]]))
+        return new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([[DevWorkerFx.Environment, { displayName: DevWorkerFx.Environment, purpose: EnvironmentPurpose.Development }]]))
     }
 
     public static async TokenFor(worker: WorkerHost): Promise<string>
     {
-        const server = await worker.RegistryForTest().ServerFor(DevWorkerFx.Tenant)
+        const server = await worker.RegistryForTest().ServerFor(DevWorkerFx.Environment)
         const pack = await server.Pack()
-        await pack.Grants.Save(new Grant(DevWorkerFx.Tenant, Role.Owner, new ResourceRef(ResourceKind.Realm, DevWorkerFx.Tenant, [])))
-        return (await pack.Tokens.Issue(server.Realm(), DevWorkerFx.Tenant, [], null)).Token
+        await pack.Grants.Save(new Grant(DevWorkerFx.Environment, Role.Owner, new ResourceRef(ResourceKind.Realm, DevWorkerFx.Environment, [])))
+        return (await pack.Tokens.Issue(server.Realm(), DevWorkerFx.Environment, [], null)).Token
     }
 
     /**
@@ -88,7 +88,7 @@ class DevWorkerFx
     {
         return {
             businessUnits: [{ id: DevWorkerFx.RootUnit, name: DevWorkerFx.RootUnitName }],
-            users: [{ principalId: DevWorkerFx.Tenant, businessUnitId: DevWorkerFx.RootUnit }],
+            users: [{ principalId: DevWorkerFx.Environment, businessUnitId: DevWorkerFx.RootUnit }],
             teams: [],
             roleAssignments: [],
             profileAssignments: [],
@@ -100,19 +100,19 @@ class DevWorkerFx
     /** Stores the reading security model in the tenant's identity config (kept fields: the stored ones, if any). */
     public static async SeedReader(worker: WorkerHost): Promise<void>
     {
-        const server = await worker.RegistryForTest().ServerFor(DevWorkerFx.Tenant)
+        const server = await worker.RegistryForTest().ServerFor(DevWorkerFx.Environment)
         const store = await server.RealmConfigStore()
-        const current = await store.Get(DevWorkerFx.Tenant)
+        const current = await store.Get(DevWorkerFx.Environment)
         const config = current === null
             ? new IdentityConfig(DevWorkerFx.PackId, DelegationDepth.AuthnDirectory, new Map(), new Map(), new Map(), DevWorkerFx.ReadingModel())
             : new IdentityConfig(current.PackId, current.DelegationDepth, current.ProviderSettings, current.GroupRoleMap, current.ClaimsMapping, DevWorkerFx.ReadingModel())
-        await store.Save(DevWorkerFx.Tenant, config)
+        await store.Save(DevWorkerFx.Environment, config)
     }
 
     /** Waits until the tenant's language service has loaded the opened solution. */
     public static async Idle(worker: WorkerHost): Promise<void>
     {
-        const server = await worker.RegistryForTest().ServerFor(DevWorkerFx.Tenant)
+        const server = await worker.RegistryForTest().ServerFor(DevWorkerFx.Environment)
         await (await server.LanguageService() as SolutionLanguageService).WhenIdle()
     }
 
@@ -120,7 +120,7 @@ class DevWorkerFx
     {
         const client = MachineTls.Client(DevWorkerFx.Tls(DevWorkerFx.ClientTls))
         const address = worker.Address()
-        const headers = { [DevWorkerFx.EnvironmentHeader]: DevWorkerFx.Tenant, authorization: `Bearer ${token}` }
+        const headers = { [DevWorkerFx.EnvironmentHeader]: DevWorkerFx.Environment, authorization: `Bearer ${token}` }
         const ws = new WebSocket(`wss://${address.host}:${address.port}/`, { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, headers })
         await new Promise<void>((resolve, reject) => { ws.on('open', () => resolve()); ws.on('error', reject) })
         return PragmaticClient.CreateOverSocket(new WsMessageSocket(ws))
@@ -138,9 +138,9 @@ test('worker host serves dev graph endpoints', async () =>
         const client = await DevWorkerFx.Connect(worker, token)
         try
         {
-            await client.OpenSolution(join(baseDir, DevWorkerFx.Tenant, DevWorkerFx.SolutionDir))
+            await client.OpenSolution(join(baseDir, DevWorkerFx.Environment, DevWorkerFx.SolutionDir))
             await DevWorkerFx.Idle(worker)
-            const server = await worker.RegistryForTest().ServerFor(DevWorkerFx.Tenant)
+            const server = await worker.RegistryForTest().ServerFor(DevWorkerFx.Environment)
             const handlers = worker.HandlersForTest()
             assert.equal(handlers.length, 1)
             const host = server.DevEngine() as DevGraphEngineHost

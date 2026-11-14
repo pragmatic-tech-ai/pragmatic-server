@@ -203,17 +203,17 @@ class DevWorld
 
     public static Owner(principalId: string = ViewFx.OwnerId): AccessContext
     {
-        const realm = new Realm(PpSecurityHarness.TenantId, RealmKind.SelfHosted, ViewFx.TenantName)
-        const principal = new Principal(principalId, PpSecurityHarness.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Realm, PpSecurityHarness.TenantId, []))]
+        const realm = new Realm(PpSecurityHarness.EnvironmentId, RealmKind.SelfHosted, ViewFx.EnvironmentName)
+        const principal = new Principal(principalId, PpSecurityHarness.EnvironmentId, PrincipalKind.User, new Map(), [])
+        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Realm, PpSecurityHarness.EnvironmentId, []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
     /** A reader with no grants (the unit ports' principal; the view itself checks no grant). */
     public static Reader(principalId: string = ViewFx.ReaderId): AccessContext
     {
-        const realm = new Realm(PpSecurityHarness.TenantId, RealmKind.SelfHosted, ViewFx.TenantName)
-        const principal = new Principal(principalId, PpSecurityHarness.TenantId, PrincipalKind.User, new Map(), [])
+        const realm = new Realm(PpSecurityHarness.EnvironmentId, RealmKind.SelfHosted, ViewFx.EnvironmentName)
+        const principal = new Principal(principalId, PpSecurityHarness.EnvironmentId, PrincipalKind.User, new Map(), [])
         return new AccessContext(principal, realm, [], new ResourceAuthorizationPolicy())
     }
 
@@ -281,7 +281,7 @@ class ViewFx
     public static readonly OwnerId = 'p1'
     public static readonly OtherId = 'p2'
     public static readonly ReaderId = 'u1'
-    public static readonly TenantName = 'Tenant One'
+    public static readonly EnvironmentName = 'Tenant One'
     public static readonly All = 1000
 }
 

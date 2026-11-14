@@ -15,7 +15,7 @@ import type { DeliveryChange, IDelivered, IDeliveryGate } from '../../environmen
 import { EnvironmentUpgradeFailedError } from '../../environment/environment-engine-host.js'
 import { PragmaticAppsRegistry } from '../pragmatic-apps-registry.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
-import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
+import { EnvironmentPurpose } from '../../../environments/environment-purpose.js'
 import { StructuredLogger } from '../../../observability/logger.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
 
@@ -76,7 +76,7 @@ class IngestFixture
     public static readonly Asset = 'assets/app.js'
     public static readonly ManifestFile = 'application.json'
     public static readonly Secret = 'SECRET-PAYLOAD-BYTES'
-    public static readonly TenantId = 't1'
+    public static readonly EnvironmentId = 't1'
     public static readonly CorePackage = 'shop.core'
     public static readonly BasePackage = 'shop.base'
     public static readonly BaseVersion = '2.0.0'
@@ -93,13 +93,13 @@ class IngestFixture
 
     public static Realm(): Realm
     {
-        return new Realm(IngestFixture.TenantId, RealmKind.SelfHosted, 'Tenant One')
+        return new Realm(IngestFixture.EnvironmentId, RealmKind.SelfHosted, 'Tenant One')
     }
 
     public static Context(role: Role): AccessContext
     {
-        const principal = new Principal('p1', IngestFixture.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant('p1', role, new ResourceRef(ResourceKind.Realm, IngestFixture.TenantId, []))]
+        const principal = new Principal('p1', IngestFixture.EnvironmentId, PrincipalKind.User, new Map(), [])
+        const grants = [new Grant('p1', role, new ResourceRef(ResourceKind.Realm, IngestFixture.EnvironmentId, []))]
         return new AccessContext(principal, IngestFixture.Realm(), grants, new ResourceAuthorizationPolicy())
     }
 
@@ -253,7 +253,7 @@ class DeployWire
 {
     public static async Attach(fx: IngestFixture, role: Role): Promise<{ client: PragmaticClient; Dispose: () => Promise<void> }>
     {
-        const server = new PragmaticServer({ packagesRoot: fx.PackagesDir, applicationsRoot: fx.AppsDir, graphsRoot: join(fx.Root, 'graphs'), purpose: TenantPurpose.Runtime })
+        const server = new PragmaticServer({ packagesRoot: fx.PackagesDir, applicationsRoot: fx.AppsDir, graphsRoot: join(fx.Root, 'graphs'), purpose: EnvironmentPurpose.Runtime })
         await server.Start()
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
@@ -262,7 +262,7 @@ class DeployWire
         const handler = ServerConnectionHandler.Attach(
             serverSocket, languageService, manager, IngestFixture.Context(role),
             undefined, undefined,
-            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Runtime,
+            undefined, undefined, undefined, undefined, undefined, undefined, EnvironmentPurpose.Runtime,
             runtime.applications, runtime.data,
             undefined, undefined, runtime.deployProvider)
         const client = PragmaticClient.CreateOverSocket(clientSocket)

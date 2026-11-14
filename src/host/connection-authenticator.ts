@@ -41,7 +41,7 @@ export class ConnectionAuthenticator
             const spanContext = trace.getActiveSpan()?.spanContext()
             const event: AccessAuditEvent = {
                 Timestamp: new Date(),
-                TenantId: realm.Id,
+                EnvironmentId: realm.Id,
                 PrincipalId: context?.Principal.Id,
                 Surface: AuditSurface.Upgrade,
                 MethodOrPath: ConnectionAuthenticator.UpgradeMethod,

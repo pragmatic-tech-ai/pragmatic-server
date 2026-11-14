@@ -11,8 +11,8 @@ import type { Realm } from '@pragmatic-tech-ai/todl-identity'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import { AuthHttpEndpoint } from '../auth-http-endpoint.js'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import { AuditSurface, AuditOutcome } from '../access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from '../access-audit.js'
 
@@ -46,8 +46,8 @@ class AuthAuditFixture
         cpSync(join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution'), join(baseDir, 't1', 'solution'), { recursive: true })
         const keyEnv = 'PS_AUTH_AUDIT_KEY'
         process.env[keyEnv] = randomBytes(32).toString('base64')
-        const entries = new Map<string, TenantProvisioning>([['t1', { displayName: 'Tenant One' }]])
-        const host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: keyEnv }, provisioning: new InMemoryTenantProvisioning(entries), audit })
+        const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Tenant One' }]])
+        const host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: keyEnv }, provisioning: new InMemoryEnvironmentProvisioning(entries), audit })
         const pack = await host.IdentityPackForTest('t1')
         await pack.Registrar.Register(await host.RealmForTest('t1'), 'a@x.io', 'p1', new PresentedSecret('pw-123456'))
         await pack.Grants.Save(new Grant('p1', Role.Admin, new ResourceRef(ResourceKind.Realm, 't1', [])))

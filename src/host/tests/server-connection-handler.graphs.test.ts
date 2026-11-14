@@ -5,7 +5,7 @@ import type { GraphContributeParamsDto, GraphCreateParamsDto, GraphDetailDto, Gr
 import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
-import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
+import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { PolicyGate } from '../policy-gate.js'
 import { ScopedAccessContext, TokenScope } from '../token-scope.js'
@@ -120,9 +120,9 @@ class GraphFixture
     public static readonly OutsideScopeText = "outside this credential's scope"
     public static readonly UnavailableText = 'graph service is not available'
     public static readonly NotDevelopmentText = 'operation requires a development tenant'
-    private static readonly TenantId = 't1'
+    private static readonly EnvironmentId = 't1'
     private static readonly PrincipalId = 'p1'
-    private static readonly TenantName = 'Tenant One'
+    private static readonly EnvironmentName = 'Tenant One'
 
     public readonly Service = new FakeGraphService()
 
@@ -133,9 +133,9 @@ class GraphFixture
 
     public static Context(role: Role | null): AccessContext
     {
-        const realm = new Realm(GraphFixture.TenantId, RealmKind.SelfHosted, GraphFixture.TenantName)
-        const principal = new Principal(GraphFixture.PrincipalId, GraphFixture.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = role === null ? [] : [new Grant(GraphFixture.PrincipalId, role, new ResourceRef(ResourceKind.Realm, GraphFixture.TenantId, []))]
+        const realm = new Realm(GraphFixture.EnvironmentId, RealmKind.SelfHosted, GraphFixture.EnvironmentName)
+        const principal = new Principal(GraphFixture.PrincipalId, GraphFixture.EnvironmentId, PrincipalKind.User, new Map(), [])
+        const grants = role === null ? [] : [new Grant(GraphFixture.PrincipalId, role, new ResourceRef(ResourceKind.Realm, GraphFixture.EnvironmentId, []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
@@ -158,7 +158,7 @@ class GraphFixture
         return {}
     }
 
-    public async With(purpose: TenantPurpose, body: (client: PragmaticClient) => Promise<void>, wired: boolean = true, context: AccessContext = GraphFixture.Context(Role.Owner), language: ILanguageService = GraphFixture.Language()): Promise<void>
+    public async With(purpose: EnvironmentPurpose, body: (client: PragmaticClient) => Promise<void>, wired: boolean = true, context: AccessContext = GraphFixture.Context(Role.Owner), language: ILanguageService = GraphFixture.Language()): Promise<void>
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
@@ -181,7 +181,7 @@ class GraphFixture
 test('graph/create routes to the service and returns a GraphSummaryDto (Development)', async () =>
 {
     const fixture = new GraphFixture()
-    await fixture.With(TenantPurpose.Development, async client =>
+    await fixture.With(EnvironmentPurpose.Development, async client =>
     {
         const summary = await client.CreateGraph({ graphName: GraphFixture.GraphName, description: GraphFixture.Description })
         assert.deepEqual(summary, { name: GraphFixture.GraphName, description: GraphFixture.Description, packageCount: 0, createdAt: GraphFixture.Stamp })
@@ -192,7 +192,7 @@ test('graph/create routes to the service and returns a GraphSummaryDto (Developm
 test('graph/list and graph/get route to the service (Development)', async () =>
 {
     const fixture = new GraphFixture()
-    await fixture.With(TenantPurpose.Development, async client =>
+    await fixture.With(EnvironmentPurpose.Development, async client =>
     {
         const list = await client.ListGraphs()
         assert.equal(list[0]!.name, GraphFixture.GraphName)
@@ -206,7 +206,7 @@ test('graph/list and graph/get route to the service (Development)', async () =>
 test('every graph op is rejected on a Runtime tenant with NotDevelopment', async () =>
 {
     const fixture = new GraphFixture()
-    await fixture.With(TenantPurpose.Runtime, async client =>
+    await fixture.With(EnvironmentPurpose.Runtime, async client =>
     {
         const ref = { graphName: GraphFixture.GraphName }
         const attempts = [
@@ -248,7 +248,7 @@ test('the policy gate maps the graph ops: create/delete=administer, list/get=rea
 test('a Development tenant with no graph service rejects graph ops with InvalidRequest (defensive branch)', async () =>
 {
     const fixture = new GraphFixture()
-    await fixture.With(TenantPurpose.Development, async client =>
+    await fixture.With(EnvironmentPurpose.Development, async client =>
     {
         const error = await GraphFixture.ErrorOf(client.CreateGraph({ graphName: GraphFixture.GraphName, description: GraphFixture.Description }))
         assert.equal(error.code, ErrorCodes.InvalidRequest)
@@ -260,7 +260,7 @@ test('a Development tenant with no graph service rejects graph ops with InvalidR
 test('graph/contribute delegates to the service and returns the detail (Development)', async () =>
 {
     const fixture = new GraphFixture()
-    await fixture.With(TenantPurpose.Development, async client =>
+    await fixture.With(EnvironmentPurpose.Development, async client =>
     {
         const detail = await client.ContributeGraph({ graphName: GraphFixture.GraphName, solutionId: GraphFixture.SolutionId, packages: [] })
         assert.equal(detail.name, GraphFixture.GraphName)
@@ -271,7 +271,7 @@ test('graph/contribute delegates to the service and returns the detail (Developm
 test('graph/contribute with no graph service rejects with the unavailable error', async () =>
 {
     const fixture = new GraphFixture()
-    await fixture.With(TenantPurpose.Development, async client =>
+    await fixture.With(EnvironmentPurpose.Development, async client =>
     {
         const error = await GraphFixture.ErrorOf(client.ContributeGraph({ graphName: GraphFixture.GraphName, solutionId: GraphFixture.SolutionId, packages: [] }))
         assert.equal(error.code, ErrorCodes.InvalidRequest)
@@ -306,7 +306,7 @@ test('a graph-contribute service credential is refused graph/delete even with an
 {
     const fixture = new GraphFixture()
     const scoped = new ScopedAccessContext(GraphFixture.Context(Role.Owner), [TokenScope.GraphContribute])
-    await fixture.With(TenantPurpose.Development, async client =>
+    await fixture.With(EnvironmentPurpose.Development, async client =>
     {
         const error = await GraphFixture.ErrorOf(client.DeleteGraph({ graphName: GraphFixture.GraphName }))
         assert.equal(error.code, ErrorCodes.InvalidRequest)
@@ -315,7 +315,7 @@ test('a graph-contribute service credential is refused graph/delete even with an
         assert.deepEqual(fixture.Service.Calls, [GraphFixture.ListCall])
     }, true, scoped)
     const open = new GraphFixture()
-    await open.With(TenantPurpose.Development, async client =>
+    await open.With(EnvironmentPurpose.Development, async client =>
     {
         await client.DeleteGraph({ graphName: GraphFixture.GraphName })
         assert.deepEqual(open.Service.Calls, [GraphFixture.DeleteCall + GraphFixture.GraphName])
@@ -327,7 +327,7 @@ test('graph failures answer their typed code with the unchanged message', async 
     const fixture = new GraphFixture()
     const ref = { graphName: GraphFixture.GraphName }
     const contribute = { graphName: GraphFixture.GraphName, solutionId: GraphFixture.SolutionId, packages: [] }
-    await fixture.With(TenantPurpose.Development, async client =>
+    await fixture.With(EnvironmentPurpose.Development, async client =>
     {
         fixture.Service.Failure = new GraphNotFoundError(GraphFixture.GraphName)
         let error = await GraphFixture.ErrorOf(client.GetGraph(ref))
@@ -356,7 +356,7 @@ test('graph failures answer their typed code with the unchanged message', async 
 test('a non-graph failure still answers -32603 internal error', async () =>
 {
     const fixture = new GraphFixture()
-    await fixture.With(TenantPurpose.Development, async client =>
+    await fixture.With(EnvironmentPurpose.Development, async client =>
     {
         fixture.Service.Failure = new Error(GraphFixture.SecretDetail)
         const error = await GraphFixture.ErrorOf(client.GetGraph({ graphName: GraphFixture.GraphName }))
@@ -369,14 +369,14 @@ test('a scoped credential\'s language notifications are dropped; an unscoped one
 {
     const scoped = new ScopedAccessContext(GraphFixture.Context(Role.Owner), [TokenScope.GraphContribute])
     const droppedSpy = new LanguageSpy()
-    await new GraphFixture().With(TenantPurpose.Development, async client =>
+    await new GraphFixture().With(EnvironmentPurpose.Development, async client =>
     {
         client.DidChange(GraphFixture.DocUri, GraphFixture.DocText)
         await client.ListGraphs()
         assert.deepEqual(droppedSpy.Changes, [])
     }, true, scoped, droppedSpy.Service())
     const runSpy = new LanguageSpy()
-    await new GraphFixture().With(TenantPurpose.Development, async client =>
+    await new GraphFixture().With(EnvironmentPurpose.Development, async client =>
     {
         client.DidChange(GraphFixture.DocUri, GraphFixture.DocText)
         await runSpy.Seen

@@ -23,7 +23,7 @@ const FileAuditTestNewline = '\n'
 
 const AllowEvent: AccessAuditEvent = {
     Timestamp: new Date('2026-01-01T00:00:00.000Z'),
-    TenantId: 't1',
+    EnvironmentId: 't1',
     PrincipalId: 'p1',
     Surface: AuditSurface.Rpc,
     MethodOrPath: 'solution/open',
@@ -45,7 +45,7 @@ test('the file line contains the expected fields and no secret substring', async
         const lines = readFileSync(path, 'utf8').split('\n').filter(l => l.length > 0)
         assert.equal(lines.length, 1)
         const record = JSON.parse(lines[0]!) as Record<string, unknown>
-        assert.equal(record.tenant, 't1')
+        assert.equal(record.environment, 't1')
         assert.equal(record.action, 'Administer')
         assert.equal(record.resourceKind, 'Realm')
         assert.equal(record.outcome, 'allow')
@@ -76,7 +76,7 @@ test('only whitelisted keys are serialized, so an extra secret-shaped field neve
         const tainted = { ...AllowEvent, Token: secret, Authorization: secret, Fingerprint: secret } as unknown as AccessAuditEvent
         await new FileAccessAuditSink(path).Record(tainted)
         const line = readFileSync(path, 'utf8').split(FileAuditTestNewline).filter(l => l.length > 0)[0]!
-        const expected = ['timestamp', 'tenant', 'principal', 'surface', 'method', 'action', 'resourceKind', 'resourcePath', 'outcome', 'reason', 'correlationId']
+        const expected = ['timestamp', 'environment', 'principal', 'surface', 'method', 'action', 'resourceKind', 'resourcePath', 'outcome', 'reason', 'correlationId']
         assert.deepEqual(Object.keys(JSON.parse(line) as Record<string, unknown>).sort(), expected.sort())
         assert.equal(line.includes(secret), false)
     }

@@ -18,7 +18,7 @@ class RecordingPlatform implements PlatformServices
     public static readonly PromptCall = 'prompt'
     public static readonly MasterKeyCall = 'masterKey'
     public static readonly IdentityStoresCall = 'identityStores'
-    public static readonly TenantConfigCall = 'tenantConfig'
+    public static readonly EnvironmentConfigCall = 'tenantConfig'
 
     private readonly inner = new NodePlatform()
     public readonly calls: string[] = []
@@ -60,7 +60,7 @@ class RecordingPlatform implements PlatformServices
 
     public CreateRealmConfigStore(configRoot: string): Promise<IRealmConfigStore>
     {
-        this.calls.push(RecordingPlatform.TenantConfigCall)
+        this.calls.push(RecordingPlatform.EnvironmentConfigCall)
         return this.inner.CreateRealmConfigStore(configRoot)
     }
 }
@@ -90,7 +90,7 @@ test('a server built with an injected platform routes all infra + identity throu
         identity: {
             identityRoot: join(base, 'identity'),
             masterKey: { keyFilePath: InjectionFixture.KeyFile(base) },
-            tenant: { id: 't1', displayName: 'T1' },
+            environment: { id: 't1', displayName: 'T1' },
         },
     })
     await server.Start()
@@ -101,7 +101,7 @@ test('a server built with an injected platform routes all infra + identity throu
         assert.ok(platform.calls.includes(RecordingPlatform.PromptCall))
         assert.ok(platform.calls.includes(RecordingPlatform.MasterKeyCall))
         assert.ok(platform.calls.includes(RecordingPlatform.IdentityStoresCall))
-        assert.ok(platform.calls.includes(RecordingPlatform.TenantConfigCall))
+        assert.ok(platform.calls.includes(RecordingPlatform.EnvironmentConfigCall))
         assert.notEqual(await server.Pack(), undefined)
     }
     finally

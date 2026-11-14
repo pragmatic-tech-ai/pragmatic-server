@@ -9,7 +9,7 @@ export type UserSeed = { principalId: string; email: string; passwordRef: string
 export class UserSeeder
 {
     private static readonly LoginPath = '/auth/login'
-    private static readonly TenantQuery = '?environment='
+    private static readonly EnvironmentQuery = '?environment='
     private static readonly WsPath = '/'
     private static readonly BearerPrefix = 'Bearer '
     private static readonly ContentTypeHeader = 'Content-Type'
@@ -19,7 +19,7 @@ export class UserSeeder
     private static readonly EndEvent = 'end'
     private static readonly ErrorEvent = 'error'
     private static readonly OpenEvent = 'open'
-    private static readonly TenantResourceKind = 'Tenant'
+    private static readonly RealmResourceKind = 'Realm'
     private static readonly AlreadyExistsText = 'already exists'
     private static readonly LoginFailedPrefix = 'login failed with HTTP '
     private static readonly MissingPasswordPrefix = 'no password resolved for user '
@@ -37,9 +37,9 @@ export class UserSeeder
         return { Authorization: UserSeeder.BearerPrefix + token }
     }
 
-    public async Login(baseHttpUrl: string, tenant: string, email: string, password: string): Promise<string>
+    public async Login(baseHttpUrl: string, environment: string, email: string, password: string): Promise<string>
     {
-        const url = `${baseHttpUrl}${UserSeeder.LoginPath}${UserSeeder.TenantQuery}${encodeURIComponent(tenant)}`
+        const url = `${baseHttpUrl}${UserSeeder.LoginPath}${UserSeeder.EnvironmentQuery}${encodeURIComponent(environment)}`
         const body = UserSeeder.LoginBody(email, password)
         const result = await new Promise<{ status: number; text: string }>((resolve, reject) =>
         {
@@ -64,9 +64,9 @@ export class UserSeeder
         return token
     }
 
-    public async Connect(wsUrl: string, tenant: string, token: string): Promise<MessageConnection>
+    public async Connect(wsUrl: string, environment: string, token: string): Promise<MessageConnection>
     {
-        const ws = new WebSocket(`${wsUrl}${UserSeeder.WsPath}${UserSeeder.TenantQuery}${encodeURIComponent(tenant)}`, { headers: UserSeeder.BearerHeader(token) })
+        const ws = new WebSocket(`${wsUrl}${UserSeeder.WsPath}${UserSeeder.EnvironmentQuery}${encodeURIComponent(environment)}`, { headers: UserSeeder.BearerHeader(token) })
         await new Promise<void>((resolve, reject) =>
         {
             ws.once(UserSeeder.OpenEvent, () => resolve())
@@ -98,7 +98,7 @@ export class UserSeeder
                     throw err
                 }
             }
-            await conn.sendRequest(AdminProtocol.GrantRole, { subject: user.principalId, role: user.coarseRole, resourceKind: UserSeeder.TenantResourceKind, resourcePath: [] })
+            await conn.sendRequest(AdminProtocol.GrantRole, { subject: user.principalId, role: user.coarseRole, resourceKind: UserSeeder.RealmResourceKind, resourcePath: [] })
         }
     }
 

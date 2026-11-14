@@ -13,7 +13,7 @@ import type { IDisposable, IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { CypherLimits } from '../../../config/cypher-limits.js'
 import { PagingLimits } from '../../../config/paging-limits.js'
-import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
+import { EnvironmentPurpose } from '../../../environments/environment-purpose.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
 import { PpSecurityHarness } from '../../cypher/tests/pp-security-harness.js'
@@ -103,7 +103,7 @@ class ExecWorld
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
             serverSocket, this.language, this.manager, context, undefined, this.Server.DevCypher(),
-            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development, undefined, undefined, undefined,
+            undefined, undefined, undefined, undefined, undefined, undefined, EnvironmentPurpose.Development, undefined, undefined, undefined,
             this.Server.DevExecute())
         this.clients.push(PragmaticClient.CreateOverSocket(clientSocket))
         this.handlers.push(handler)

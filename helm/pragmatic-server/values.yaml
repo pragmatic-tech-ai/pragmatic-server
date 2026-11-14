@@ -1,5 +1,5 @@
-# replicaCount > 1 is safe ONLY with redis.url set (tenant ownership lease -- one replica owns a tenant at a time).
-# Without Redis, keep this at 1: multiple replicas would open the same tenant's file-backed storage concurrently.
+# replicaCount > 1 is safe ONLY with redis.url set (environment ownership lease -- one replica owns an environment at a time).
+# Without Redis, keep this at 1: multiple replicas would open the same environment's file-backed storage concurrently.
 replicaCount: 1
 
 nameOverride: ""
@@ -41,26 +41,28 @@ persistence:
   size: 1Gi
   # storageClass: ""
 
-# The tenant MAP (the body under the top-level "tenants" key). The chart wraps it as
-# {"tenants": {...}} into the ConfigMap's tenants.json (mounted at /cfg/tenants.json).
-# e.g. tenants: { acme: { displayName: Acme } }
+# The environment MAP (the body under the top-level "environments" key). The chart wraps it as
+# {"environments": {...}} into the ConfigMap's environments.json (mounted at /cfg/environments.json).
+# e.g. environments: { acme: { displayName: Acme } }
+# A values file written before the rename may still say `tenants:`; it is read when `environments` is empty
+# (for one release).
 # Holds secret REFERENCES only, never secret values.
-# A tenant entry may also carry a `connections` map (id -> { settings, secretRef }); each
+# An environment entry may also carry a `connections` map (id -> { settings, secretRef }); each
 # secretRef resolves from `secrets.provisioned` (or provisionedExistingSecret).
-tenants: {}
+environments: {}
 
 # Secret placeholders: EMPTY here, supplied at install time (e.g. --set secrets.masterKeyB64=...).
 # Never commit a real value.
 secrets:
   masterKeyB64: ""
-  # Per-tenant OIDC client secrets and bootstrap-admin passwords, keyed by the ref strings used in
-  # `tenants` (e.g. "acme-oidc-secret", "acme-admin-pw"). DEV CONVENIENCE ONLY -- never commit
+  # Per-environment OIDC client secrets and bootstrap-admin passwords, keyed by the ref strings used in
+  # `environments` (e.g. "acme-oidc-secret", "acme-admin-pw"). DEV CONVENIENCE ONLY -- never commit
   # real values here; for production supply them out-of-band via provisionedExistingSecret.
   provisioned: {}
   provisionedExistingSecret: ""
   provisionedSecretKey: provisioned-secrets.json
 
-# Optional Redis for safe multi-replica operation (tenant ownership lease). Leave url empty for single-replica.
+# Optional Redis for safe multi-replica operation (environment ownership lease). Leave url empty for single-replica.
 # Supply the URL via this chart's Secret (set redis.url) OR an existing Secret (redis.existingSecret + redis.secretKey).
 # The URL may carry credentials -- treat it as a secret; never commit a real value.
 redis:

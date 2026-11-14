@@ -7,9 +7,9 @@ import type { WriteBatch, WriteResult } from '@pragmatic-tech-ai/todl'
 import { DeliveryChannel, EngineBridgeErrorCode, EnvironmentCatalogError, EnvironmentCatalogErrorCode, ExternalWriteError } from '@pragmatic-tech-ai/todl/engine'
 import type { IStorage, StorageEntry } from '@pragmatic-tech-ai/todl-runtime'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
-import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
-import { InMemoryTenantCoordinator } from '../../../tenancy/tenant-coordinator.js'
-import { InMemoryTenantProvisioning, TenantRegistry } from '../../../tenancy/tenant-registry.js'
+import { EnvironmentPurpose } from '../../../environments/environment-purpose.js'
+import { InMemoryEnvironmentCoordinator } from '../../../environments/environment-coordinator.js'
+import { InMemoryEnvironmentProvisioning, EnvironmentRegistry } from '../../../environments/environment-registry.js'
 import { MemorySourceAdapter } from '../../engine/tests/memory-source-adapter.js'
 import { EnvironmentEngineHost, EnvironmentUpgradeFailedError } from '../environment-engine-host.js'
 import type { IEnvironmentDiagnostics } from '../environment-engine-host.js'
@@ -424,17 +424,17 @@ describe('environment engine host', () =>
         await HostFx.Run(async fx =>
         {
             fx.Live(HostFx.CrmApp, HostFx.AppVersion, [HostFx.Crm])
-            const provisioning = new InMemoryTenantProvisioning(new Map([[EnvironmentFixture.TenantId, { displayName: EnvironmentFixture.TenantId, purpose: TenantPurpose.Runtime }]]))
-            const registry = new TenantRegistry(fx.Root, fx.MasterKey(), provisioning, new InMemoryTenantCoordinator())
+            const provisioning = new InMemoryEnvironmentProvisioning(new Map([[EnvironmentFixture.EnvironmentId, { displayName: EnvironmentFixture.EnvironmentId, purpose: EnvironmentPurpose.Runtime }]]))
+            const registry = new EnvironmentRegistry(fx.Root, fx.MasterKey(), provisioning, new InMemoryEnvironmentCoordinator())
             try
             {
-                const server = await registry.ServerFor(EnvironmentFixture.TenantId)
+                const server = await registry.ServerFor(EnvironmentFixture.EnvironmentId)
                 const engine = await server.EnvironmentEngine().Engine()
                 await fx.Seed([{ Concept: HostFx.Account, Id: HostFx.AccountId, Properties: { name: HostFx.Acme } }], server.EnvironmentEngine())
-                await registry.DisposeTenant(EnvironmentFixture.TenantId)
+                await registry.DisposeEnvironment(EnvironmentFixture.EnvironmentId)
                 await assert.rejects(engine.BeginRead(AccessScope.System), (error: unknown) => HostFx.IsDisposed(error), 'the engine is disposed with the server')
                 // the store is closed: the next lease holder opens the same LMDB and sees the committed write
-                const next = await registry.ServerFor(EnvironmentFixture.TenantId)
+                const next = await registry.ServerFor(EnvironmentFixture.EnvironmentId)
                 assert.notEqual(next, server)
                 assert.deepEqual(await HostFx.Column(await next.EnvironmentEngine().Engine(), HostFx.Accounts), [HostFx.Acme])
             }

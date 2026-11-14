@@ -1,10 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ServerBootstrap } from '../server-bootstrap.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import { DeploymentMode } from '../../platform/deployment-mode.js'
 import type { ServerConfig } from '../../config/server-config.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 
 class Fixtures
 {
@@ -13,9 +13,9 @@ class Fixtures
         return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { base64Env: 'PRAGMATIC_MASTER_KEY' }, deploymentMode: DeploymentMode.Local, ...extra }
     }
 
-    public static Provisioning(): InMemoryTenantProvisioning
+    public static Provisioning(): InMemoryEnvironmentProvisioning
     {
-        return new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>())
+        return new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>())
     }
 }
 

@@ -36,7 +36,7 @@ import type { IEnvironmentRuntime, EnvEndpoint, EnvRuntimeContext } from '../env
 import { EnvironmentRuntimeResolver } from '../environment-runtime-resolver.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
-import { BundleBuilder, TenantPurposeName, type EnvDefinition, type EnvOidc } from '../../../environments/seed/bundle.js'
+import { BundleBuilder, EnvironmentPurposeName, type EnvDefinition, type EnvOidc } from '../../../environments/seed/bundle.js'
 import type { UserSeed } from '../../../environments/seed/users.js'
 import { AdminProxyError, AdminProxyErrorKind, type IAdminProxy, type AdminConnectInfo, type AdminSnapshot } from '../admin-proxy.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, IssueTokenParams, TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -991,7 +991,7 @@ class DefOfProbe
         return (service as any).DefOf(rec) as EnvDefinition
     }
 
-    public static Purpose(service: EnvironmentService, rec: EnvironmentRecord): TenantPurposeName
+    public static Purpose(service: EnvironmentService, rec: EnvironmentRecord): EnvironmentPurposeName
     {
         return DefOfProbe.Def(service, rec).purpose
     }
@@ -1009,14 +1009,14 @@ test('DefOf re-derives purpose from the stored type, not the template default', 
 {
     const h = await Harness.Make()
     const rec = { ...Harness.Record('r1', EnvStatus.Stopped), template: Template.DevBlank, type: EnvType.Runtime }
-    assert.equal(DefOfProbe.Purpose(h.Service, rec), TenantPurposeName.Runtime)
+    assert.equal(DefOfProbe.Purpose(h.Service, rec), EnvironmentPurposeName.Runtime)
 })
 
 test('DefOf falls back to the template default when a legacy record has no type', async () =>
 {
     const h = await Harness.Make()
     const rec = { ...Harness.Record('l1', EnvStatus.Stopped), template: Template.DemoContoso, type: undefined } as unknown as EnvironmentRecord
-    assert.equal(DefOfProbe.Purpose(h.Service, rec), TenantPurposeName.Runtime)
+    assert.equal(DefOfProbe.Purpose(h.Service, rec), EnvironmentPurposeName.Runtime)
 })
 
 // The database host follows the record's runtime, with the same rule Create applies: a runtime that publishes no host port

@@ -12,8 +12,8 @@ export enum EnvKind
     Demo = 'demo',
 }
 
-/** The numeric TenantPurpose serialized into tenants.json (Development = 0, Runtime = 1). */
-export enum TenantPurposeName
+/** The numeric EnvironmentPurpose serialized into environments.json (Development = 0, Runtime = 1). */
+export enum EnvironmentPurposeName
 {
     Development = '0',
     Runtime = '1',
@@ -22,15 +22,15 @@ export enum TenantPurposeName
 export type EnvDatabase = { connectionName: string; host: string; port: number; database: string; user: string; password: string; hostPort: number }
 /** Tenant-IdP federation input: provider settings for the generic-oidc pack plus the raw client secret stored under secretRef. */
 export type EnvOidc = { issuer: string; discoveryUrl: string; clientId: string; redirectUri: string; secretRef: string; secret: string }
-export type EnvDefinition = { name: string; kind: EnvKind; environmentId: string; purpose: TenantPurposeName; hostPort: number; database?: EnvDatabase }
+export type EnvDefinition = { name: string; kind: EnvKind; environmentId: string; purpose: EnvironmentPurposeName; hostPort: number; database?: EnvDatabase }
 
-/** Generates a pragmatic-server config bundle (master key, secrets, tenants, tenant config, demo app) for one environment. */
+/** Generates a pragmatic-server config bundle (master key, secrets, environments, realm config, demo app) for one environment. */
 export class BundleBuilder
 {
     private static readonly MasterKeyFile = 'master.key'
     private static readonly SecretsFile = 'provisioned-secrets.json'
-    private static readonly TenantsFile = 'tenants.json'
-    private static readonly TenantConfigFile = 'tenant-config.json'
+    private static readonly EnvironmentsFile = 'environments.json'
+    private static readonly RealmConfigFile = 'realm-config.json'
     private static readonly ApplicationFile = 'application.json'
     private static readonly SecurityModelFile = 'security-model.json'
     private static readonly UsersFile = 'users.json'
@@ -66,12 +66,12 @@ export class BundleBuilder
         const seedDir = explicitSeedDir ?? join(BundleBuilder.SeedRoot, def.name, BundleBuilder.SeedDir)
         BundleBuilder.WriteMasterKey(bundleDir)
         BundleBuilder.WriteSecrets(def, bundleDir, seedDir, oidc)
-        BundleBuilder.WriteTenants(def, bundleDir)
-        const tenantDir = join(bundleDir, BundleBuilder.DataDir, def.environmentId)
-        BundleBuilder.WriteTenantConfig(def, tenantDir, seedDir, oidc)
+        BundleBuilder.WriteEnvironments(def, bundleDir)
+        const environmentDir = join(bundleDir, BundleBuilder.DataDir, def.environmentId)
+        BundleBuilder.WriteRealmConfig(def, environmentDir, seedDir, oidc)
         if (def.kind === EnvKind.Demo)
         {
-            await BundleBuilder.WriteDemoApplication(tenantDir)
+            await BundleBuilder.WriteDemoApplication(environmentDir)
         }
     }
 
@@ -137,10 +137,10 @@ export class BundleBuilder
         })
     }
 
-    private static WriteTenants(def: EnvDefinition, bundleDir: string): void
+    private static WriteEnvironments(def: EnvDefinition, bundleDir: string): void
     {
-        const tenants: Record<string, unknown> = {}
-        const tenant: Record<string, unknown> = {
+        const environments: Record<string, unknown> = {}
+        const environment: Record<string, unknown> = {
             displayName: def.environmentId,
             purpose: Number(def.purpose),
             bootstrap: {
@@ -154,20 +154,20 @@ export class BundleBuilder
         if (def.database)
         {
             const db = def.database
-            const policy = tenant.connectorsPolicy as { adapterAllowlist: string[] }
+            const policy = environment.connectorsPolicy as { adapterAllowlist: string[] }
             policy.adapterAllowlist = [BundleBuilder.SqlAdapter]
             const connections: Record<string, unknown> = {}
             connections[db.connectionName] = { settings: { host: db.host, port: String(db.port), database: db.database, user: db.user }, secretRef: BundleBuilder.DbSecretRef(def, db) }
-            tenant.connections = connections
+            environment.connections = connections
         }
-        tenants[def.environmentId] = tenant
-        BundleBuilder.WriteJson(join(bundleDir, BundleBuilder.TenantsFile), { tenants })
+        environments[def.environmentId] = environment
+        BundleBuilder.WriteJson(join(bundleDir, BundleBuilder.EnvironmentsFile), { environments })
     }
 
-    /** Matches FileTenantConfigStore: { configs: { <environmentId>: record } }, Map fields serialized as entry arrays. */
-    private static WriteTenantConfig(def: EnvDefinition, tenantDir: string, seedDir: string, oidc?: EnvOidc): void
+    /** Matches FileRealmConfigStore: { configs: { <environmentId>: record } }, Map fields serialized as entry arrays. */
+    private static WriteRealmConfig(def: EnvDefinition, environmentDir: string, seedDir: string, oidc?: EnvOidc): void
     {
-        const identityDir = join(tenantDir, BundleBuilder.IdentityDir)
+        const identityDir = join(environmentDir, BundleBuilder.IdentityDir)
         mkdirSync(identityDir, { recursive: true })
         const record: Record<string, unknown> = {
             packId: oidc ? BundleBuilder.GenericOidcPackId : BundleBuilder.LocalPackId,
@@ -183,7 +183,7 @@ export class BundleBuilder
         }
         const configs: Record<string, unknown> = {}
         configs[def.environmentId] = record
-        BundleBuilder.WriteJson(join(identityDir, BundleBuilder.TenantConfigFile), { configs })
+        BundleBuilder.WriteJson(join(identityDir, BundleBuilder.RealmConfigFile), { configs })
     }
 
     private static OidcProviderSettings(oidc: EnvOidc): Array<[string, string]>
@@ -197,10 +197,10 @@ export class BundleBuilder
         ]
     }
 
-    private static async WriteDemoApplication(tenantDir: string): Promise<void>
+    private static async WriteDemoApplication(environmentDir: string): Promise<void>
     {
-        await NorthwindApp.Compile(join(tenantDir, BundleBuilder.PackagesDir))
-        const appDir = join(tenantDir, BundleBuilder.ApplicationsDir, NorthwindApp.AppName)
+        await NorthwindApp.Compile(join(environmentDir, BundleBuilder.PackagesDir))
+        const appDir = join(environmentDir, BundleBuilder.ApplicationsDir, NorthwindApp.AppName)
         mkdirSync(appDir, { recursive: true })
         BundleBuilder.WriteJson(join(appDir, BundleBuilder.ApplicationFile), {
             name: NorthwindApp.AppName,

@@ -11,8 +11,8 @@ import { WebSocket } from 'ws'
 import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { Gateway } from '../gateway.js'
 import { WorkerHost } from '../worker-host.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import type { IWorkerRouter, WorkerEndpoint } from '../worker-router.js'
 import type { MachineTlsRef } from '../machine-tls.js'
 import { StructuredLogger } from '../../observability/logger.js'
@@ -115,7 +115,7 @@ class BackingWorker
         mkdirSync(join(baseDir, 't1'), { recursive: true })
         cpSync(join(GwFixture.Tls().certFile, '..', '..', 'sample-solution'), join(baseDir, 't1', 'solution'), { recursive: true })
         process.env[GwFixture.KeyEnv] = randomBytes(32).toString('base64')
-        const provisioning = new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>([['t1', { displayName: 'T1' }]]))
+        const provisioning = new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'T1' }]]))
         const worker = await WorkerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: GwFixture.KeyEnv }, provisioning, tls: GwFixture.Tls() })
         return new BackingWorker(baseDir, worker)
     }

@@ -1,11 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { BundleBuilder, EnvKind, TenantPurposeName } from '../bundle.js'
+import { BundleBuilder, EnvKind, EnvironmentPurposeName } from '../bundle.js'
 import type { EnvDefinition } from '../bundle.js'
 import type { DockerEnv } from '../docker.js'
 import { SeedCli } from '../seed.js'
 
-const Demo: EnvDefinition = { name: 'demo', kind: EnvKind.Demo, environmentId: 'contoso', purpose: TenantPurposeName.Runtime, hostPort: 8081 }
+const Demo: EnvDefinition = { name: 'demo', kind: EnvKind.Demo, environmentId: 'contoso', purpose: EnvironmentPurposeName.Runtime, hostPort: 8081 }
 
 type UpAccess = { Up(d: DockerEnv, def: EnvDefinition, dir: string): Promise<void> }
 

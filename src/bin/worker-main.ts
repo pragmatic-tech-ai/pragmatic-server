@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import type { ServerConfig } from '../config/server-config.js'
 import { ServerConfigLoader } from '../config/server-config-loader.js'
-import { TenantProvisioningFactory } from '../config/tenant-provisioning-factory.js'
+import { EnvironmentProvisioningFactory } from '../config/environment-provisioning-factory.js'
 import { ProvisionedSecretsFactory } from '../config/provisioned-secrets-factory.js'
 import { WorkerHost } from '../cluster/worker-host.js'
 import { ServerBootstrap } from './server-bootstrap.js'
@@ -40,7 +40,8 @@ class WorkerMain
         const logger = StructuredLogger.ToStdout()
         const read = (path: string): string => readFileSync(path, WorkerMain.Utf8)
         const config = ServerConfigLoader.Load(process.env, read)
-        const { provisioning } = TenantProvisioningFactory.Build(config, read)
+        ServerBootstrap.LogDeprecations(config, logger)
+        const { provisioning } = EnvironmentProvisioningFactory.Build(config, read)
         const provisionedSecrets = ProvisionedSecretsFactory.Build(config, read)
         const observabilityOptions = ServerBootstrap.ObservabilityOptions(config, ObservabilityRole.Worker)
         const observability = observabilityOptions !== undefined ? Observability.Start(observabilityOptions) : undefined

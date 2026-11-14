@@ -11,7 +11,7 @@ import { ProvisionedSecretSource } from '../../config/provisioned-secret-source.
 
 class ReadBackFixture
 {
-    public static readonly TenantId = 't1'
+    public static readonly EnvironmentId = 't1'
     public static readonly KeyEnv = 'PS_RB_KEY'
     public static readonly GroupName = 'ops'
     public static readonly GenericOidcPackId = 'generic-oidc'
@@ -39,7 +39,7 @@ class ReadBackFixture
             identity: {
                 identityRoot,
                 masterKey: { base64Env: ReadBackFixture.KeyEnv },
-                tenant: { id: ReadBackFixture.TenantId, displayName: 'Tenant One' },
+                environment: { id: ReadBackFixture.EnvironmentId, displayName: 'Environment One' },
             },
         }
     }
@@ -56,18 +56,18 @@ test('first boot seeds the config store; a later boot does not overwrite an admi
     {
         await first.Start()
         const store = await first.RealmConfigStore()
-        const seeded = await store.Get(ReadBackFixture.TenantId)
+        const seeded = await store.Get(ReadBackFixture.EnvironmentId)
         assert.notEqual(seeded, null)
         assert.equal(seeded!.DelegationDepth, DelegationDepth.FullAuthz)
         const edited = new IdentityConfig(seeded!.PackId, DelegationDepth.ExternalGrants, seeded!.ProviderSettings, new Map([[ReadBackFixture.GroupName, Role.Admin]]), seeded!.ClaimsMapping)
-        await store.Save(ReadBackFixture.TenantId, edited)
+        await store.Save(ReadBackFixture.EnvironmentId, edited)
         await first.Dispose()
 
         const second = new PragmaticServer(options)
         try
         {
             await second.Start()
-            const after = await (await second.RealmConfigStore()).Get(ReadBackFixture.TenantId)
+            const after = await (await second.RealmConfigStore()).Get(ReadBackFixture.EnvironmentId)
             assert.notEqual(after, null)
             assert.equal(after!.DelegationDepth, DelegationDepth.ExternalGrants)
             assert.equal(after!.GroupRoleMap.get(ReadBackFixture.GroupName), Role.Admin)
@@ -96,7 +96,7 @@ test('a later boot composes the identity from the stored config, not the seed', 
     {
         await first.Start()
         assert.equal(first.Oidc(), undefined)
-        await (await first.RealmConfigStore()).Save(ReadBackFixture.TenantId, ReadBackFixture.OidcConfig(ReadBackFixture.StoredSecretRef))
+        await (await first.RealmConfigStore()).Save(ReadBackFixture.EnvironmentId, ReadBackFixture.OidcConfig(ReadBackFixture.StoredSecretRef))
         await first.Dispose()
 
         const second = new PragmaticServer(options)
@@ -139,7 +139,7 @@ test('secret-ref provisioning reads the stored ProviderSettings, not the seed', 
         const firstSecrets = (await first.Pack()).Secrets
         assert.equal(await firstSecrets.Get(ReadBackFixture.SeedSecretRef), ReadBackFixture.SeedSecretValue)
         assert.equal(await firstSecrets.Get(ReadBackFixture.StoredSecretRef), null)
-        await (await first.RealmConfigStore()).Save(ReadBackFixture.TenantId, ReadBackFixture.OidcConfig(ReadBackFixture.StoredSecretRef))
+        await (await first.RealmConfigStore()).Save(ReadBackFixture.EnvironmentId, ReadBackFixture.OidcConfig(ReadBackFixture.StoredSecretRef))
         await first.Dispose()
 
         const second = new PragmaticServer(options)

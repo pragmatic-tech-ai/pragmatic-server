@@ -16,7 +16,7 @@ test('SeedUsers sends CreateAccount then GrantRole per user', async () =>
     await new UserSeeder().SeedUsers(fake as never, [{ principalId: 'rep-boston', email: 'rep-boston@contoso.test', passwordRef: 'rep-boston-pw', coarseRole: 'Editor', password: 'pw' } as never])
     assert.deepEqual(sent.map(s => s.method), [AdminProtocol.CreateAccount.method, AdminProtocol.GrantRole.method])
     assert.deepEqual(sent[0].params, { email: 'rep-boston@contoso.test', principalId: 'rep-boston', password: 'pw' })
-    assert.deepEqual(sent[1].params, { subject: 'rep-boston', role: 'Editor', resourceKind: 'Tenant', resourcePath: [] })
+    assert.deepEqual(sent[1].params, { subject: 'rep-boston', role: 'Editor', resourceKind: 'Realm', resourcePath: [] })
 })
 
 test('SeedUsers swallows account-already-exists and still grants', async () =>

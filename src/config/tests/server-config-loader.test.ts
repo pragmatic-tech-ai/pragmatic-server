@@ -26,15 +26,33 @@ test('loads defaults for host/port/mode when only required values are present', 
     assert.equal(config.deploymentMode, DeploymentMode.Local)
     assert.equal(config.baseDir, '/data')
     assert.deepEqual(config.masterKey, { keyFilePath: '/run/secrets/key' })
-    assert.deepEqual(config.singleTenant, { id: 't1', displayName: 't1' })
-    assert.equal(config.tenantsFile, undefined)
+    assert.deepEqual(config.singleEnvironment, { id: 't1', displayName: 't1' })
+    assert.equal(config.environmentsFile, undefined)
 })
 
-test('prefers a tenants file over single-tenant env when both present', () =>
+test('prefers an environments file over single-environment env when both present', () =>
+{
+    const env = { ...Env.Minimal(), PRAGMATIC_ENVIRONMENTS_FILE: '/cfg/environments.json' }
+    const config = ServerConfigLoader.Load(env, Env.NoRead)
+    assert.equal(config.environmentsFile, '/cfg/environments.json')
+    assert.deepEqual(config.deprecations ?? [], [])
+})
+
+test('reads the legacy PRAGMATIC_TENANTS_FILE when the new variable is unset', () =>
 {
     const env = { ...Env.Minimal(), PRAGMATIC_TENANTS_FILE: '/cfg/tenants.json' }
     const config = ServerConfigLoader.Load(env, Env.NoRead)
-    assert.equal(config.tenantsFile, '/cfg/tenants.json')
+    assert.equal(config.environmentsFile, '/cfg/tenants.json')
+    assert.equal(config.deprecations?.length, 1)
+    assert.match(config.deprecations![0], /PRAGMATIC_TENANTS_FILE.*PRAGMATIC_ENVIRONMENTS_FILE/)
+})
+
+test('prefers PRAGMATIC_ENVIRONMENTS_FILE when both are set', () =>
+{
+    const env = { ...Env.Minimal(), PRAGMATIC_ENVIRONMENTS_FILE: '/cfg/environments.json', PRAGMATIC_TENANTS_FILE: '/cfg/tenants.json' }
+    const config = ServerConfigLoader.Load(env, Env.NoRead)
+    assert.equal(config.environmentsFile, '/cfg/environments.json')
+    assert.deepEqual(config.deprecations ?? [], [])
 })
 
 test('reads base64 env master key ref', () =>
@@ -56,10 +74,10 @@ test('fails closed when no master key ref is given', () =>
     assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), /master key/)
 })
 
-test('fails closed when neither tenants file nor tenant id is given', () =>
+test('fails closed when neither environments file nor environment id is given', () =>
 {
     const env = { PRAGMATIC_BASE_DIR: '/data', PRAGMATIC_MASTER_KEY_FILE: '/k' }
-    assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), /tenant/)
+    assert.throws(() => ServerConfigLoader.Load(env, Env.NoRead), /PRAGMATIC_ENVIRONMENTS_FILE or PRAGMATIC_ENVIRONMENT_ID/)
 })
 
 test('a thrown error never echoes a secret-looking env value', () =>

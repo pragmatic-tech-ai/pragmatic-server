@@ -50,7 +50,7 @@ test('a resolved token emits an Upgrade Allow event carrying the principal id', 
     assert.equal(sink.Events[0]!.Surface, AuditSurface.Upgrade)
     assert.equal(sink.Events[0]!.Outcome, AuditOutcome.Allow)
     assert.equal(sink.Events[0]!.PrincipalId, 'svc1')
-    assert.equal(sink.Events[0]!.TenantId, 't1')
+    assert.equal(sink.Events[0]!.EnvironmentId, 't1')
 })
 
 test('an unresolved token emits an Upgrade AuthFailure event without a principal', async () =>

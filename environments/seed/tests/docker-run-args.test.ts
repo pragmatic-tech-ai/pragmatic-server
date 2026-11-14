@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DockerEnv, EnvKind, TenantPurposeName } from '../docker.js'
+import { DockerEnv, EnvKind, EnvironmentPurposeName } from '../docker.js'
 import type { EnvDefinition } from '../docker.js'
 import { EnvConventions } from '../env-conventions.js'
 
@@ -12,17 +12,17 @@ class RunArgsProbe
     private static readonly RuntimeName = 'runtime'
     private static readonly DevelopmentName = 'dev'
     private static readonly EnvironmentId = 'contoso'
-    private static readonly DevelopmentTenantId = 'dev'
+    private static readonly DevelopmentEnvironmentId = 'dev'
     private static readonly OriginScheme = 'http://localhost:'
 
     public static RuntimeDef(hostPort: number): EnvDefinition
     {
-        return { name: RunArgsProbe.RuntimeName, kind: EnvKind.Demo, environmentId: RunArgsProbe.EnvironmentId, purpose: TenantPurposeName.Runtime, hostPort }
+        return { name: RunArgsProbe.RuntimeName, kind: EnvKind.Demo, environmentId: RunArgsProbe.EnvironmentId, purpose: EnvironmentPurposeName.Runtime, hostPort }
     }
 
     public static DevelopmentDef(hostPort: number): EnvDefinition
     {
-        return { name: RunArgsProbe.DevelopmentName, kind: EnvKind.Dev, environmentId: RunArgsProbe.DevelopmentTenantId, purpose: TenantPurposeName.Development, hostPort }
+        return { name: RunArgsProbe.DevelopmentName, kind: EnvKind.Dev, environmentId: RunArgsProbe.DevelopmentEnvironmentId, purpose: EnvironmentPurposeName.Development, hostPort }
     }
 
     public static DatabaseDef(): EnvDefinition

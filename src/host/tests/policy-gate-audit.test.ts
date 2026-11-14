@@ -61,7 +61,7 @@ test('an allowed Authorize emits one Allow event with action, kind, principal an
     const event = sink.Events[0]!
     assert.equal(event.Outcome, AuditOutcome.Allow)
     assert.equal(event.Surface, AuditSurface.Rpc)
-    assert.equal(event.TenantId, 't1')
+    assert.equal(event.EnvironmentId, 't1')
     assert.equal(event.PrincipalId, 'p1')
     assert.equal(event.MethodOrPath, LanguageProtocol.CompletionsAt.method)
     assert.equal(event.Action, Action.Read)

@@ -142,7 +142,7 @@ describe('K8sManifestBuilder', () =>
         assert.equal(c.image, 'pragmatic-server:dev')
         assert.equal(c.imagePullPolicy, 'IfNotPresent')
         assert.equal(c.ports[0].containerPort, 8080)
-        assert.deepEqual(c.env.map((e: any) => e.name), ['PRAGMATIC_PORT', 'OTHER', 'PRAGMATIC_BASE_DIR', 'PRAGMATIC_TENANTS_FILE', 'PRAGMATIC_MASTER_KEY_FILE', 'PRAGMATIC_PROVISIONED_SECRETS_FILE', 'PRAGMATIC_DEPLOYMENT_MODE'])
+        assert.deepEqual(c.env.map((e: any) => e.name), ['PRAGMATIC_PORT', 'OTHER', 'PRAGMATIC_BASE_DIR', 'PRAGMATIC_ENVIRONMENTS_FILE', 'PRAGMATIC_MASTER_KEY_FILE', 'PRAGMATIC_PROVISIONED_SECRETS_FILE', 'PRAGMATIC_DEPLOYMENT_MODE'])
         assert.equal(c.readinessProbe.httpGet.path, '/healthz')
         assert.equal(c.readinessProbe.httpGet.port, 8080)
     })
@@ -175,7 +175,7 @@ describe('K8sManifestBuilder server boot wiring', () =>
         const val = (n: string) => c.env.find((e: any) => e.name === n).value
         assert.equal(val('PRAGMATIC_PORT'), '8080')
         assert.equal(val('PRAGMATIC_BASE_DIR'), '/pragmatic/data')
-        assert.equal(val('PRAGMATIC_TENANTS_FILE'), '/pragmatic/config/tenants.json')
+        assert.equal(val('PRAGMATIC_ENVIRONMENTS_FILE'), '/pragmatic/config/environments.json')
         assert.equal(val('PRAGMATIC_MASTER_KEY_FILE'), '/pragmatic/secrets/master.key')
         assert.equal(val('PRAGMATIC_PROVISIONED_SECRETS_FILE'), '/pragmatic/secrets/provisioned-secrets.json')
         assert.equal(val('PRAGMATIC_DEPLOYMENT_MODE'), 'local')

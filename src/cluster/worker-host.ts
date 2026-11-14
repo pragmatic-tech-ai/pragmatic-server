@@ -23,11 +23,11 @@ import { BrowserSessionAuth } from '../host/browser-session-auth.js'
 import { ConnectionAuthenticator } from '../host/connection-authenticator.js'
 import { AuthHttpEndpoint } from '../host/auth-http-endpoint.js'
 import type { WebSocketAddress } from '../host/pragmatic-server-host.js'
-import { InMemoryTenantCoordinator } from '../tenancy/tenant-coordinator.js'
-import { TenantRegistry } from '../tenancy/tenant-registry.js'
-import { TenantOwnedElsewhereError, InMemoryTenantOwnership } from '../tenancy/tenant-ownership.js'
-import type { ITenantOwnership } from '../tenancy/tenant-ownership.js'
-import { RedisTenantOwnership } from '../tenancy/redis-tenant-ownership.js'
+import { InMemoryEnvironmentCoordinator } from '../environments/environment-coordinator.js'
+import { EnvironmentRegistry } from '../environments/environment-registry.js'
+import { EnvironmentOwnedElsewhereError, InMemoryEnvironmentOwnership } from '../environments/environment-ownership.js'
+import type { IEnvironmentOwnership } from '../environments/environment-ownership.js'
+import { RedisEnvironmentOwnership } from '../environments/redis-environment-ownership.js'
 import { WorkerRegistration } from './worker-registration.js'
 import { HealthEndpoint } from '../host/health-endpoint.js'
 import type { CypherLimits } from '../config/cypher-limits.js'
@@ -35,7 +35,7 @@ import type { PagingLimits } from '../config/paging-limits.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
 import type { AdapterPacksConfig, WsResilienceConfig } from '../config/server-config.js'
 import type { WorkerEndpoint } from './worker-router.js'
-import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
+import type { IEnvironmentProvisioning } from '../environments/environment-provisioning.js'
 import { MachineTls } from './machine-tls.js'
 import type { MachineTlsRef } from './machine-tls.js'
 import { MachineFingerprintHeader } from './machine-headers.js'
@@ -61,7 +61,7 @@ export interface WorkerHostOptions
     port: number
     baseDir: string
     masterKey: MasterKeyRef
-    provisioning: ITenantProvisioning
+    provisioning: IEnvironmentProvisioning
     tls: MachineTlsRef
     idleTtlMs?: number
     idleSweepMs?: number
@@ -140,7 +140,7 @@ export class WorkerHost
 
     private readonly httpsServer: HttpsServer
     private readonly wss: WebSocketServer
-    private readonly registry: TenantRegistry
+    private readonly registry: EnvironmentRegistry
     private readonly authenticator: ConnectionAuthenticator
     private readonly browserAuth: BrowserSessionAuth
     private readonly audit: IAccessAuditSink
@@ -171,7 +171,7 @@ export class WorkerHost
     private constructor(
         httpsServer: HttpsServer,
         wss: WebSocketServer,
-        registry: TenantRegistry,
+        registry: EnvironmentRegistry,
         address: WebSocketAddress,
         idleTtlMs: number,
         idleSweepMs: number,
@@ -282,13 +282,13 @@ export class WorkerHost
 
     public static async StartAsync(options: WorkerHostOptions): Promise<WorkerHost>
     {
-        const coordinator = new InMemoryTenantCoordinator()
+        const coordinator = new InMemoryEnvironmentCoordinator()
         const hasRedis = options.redisUrl !== undefined && options.redisUrl.length > 0
-        const ownership: ITenantOwnership = hasRedis
-            ? new RedisTenantOwnership(options.redisUrl!, options.replicaId ?? randomUUID())
-            : new InMemoryTenantOwnership()
+        const ownership: IEnvironmentOwnership = hasRedis
+            ? new RedisEnvironmentOwnership(options.redisUrl!, options.replicaId ?? randomUUID())
+            : new InMemoryEnvironmentOwnership()
         await ownership.Start().catch(() => {})
-        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets, undefined, options.adapterPacks, options.logger)
+        const registry = new EnvironmentRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets, undefined, options.adapterPacks, options.logger)
         const host = options.host ?? WorkerHost.DefaultHost
         const httpsServer = createServer(MachineTls.Server(options.tls))
         const resilience = options.wsResilience ?? WorkerHost.DefaultWsResilience
@@ -340,7 +340,7 @@ export class WorkerHost
         return this.address
     }
 
-    public RegistryForTest(): TenantRegistry
+    public RegistryForTest(): EnvironmentRegistry
     {
         return this.registry
     }
@@ -491,15 +491,15 @@ export class WorkerHost
             this.RejectRetryable(socket)
             return
         }
-        const environmentId = this.TenantHint(req)
+        const environmentId = this.EnvironmentHint(req)
         if (environmentId === null)
         {
             socket.destroy()
             return
         }
         const limit = this.rateLimit.Check(
-            { scope: RateLimitScope.Tenant, tenant: environmentId, key: environmentId },
-            { surface: AuditSurface.Upgrade, tenant: environmentId, methodOrPath: RateLimitGuard.UpgradeMethodName() })
+            { scope: RateLimitScope.Environment, environment: environmentId, key: environmentId },
+            { surface: AuditSurface.Upgrade, environment: environmentId, methodOrPath: RateLimitGuard.UpgradeMethodName() })
         if (!limit.Allowed)
         {
             this.RejectRateLimited(socket, limit.RetryAfterMs)
@@ -512,7 +512,7 @@ export class WorkerHost
         }
         catch (error)
         {
-            if (error instanceof TenantOwnedElsewhereError)
+            if (error instanceof EnvironmentOwnedElsewhereError)
             {
                 this.RejectRetryable(socket)
             }
@@ -537,7 +537,7 @@ export class WorkerHost
             const languageService = await server.LanguageService()
             const manager = await server.Manager()
             const pack = await server.Pack()
-            const admin = new AdminService(pack.Grants, pack.Audit, await server.RealmConfigStore(), server.Realm(), () => this.registry.DisposeTenant(environmentId), pack.Accounts, pack.Registrar, pack.Tokens, {
+            const admin = new AdminService(pack.Grants, pack.Audit, await server.RealmConfigStore(), server.Realm(), () => this.registry.DisposeEnvironment(environmentId), pack.Accounts, pack.Registrar, pack.Tokens, {
                 Invalidate: name => server.InvalidateAdapterPack(name),
                 AllowScripts: name => server.AllowAdapterPackScripts(name),
                 DenyScripts: name => server.DenyAdapterPackScripts(name),
@@ -617,7 +617,7 @@ export class WorkerHost
         if (header === undefined)
         {
             const credential = this.browserAuth.Credential(req, true)
-            if (credential === null || credential.Tenant !== server.Realm().Id)
+            if (credential === null || credential.Environment !== server.Realm().Id)
             {
                 return null
             }
@@ -645,7 +645,7 @@ export class WorkerHost
                 await new AppServingEndpoint(this.registry).Handle(req, res)
                 return
             }
-            const environmentId = this.TenantHint(req)
+            const environmentId = this.EnvironmentHint(req)
             if (environmentId === null)
             {
                 res.writeHead(BrowserSessionAuth.IsSessionPath(path) ? WorkerHost.UnauthorizedStatus : WorkerHost.NotFoundStatus)
@@ -695,9 +695,9 @@ export class WorkerHost
 
     // Cluster cookie path (deferred beyond SP0): this assumes the mTLS gateway STRIPS any client-supplied `Cookie`
     // and `Origin` headers on the forwarded leg; the full cluster-cookie story is out of SP0 scope.
-    private TenantHint(req: IncomingMessage): string | null
+    private EnvironmentHint(req: IncomingMessage): string | null
     {
         const header = req.headers[WorkerHost.EnvironmentHeader]
-        return typeof header === 'string' && header.length > 0 ? header : this.browserAuth.CookieTenant(req.headers)
+        return typeof header === 'string' && header.length > 0 ? header : this.browserAuth.CookieEnvironment(req.headers)
     }
 }

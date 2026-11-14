@@ -188,7 +188,7 @@ describe('environment scope rules (tier 1)', () =>
             await RulesFx.SeedEmployees(fx)
             assert.equal((await Tier1Fx.Names(server, Tier1Fx.Admin, Tier1Fx.Employee)).length, 2)
             const snapshot = new IdpDirectorySnapshot(new Date(), true, new Map([[Tier1Fx.Admin, IdpUserState.Disabled]]), new Map())
-            await (await server.Pack()).IdpDirectory.Save(EnvironmentFixture.TenantId, snapshot)
+            await (await server.Pack()).IdpDirectory.Save(EnvironmentFixture.EnvironmentId, snapshot)
             ;(await server.SecuritySetting()).Invalidate()
             assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Admin, Tier1Fx.Employee), [], 'a disabled System Administrator holds nothing')
             assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Admin, Tier1Fx.Account), [])

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BundleBuilder, EnvKind } from './bundle.js'
-import type { EnvDefinition, TenantPurposeName } from './bundle.js'
+import type { EnvDefinition, EnvironmentPurposeName } from './bundle.js'
 import { DockerEnv } from './docker.js'
 import { UserSeeder } from './users.js'
 import type { UserSeed } from './users.js'
@@ -67,7 +67,7 @@ export class SeedCli
     public static LoadDefinition(env: string): EnvDefinition
     {
         const json = JSON.parse(readFileSync(join(SeedCli.EnvDir(env), SeedCli.EnvFile), SeedCli.Utf8)) as { name: string; kind: EnvKind; environmentId: string; purpose: number; hostPort: number }
-        return { name: json.name, kind: json.kind, environmentId: json.environmentId, purpose: String(json.purpose) as TenantPurposeName, hostPort: json.hostPort }
+        return { name: json.name, kind: json.kind, environmentId: json.environmentId, purpose: String(json.purpose) as EnvironmentPurposeName, hostPort: json.hostPort }
     }
 
     /** Reads the generated provisioned-secrets.json (secretRef to value) for an environment. */

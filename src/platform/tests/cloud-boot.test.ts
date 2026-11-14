@@ -20,17 +20,17 @@ class CloudServerFixture
         return CloudPlatform.Create({ session: new PgSession(new pg.Pool() as unknown as Pool), storage: new ObjectStoreProviderRegistry(), secretManager, masterKeyRef: 'cluster/master-key' })
     }
 
-    public static Options(platform: CloudPlatform, tenantId: string)
+    public static Options(platform: CloudPlatform, environmentId: string)
     {
         return {
-            packagesRoot: `tenants/${tenantId}/packages`,
+            packagesRoot: `tenants/${environmentId}/packages`,
             deploymentMode: DeploymentMode.Cloud,
             platform,
             identity: {
-                identityRoot: `tenants/${tenantId}/identity`,
+                identityRoot: `tenants/${environmentId}/identity`,
                 masterKey: { base64Env: 'UNUSED_CLOUD_KEY' },
-                tenant: { id: tenantId, displayName: 'Cloud Tenant' },
-                bootstrap: { adminEmail: 'admin@x.io', adminPrincipalId: 'admin', adminPasswordRef: `${tenantId}/bootstrap/admin`, ownerGrant: true },
+                environment: { id: environmentId, displayName: 'Cloud Environment' },
+                bootstrap: { adminEmail: 'admin@x.io', adminPrincipalId: 'admin', adminPasswordRef: `${environmentId}/bootstrap/admin`, ownerGrant: true },
             },
         }
     }
@@ -39,8 +39,8 @@ class CloudServerFixture
 test('a PragmaticServer boots on DeploymentMode.Cloud and authenticates a seeded Owner admin', async () =>
 {
     const platform = await CloudServerFixture.Platform(9)
-    const tenantId = `cloud-${randomUUID()}`
-    const options = CloudServerFixture.Options(platform, tenantId)
+    const environmentId = `cloud-${randomUUID()}`
+    const options = CloudServerFixture.Options(platform, environmentId)
     const server = new PragmaticServer(options)
     try
     {
@@ -62,8 +62,8 @@ test('a PragmaticServer boots on DeploymentMode.Cloud and authenticates a seeded
 test('cloud boot denies an unknown account (deny-by-default)', async () =>
 {
     const platform = await CloudServerFixture.Platform(5)
-    const tenantId = `cloud-${randomUUID()}`
-    const server = new PragmaticServer(CloudServerFixture.Options(platform, tenantId))
+    const environmentId = `cloud-${randomUUID()}`
+    const server = new PragmaticServer(CloudServerFixture.Options(platform, environmentId))
     try
     {
         await server.Start()

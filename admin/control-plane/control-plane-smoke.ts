@@ -62,9 +62,9 @@ import { NetPortProbe, PortAllocator } from './port-allocator.js'
 
 type HttpResult = { status: number; json: unknown; setCookie: string[] }
 
-interface TenantsShape
+interface EnvironmentsShape
 {
-    tenants: Record<string, { purpose: number } | undefined>
+    environments: Record<string, { purpose: number } | undefined>
 }
 
 export class ControlPlaneSmoke
@@ -86,7 +86,7 @@ export class ControlPlaneSmoke
     private static readonly StaticDir = 'static'
     private static readonly SecretsFile = 'provisioned-secrets.json'
     private static readonly Utf8 = 'utf8'
-    private static readonly TenantsFile = 'tenants.json'
+    private static readonly EnvironmentsFile = 'environments.json'
     private static readonly DevPurpose = 0
     private static readonly DemoPurpose = 1
     private static readonly EnvironmentsPath = '/api/environments'
@@ -185,8 +185,8 @@ export class ControlPlaneSmoke
         SeededDemo: 'demo-contoso: four demo principals plus admin seeded',
         DeleteDemo: 'demo-contoso: service delete succeeds',
         GoneDemo: 'demo-contoso: no longer listed',
-        PurposeDev: 'dev-blank: tenants.json purpose is Development (0)',
-        PurposeDemo: 'demo-contoso: tenants.json purpose is Runtime (1)',
+        PurposeDev: 'dev-blank: environments.json purpose is Development (0)',
+        PurposeDemo: 'demo-contoso: environments.json purpose is Runtime (1)',
         PromoteCreateDev: 'promote: development env create succeeds and reaches running',
         PromoteCreateGraph: 'promote: create graph on dev env returns 201',
         PromoteMakerToken: 'promote: maker token mint via the environment service returns a token',
@@ -665,9 +665,9 @@ export class ControlPlaneSmoke
 
     private CheckPurpose(label: string, dataRoot: string, envName: string, tenantId: string, expected: number): void
     {
-        const tenantsPath = join(dataRoot, envName, ControlPlaneSmoke.TenantsFile)
-        const parsed = JSON.parse(readFileSync(tenantsPath, ControlPlaneSmoke.Utf8)) as TenantsShape
-        const purpose = parsed.tenants[tenantId]?.purpose
+        const environmentsPath = join(dataRoot, envName, ControlPlaneSmoke.EnvironmentsFile)
+        const parsed = JSON.parse(readFileSync(environmentsPath, ControlPlaneSmoke.Utf8)) as EnvironmentsShape
+        const purpose = parsed.environments[tenantId]?.purpose
         this.Expect(label, purpose === expected, String(purpose))
     }
 

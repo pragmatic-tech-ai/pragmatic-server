@@ -8,11 +8,11 @@ services:
     environment:
       PRAGMATIC_BASE_DIR: /data
       PRAGMATIC_PORT: "8080"
-      PRAGMATIC_TENANTS_FILE: /cfg/tenants.json
+      PRAGMATIC_ENVIRONMENTS_FILE: /cfg/environments.json
       PRAGMATIC_MASTER_KEY_FILE: /run/secrets/master_key
     volumes:
       - pragmatic-data:/data
-      - ./docker/tenants.example.json:/cfg/tenants.json:ro
+      - ./docker/environments.example.json:/cfg/environments.json:ro
       - ./docker/master.key:/run/secrets/master_key:ro
 # A Redis coordinator would attach here for the deferred multi-replica story:
 #  redis:

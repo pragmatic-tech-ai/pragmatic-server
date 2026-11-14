@@ -7,8 +7,8 @@ import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WorkerHost } from '../worker-host.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import type { MachineTlsRef } from '../machine-tls.js'
 
 class Fixture
@@ -21,9 +21,9 @@ class Fixture
         return { certFile: join(Fixture.Dir, 'server.pem'), keyFile: join(Fixture.Dir, 'server.key'), caFile: join(Fixture.Dir, 'ca.pem') }
     }
 
-    public static Provisioning(): InMemoryTenantProvisioning
+    public static Provisioning(): InMemoryEnvironmentProvisioning
     {
-        return new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>([['t1', { displayName: 'T1' }]]))
+        return new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'T1' }]]))
     }
 
     public static Get(port: number, path: string): Promise<number>

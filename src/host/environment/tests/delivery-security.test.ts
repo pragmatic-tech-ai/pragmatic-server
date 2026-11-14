@@ -287,7 +287,7 @@ describe('delivery security (S4 Task 13)', () =>
             await DeliveryFx.Applied(fx, DeliveryFx.V2, [DeliveryFx.Hr1, DeliveryFx.Crm2])
             for (const id of [DeliveryFx.A1, DeliveryFx.A2])
             {
-                assert.equal(await DeliveryFx.SystemRead(server, id, SystemNames.Owner), SystemPrincipal.IdFor(EnvironmentFixture.TenantId))
+                assert.equal(await DeliveryFx.SystemRead(server, id, SystemNames.Owner), SystemPrincipal.IdFor(EnvironmentFixture.EnvironmentId))
                 assert.equal(await DeliveryFx.SystemRead(server, id, SystemNames.OwningBusinessUnit), DeliveryFx.Contoso, 'the root business unit')
             }
             assert.deepEqual(await Tier1Fx.Names(server, Tier1Fx.Alice, DeliveryFx.Account), [], 'a user-depth BasicUser sees none of the system-owned records')
@@ -314,7 +314,7 @@ describe('delivery security (S4 Task 13)', () =>
             await host.Engine()
             await host.BackfillNow()
             assert.deepEqual((await DeliveryFx.Stored(next))?.roleOverrides, [], 'the open reconciled the setting against v2')
-            assert.equal(await DeliveryFx.SystemRead(next, DeliveryFx.A1, SystemNames.Owner), SystemPrincipal.IdFor(EnvironmentFixture.TenantId), 'the owed backfill resumed')
+            assert.equal(await DeliveryFx.SystemRead(next, DeliveryFx.A1, SystemNames.Owner), SystemPrincipal.IdFor(EnvironmentFixture.EnvironmentId), 'the owed backfill resumed')
             await DeliveryFx.Applied(fx, DeliveryFx.V3, [DeliveryFx.Hr3, DeliveryFx.Crm2])
             const stored = await DeliveryFx.Stored(next)
             assert.deepEqual(stored?.roleOverrides, [], 'the restored concept does not revive the override')

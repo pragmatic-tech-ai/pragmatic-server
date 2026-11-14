@@ -323,7 +323,7 @@ export class K8sManifestBuilder
     // In-cluster server boot wiring (env var names and file contract match environments/seed/docker.ts).
     private static readonly ConfigMapKey = 'configMap'
     private static readonly BaseDirVar = 'PRAGMATIC_BASE_DIR'
-    private static readonly TenantsFileVar = 'PRAGMATIC_TENANTS_FILE'
+    private static readonly EnvironmentsFileVar = 'PRAGMATIC_ENVIRONMENTS_FILE'
     private static readonly MasterKeyFileVar = 'PRAGMATIC_MASTER_KEY_FILE'
     private static readonly SecretsFileVar = 'PRAGMATIC_PROVISIONED_SECRETS_FILE'
     private static readonly DeploymentModeVar = 'PRAGMATIC_DEPLOYMENT_MODE'
@@ -1684,7 +1684,7 @@ export class K8sManifestBuilder
         }))
         env.push(
             this.EnvLiteral(K8sManifestBuilder.BaseDirVar, K8sManifestBuilder.ServerDataMount),
-            this.EnvLiteral(K8sManifestBuilder.TenantsFileVar, this.MountedFile(K8sManifestBuilder.ServerConfigMount, EnvServerSeedSource.TenantsFile)),
+            this.EnvLiteral(K8sManifestBuilder.EnvironmentsFileVar, this.MountedFile(K8sManifestBuilder.ServerConfigMount, EnvServerSeedSource.EnvironmentsFile)),
             this.EnvLiteral(K8sManifestBuilder.MasterKeyFileVar, this.MountedFile(K8sManifestBuilder.ServerSecretsMount, EnvServerSeedSource.MasterKeyFile)),
             this.EnvLiteral(K8sManifestBuilder.SecretsFileVar, this.MountedFile(K8sManifestBuilder.ServerSecretsMount, EnvServerSeedSource.SecretsFile)),
             this.EnvLiteral(K8sManifestBuilder.DeploymentModeVar, K8sManifestBuilder.DeploymentModeLocal),

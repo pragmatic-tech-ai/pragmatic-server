@@ -34,7 +34,7 @@ export class CookieAppSessionCheck implements IAppSessionCheck
     public async HasSession(req: IncomingMessage, environment: string): Promise<boolean>
     {
         const credential = this.browser.Credential(req, false)
-        if (credential === null || credential.Tenant !== environment)
+        if (credential === null || credential.Environment !== environment)
         {
             return false
         }

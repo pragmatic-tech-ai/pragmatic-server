@@ -11,7 +11,7 @@ import type { PragmaticServer } from '../../../pragmatic-server.js'
  */
 export class DevConnectorRead
 {
-    private static readonly DefaultTenant = 't1'
+    private static readonly DefaultEnvironment = 't1'
     private static readonly PrincipalId = 'p1'
     private static readonly Separator = ' <- '
     private static readonly NoModelsMessage = 'the open solution has no connector model'
@@ -20,14 +20,14 @@ export class DevConnectorRead
     {
     }
 
-    public static async Rows(server: PragmaticServer, concept: string, tenantId: string = DevConnectorRead.DefaultTenant): Promise<EntityDto[]>
+    public static async Rows(server: PragmaticServer, concept: string, environmentId: string = DevConnectorRead.DefaultEnvironment): Promise<EntityDto[]>
     {
         const service = server.DevConnectors()
         const models = await service.List()
         if (models.length === 0) throw new Error(DevConnectorRead.NoModelsMessage)
         try
         {
-            return (await service.Read(DevConnectorRead.Context(tenantId), { modelId: models[0]!.modelId, concept }, new PagingLimits())).items
+            return (await service.Read(DevConnectorRead.Context(environmentId), { modelId: models[0]!.modelId, concept }, new PagingLimits())).items
         }
         catch (error)
         {
@@ -35,11 +35,11 @@ export class DevConnectorRead
         }
     }
 
-    public static Context(tenantId: string): AccessContext
+    public static Context(environmentId: string): AccessContext
     {
-        const realm = new Realm(tenantId, RealmKind.SelfHosted, tenantId)
-        const principal = new Principal(DevConnectorRead.PrincipalId, tenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant(DevConnectorRead.PrincipalId, Role.Owner, new ResourceRef(ResourceKind.Realm, tenantId, []))]
+        const realm = new Realm(environmentId, RealmKind.SelfHosted, environmentId)
+        const principal = new Principal(DevConnectorRead.PrincipalId, environmentId, PrincipalKind.User, new Map(), [])
+        const grants = [new Grant(DevConnectorRead.PrincipalId, Role.Owner, new ResourceRef(ResourceKind.Realm, environmentId, []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 

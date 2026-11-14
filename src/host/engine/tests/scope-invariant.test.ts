@@ -64,7 +64,7 @@ class InvariantFx
     public static readonly First = 'p-one'
     public static readonly Second = 'p-two'
     public static readonly Outsider = 'p-outsider'
-    public static readonly TenantName = 'Tenant One'
+    public static readonly EnvironmentName = 'Tenant One'
     public static readonly ModelsDir = 'models'
     public static readonly ModelFileName = 'model.todl'
     public static readonly NoConnectors = 'no connectors'
@@ -137,8 +137,8 @@ class InvariantFx
     /** A principal with no grant on the tenant: the PolicyGate refuses it. */
     public static Ungranted(principalId: string): AccessContext
     {
-        const realm = new Realm(PpSecurityHarness.TenantId, RealmKind.SelfHosted, InvariantFx.TenantName)
-        return new AccessContext(new Principal(principalId, PpSecurityHarness.TenantId, PrincipalKind.User, new Map(), []), realm, [], new ResourceAuthorizationPolicy())
+        const realm = new Realm(PpSecurityHarness.EnvironmentId, RealmKind.SelfHosted, InvariantFx.EnvironmentName)
+        return new AccessContext(new Principal(principalId, PpSecurityHarness.EnvironmentId, PrincipalKind.User, new Map(), []), realm, [], new ResourceAuthorizationPolicy())
     }
 
     /** The class node Premium as a hypothetical Widget, its property values spelled out from the fixture text. */

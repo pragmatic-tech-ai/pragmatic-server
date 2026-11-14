@@ -15,7 +15,7 @@ class MachineHarness
     public static readonly LocalPackId = 'local'
     public static readonly EntraPackId = 'entra'
     private static readonly EntraIssuer = 'https://login.microsoftonline.com/test-tid/v2.0'
-    private static readonly TenantId = 't-machine'
+    private static readonly EnvironmentId = 't-machine'
     private static readonly HashAlgorithm = 'sha256'
     private static readonly HexEncoding = 'hex'
     private static readonly Group = 'robots'
@@ -33,7 +33,7 @@ class MachineHarness
 
     public static Realm(packId: string): Realm
     {
-        return new Realm(MachineHarness.TenantId, RealmKind.SelfHosted, packId)
+        return new Realm(MachineHarness.EnvironmentId, RealmKind.SelfHosted, packId)
     }
 
     public static LocalConfig(): IdentityConfig

@@ -74,7 +74,7 @@ export class FileAccessAuditSink implements IAccessAuditSink
     {
         return JSON.stringify({
             timestamp: event.Timestamp.toISOString(),
-            tenant: event.TenantId,
+            environment: event.EnvironmentId,
             principal: event.PrincipalId,
             surface: event.Surface,
             method: event.MethodOrPath,

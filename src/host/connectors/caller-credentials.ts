@@ -28,12 +28,12 @@ export interface ICallerCredentialRevoker
  */
 export class CallerCredentials implements ICallerCredentialWrapper, ICallerCredentialRevoker
 {
-    private static readonly UnboundTenantId = 'unbound'
+    private static readonly UnboundRealmId = 'unbound'
     private static readonly RevokeFailedLine = 'caller credentials: revoke failed: '
     private static readonly UnknownName = 'unknown'
 
     private tokens = new CallerSourceTokens(new UnsupportedSourceTokenProvider())
-    private realm = new Realm(CallerCredentials.UnboundTenantId, RealmKind.SelfHosted, CallerCredentials.UnboundTenantId)
+    private realm = new Realm(CallerCredentials.UnboundRealmId, RealmKind.SelfHosted, CallerCredentials.UnboundRealmId)
     private vault: UpstreamTokenVault | undefined
     private readonly wrapped = new Map<IDataSourceAdapterFactory, CallerCredentialAdapterFactory>()
 

@@ -11,7 +11,7 @@ import type { IAccessAuditSink, AccessAuditEvent, AuditSurface } from './access-
 export interface RateLimitContext
 {
     surface: AuditSurface
-    tenant: string
+    environment: string
     principal?: string
     methodOrPath: string
     correlationId?: string
@@ -24,7 +24,7 @@ export class RateLimitGuard
 {
     private static readonly Metric = 'rate_limited_total'
     private static readonly ScopeLabel = 'scope'
-    private static readonly TenantLabel = 'tenant'
+    private static readonly EnvironmentLabel = 'environment'
     private static readonly ErrorMetric = 'rate_limit_errors_total'
     private static readonly LimiterErrorMessage = 'rate limiter failed; request allowed (fail-open)'
     private static readonly SurfaceField = 'surface'
@@ -83,7 +83,7 @@ export class RateLimitGuard
             const decision = this.limiter.Check(request)
             if (!decision.Allowed)
             {
-                this.Meter(request.scope, context.tenant)
+                this.Meter(request.scope, context.environment)
                 this.Emit(context)
             }
             return decision
@@ -102,12 +102,12 @@ export class RateLimitGuard
         {
             this.logger?.Error(RateLimitGuard.LimiterErrorMessage, {
                 [RateLimitGuard.ScopeLabel]: request.scope,
-                [RateLimitGuard.TenantLabel]: context.tenant,
+                [RateLimitGuard.EnvironmentLabel]: context.environment,
                 [RateLimitGuard.SurfaceField]: context.surface,
                 [RateLimitGuard.MethodField]: context.methodOrPath,
                 [RateLimitGuard.ErrorField]: error instanceof Error ? error.message : String(error),
             })
-            this.errors?.add(1, { [RateLimitGuard.ScopeLabel]: request.scope, [RateLimitGuard.TenantLabel]: context.tenant })
+            this.errors?.add(1, { [RateLimitGuard.ScopeLabel]: request.scope, [RateLimitGuard.EnvironmentLabel]: context.environment })
         }
         catch
         {
@@ -115,11 +115,11 @@ export class RateLimitGuard
         }
     }
 
-    private Meter(scope: string, tenant: string): void
+    private Meter(scope: string, environment: string): void
     {
         try
         {
-            this.rejected?.add(1, { [RateLimitGuard.ScopeLabel]: scope, [RateLimitGuard.TenantLabel]: tenant })
+            this.rejected?.add(1, { [RateLimitGuard.ScopeLabel]: scope, [RateLimitGuard.EnvironmentLabel]: environment })
         }
         catch
         {
@@ -131,7 +131,7 @@ export class RateLimitGuard
     {
         const event: AccessAuditEvent = {
             Timestamp: new Date(),
-            TenantId: context.tenant,
+            EnvironmentId: context.environment,
             PrincipalId: context.principal,
             Surface: context.surface,
             MethodOrPath: context.methodOrPath,

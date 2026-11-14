@@ -43,7 +43,7 @@ class RotationFixture
             identity: {
                 identityRoot: d.identityRoot,
                 masterKey: { base64Env: d.keyEnv },
-                tenant: { id: 't1', displayName: 'Tenant One' },
+                environment: { id: 't1', displayName: 'Environment One' },
                 bootstrap: { adminEmail: RotationFixture.Email, adminPrincipalId: 'admin', adminPasswordRef: RotationFixture.PasswordRef, ownerGrant: true, allowAdminPasswordRotation: allowRotation },
             },
         }

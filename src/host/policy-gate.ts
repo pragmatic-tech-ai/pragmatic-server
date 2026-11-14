@@ -71,7 +71,7 @@ export class PolicyGate
             const spanContext = trace.getActiveSpan()?.spanContext()
             const event: AccessAuditEvent = {
                 Timestamp: new Date(),
-                TenantId: this.context.Realm.Id,
+                EnvironmentId: this.context.Realm.Id,
                 PrincipalId: this.context.Principal.Id,
                 Surface: AuditSurface.Rpc,
                 MethodOrPath: method,
@@ -95,8 +95,8 @@ export class PolicyGate
         const read: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Model }
         const write: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Model }
         const administer: MethodPolicy = { action: Action.Administer, resourceKind: ResourceKind.Realm }
-        const readTenant: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Realm }
-        const writeTenant: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Realm }
+        const readEnvironment: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Realm }
+        const writeEnvironment: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Realm }
         const contribute: MethodPolicy = { action: Action.Contribute, resourceKind: ResourceKind.Realm }
         const connect: MethodPolicy = { action: Action.Connect, resourceKind: ResourceKind.Connector }
         const readConnector: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Connector }
@@ -118,7 +118,7 @@ export class PolicyGate
             [LanguageProtocol.DiagnosticsFor.method, read],
             [LanguageProtocol.DidChange.method, write],
             [SolutionProtocol.OpenSolution.method, administer],
-            [SolutionProtocol.ActiveSolution.method, readTenant],
+            [SolutionProtocol.ActiveSolution.method, readEnvironment],
             [ModelProtocol.ModelView.method, read],
             [ModelProtocol.Resources.method, read],
             [ConnectorProtocol.List.method, readConnector],
@@ -131,25 +131,25 @@ export class PolicyGate
             [ConnectorProtocol.Prepare.method, connect],
             [ConnectorProtocol.Refresh.method, connect],
             [ConnectorProtocol.RefreshModel.method, connect],
-            [CypherProtocol.Query.method, readTenant],
-            [CypherProtocol.Execute.method, writeTenant],
-            [CypherProtocol.Models.method, readTenant],
-            [AppDataProtocol.Write.method, writeTenant],
-            [DataSharingProtocol.Share.method, writeTenant],
-            [DataSharingProtocol.Unshare.method, writeTenant],
-            [DataSharingProtocol.ListShares.method, readTenant],
-            [DataAssignmentProtocol.Assign.method, writeTenant],
-            [PragmaticAppProtocol.List.method, readTenant],
-            [PragmaticAppProtocol.Open.method, readTenant],
+            [CypherProtocol.Query.method, readEnvironment],
+            [CypherProtocol.Execute.method, writeEnvironment],
+            [CypherProtocol.Models.method, readEnvironment],
+            [AppDataProtocol.Write.method, writeEnvironment],
+            [DataSharingProtocol.Share.method, writeEnvironment],
+            [DataSharingProtocol.Unshare.method, writeEnvironment],
+            [DataSharingProtocol.ListShares.method, readEnvironment],
+            [DataAssignmentProtocol.Assign.method, writeEnvironment],
+            [PragmaticAppProtocol.List.method, readEnvironment],
+            [PragmaticAppProtocol.Open.method, readEnvironment],
             [ApplicationDeployProtocol.Deploy.method, administer],
             [GraphProtocol.Create.method, administer],
             [GraphProtocol.Delete.method, administer],
-            [GraphProtocol.List.method, readTenant],
-            [GraphProtocol.Get.method, readTenant],
-            [GraphProtocol.Export.method, readTenant],
+            [GraphProtocol.List.method, readEnvironment],
+            [GraphProtocol.Get.method, readEnvironment],
+            [GraphProtocol.Export.method, readEnvironment],
             [GraphProtocol.Contribute.method, contribute],
             [GraphProtocol.Load.method, administer],
-            [GraphProtocol.Loaded.method, readTenant],
+            [GraphProtocol.Loaded.method, readEnvironment],
             [AdminProtocol.ListGrants.method, administer],
             [AdminProtocol.GrantRole.method, administer],
             [AdminProtocol.RevokeRole.method, administer],

@@ -11,8 +11,8 @@ import { WebSocket } from 'ws'
 import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { WorkerHost } from '../worker-host.js'
 import { MachineTls } from '../machine-tls.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import type { MachineTlsRef } from '../machine-tls.js'
 import { StructuredLogger } from '../../observability/logger.js'
 import { DrainController } from '../../observability/drain-controller.js'
@@ -34,9 +34,9 @@ class Fixture
         return { certFile: join(Fixture.Dir, 'client.pem'), keyFile: join(Fixture.Dir, 'client.key'), caFile: join(Fixture.Dir, 'ca.pem') }
     }
 
-    public static Provisioning(): InMemoryTenantProvisioning
+    public static Provisioning(): InMemoryEnvironmentProvisioning
     {
-        return new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>([['t1', { displayName: 'T1' }]]))
+        return new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'T1' }]]))
     }
 
     public static NewBaseDir(): string

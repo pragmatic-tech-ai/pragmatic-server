@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { EnvKind, TenantPurposeName, type EnvDefinition } from '../../environments/seed/bundle.js'
+import { EnvKind, EnvironmentPurposeName, type EnvDefinition } from '../../environments/seed/bundle.js'
 import { EnvConventions } from '../../environments/seed/env-conventions.js'
 import { Template, EnvType } from './environment-record.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
@@ -66,14 +66,14 @@ export class TemplateCatalog
         return template === Template.DemoContoso || template === Template.RuntimePostgres ? EnvType.Runtime : EnvType.Development
     }
 
-    private static PurposeFor(type: EnvType): TenantPurposeName
+    private static PurposeFor(type: EnvType): EnvironmentPurposeName
     {
         switch (type)
         {
             case EnvType.Development:
-                return TenantPurposeName.Development
+                return EnvironmentPurposeName.Development
             case EnvType.Runtime:
-                return TenantPurposeName.Runtime
+                return EnvironmentPurposeName.Runtime
             default:
             {
                 const _exhaustive: never = type

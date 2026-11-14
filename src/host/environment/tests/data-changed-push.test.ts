@@ -12,7 +12,7 @@ import { Disposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import { PragmaticServer } from '../../../pragmatic-server.js'
-import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
+import { EnvironmentPurpose } from '../../../environments/environment-purpose.js'
 import type { IGraphScope } from '../../engine/access-scope-source.js'
 import type { IUpgradeTimer } from '../../engine/bounded-wait.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
@@ -178,7 +178,7 @@ class PushFx
 
     public static Principal(id: string): Principal
     {
-        return new Principal(id, EnvironmentFixture.TenantId, PrincipalKind.User, new Map(), [])
+        return new Principal(id, EnvironmentFixture.EnvironmentId, PrincipalKind.User, new Map(), [])
     }
 
     public static async Run(options: IEnvironmentFixtureOptions, body: (fx: EnvironmentFixture) => Promise<void>, external: boolean = true): Promise<void>
@@ -492,7 +492,7 @@ describe('data/changed push', () =>
     test('dev tenants get no data/changed', async () =>
     {
         const packages = mkdtempSync(join(tmpdir(), PushFx.DevPrefix))
-        const server = new PragmaticServer({ purpose: TenantPurpose.Development, packagesRoot: packages })
+        const server = new PragmaticServer({ purpose: EnvironmentPurpose.Development, packagesRoot: packages })
         try
         {
             assert.equal(ServerConnectionHandler.RuntimeAttachArgs(server).dataChanges, undefined)

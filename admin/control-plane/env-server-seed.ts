@@ -83,7 +83,7 @@ export class SeedTooLargeError extends Error
 
 /**
  * Control-plane seed source for an in-cluster environment server: reads a generated boot bundle and yields the non-secret
- * tenants ConfigMap plus a secret-safe Secret set. Secret values exit only via EnvServerSecretSet.RenderManifest().
+ * environment ConfigMap plus a secret-safe Secret set. Secret values exit only via EnvServerSecretSet.RenderManifest().
  * Also the single home of the ConfigMap/Secret name scheme.
  */
 export class EnvServerSeedSource
@@ -91,9 +91,11 @@ export class EnvServerSeedSource
     public static readonly Redacted = '[EnvServerSeedSource: values redacted]'
     public static readonly MasterKeyFile = 'master.key'
     public static readonly SecretsFile = 'provisioned-secrets.json'
-    public static readonly TenantsFile = 'tenants.json'
+    public static readonly EnvironmentsFile = 'environments.json'
     public static readonly SecretNameSuffix = '-env-secrets'
-    public static readonly ConfigMapNameSuffix = '-tenants'
+    public static readonly ConfigMapNameSuffix = '-environment'
+    /** The ConfigMap suffix before the rename; ApplyBundle deletes `<env>-tenants` after writing the new one (one release). */
+    private static readonly LegacyConfigMapNameSuffix = '-tenants'
     public static readonly PasswordKey = 'password'
     public static readonly SeedSecretNameSuffix = '-env-seed'
     public static readonly SeedKey = 'seed.json'
@@ -165,10 +167,23 @@ export class EnvServerSeedSource
         await kubectl.Apply(JSON.stringify(secret))
     }
 
-    /** Name of the tenants ConfigMap: `<env>-tenants`. */
+    /** Name of the environment ConfigMap: `<env>-environment`. */
     public static ConfigMapNameOf(environmentName: string): string
     {
         return `${environmentName}${EnvServerSeedSource.ConfigMapNameSuffix}`
+    }
+
+    /** The pre-rename ConfigMap (`<env>-tenants`) as a delete manifest: name and namespace only. */
+    private static LegacyConfigMapManifest(environmentName: string): K8sObject
+    {
+        return {
+            [EnvServerSeedSource.ApiVersionKey]: EnvServerSeedSource.ApiVersion,
+            [EnvServerSeedSource.KindKey]: EnvServerSeedSource.ConfigMapKind,
+            [EnvServerSeedSource.MetadataKey]: {
+                [EnvServerSeedSource.NameKey]: `${environmentName}${EnvServerSeedSource.LegacyConfigMapNameSuffix}`,
+                [EnvServerSeedSource.NamespaceKey]: K8sManifestBuilder.NamespaceOf(environmentName),
+            },
+        }
     }
 
     /** Name of the seed-tree Secret: `<env>-env-seed`. */
@@ -183,7 +198,7 @@ export class EnvServerSeedSource
         return K8sManifestBuilder.SecretNameOf(dbPasswordRef)
     }
 
-    /** The non-secret tenants ConfigMap (data key `tenants.json` = the file text). */
+    /** The non-secret environment ConfigMap (data key `environments.json` = the file text). */
     public ConfigMapManifest(): K8sObject
     {
         return {
@@ -193,7 +208,7 @@ export class EnvServerSeedSource
                 [EnvServerSeedSource.NameKey]: EnvServerSeedSource.ConfigMapNameOf(this.environmentName),
                 [EnvServerSeedSource.NamespaceKey]: this.Namespace(),
             },
-            [EnvServerSeedSource.DataKey]: { [EnvServerSeedSource.TenantsFile]: this.ReadText(EnvServerSeedSource.TenantsFile) },
+            [EnvServerSeedSource.DataKey]: { [EnvServerSeedSource.EnvironmentsFile]: this.ReadText(EnvServerSeedSource.EnvironmentsFile) },
         }
     }
 
@@ -296,8 +311,9 @@ export class EnvServerSeedSource
     }
 
     /**
-     * Applies the env-server seed (tenants ConfigMap + master/provisioned Secrets, and the db-password Secret when a
-     * ref is given) from a generated bundle as one v1 List. The single home for the seed manifest: InClusterEnvironmentRuntime.BringUp
+     * Applies the env-server seed (environment ConfigMap + master/provisioned Secrets, and the db-password Secret when a
+     * ref is given) from a generated bundle as one v1 List, then deletes the pre-rename `<env>-tenants` ConfigMap (gone
+     * already is not an error). The single home for the seed manifest: InClusterEnvironmentRuntime.BringUp
      * and the gated orchestrator smokes both route through here so a change can never drift between production and the smokes.
      * The applied JSON carries base64 secret values transiently; it is handed only to kubectl and is never logged.
      */
@@ -310,5 +326,6 @@ export class EnvServerSeedSource
             [EnvServerSeedSource.ItemsKey]: [seed.ConfigMapManifest(), ...seed.SecretSet().RenderManifest()],
         }
         await kubectl.Apply(JSON.stringify(list))
+        await kubectl.DeleteManifest(JSON.stringify(EnvServerSeedSource.LegacyConfigMapManifest(environmentName)))
     }
 }

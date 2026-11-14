@@ -94,7 +94,7 @@ export class Tier1Fx
     public static readonly CustomerRow = 'k1'
     public static readonly Acme = 'Acme'
 
-    private static readonly TenantName = 'Environment One'
+    private static readonly EnvironmentName = 'Environment One'
     private static readonly ContosoName = 'Contoso'
     private static readonly SalesName = 'Sales'
     private static readonly MarketingName = 'Marketing'
@@ -143,9 +143,9 @@ export class Tier1Fx
 
     public static Context(principalId: string): AccessContext
     {
-        const realm = new Realm(EnvironmentFixture.TenantId, RealmKind.SelfHosted, Tier1Fx.TenantName)
-        const principal = new Principal(principalId, EnvironmentFixture.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Realm, EnvironmentFixture.TenantId, []))]
+        const realm = new Realm(EnvironmentFixture.EnvironmentId, RealmKind.SelfHosted, Tier1Fx.EnvironmentName)
+        const principal = new Principal(principalId, EnvironmentFixture.EnvironmentId, PrincipalKind.User, new Map(), [])
+        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Realm, EnvironmentFixture.EnvironmentId, []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 

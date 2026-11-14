@@ -7,7 +7,7 @@ import type { ISessionManager } from '@pragmatic-tech-ai/todl-identity'
 import type { IAuditSink, AuditEvent, IRealmConfigStore, IRoleGrantStore, ISecurityModelConfig, TeamMembershipRow } from '@pragmatic-tech-ai/todl-identity'
 import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
-import { AdminService, AdminTokenNotFoundError, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, ForeignTenantResourceError } from '../admin-service.js'
+import { AdminService, AdminTokenNotFoundError, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, ForeignRealmResourceError } from '../admin-service.js'
 import type { ISecuritySettingAdmin } from '../admin-service.js'
 import type { SecuritySettingIssue } from '../environment/security-setting-catalog-check.js'
 import { AdminEnums, AdminEnumError } from '../admin-enums.js'
@@ -81,12 +81,12 @@ class FakeConfigStore implements IRealmConfigStore
     public Stored: IdentityConfig | null = null
     public readonly Calls: string[] = []
 
-    public async Get(_tenantId: string): Promise<IdentityConfig | null>
+    public async Get(_environmentId: string): Promise<IdentityConfig | null>
     {
         return this.Stored
     }
 
-    public async Save(_tenantId: string, config: IdentityConfig): Promise<void>
+    public async Save(_environmentId: string, config: IdentityConfig): Promise<void>
     {
         this.Calls.push('save')
         this.Stored = config
@@ -130,9 +130,9 @@ class RecordingInvalidator implements IPrincipalInvalidator
 {
     public readonly Calls: Array<[string, string]> = []
 
-    public InvalidatePrincipal(tenantId: string, principalId: string): void
+    public InvalidatePrincipal(environmentId: string, principalId: string): void
     {
-        this.Calls.push([tenantId, principalId])
+        this.Calls.push([environmentId, principalId])
     }
 }
 
@@ -199,26 +199,26 @@ class AdminFixture
         return new AdminService(this.Grants, audit, this.Config, realm, evict, this.Accounts, this.Registrar, this.Tokens, this.Packs, this.Reload)
     }
 
-    public TenantRoot(): ResourceRef
+    public EnvironmentRoot(): ResourceRef
     {
         return new ResourceRef(ResourceKind.Realm, this.Realm.Id, [])
     }
 
-    public async Seed(subject: string, role: Role, resource: ResourceRef = this.TenantRoot()): Promise<void>
+    public async Seed(subject: string, role: Role, resource: ResourceRef = this.EnvironmentRoot()): Promise<void>
     {
         await this.Grants.Inner.Save(new Grant(subject, role, resource))
     }
 
     public async RootGrantCount(): Promise<number>
     {
-        return (await this.Grants.GrantsOn(this.TenantRoot())).length
+        return (await this.Grants.GrantsOn(this.EnvironmentRoot())).length
     }
 }
 
 test('GrantRole saves and audits actor+action with no secret', async () =>
 {
     const f = new AdminFixture()
-    await f.Service.GrantRole('u1', 'u2', Role.Editor, f.TenantRoot())
+    await f.Service.GrantRole('u1', 'u2', Role.Editor, f.EnvironmentRoot())
     assert.equal((await f.Service.ListGrants('u2')).length, 1)
     assert.equal(f.Audit.Events.length, 1)
     const event = f.Audit.Events[0]
@@ -234,8 +234,8 @@ test('GrantRole saves and audits actor+action with no secret', async () =>
 test('RevokeRole removes the grant and audits', async () =>
 {
     const f = new AdminFixture()
-    await f.Service.GrantRole('u1', 'u2', Role.Editor, f.TenantRoot())
-    await f.Service.RevokeRole('u1', 'u2', Role.Editor, f.TenantRoot())
+    await f.Service.GrantRole('u1', 'u2', Role.Editor, f.EnvironmentRoot())
+    await f.Service.RevokeRole('u1', 'u2', Role.Editor, f.EnvironmentRoot())
     assert.equal((await f.Service.ListGrants('u2')).length, 0)
     assert.equal(f.Audit.Events[1].Detail.get('action'), 'revoke-role')
 })
@@ -243,7 +243,7 @@ test('RevokeRole removes the grant and audits', async () =>
 test('self-lockout rejects before touching the store', async () =>
 {
     const f = new AdminFixture()
-    await assert.rejects(f.Service.RevokeRole('u1', 'u1', Role.Owner, f.TenantRoot()), AdminSelfLockoutError)
+    await assert.rejects(f.Service.RevokeRole('u1', 'u1', Role.Owner, f.EnvironmentRoot()), AdminSelfLockoutError)
     assert.equal(f.Grants.Touched, 0)
     assert.equal(f.Audit.Events.length, 0)
 })
@@ -253,7 +253,7 @@ test('revoking another subject Owner is allowed', async () =>
     const f = new AdminFixture()
     await f.Seed('u2', Role.Owner)
     await f.Seed('u3', Role.Owner)
-    await f.Service.RevokeRole('u1', 'u2', Role.Owner, f.TenantRoot())
+    await f.Service.RevokeRole('u1', 'u2', Role.Owner, f.EnvironmentRoot())
     assert.equal(f.Grants.Touched, 1)
 })
 
@@ -261,7 +261,7 @@ test('revoking the sole tenant-root Owner is rejected, grant kept, no audit', as
 {
     const f = new AdminFixture()
     await f.Seed('u2', Role.Owner)
-    await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Owner, f.TenantRoot()), LastAdministratorError)
+    await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Owner, f.EnvironmentRoot()), LastAdministratorError)
     assert.equal(await f.RootGrantCount(), 1)
     assert.equal(f.Grants.Touched, 0)
     assert.equal(f.Audit.Events.length, 0)
@@ -271,7 +271,7 @@ test('revoking the sole tenant-root Admin is rejected', async () =>
 {
     const f = new AdminFixture()
     await f.Seed('u2', Role.Admin)
-    await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Admin, f.TenantRoot()), LastAdministratorError)
+    await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Admin, f.EnvironmentRoot()), LastAdministratorError)
     assert.equal(await f.RootGrantCount(), 1)
     assert.equal(f.Audit.Events.length, 0)
 })
@@ -281,9 +281,9 @@ test('two Owners: first revoke succeeds and audits, second is rejected', async (
     const f = new AdminFixture()
     await f.Seed('u2', Role.Owner)
     await f.Seed('u3', Role.Owner)
-    await f.Service.RevokeRole('u1', 'u2', Role.Owner, f.TenantRoot())
+    await f.Service.RevokeRole('u1', 'u2', Role.Owner, f.EnvironmentRoot())
     assert.equal(f.Audit.Events.length, 1)
-    await assert.rejects(f.Service.RevokeRole('u1', 'u3', Role.Owner, f.TenantRoot()), LastAdministratorError)
+    await assert.rejects(f.Service.RevokeRole('u1', 'u3', Role.Owner, f.EnvironmentRoot()), LastAdministratorError)
     assert.equal(await f.RootGrantCount(), 1)
     assert.equal(f.Audit.Events.length, 1)
 })
@@ -297,7 +297,7 @@ test('duplicate sole-Owner grants: revoke is still rejected (exclusion drops eve
     assert.equal(await f.RootGrantCount(), 2)
     // Revoke deletes BOTH copies, so u2 would be left with no admin grant; the guard must reject,
     // not be fooled into counting the second copy as a surviving administrator.
-    await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Owner, f.TenantRoot()), LastAdministratorError)
+    await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Owner, f.EnvironmentRoot()), LastAdministratorError)
     assert.equal(await f.RootGrantCount(), 2)
     assert.equal(f.Grants.Touched, 0)
     assert.equal(f.Audit.Events.length, 0)
@@ -308,8 +308,8 @@ test('Owner plus Admin: Owner revoke allowed, then Admin revoke rejected', async
     const f = new AdminFixture()
     await f.Seed('u2', Role.Owner)
     await f.Seed('u3', Role.Admin)
-    await f.Service.RevokeRole('u1', 'u2', Role.Owner, f.TenantRoot())
-    await assert.rejects(f.Service.RevokeRole('u1', 'u3', Role.Admin, f.TenantRoot()), LastAdministratorError)
+    await f.Service.RevokeRole('u1', 'u2', Role.Owner, f.EnvironmentRoot())
+    await assert.rejects(f.Service.RevokeRole('u1', 'u3', Role.Admin, f.EnvironmentRoot()), LastAdministratorError)
     assert.equal(await f.RootGrantCount(), 1)
 })
 
@@ -318,7 +318,7 @@ test('tenant-root Viewer revoke is allowed (guard skipped) when an Owner exists'
     const f = new AdminFixture()
     await f.Seed('u2', Role.Owner)
     await f.Seed('u3', Role.Viewer)
-    await f.Service.RevokeRole('u1', 'u3', Role.Viewer, f.TenantRoot())
+    await f.Service.RevokeRole('u1', 'u3', Role.Viewer, f.EnvironmentRoot())
     assert.equal(await f.RootGrantCount(), 1)
 })
 
@@ -338,7 +338,7 @@ test('two tenants each with one Owner: revoking A sole Owner is rejected regardl
     const f = new AdminFixture()
     await f.Seed('u2', Role.Owner)
     await f.Seed('ub', Role.Owner, new ResourceRef(ResourceKind.Realm, 't2', []))
-    await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Owner, f.TenantRoot()), LastAdministratorError)
+    await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Owner, f.EnvironmentRoot()), LastAdministratorError)
     assert.equal(await f.RootGrantCount(), 1)
 })
 
@@ -346,14 +346,14 @@ test('self-lockout takes precedence over last-administrator', async () =>
 {
     const f = new AdminFixture()
     await f.Seed('u1', Role.Owner)
-    await assert.rejects(f.Service.RevokeRole('u1', 'u1', Role.Owner, f.TenantRoot()), AdminSelfLockoutError)
+    await assert.rejects(f.Service.RevokeRole('u1', 'u1', Role.Owner, f.EnvironmentRoot()), AdminSelfLockoutError)
 })
 
 test('ListGrants returns only the subject grants', async () =>
 {
     const f = new AdminFixture()
-    await f.Service.GrantRole('u1', 'u2', Role.Viewer, f.TenantRoot())
-    await f.Service.GrantRole('u1', 'u3', Role.Admin, f.TenantRoot())
+    await f.Service.GrantRole('u1', 'u2', Role.Viewer, f.EnvironmentRoot())
+    await f.Service.GrantRole('u1', 'u3', Role.Admin, f.EnvironmentRoot())
     const grants = await f.Service.ListGrants('u2')
     assert.equal(grants.length, 1)
     assert.equal(grants[0].Role, Role.Viewer)
@@ -362,7 +362,7 @@ test('ListGrants returns only the subject grants', async () =>
 test('ListGrants never returns the same subject grants from another tenant', async () =>
 {
     const f = new AdminFixture()
-    await f.Grants.Save(new Grant('u2', Role.Viewer, f.TenantRoot()))
+    await f.Grants.Save(new Grant('u2', Role.Viewer, f.EnvironmentRoot()))
     await f.Grants.Save(new Grant('u2', Role.Owner, new ResourceRef(ResourceKind.Realm, 'other-tenant', [])))
     const grants = await f.Service.ListGrants('u2')
     assert.equal(grants.length, 1)
@@ -414,7 +414,7 @@ test('a failing audit fails the mutation closed', async () =>
 {
     const f = new AdminFixture()
     const failing = f.ServiceFor(f.Realm, new FailingAuditSink(), async () => {})
-    await assert.rejects(failing.GrantRole('u1', 'u2', Role.Viewer, f.TenantRoot()), /audit down/)
+    await assert.rejects(failing.GrantRole('u1', 'u2', Role.Viewer, f.EnvironmentRoot()), /audit down/)
 })
 
 test('AdminEnums round-trips names and fails closed naming the field only', () =>
@@ -431,13 +431,13 @@ test('AdminEnums round-trips names and fails closed naming the field only', () =
 test('self-lockout guard is narrow: other combinations proceed', async () =>
 {
     const f = new AdminFixture()
-    const tenantRoot = f.TenantRoot()
+    const environmentRoot = f.EnvironmentRoot()
     await f.Seed('keeper', Role.Owner)
     const cases: ReadonlyArray<readonly [string, Role, ResourceRef]> = [
-        ['u1', Role.Admin, tenantRoot],
+        ['u1', Role.Admin, environmentRoot],
         ['u1', Role.Owner, new ResourceRef(ResourceKind.Project, 't1', [])],
         ['u1', Role.Owner, new ResourceRef(ResourceKind.Realm, 't1', ['p'])],
-        ['u2', Role.Owner, tenantRoot],
+        ['u2', Role.Owner, environmentRoot],
     ]
     for (const [subject, role, resource] of cases)
     {
@@ -458,7 +458,7 @@ test('failing audit fails RevokeRole and SetConfig closed', async () =>
 {
     const f = new AdminFixture()
     const failing = f.ServiceFor(f.Realm, new FailingAuditSink(), async () => {})
-    await assert.rejects(failing.RevokeRole('u1', 'u2', Role.Viewer, f.TenantRoot()), /audit down/)
+    await assert.rejects(failing.RevokeRole('u1', 'u2', Role.Viewer, f.EnvironmentRoot()), /audit down/)
     const config = new IdentityConfig('local', DelegationDepth.AuthnDirectory, new Map(), new Map(), new Map())
     await assert.rejects(failing.SetConfig('u1', config), /audit down/)
 })
@@ -644,7 +644,7 @@ test('GrantRole with a foreign-tenant resource is rejected before any store or a
 {
     const f = new AdminFixture()
     const foreign = new ResourceRef(ResourceKind.Realm, 'other-tenant', [])
-    await assert.rejects(f.Service.GrantRole('u1', 'u2', Role.Editor, foreign), ForeignTenantResourceError)
+    await assert.rejects(f.Service.GrantRole('u1', 'u2', Role.Editor, foreign), ForeignRealmResourceError)
     assert.equal(f.Grants.Touched, 0)
     assert.equal(f.Audit.Events.length, 0)
 })
@@ -654,7 +654,7 @@ test('RevokeRole with a foreign-tenant resource is rejected before any store or 
     const f = new AdminFixture()
     const foreign = new ResourceRef(ResourceKind.Realm, 'other-tenant', [])
     await f.Seed('u2', Role.Editor, foreign)
-    await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Editor, foreign), ForeignTenantResourceError)
+    await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Editor, foreign), ForeignRealmResourceError)
     assert.equal(f.Grants.Touched, 0)
     assert.equal(f.Audit.Events.length, 0)
     assert.equal((await f.Grants.GrantsOn(foreign)).length, 1)
@@ -693,7 +693,7 @@ test('concurrent revokes of the last two administrators: exactly one succeeds, o
 {
     const f = new AdminFixture()
     const racy = new RacyGrantStore()
-    const root = f.TenantRoot()
+    const root = f.EnvironmentRoot()
     await racy.Inner.Save(new Grant('u2', Role.Owner, root))
     await racy.Inner.Save(new Grant('u3', Role.Owner, root))
     const racing = new AdminService(racy, f.Audit, f.Config, f.Realm, async () => undefined, f.Accounts, f.Registrar, f.Tokens, f.Packs, f.Reload)
@@ -712,7 +712,7 @@ test('concurrent revokes via two AdminService instances on one tenant serialize:
 {
     const f = new AdminFixture()
     const racy = new RacyGrantStore()
-    const root = f.TenantRoot()
+    const root = f.EnvironmentRoot()
     await racy.Inner.Save(new Grant('u2', Role.Owner, root))
     await racy.Inner.Save(new Grant('u3', Role.Owner, root))
     const first = new AdminService(racy, f.Audit, f.Config, f.Realm, async () => undefined, f.Accounts, f.Registrar, f.Tokens, f.Packs, f.Reload)
@@ -735,7 +735,7 @@ test('RevokeRole invalidates the subject live connections once', async () =>
     const svc = f.WiredService(inv, new RecordingSessions())
     await f.Seed('u1', Role.Owner)
     await f.Seed('u2', Role.Editor)
-    await svc.RevokeRole('u1', 'u2', Role.Editor, f.TenantRoot())
+    await svc.RevokeRole('u1', 'u2', Role.Editor, f.EnvironmentRoot())
     assert.deepEqual(inv.Calls, [[f.Realm.Id, 'u2']])
 })
 
@@ -769,7 +769,7 @@ test('revokes without invalidator or sessions still complete', async () =>
     const f = new AdminFixture()
     await f.Seed('u1', Role.Owner)
     await f.Seed('u2', Role.Editor)
-    await f.Service.RevokeRole('u1', 'u2', Role.Editor, f.TenantRoot())
+    await f.Service.RevokeRole('u1', 'u2', Role.Editor, f.EnvironmentRoot())
     const issued = await f.Service.IssueToken('u1', 'bob', ['read'], null)
     await f.Service.RevokeToken('u1', issued.Grant.TokenRef)
     await f.Service.CreateAccount('u1', 'a@x.io', 'p9', new PresentedSecret('pw'))
@@ -783,6 +783,6 @@ test('a blocked revoke does not invalidate live connections', async () =>
     const inv = new RecordingInvalidator()
     const svc = f.WiredService(inv, new RecordingSessions())
     await f.Seed('u1', Role.Owner)
-    await assert.rejects(svc.RevokeRole('u1', 'u1', Role.Owner, f.TenantRoot()), AdminSelfLockoutError)
+    await assert.rejects(svc.RevokeRole('u1', 'u1', Role.Owner, f.EnvironmentRoot()), AdminSelfLockoutError)
     assert.equal(inv.Calls.length, 0)
 })

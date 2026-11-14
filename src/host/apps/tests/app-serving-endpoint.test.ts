@@ -6,9 +6,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { PragmaticServerHost } from '../../pragmatic-server-host.js'
-import { InMemoryTenantProvisioning } from '../../../tenancy/tenant-registry.js'
-import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
-import type { TenantProvisioning } from '../../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../../environments/environment-registry.js'
+import { EnvironmentPurpose } from '../../../environments/environment-purpose.js'
+import type { EnvironmentProvisioning } from '../../../environments/environment-provisioning.js'
 import { PragmaticAppManifestParser } from '../pragmatic-app-manifest.js'
 import { PresentedSecret } from '@pragmatic-tech-ai/todl-identity'
 
@@ -23,7 +23,7 @@ interface Reply
 
 class ServeFixture
 {
-    public static readonly Tenant = 't1'
+    public static readonly Environment = 't1'
     public static readonly App = 'shop'
     public static readonly Shell = '<html><head><title>x</title></head><body>shell</body></html>'
     public static readonly Script = 'console.log(1)'
@@ -39,7 +39,7 @@ class ServeFixture
     /** Writes a version-scoped tree `<app>/<version>/{application.json,ui/...}` whose shell names the version. */
     public WriteVersion(version: string): void
     {
-        const root = join(this.Dir, ServeFixture.Tenant, 'applications', ServeFixture.App, version)
+        const root = join(this.Dir, ServeFixture.Environment, 'applications', ServeFixture.App, version)
         mkdirSync(join(root, 'ui', 'assets'), { recursive: true })
         writeFileSync(join(root, 'ui', 'index.html'), '<html><head></head><body>shell-' + version + '</body></html>')
         writeFileSync(join(root, 'ui', 'assets', 'app.js'), 'console.log("' + version + '")')
@@ -48,16 +48,16 @@ class ServeFixture
 
     public WriteLive(version: string): void
     {
-        writeFileSync(join(this.Dir, ServeFixture.Tenant, 'applications', ServeFixture.App, 'live'), version)
+        writeFileSync(join(this.Dir, ServeFixture.Environment, 'applications', ServeFixture.App, 'live'), version)
     }
 
     public async Start(legacy = true): Promise<PragmaticServerHost>
     {
         const keyPath = join(this.Dir, 'key')
         writeFileSync(keyPath, randomBytes(32))
-        const entries = new Map<string, TenantProvisioning>()
-        entries.set(ServeFixture.Tenant, { displayName: 'Tenant One', purpose: TenantPurpose.Runtime })
-        const apps = join(this.Dir, ServeFixture.Tenant, 'applications')
+        const entries = new Map<string, EnvironmentProvisioning>()
+        entries.set(ServeFixture.Environment, { displayName: 'Tenant One', purpose: EnvironmentPurpose.Runtime })
+        const apps = join(this.Dir, ServeFixture.Environment, 'applications')
         if (legacy)
         {
             const ui = join(apps, ServeFixture.App, 'ui')
@@ -67,7 +67,7 @@ class ServeFixture
             writeFileSync(join(apps, ServeFixture.App, 'application.json'), JSON.stringify({ name: ServeFixture.App, version: '1.0.0', packages: [], ui: { entry: 'index.html', assets: ['assets/app.js'] } }))
         }
         writeFileSync(join(apps, 'secret.txt'), ServeFixture.Secret)
-        const host = await PragmaticServerHost.StartAsync({ port: 0, baseDir: this.Dir, masterKey: { keyFilePath: keyPath }, provisioning: new InMemoryTenantProvisioning(entries) })
+        const host = await PragmaticServerHost.StartAsync({ port: 0, baseDir: this.Dir, masterKey: { keyFilePath: keyPath }, provisioning: new InMemoryEnvironmentProvisioning(entries) })
         this.Cookie = await ServeFixture.SignIn(host)
         return host
     }
@@ -75,9 +75,9 @@ class ServeFixture
     /** Registers the test account and signs it in the way the sign-in page does; answers the session cookie. */
     public static async SignIn(host: PragmaticServerHost): Promise<string>
     {
-        const pack = await host.IdentityPackForTest(ServeFixture.Tenant)
-        await pack.Registrar.Register(await host.RealmForTest(ServeFixture.Tenant), ServeFixture.Email, 'p1', new PresentedSecret(ServeFixture.Password))
-        const response = await fetch(`http://127.0.0.1:${host.Address().port}/auth/browser-login?environment=${ServeFixture.Tenant}`, {
+        const pack = await host.IdentityPackForTest(ServeFixture.Environment)
+        await pack.Registrar.Register(await host.RealmForTest(ServeFixture.Environment), ServeFixture.Email, 'p1', new PresentedSecret(ServeFixture.Password))
+        const response = await fetch(`http://127.0.0.1:${host.Address().port}/auth/browser-login?environment=${ServeFixture.Environment}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email: ServeFixture.Email, password: ServeFixture.Password }),

@@ -10,7 +10,7 @@ import { toJSON, ModelShardExtractor } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { AccessContext, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
-import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
+import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { PageFingerprint } from '../paging/page-request.js'
@@ -47,7 +47,7 @@ class ModelScopedWorld
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(
             serverSocket, this.language, this.manager, context, undefined, this.server.DevCypher(),
-            undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development)
+            undefined, undefined, undefined, undefined, undefined, undefined, EnvironmentPurpose.Development)
         this.clients.push(PragmaticClient.CreateOverSocket(clientSocket))
         this.handlers.push(handler)
         return handler

@@ -119,13 +119,13 @@ test('one successful request emits exactly one span and the success metrics with
         await new Promise(resolve => setImmediate(resolve))
         const spans = fixture.SpanExporter.getFinishedSpans()
         assert.equal(spans.length, 1)
-        assert.equal(spans[0]!.attributes.tenant, 't1')
+        assert.equal(spans[0]!.attributes.environment, 't1')
         assert.equal(spans[0]!.attributes.principal, 'principal-xyz')
         assert.equal(spans[0]!.attributes.outcome, 'ok')
         const totals = await fixture.Points('requests_total')
         assert.equal(totals.length, 1)
         assert.equal(totals[0]!.value, 1)
-        assert.equal(totals[0]!.attributes.tenant, 't1')
+        assert.equal(totals[0]!.attributes.environment, 't1')
         assert.equal(totals[0]!.attributes.outcome, 'ok')
         assert.equal(totals[0]!.attributes.principal, undefined)
         const durations = await fixture.Points('request_duration_ms')
@@ -151,7 +151,7 @@ test('a throwing operation increments request_errors_total, marks the span error
 {
     const fixture = new Fixture()
     const instrumentation = fixture.Instrumentation()
-    await assert.rejects(() => instrumentation.Run({ method: 'solution/open', tenant: 't1', principal: 'p1' }, () =>
+    await assert.rejects(() => instrumentation.Run({ method: 'solution/open', environment: 't1', principal: 'p1' }, () =>
     {
         throw new TypeError('bad')
     }))
@@ -166,7 +166,7 @@ test('a throwing operation increments request_errors_total, marks the span error
     assert.equal(errors.length, 1)
     assert.equal(errors[0]!.value, 1)
     assert.equal(errors[0]!.attributes.class, 'TypeError')
-    assert.equal(errors[0]!.attributes.tenant, 't1')
+    assert.equal(errors[0]!.attributes.environment, 't1')
     assert.equal(errors[0]!.attributes.principal, undefined)
     await fixture.Observability.Shutdown()
 })
@@ -174,7 +174,7 @@ test('a throwing operation increments request_errors_total, marks the span error
 test('a request still returns its result even though exporters are inert in-memory', async () =>
 {
     const fixture = new Fixture()
-    const result = await fixture.Instrumentation().Run({ method: 'solution/active', tenant: 't1', principal: 'p1' }, () => 42)
+    const result = await fixture.Instrumentation().Run({ method: 'solution/active', environment: 't1', principal: 'p1' }, () => 42)
     assert.equal(result, 42)
     await fixture.Observability.Shutdown()
 })
@@ -185,8 +185,8 @@ test('concurrent requests keep the in-flight count accurate and net to zero', as
     const instrumentation = fixture.Instrumentation()
     let releaseA = (): void => {}
     let releaseB = (): void => {}
-    const a = instrumentation.Run({ method: 'm', tenant: 't1', principal: 'p1' }, () => new Promise<void>(resolve => { releaseA = resolve }))
-    const b = instrumentation.Run({ method: 'm', tenant: 't1', principal: 'p1' }, () => new Promise<void>(resolve => { releaseB = resolve }))
+    const a = instrumentation.Run({ method: 'm', environment: 't1', principal: 'p1' }, () => new Promise<void>(resolve => { releaseA = resolve }))
+    const b = instrumentation.Run({ method: 'm', environment: 't1', principal: 'p1' }, () => new Promise<void>(resolve => { releaseB = resolve }))
     await new Promise(resolve => setImmediate(resolve))
     assert.equal(instrumentation.InFlight(), 2)
     releaseA()
@@ -273,7 +273,7 @@ test('a throwing meter or logger sink never turns a successful request into an e
 {
     const fixture = new Fixture()
     const instrumentation = new RequestInstrumentation(fixture.Observability.Tracer(), fixture.Observability.Meter(), new ThrowingLogger())
-    const result = await instrumentation.Run({ method: 'm', tenant: 't1', principal: 'p1' }, () => 7)
+    const result = await instrumentation.Run({ method: 'm', environment: 't1', principal: 'p1' }, () => 7)
     assert.equal(result, 7)
     assert.equal(instrumentation.InFlight(), 0)
     assert.equal(fixture.SpanExporter.getFinishedSpans().length, 1)

@@ -17,8 +17,8 @@ import { AuthHttpEndpoint } from '../auth-http-endpoint.js'
 import { MachineCertAuthenticator } from '../machine-cert-authenticator.js'
 import { MachineCertIdentity, MachinePrincipalMap } from '../machine-principal-map.js'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 
 class MachineFixture
 {
@@ -168,8 +168,8 @@ test('a host with clientTls listens over TLS and serves a no-cert client', async
     const dir = mkdtempSync(join(tmpdir(), 'ph7b-tls-'))
     const keyPath = join(dir, 'key')
     writeFileSync(keyPath, randomBytes(32))
-    const entries = new Map<string, TenantProvisioning>([['t1', { displayName: 'Tenant One' }]])
-    const host = await PragmaticServerHost.StartAsync({ port: 0, baseDir: dir, masterKey: { keyFilePath: keyPath }, provisioning: new InMemoryTenantProvisioning(entries), clientTls: MachineFixture.ServerRef })
+    const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Tenant One' }]])
+    const host = await PragmaticServerHost.StartAsync({ port: 0, baseDir: dir, masterKey: { keyFilePath: keyPath }, provisioning: new InMemoryEnvironmentProvisioning(entries), clientTls: MachineFixture.ServerRef })
     try
     {
         const res = await new Promise<number>((resolve, reject) =>

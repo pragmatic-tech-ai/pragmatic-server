@@ -66,7 +66,7 @@ class ReadsClient
         await Tier1Fx.Run({ Identity: true, SecurityModel: ReadsClient.TeamModel() }, async (_fx, server) =>
         {
             const pack = await server.Pack()
-            await pack.IdpDirectory.Save(EnvironmentFixture.TenantId, ReadsClient.TeamSnapshot())
+            await pack.IdpDirectory.Save(EnvironmentFixture.EnvironmentId, ReadsClient.TeamSnapshot())
             const security = new EnvironmentSecurityAdmin(await server.SecuritySetting(), server.EnvironmentEngine(), { RunNow: async () => undefined }, server.SecurityChangeLog())
             const admin = await ReadsClient.Open(server, Tier1Fx.Context(Tier1Fx.Admin), security)
             try
@@ -82,9 +82,9 @@ class ReadsClient
 
     public static ViewerContext(): AccessContext
     {
-        const realm = new Realm(EnvironmentFixture.TenantId, RealmKind.SelfHosted, 'Environment One')
-        const principal = new Principal('viewer', EnvironmentFixture.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant('viewer', Role.Viewer, new ResourceRef(ResourceKind.Realm, EnvironmentFixture.TenantId, []))]
+        const realm = new Realm(EnvironmentFixture.EnvironmentId, RealmKind.SelfHosted, 'Environment One')
+        const principal = new Principal('viewer', EnvironmentFixture.EnvironmentId, PrincipalKind.User, new Map(), [])
+        const grants = [new Grant('viewer', Role.Viewer, new ResourceRef(ResourceKind.Realm, EnvironmentFixture.EnvironmentId, []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 }

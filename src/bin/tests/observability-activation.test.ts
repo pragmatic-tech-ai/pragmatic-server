@@ -5,9 +5,9 @@ import { DeploymentMode } from '../../platform/deployment-mode.js'
 import { ServerBootstrap } from '../server-bootstrap.js'
 import { Observability, ObservabilityRole } from '../../observability/observability.js'
 import { OtlpProtocol } from '../../observability/otlp-protocol.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import type { ServerConfig } from '../../config/server-config.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 
 class Fixtures
 {
@@ -18,9 +18,9 @@ class Fixtures
         return { host: '0.0.0.0', port: 8443, baseDir: '/data', masterKey: { keyFilePath: '/run/secrets/key' }, deploymentMode: DeploymentMode.Local, replicaId: 'pod-1', tls: { certFile: '/c.pem', keyFile: '/k.pem', caFile: '/ca.pem' }, ...extra }
     }
 
-    public static Provisioning(): InMemoryTenantProvisioning
+    public static Provisioning(): InMemoryEnvironmentProvisioning
     {
-        return new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>())
+        return new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>())
     }
 
     public static async FreePort(): Promise<number>

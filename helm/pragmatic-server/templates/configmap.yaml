@@ -5,4 +5,5 @@ metadata:
   labels:
     {{- include "pragmatic-server.labels" . | nindent 4 }}
 data:
-  tenants.json: {{ dict "tenants" .Values.tenants | toJson | quote }}
+  {{- /* .Values.tenants is the pre-rename name of .Values.environments, still read for one release. */}}
+  environments.json: {{ dict "environments" (.Values.environments | default .Values.tenants | default (dict)) | toJson | quote }}

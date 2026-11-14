@@ -36,15 +36,15 @@ import { BrowserSessionAuth } from './browser-session-auth.js'
 import { ConnectionAuthenticator } from './connection-authenticator.js'
 import { AuthHttpEndpoint } from './auth-http-endpoint.js'
 import { HealthEndpoint } from './health-endpoint.js'
-import { InMemoryTenantCoordinator } from '../tenancy/tenant-coordinator.js'
-import { TenantRegistry } from '../tenancy/tenant-registry.js'
-import { InMemoryTenantOwnership, TenantOwnedElsewhereError } from '../tenancy/tenant-ownership.js'
-import { RedisTenantOwnership } from '../tenancy/redis-tenant-ownership.js'
+import { InMemoryEnvironmentCoordinator } from '../environments/environment-coordinator.js'
+import { EnvironmentRegistry } from '../environments/environment-registry.js'
+import { InMemoryEnvironmentOwnership, EnvironmentOwnedElsewhereError } from '../environments/environment-ownership.js'
+import { RedisEnvironmentOwnership } from '../environments/redis-environment-ownership.js'
 import { FetchHttpClient, InMemoryOidcFlowStateStore } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { RedisOidcFlowStateStore } from '../identity/redis-oidc-flow-state-store.js'
 import { ClusterKeys } from '../cluster/cluster-keys.js'
 import type { IdentityRuntime } from '../identity/identity-runtime.js'
-import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
+import type { IEnvironmentProvisioning } from '../environments/environment-provisioning.js'
 import type { PlatformServices } from '../platform/platform-services.js'
 import type { DeploymentMode } from '../platform/deployment-mode.js'
 import { NullLogger } from '../observability/logger.js'
@@ -62,7 +62,7 @@ export interface PragmaticServerHostOptions
     port: number
     baseDir: string
     masterKey: MasterKeyRef
-    provisioning: ITenantProvisioning
+    provisioning: IEnvironmentProvisioning
     idleTtlMs?: number
     idleSweepMs?: number
     platform?: PlatformServices
@@ -144,7 +144,7 @@ export class PragmaticServerHost
 
     private readonly httpServer: HttpServer | HttpsServer
     private readonly wss: WebSocketServer
-    private readonly registry: TenantRegistry
+    private readonly registry: EnvironmentRegistry
     private readonly authenticator: ConnectionAuthenticator
     private readonly browserAuth: BrowserSessionAuth
     private readonly audit: IAccessAuditSink
@@ -173,7 +173,7 @@ export class PragmaticServerHost
     private constructor(
         httpServer: HttpServer | HttpsServer,
         wss: WebSocketServer,
-        registry: TenantRegistry,
+        registry: EnvironmentRegistry,
         address: WebSocketAddress,
         idleTtlMs: number,
         idleSweepMs: number,
@@ -234,12 +234,12 @@ export class PragmaticServerHost
 
     public static async StartAsync(options: PragmaticServerHostOptions): Promise<PragmaticServerHost>
     {
-        const coordinator = new InMemoryTenantCoordinator()
+        const coordinator = new InMemoryEnvironmentCoordinator()
         const ownership = options.redisUrl !== undefined && options.redisUrl.length > 0
-            ? new RedisTenantOwnership(options.redisUrl, options.replicaId ?? randomUUID())
-            : new InMemoryTenantOwnership()
+            ? new RedisEnvironmentOwnership(options.redisUrl, options.replicaId ?? randomUUID())
+            : new InMemoryEnvironmentOwnership()
         await ownership.Start().catch(() => {})
-        const registry = new TenantRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets, PragmaticServerHost.BuildIdentityRuntime(options.redisUrl), options.adapterPacks, options.logger)
+        const registry = new EnvironmentRegistry(options.baseDir, options.masterKey, options.provisioning, coordinator, options.platform, options.deploymentMode, ownership, options.provisionedSecrets, PragmaticServerHost.BuildIdentityRuntime(options.redisUrl), options.adapterPacks, options.logger)
         const host = options.host ?? PragmaticServerHost.DefaultHost
         const httpServer = options.clientTls === undefined ? createServer() : httpsCreateServer(MachineTls.OptionalServer(options.clientTls))
         const resilience = options.wsResilience ?? PragmaticServerHost.DefaultWsResilience
@@ -279,7 +279,7 @@ export class PragmaticServerHost
         return this.address
     }
 
-    public RegistryForTest(): TenantRegistry
+    public RegistryForTest(): EnvironmentRegistry
     {
         return this.registry
     }
@@ -425,15 +425,15 @@ export class PragmaticServerHost
             this.RejectRetryable(socket)
             return
         }
-        const environmentId = this.TenantHint(req)
+        const environmentId = this.EnvironmentHint(req)
         if (environmentId === null)
         {
             this.Reject(socket)
             return
         }
         const limit = this.rateLimit.Check(
-            { scope: RateLimitScope.Tenant, tenant: environmentId, key: environmentId },
-            { surface: AuditSurface.Upgrade, tenant: environmentId, methodOrPath: RateLimitGuard.UpgradeMethodName() })
+            { scope: RateLimitScope.Environment, environment: environmentId, key: environmentId },
+            { surface: AuditSurface.Upgrade, environment: environmentId, methodOrPath: RateLimitGuard.UpgradeMethodName() })
         if (!limit.Allowed)
         {
             this.RejectRateLimited(socket, limit.RetryAfterMs)
@@ -446,7 +446,7 @@ export class PragmaticServerHost
         }
         catch (error)
         {
-            if (error instanceof TenantOwnedElsewhereError)
+            if (error instanceof EnvironmentOwnedElsewhereError)
             {
                 this.RejectRetryable(socket)
             }
@@ -470,7 +470,7 @@ export class PragmaticServerHost
             const languageService = await server.LanguageService()
             const manager = await server.Manager()
             const pack = await server.Pack()
-            const admin = new AdminService(pack.Grants, pack.Audit, await server.RealmConfigStore(), server.Realm(), () => this.registry.DisposeTenant(environmentId), pack.Accounts, pack.Registrar, pack.Tokens, {
+            const admin = new AdminService(pack.Grants, pack.Audit, await server.RealmConfigStore(), server.Realm(), () => this.registry.DisposeEnvironment(environmentId), pack.Accounts, pack.Registrar, pack.Tokens, {
                 Invalidate: name => server.InvalidateAdapterPack(name),
                 AllowScripts: name => server.AllowAdapterPackScripts(name),
                 DenyScripts: name => server.DenyAdapterPackScripts(name),
@@ -550,7 +550,7 @@ export class PragmaticServerHost
         if (header === undefined)
         {
             const credential = this.browserAuth.Credential(req, true)
-            if (credential === null || credential.Tenant !== server.Realm().Id)
+            if (credential === null || credential.Environment !== server.Realm().Id)
             {
                 return null
             }
@@ -591,7 +591,7 @@ export class PragmaticServerHost
                 await new AppServingEndpoint(this.registry, new CookieAppSessionCheck(this.browserAuth, this.registry)).Handle(req, res)
                 return
             }
-            const environmentId = this.TenantHint(req)
+            const environmentId = this.EnvironmentHint(req)
             if (environmentId === null)
             {
                 res.writeHead(BrowserSessionAuth.IsSessionPath(path) ? PragmaticServerHost.UnauthorizedStatus : PragmaticServerHost.NotFoundStatus)
@@ -607,7 +607,7 @@ export class PragmaticServerHost
         {
             if (!res.headersSent && !res.writableEnded)
             {
-                if (error instanceof TenantOwnedElsewhereError)
+                if (error instanceof EnvironmentOwnedElsewhereError)
                 {
                     res.writeHead(PragmaticServerHost.ServiceUnavailableStatus, { [PragmaticServerHost.RetryAfterHeader]: PragmaticServerHost.RetryAfterSeconds })
                     res.end()
@@ -641,11 +641,11 @@ export class PragmaticServerHost
         return { authenticator, identity: MachineCertIdentity.FromPeerCertificate(socket.authorized === true, socket.getPeerCertificate()) }
     }
 
-    private TenantHint(req: IncomingMessage): string | null
+    private EnvironmentHint(req: IncomingMessage): string | null
     {
         const url = new URL(req.url ?? '/', PragmaticServerHost.BaseUrl)
-        const tenant = url.searchParams.get(PragmaticServerHost.EnvironmentParam)
-        return tenant !== null && tenant.length > 0 ? tenant : this.browserAuth.CookieTenant(req.headers)
+        const environment = url.searchParams.get(PragmaticServerHost.EnvironmentParam)
+        return environment !== null && environment.length > 0 ? environment : this.browserAuth.CookieEnvironment(req.headers)
     }
 
     private RejectRetryable(socket: Socket): void

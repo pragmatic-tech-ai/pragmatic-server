@@ -24,10 +24,10 @@ export class CallerSourceTokens implements ISourceTokenProvider
     }
 
     /** Drops every cached token of `principalId` in `tenantId`, here and in the inner provider's own cache. */
-    public Forget(tenantId: string, principalId: string): void
+    public Forget(environmentId: string, principalId: string): void
     {
-        this.cache.Forget(tenantId, principalId)
+        this.cache.Forget(environmentId, principalId)
         const revocable = this.inner as Partial<IRevocableSourceTokenProvider>
-        revocable.Forget?.(tenantId, principalId)
+        revocable.Forget?.(environmentId, principalId)
     }
 }

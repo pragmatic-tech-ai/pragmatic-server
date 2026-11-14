@@ -93,7 +93,7 @@ test('gated-live: a registered worker is routed to; after it stops, the tenant r
         t.skip('PRAGMATIC_TEST_REDIS_URL not set')
         return
     }
-    const tenant = `t-${randomBytes(6).toString('hex')}`
+    const environment = `t-${randomBytes(6).toString('hex')}`
     const w1 = new WorkerRegistration(url, { host: '127.0.0.1', port: 7001 })
     const w2 = new WorkerRegistration(url, { host: '127.0.0.1', port: 7002 })
     const router = new RedisWorkerRouter(url)
@@ -101,10 +101,10 @@ test('gated-live: a registered worker is routed to; after it stops, the tenant r
     {
         await w1.Start()
         await w2.Start()
-        const first = await router.RouteOrSpawn(tenant)
+        const first = await router.RouteOrSpawn(environment)
         assert.ok(first.port === 7001 || first.port === 7002)
         await (first.port === 7001 ? w1 : w2).Drain()
-        const second = await router.RouteOrSpawn(tenant)
+        const second = await router.RouteOrSpawn(environment)
         assert.notEqual(second.port, first.port)
     }
     finally

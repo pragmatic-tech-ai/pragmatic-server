@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { EnvKind, TenantPurposeName, type EnvDefinition } from '../../../environments/seed/bundle.js'
+import { EnvKind, EnvironmentPurposeName, type EnvDefinition } from '../../../environments/seed/bundle.js'
 import { EnvironmentRegistry } from '../environment-registry.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import type { EnvRuntimeContext } from '../environment-runtime.js'
@@ -18,7 +18,7 @@ class NoHostFixture
 
     public static Def(): EnvDefinition
     {
-        return { name: NoHostFixture.Name, kind: EnvKind.Dev, environmentId: NoHostFixture.Name, purpose: TenantPurposeName.Development, hostPort: 8100 }
+        return { name: NoHostFixture.Name, kind: EnvKind.Dev, environmentId: NoHostFixture.Name, purpose: EnvironmentPurposeName.Development, hostPort: 8100 }
     }
 
     /** An unbound (host-run) record, as an older data root may still hold. */

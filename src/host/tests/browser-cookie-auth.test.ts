@@ -7,8 +7,8 @@ import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import { ProvisionedSecretSource } from '../../config/provisioned-secret-source.js'
 import type { ILogger, LogFields } from '../../observability/logger.js'
 import type { IAccessAuditSink, AccessAuditEvent } from '../access-audit.js'
@@ -66,7 +66,7 @@ class CookieFixture
     {
         this.baseDir = mkdtempSync(join(tmpdir(), 'ps-cookie-'))
         process.env[CookieFixture.KeyEnv] = randomBytes(32).toString('base64')
-        const entries = new Map<string, TenantProvisioning>([['t1', {
+        const entries = new Map<string, EnvironmentProvisioning>([['t1', {
             displayName: 'Tenant One',
             bootstrap: { adminEmail: CookieFixture.Email, adminPrincipalId: 'admin', adminPasswordRef: 't1-admin-pw', ownerGrant: true },
         }]])
@@ -75,7 +75,7 @@ class CookieFixture
             port: 0,
             baseDir: this.baseDir,
             masterKey: { base64Env: CookieFixture.KeyEnv },
-            provisioning: new InMemoryTenantProvisioning(entries),
+            provisioning: new InMemoryEnvironmentProvisioning(entries),
             provisionedSecrets: ProvisionedSecretSource.FromText(JSON.stringify({ 't1-admin-pw': CookieFixture.Password })),
             allowedOrigins: [CookieFixture.AllowedOrigin],
             logger: this.Logger,
@@ -128,7 +128,7 @@ class CookieFixture
     }
 }
 
-test('login with the seeded admin sets an httpOnly SameSite session cookie bound to tenant + principal', async () =>
+test('login with the seeded admin sets an httpOnly SameSite session cookie bound to environment + principal', async () =>
 {
     const fixture = new CookieFixture()
     await fixture.StartAsync()
@@ -136,6 +136,8 @@ test('login with the seeded admin sets an httpOnly SameSite session cookie bound
     {
         const response = await fixture.LoginAsync()
         assert.equal(response.status, 200)
+        const login = await response.clone().json() as Record<string, unknown>
+        assert.deepEqual(Object.keys(login).sort(), ['environment', 'expiresAt', 'principalId'])
         const setCookie = response.headers.get('set-cookie')!
         assert.match(setCookie, /^ps_session=/)
         assert.match(setCookie, /HttpOnly/)
@@ -144,8 +146,9 @@ test('login with the seeded admin sets an httpOnly SameSite session cookie bound
         assert.doesNotMatch(setCookie, /Secure/)
         const whoami = await fetch(`${fixture.base}/auth/session`, { headers: { Cookie: CookieFixture.CookiePair(response), Origin: fixture.base } })
         assert.equal(whoami.status, 200)
-        const body = await whoami.json() as { tenant: string; principalId: string }
-        assert.equal(body.tenant, 't1')
+        const body = await whoami.json() as { environment: string; principalId: string; expiresAt: string }
+        assert.deepEqual(Object.keys(body).sort(), ['environment', 'expiresAt', 'principalId'], '/auth/session answers {environment, principalId, expiresAt}')
+        assert.equal(body.environment, 't1')
         assert.equal(body.principalId, 'admin')
     }
     finally
@@ -217,9 +220,9 @@ test('missing, forged, wrong-tenant and revoked cookies are denied with a clean 
         const valid = CookieFixture.CookiePair(await fixture.LoginAsync())
         const token = CookieFixture.TokenOf(valid)
         const forged = 'ps_session=t1.' + randomBytes(32).toString('base64url')
-        const wrongTenant = 'ps_session=t2.' + token
+        const wrongEnvironment = 'ps_session=t2.' + token
         const malformed = 'ps_session=garbage'
-        for (const cookie of [forged, wrongTenant, malformed])
+        for (const cookie of [forged, wrongEnvironment, malformed])
         {
             assert.equal(await fixture.ConnectAsync({ Cookie: cookie, Origin: fixture.base }), '401')
             const response = await fetch(`${fixture.base}/auth/session`, { headers: { Cookie: cookie, Origin: fixture.base } })
@@ -311,7 +314,7 @@ test('browser login body carries no session token; the Bearer login still return
         assert.ok(!text.includes(token))
         const body = JSON.parse(text) as Record<string, unknown>
         assert.equal(body.token, undefined)
-        assert.equal(body.tenant, 't1')
+        assert.equal(body.environment, 't1')
         assert.equal(body.principalId, 'admin')
         const bearer = await (await fixture.LoginAsync(CookieFixture.Password, '/auth/login')).json() as { token: string }
         assert.ok(bearer.token.length > 0)

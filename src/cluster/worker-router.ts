@@ -22,7 +22,7 @@ export class InMemoryWorkerRouter implements IWorkerRouter
         this.endpoint = endpoint
     }
 
-    public async RouteOrSpawn(_tenantId: string): Promise<WorkerEndpoint>
+    public async RouteOrSpawn(_environmentId: string): Promise<WorkerEndpoint>
     {
         return this.endpoint
     }

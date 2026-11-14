@@ -137,7 +137,7 @@ class DevCypherFx
     public static readonly ModelB = 'acme.ShopB'
     public static readonly Plain = 'p1'
     public static readonly ViewerId = 'u1'
-    public static readonly TenantName = 'Tenant One'
+    public static readonly EnvironmentName = 'Tenant One'
     public static readonly Secret = 'hush'
     public static readonly UnknownModel = 'acme.Nope'
     /** The sample solution's name: its package owns what lies outside every model. */
@@ -206,9 +206,9 @@ class DevCypherFx
 
     private static ContextOf(principalId: string, role: Role): AccessContext
     {
-        const realm = new Realm(PpSecurityHarness.TenantId, RealmKind.SelfHosted, DevCypherFx.TenantName)
-        const principal = new Principal(principalId, PpSecurityHarness.TenantId, PrincipalKind.User, new Map(), [])
-        return new AccessContext(principal, realm, [new Grant(principalId, role, new ResourceRef(ResourceKind.Realm, PpSecurityHarness.TenantId, []))], new ResourceAuthorizationPolicy())
+        const realm = new Realm(PpSecurityHarness.EnvironmentId, RealmKind.SelfHosted, DevCypherFx.EnvironmentName)
+        const principal = new Principal(principalId, PpSecurityHarness.EnvironmentId, PrincipalKind.User, new Map(), [])
+        return new AccessContext(principal, realm, [new Grant(principalId, role, new ResourceRef(ResourceKind.Realm, PpSecurityHarness.EnvironmentId, []))], new ResourceAuthorizationPolicy())
     }
 
     /** Two models: ShopA (a1 sales "alpha", a2 root "beta", a1 peer -> b1) and ShopB (b1 sales "gamma"). */

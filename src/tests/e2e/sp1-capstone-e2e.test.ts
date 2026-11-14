@@ -23,7 +23,7 @@ import {
 } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection, SecurityModelDto, AppWriteOpDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { BaseRole, PrivilegeAction, AccessLevel } from '@pragmatic-tech-ai/todl-identity'
-import { BundleBuilder, EnvKind, TenantPurposeName } from '../../../environments/seed/bundle.js'
+import { BundleBuilder, EnvKind, EnvironmentPurposeName } from '../../../environments/seed/bundle.js'
 import { Sp1AppBuilder } from './sp1-app-builder.js'
 import type { BuiltSp1App } from './sp1-app-builder.js'
 
@@ -122,17 +122,17 @@ class Sp1SecurityModel
  * bundle, mounts it read-only, runs the published image, polls /healthz. Deliberately seeds NO security model,
  * so an identity-configured tenant fails closed until the admin configures roles live through the admin path.
  */
-class RuntimeTenant
+class RuntimeEnvironment
 {
     private static readonly Image = 'pragmatic-server:sp1'
-    private static readonly TenantId = 'sp1'
+    private static readonly EnvironmentId = 'sp1'
     private static readonly EnvName = 'sp1'
     private static readonly BundlePrefix = 'sp1-bundle-'
     private static readonly SeedPrefix = 'sp1-seed-'
     private static readonly NamePrefix = 'sp1-e2e-'
     private static readonly SecretsFile = 'provisioned-secrets.json'
     private static readonly MasterKeyFile = 'master.key'
-    private static readonly TenantsFile = 'tenants.json'
+    private static readonly EnvironmentsFile = 'tenants.json'
     private static readonly Utf8 = 'utf8'
     private static readonly Docker = 'docker'
     private static readonly RunVerb = 'run'
@@ -146,7 +146,7 @@ class RuntimeTenant
     private static readonly RemoveVerb = 'rm'
     private static readonly ForceFlag = '-f'
     private static readonly ContainerPort = '8080'
-    private static readonly TenantsMount = ':/cfg/tenants.json:ro'
+    private static readonly EnvironmentsMount = ':/cfg/tenants.json:ro'
     private static readonly SecretsMount = ':/cfg/provisioned-secrets.json:ro'
     private static readonly MasterKeyMount = ':/run/secrets/master_key:ro'
     private static readonly DataDir = 'data'
@@ -167,7 +167,7 @@ class RuntimeTenant
     private static readonly HealthNeverReady = 'the runtime tenant container never reported /healthz=200'
     private static readonly PortEnv = 'PRAGMATIC_PORT=8080'
     private static readonly BaseDirEnv = 'PRAGMATIC_BASE_DIR=/home/pragmatic/data'
-    private static readonly TenantsFileEnv = 'PRAGMATIC_TENANTS_FILE=/cfg/tenants.json'
+    private static readonly EnvironmentsFileEnv = 'PRAGMATIC_TENANTS_FILE=/cfg/tenants.json'
     private static readonly MasterKeyEnv = 'PRAGMATIC_MASTER_KEY_FILE=/run/secrets/master_key'
     private static readonly SecretsEnv = 'PRAGMATIC_PROVISIONED_SECRETS_FILE=/cfg/provisioned-secrets.json'
     private static readonly DeploymentModeEnv = 'PRAGMATIC_DEPLOYMENT_MODE=local'
@@ -182,61 +182,61 @@ class RuntimeTenant
     public constructor(private readonly port: number)
     {
         const unique = randomBytes(6).toString('hex')
-        this.bundleDir = mkdtempSync(join(tmpdir(), RuntimeTenant.BundlePrefix))
-        this.seedDir = mkdtempSync(join(tmpdir(), RuntimeTenant.SeedPrefix))
-        this.container = RuntimeTenant.NamePrefix + unique
+        this.bundleDir = mkdtempSync(join(tmpdir(), RuntimeEnvironment.BundlePrefix))
+        this.seedDir = mkdtempSync(join(tmpdir(), RuntimeEnvironment.SeedPrefix))
+        this.container = RuntimeEnvironment.NamePrefix + unique
     }
 
     public get Base(): string
     {
-        return RuntimeTenant.Loopback + this.port
+        return RuntimeEnvironment.Loopback + this.port
     }
 
     public get WsUrl(): string
     {
-        return RuntimeTenant.WsScheme + this.port + RuntimeTenant.WsPath
+        return RuntimeEnvironment.WsScheme + this.port + RuntimeEnvironment.WsPath
     }
 
     public get Origin(): string
     {
-        return RuntimeTenant.Loopback + this.port
+        return RuntimeEnvironment.Loopback + this.port
     }
 
     public get AppUrl(): string
     {
-        return this.Base + RuntimeTenant.AppPath
+        return this.Base + RuntimeEnvironment.AppPath
     }
 
     public get BrowserLoginUrl(): string
     {
-        return this.Base + RuntimeTenant.BrowserLoginPath
+        return this.Base + RuntimeEnvironment.BrowserLoginPath
     }
 
     public get AdminEmail(): string
     {
-        return BundleBuilder.AdminEmailPrefix + RuntimeTenant.TenantId + BundleBuilder.AdminEmailSuffix
+        return BundleBuilder.AdminEmailPrefix + RuntimeEnvironment.EnvironmentId + BundleBuilder.AdminEmailSuffix
     }
 
     public get AdminPassword(): string
     {
-        const secrets = JSON.parse(readFileSync(join(this.bundleDir, RuntimeTenant.SecretsFile), RuntimeTenant.Utf8)) as Record<string, string>
-        return secrets[RuntimeTenant.TenantId + BundleBuilder.AdminSecretSuffix]!
+        const secrets = JSON.parse(readFileSync(join(this.bundleDir, RuntimeEnvironment.SecretsFile), RuntimeEnvironment.Utf8)) as Record<string, string>
+        return secrets[RuntimeEnvironment.EnvironmentId + BundleBuilder.AdminSecretSuffix]!
     }
 
     public get BearerHeaderPrefix(): string
     {
-        return RuntimeTenant.BearerScheme
+        return RuntimeEnvironment.BearerScheme
     }
 
     public static RequireImage(): void
     {
         try
         {
-            execFileSync(RuntimeTenant.Docker, [RuntimeTenant.ImageInspect, RuntimeTenant.InspectVerb, RuntimeTenant.Image], { stdio: 'ignore' })
+            execFileSync(RuntimeEnvironment.Docker, [RuntimeEnvironment.ImageInspect, RuntimeEnvironment.InspectVerb, RuntimeEnvironment.Image], { stdio: 'ignore' })
         }
         catch
         {
-            throw new Error(RuntimeTenant.ImageMissing)
+            throw new Error(RuntimeEnvironment.ImageMissing)
         }
     }
 
@@ -245,9 +245,9 @@ class RuntimeTenant
         // Intentionally seed NO security model: an identity-configured tenant with none fails closed, so the
         // admin's first create is denied until roles are configured live below (proving the gate + config path).
         await BundleBuilder.Generate(
-            { name: RuntimeTenant.EnvName, kind: EnvKind.Dev, environmentId: RuntimeTenant.TenantId, purpose: TenantPurposeName.Runtime, hostPort: this.port },
+            { name: RuntimeEnvironment.EnvName, kind: EnvKind.Dev, environmentId: RuntimeEnvironment.EnvironmentId, purpose: EnvironmentPurposeName.Runtime, hostPort: this.port },
             this.bundleDir, this.seedDir)
-        execFileSync(RuntimeTenant.Docker, this.RunArgs(), { stdio: 'ignore' })
+        execFileSync(RuntimeEnvironment.Docker, this.RunArgs(), { stdio: 'ignore' })
         this.started = true
         await this.WaitForHealthy()
     }
@@ -255,12 +255,12 @@ class RuntimeTenant
     /** Obtains a bearer token the way a Node client would, via the Bearer login route. */
     public async BearerFor(email: string, password: string): Promise<string>
     {
-        const response = await fetch(this.Base + RuntimeTenant.LoginPath, {
-            method: RuntimeTenant.PostMethod,
-            headers: RuntimeTenant.JsonHeader,
+        const response = await fetch(this.Base + RuntimeEnvironment.LoginPath, {
+            method: RuntimeEnvironment.PostMethod,
+            headers: RuntimeEnvironment.JsonHeader,
             body: JSON.stringify({ email, password }),
         })
-        assert.equal(response.status, RuntimeTenant.OkStatus)
+        assert.equal(response.status, RuntimeEnvironment.OkStatus)
         return ((await response.json()) as { token: string }).token
     }
 
@@ -273,51 +273,51 @@ class RuntimeTenant
     {
         if (this.started)
         {
-            RuntimeTenant.Quiet(() => execFileSync(RuntimeTenant.Docker, [RuntimeTenant.RemoveVerb, RuntimeTenant.ForceFlag, this.container], { stdio: 'ignore' }))
+            RuntimeEnvironment.Quiet(() => execFileSync(RuntimeEnvironment.Docker, [RuntimeEnvironment.RemoveVerb, RuntimeEnvironment.ForceFlag, this.container], { stdio: 'ignore' }))
         }
-        RuntimeTenant.Quiet(() => rmSync(this.bundleDir, { recursive: true, force: true }))
-        RuntimeTenant.Quiet(() => rmSync(this.seedDir, { recursive: true, force: true }))
+        RuntimeEnvironment.Quiet(() => rmSync(this.bundleDir, { recursive: true, force: true }))
+        RuntimeEnvironment.Quiet(() => rmSync(this.seedDir, { recursive: true, force: true }))
     }
 
     private RunArgs(): string[]
     {
         return [
-            RuntimeTenant.RunVerb, RuntimeTenant.RunFlag, RuntimeTenant.NameFlag, this.container,
-            RuntimeTenant.PortFlag, this.port + ':' + RuntimeTenant.ContainerPort,
-            RuntimeTenant.VolumeFlag, join(this.bundleDir, RuntimeTenant.TenantsFile) + RuntimeTenant.TenantsMount,
-            RuntimeTenant.VolumeFlag, join(this.bundleDir, RuntimeTenant.SecretsFile) + RuntimeTenant.SecretsMount,
-            RuntimeTenant.VolumeFlag, join(this.bundleDir, RuntimeTenant.MasterKeyFile) + RuntimeTenant.MasterKeyMount,
-            RuntimeTenant.VolumeFlag, join(this.bundleDir, RuntimeTenant.DataDir) + RuntimeTenant.DataMount,
-            RuntimeTenant.EnvFlag, RuntimeTenant.BaseDirEnv,
-            RuntimeTenant.EnvFlag, RuntimeTenant.TenantsFileEnv,
-            RuntimeTenant.EnvFlag, RuntimeTenant.MasterKeyEnv,
-            RuntimeTenant.EnvFlag, RuntimeTenant.SecretsEnv,
-            RuntimeTenant.EnvFlag, RuntimeTenant.PortEnv,
-            RuntimeTenant.EnvFlag, RuntimeTenant.DeploymentModeEnv,
-            RuntimeTenant.EnvFlag, RuntimeTenant.AllowedOriginsEnv + this.Origin,
-            RuntimeTenant.Image,
+            RuntimeEnvironment.RunVerb, RuntimeEnvironment.RunFlag, RuntimeEnvironment.NameFlag, this.container,
+            RuntimeEnvironment.PortFlag, this.port + ':' + RuntimeEnvironment.ContainerPort,
+            RuntimeEnvironment.VolumeFlag, join(this.bundleDir, RuntimeEnvironment.EnvironmentsFile) + RuntimeEnvironment.EnvironmentsMount,
+            RuntimeEnvironment.VolumeFlag, join(this.bundleDir, RuntimeEnvironment.SecretsFile) + RuntimeEnvironment.SecretsMount,
+            RuntimeEnvironment.VolumeFlag, join(this.bundleDir, RuntimeEnvironment.MasterKeyFile) + RuntimeEnvironment.MasterKeyMount,
+            RuntimeEnvironment.VolumeFlag, join(this.bundleDir, RuntimeEnvironment.DataDir) + RuntimeEnvironment.DataMount,
+            RuntimeEnvironment.EnvFlag, RuntimeEnvironment.BaseDirEnv,
+            RuntimeEnvironment.EnvFlag, RuntimeEnvironment.EnvironmentsFileEnv,
+            RuntimeEnvironment.EnvFlag, RuntimeEnvironment.MasterKeyEnv,
+            RuntimeEnvironment.EnvFlag, RuntimeEnvironment.SecretsEnv,
+            RuntimeEnvironment.EnvFlag, RuntimeEnvironment.PortEnv,
+            RuntimeEnvironment.EnvFlag, RuntimeEnvironment.DeploymentModeEnv,
+            RuntimeEnvironment.EnvFlag, RuntimeEnvironment.AllowedOriginsEnv + this.Origin,
+            RuntimeEnvironment.Image,
         ]
     }
 
     private async WaitForHealthy(): Promise<void>
     {
-        const deadline = Date.now() + RuntimeTenant.HealthTimeoutMs
+        const deadline = Date.now() + RuntimeEnvironment.HealthTimeoutMs
         while (Date.now() < deadline)
         {
             if (await this.Healthy())
             {
                 return
             }
-            await new Promise<void>(resolve => setTimeout(resolve, RuntimeTenant.HealthPollMs))
+            await new Promise<void>(resolve => setTimeout(resolve, RuntimeEnvironment.HealthPollMs))
         }
-        throw new Error(RuntimeTenant.HealthNeverReady)
+        throw new Error(RuntimeEnvironment.HealthNeverReady)
     }
 
     private async Healthy(): Promise<boolean>
     {
         try
         {
-            return (await fetch(this.Base + RuntimeTenant.HealthPath)).status === RuntimeTenant.OkStatus
+            return (await fetch(this.Base + RuntimeEnvironment.HealthPath)).status === RuntimeEnvironment.OkStatus
         }
         catch
         {
@@ -353,10 +353,10 @@ class AdminWire
     {
     }
 
-    public static async Connect(tenant: RuntimeTenant): Promise<AdminWire>
+    public static async Connect(environment: RuntimeEnvironment): Promise<AdminWire>
     {
-        const bearer = await tenant.AdminBearer()
-        const ws = new WebSocket(tenant.WsUrl, { headers: { [AdminWire.AuthHeader]: tenant.BearerHeaderPrefix + bearer } })
+        const bearer = await environment.AdminBearer()
+        const ws = new WebSocket(environment.WsUrl, { headers: { [AdminWire.AuthHeader]: environment.BearerHeaderPrefix + bearer } })
         await new Promise<void>((resolve, reject) =>
         {
             ws.once(AdminWire.OpenEvent, () => resolve())
@@ -402,9 +402,9 @@ class DataSession
     {
     }
 
-    public static async Open(tenant: RuntimeTenant, bearer: string): Promise<DataSession>
+    public static async Open(environment: RuntimeEnvironment, bearer: string): Promise<DataSession>
     {
-        const client = await PragmaticClient.ConnectAsync(tenant.WsUrl, { bearerToken: bearer })
+        const client = await PragmaticClient.ConnectAsync(environment.WsUrl, { bearerToken: bearer })
         await client.OpenApplication(Sp1AppBuilder.AppName)
         return new DataSession(client)
     }
@@ -451,12 +451,12 @@ class BrowserProof
 {
     private static readonly RenderTimeoutMs = 60000
 
-    public static async AssertSees(tenant: RuntimeTenant, email: string, password: string, needle: string): Promise<void>
+    public static async AssertSees(environment: RuntimeEnvironment, email: string, password: string, needle: string): Promise<void>
     {
         const browser = await chromium.launch()
         try
         {
-            await BrowserProof.Render(browser, tenant, email, password, needle)
+            await BrowserProof.Render(browser, environment, email, password, needle)
         }
         finally
         {
@@ -464,13 +464,13 @@ class BrowserProof
         }
     }
 
-    private static async Render(browser: Browser, tenant: RuntimeTenant, email: string, password: string, needle: string): Promise<void>
+    private static async Render(browser: Browser, environment: RuntimeEnvironment, email: string, password: string, needle: string): Promise<void>
     {
         const context = await browser.newContext()
-        const login = await context.request.post(tenant.BrowserLoginUrl, { data: { email, password } })
+        const login = await context.request.post(environment.BrowserLoginUrl, { data: { email, password } })
         assert.ok(login.ok())
         const page = await context.newPage()
-        await page.goto(tenant.AppUrl)
+        await page.goto(environment.AppUrl)
         await page.getByText(needle).first().waitFor({ timeout: BrowserProof.RenderTimeoutMs })
     }
 }
@@ -488,8 +488,8 @@ class WriteAssert
 
 test('SP1 capstone: generate a per-concept CRUD app, configure roles live, admin CRUD + reader RBAC denial', { skip: !Gate.Enabled, timeout: 900000 }, async () =>
 {
-    RuntimeTenant.RequireImage()
-    const tenant = new RuntimeTenant(await FreePort.Acquire())
+    RuntimeEnvironment.RequireImage()
+    const environment = new RuntimeEnvironment(await FreePort.Acquire())
     let built: BuiltSp1App | undefined
     let deployClient: PragmaticClient | undefined
     let admin: DataSession | undefined
@@ -497,11 +497,11 @@ test('SP1 capstone: generate a per-concept CRUD app, configure roles live, admin
     let adminWire: AdminWire | undefined
     try
     {
-        await tenant.StartAsync()
+        await environment.StartAsync()
 
         // (b) Build the GENERATED per-concept CRUD app and deploy it.
         built = await Sp1AppBuilder.Build()
-        deployClient = await PragmaticClient.ConnectAsync(tenant.WsUrl, { bearerToken: await tenant.AdminBearer() })
+        deployClient = await PragmaticClient.ConnectAsync(environment.WsUrl, { bearerToken: await environment.AdminBearer() })
         const deployed = await deployClient.DeployApplication(built.DeployParams())
         assert.equal(deployed.status, AppWriteStatus.Applied)
 
@@ -510,11 +510,11 @@ test('SP1 capstone: generate a per-concept CRUD app, configure roles live, admin
         // identity-configured tenant denies every write until roles are configured below. (Contrast
         // the post-config reader denial in step (f), which is the per-concept RULE denial — the reader
         // has coarse Write yet only a Read privilege on this concept.)
-        admin = await DataSession.Open(tenant, await tenant.AdminBearer())
+        admin = await DataSession.Open(environment, await environment.AdminBearer())
         WriteAssert.Status(await admin.Create({ [Sp1AppBuilder.TitleField]: Sp1Accounts.TitleAlpha }), AppWriteStatus.Denied)
 
         // (d) Seed the reader and configure roles LIVE through the admin path (no redeploy / restart).
-        adminWire = await AdminWire.Connect(tenant)
+        adminWire = await AdminWire.Connect(environment)
         await adminWire.CreateAccount(Sp1Accounts.ReaderEmail, Sp1Accounts.ReaderPrincipalId, Sp1Accounts.ReaderPassword)
         await adminWire.GrantRole(Sp1Accounts.ReaderPrincipalId, Sp1Accounts.EditorRole)
         await adminWire.SetSecurityModel(Sp1SecurityModel.Config())
@@ -529,10 +529,10 @@ test('SP1 capstone: generate a per-concept CRUD app, configure roles live, admin
         assert.equal(afterEdit.includes(Sp1Accounts.TitleAlpha), false)
 
         // The served, generated app renders the live edited value to a real admin browser session.
-        await BrowserProof.AssertSees(tenant, tenant.AdminEmail, tenant.AdminPassword, Sp1Accounts.TitleBeta)
+        await BrowserProof.AssertSees(environment, environment.AdminEmail, environment.AdminPassword, Sp1Accounts.TitleBeta)
 
         // (f) A read-only reader's create/edit/delete are each DENIED, and the row is unchanged.
-        reader = await DataSession.Open(tenant, await tenant.BearerFor(Sp1Accounts.ReaderEmail, Sp1Accounts.ReaderPassword))
+        reader = await DataSession.Open(environment, await environment.BearerFor(Sp1Accounts.ReaderEmail, Sp1Accounts.ReaderPassword))
         WriteAssert.Status(await reader.Create({ [Sp1AppBuilder.TitleField]: Sp1Accounts.TitleGamma }), AppWriteStatus.Denied)
         WriteAssert.Status(await reader.Update(id, { [Sp1AppBuilder.TitleField]: Sp1Accounts.TitleGamma }), AppWriteStatus.Denied)
         WriteAssert.Status(await reader.Delete(id), AppWriteStatus.Denied)
@@ -550,7 +550,7 @@ test('SP1 capstone: generate a per-concept CRUD app, configure roles live, admin
         await reader?.DisposeAsync()
         adminWire?.Dispose()
         await deployClient?.DisposeAsync()
-        tenant.Stop()
+        environment.Stop()
         built?.Dispose()
     }
 })

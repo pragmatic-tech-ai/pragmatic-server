@@ -3,23 +3,23 @@ import assert from 'node:assert/strict'
 import { DeploymentMode } from '../../platform/deployment-mode.js'
 import { ServerBootstrap } from '../server-bootstrap.js'
 import { ProvisionedSecretSource } from '../../config/provisioned-secret-source.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import type { ServerConfig, GatewayConfig } from '../../config/server-config.js'
 import type { IWorkerRouter } from '../../cluster/worker-router.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 
 class Fixture
 {
     public static Config(mode: DeploymentMode): ServerConfig
     {
-        return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { keyFilePath: '/run/secrets/key' }, deploymentMode: mode, singleTenant: { id: 't1', displayName: 'Tenant One' }, idleTtlMs: 1000 }
+        return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { keyFilePath: '/run/secrets/key' }, deploymentMode: mode, singleEnvironment: { id: 't1', displayName: 'Tenant One' }, idleTtlMs: 1000 }
     }
 
-    public static Provisioning(): InMemoryTenantProvisioning
+    public static Provisioning(): InMemoryEnvironmentProvisioning
     {
-        const entries = new Map<string, TenantProvisioning>()
+        const entries = new Map<string, EnvironmentProvisioning>()
         entries.set('t1', { displayName: 'Tenant One' })
-        return new InMemoryTenantProvisioning(entries)
+        return new InMemoryEnvironmentProvisioning(entries)
     }
 }
 
@@ -45,7 +45,7 @@ test('the startup line never contains the master key reference target', () =>
     const line = ServerBootstrap.StartupLine(Fixture.Config(DeploymentMode.Local), 1)
     assert.ok(!line.includes('/run/secrets/key'))
     assert.ok(line.includes('8080'))
-    assert.ok(line.includes('tenants=1'))
+    assert.ok(line.includes('environments=1'))
 })
 
 test('ComposeOptions carries the provisioned secret source onto the host options', () =>

@@ -9,7 +9,7 @@ import { EnvironmentSecuritySetting } from '../environment-security-setting.js'
 import { IdpDirectorySyncHost } from '../idp-directory-sync-host.js'
 import type { ISyncDiagnostics, ISyncTimer } from '../idp-directory-sync-host.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
-import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
+import { EnvironmentPurpose } from '../../../environments/environment-purpose.js'
 import { EnvironmentFixture } from './environment-fixture.js'
 
 /** A config store whose stored security model can be swapped between runs. */
@@ -21,7 +21,7 @@ class MutableConfigStore implements IRealmConfigStore
     {
     }
 
-    public async Get(_tenantId: string): Promise<IdentityConfig | null>
+    public async Get(_environmentId: string): Promise<IdentityConfig | null>
     {
         if (this.Fail !== undefined) throw this.Fail
         return this.model === undefined ? null : new IdentityConfig('local', DelegationDepth.FullAuthz, new Map(), new Map(), new Map(), this.model)
@@ -48,12 +48,12 @@ class MemoryDirectoryStore implements IIdpDirectoryStore
         this.saved = seed
     }
 
-    public async Get(_tenantId: string): Promise<IdpDirectorySnapshot | null>
+    public async Get(_environmentId: string): Promise<IdpDirectorySnapshot | null>
     {
         return this.saved
     }
 
-    public async Save(_tenantId: string, snapshot: IdpDirectorySnapshot): Promise<void>
+    public async Save(_environmentId: string, snapshot: IdpDirectorySnapshot): Promise<void>
     {
         this.saved = snapshot
         this.saves++
@@ -115,7 +115,7 @@ class RecordingDiagnostics implements ISyncDiagnostics
 {
     public readonly Failures: string[] = []
 
-    public Failed(_tenantId: string, error: Error): void
+    public Failed(_environmentId: string, error: Error): void
     {
         this.Failures.push(error.name)
     }
@@ -310,19 +310,19 @@ describe('idp directory sync host', () =>
         {
             // a stored setting (the sync has something to ask about), then a restart: nothing connects to the new server
             await fx.Start({ Identity: true, SecurityModel: SyncStartFx.Setting })
-            assert.equal(await (await fx.Server.Pack()).IdpDirectory.Get(EnvironmentFixture.TenantId), null, 'no snapshot is stored before the restart')
+            assert.equal(await (await fx.Server.Pack()).IdpDirectory.Get(EnvironmentFixture.EnvironmentId), null, 'no snapshot is stored before the restart')
             await fx.Server.Dispose()
             restarted = new PragmaticServer({
-                purpose: TenantPurpose.Runtime,
+                purpose: EnvironmentPurpose.Runtime,
                 packagesRoot: fx.PackagesDir,
                 applicationsRoot: fx.AppsDir,
                 graphsRoot: fx.GraphsDir,
-                identity: { identityRoot: fx.IdentityDir, masterKey: { base64Env: EnvironmentFixture.KeyEnv }, tenant: { id: EnvironmentFixture.TenantId, displayName: SyncStartFx.DisplayName } },
+                identity: { identityRoot: fx.IdentityDir, masterKey: { base64Env: EnvironmentFixture.KeyEnv }, environment: { id: EnvironmentFixture.EnvironmentId, displayName: SyncStartFx.DisplayName } },
             })
             await restarted.Start()
             const store = (await restarted.Pack()).IdpDirectory
-            for (let tick = 0; tick < SyncStartFx.MaxTicks && (await store.Get(EnvironmentFixture.TenantId)) === null; tick++) await new Promise(resolve => setTimeout(resolve, SyncStartFx.TickMs))
-            assert.notEqual(await store.Get(EnvironmentFixture.TenantId), null, 'Start ran the first sync: the directory snapshot is stored')
+            for (let tick = 0; tick < SyncStartFx.MaxTicks && (await store.Get(EnvironmentFixture.EnvironmentId)) === null; tick++) await new Promise(resolve => setTimeout(resolve, SyncStartFx.TickMs))
+            assert.notEqual(await store.Get(EnvironmentFixture.EnvironmentId), null, 'Start ran the first sync: the directory snapshot is stored')
         }
         finally
         {

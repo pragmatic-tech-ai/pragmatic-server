@@ -14,7 +14,7 @@ export enum RequestOutcome
 export interface IRequestObservation
 {
     method: string
-    tenant: string
+    environment: string
     principal: string
 }
 
@@ -26,7 +26,7 @@ export class RequestInstrumentation
     private static readonly RequestsInFlight = 'requests_in_flight'
     private static readonly RequestErrorsTotal = 'request_errors_total'
     private static readonly MethodLabel = 'method'
-    private static readonly TenantLabel = 'tenant'
+    private static readonly EnvironmentLabel = 'environment'
     private static readonly OutcomeKey = 'outcome'
     private static readonly ClassKey = 'class'
     private static readonly PrincipalAttribute = 'principal'
@@ -72,23 +72,23 @@ export class RequestInstrumentation
 
     private async Observe<T>(span: Span, request: IRequestObservation, operation: () => T | Promise<T>): Promise<T>
     {
-        const labels = { [RequestInstrumentation.MethodLabel]: request.method, [RequestInstrumentation.TenantLabel]: request.tenant }
+        const labels = { [RequestInstrumentation.MethodLabel]: request.method, [RequestInstrumentation.EnvironmentLabel]: request.environment }
         let log: ILogger = this.logger
         const start = performance.now()
         try
         {
             this.Safely(() =>
             {
-                log = this.logger.Child({ [RequestInstrumentation.CorrelationIdField]: span.spanContext().traceId, [RequestInstrumentation.MethodLabel]: request.method, [RequestInstrumentation.TenantLabel]: request.tenant })
+                log = this.logger.Child({ [RequestInstrumentation.CorrelationIdField]: span.spanContext().traceId, [RequestInstrumentation.MethodLabel]: request.method, [RequestInstrumentation.EnvironmentLabel]: request.environment })
                 span.setAttribute(RequestInstrumentation.MethodLabel, request.method)
-                span.setAttribute(RequestInstrumentation.TenantLabel, request.tenant)
+                span.setAttribute(RequestInstrumentation.EnvironmentLabel, request.environment)
                 if (request.principal.length > 0)
                 {
                     span.setAttribute(RequestInstrumentation.PrincipalAttribute, request.principal)
                 }
             })
             this.inFlight += 1
-            this.Safely(() => this.inFlightCounter.add(1, { [RequestInstrumentation.TenantLabel]: request.tenant }))
+            this.Safely(() => this.inFlightCounter.add(1, { [RequestInstrumentation.EnvironmentLabel]: request.environment }))
             const result = await operation()
             this.Safely(() => this.RecordSuccess(span, labels, log))
             return result
@@ -101,7 +101,7 @@ export class RequestInstrumentation
         finally
         {
             this.inFlight -= 1
-            this.Safely(() => this.inFlightCounter.add(-1, { [RequestInstrumentation.TenantLabel]: request.tenant }))
+            this.Safely(() => this.inFlightCounter.add(-1, { [RequestInstrumentation.EnvironmentLabel]: request.environment }))
             this.Safely(() => this.durationMs.record(performance.now() - start, labels))
             this.Safely(() => span.end())
         }

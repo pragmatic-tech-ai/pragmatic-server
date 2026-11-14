@@ -52,7 +52,7 @@ export class CloudPlatform implements PlatformServices
     private readonly anchorKey: string | undefined
     private readonly anchorInterval: number
     private sqlStoresPromise: Promise<SqlIdentityStores> | undefined
-    private tenantConfigPromise: Promise<IRealmConfigStore> | undefined
+    private environmentConfigPromise: Promise<IRealmConfigStore> | undefined
 
     private constructor(session: ISqlSession, storage: IStorageProviderRegistry, masterKey: Buffer, anchorKey: string | undefined, anchorInterval: number)
     {
@@ -165,10 +165,10 @@ export class CloudPlatform implements PlatformServices
 
     private realmConfigStore(): Promise<IRealmConfigStore>
     {
-        if (this.tenantConfigPromise === undefined)
+        if (this.environmentConfigPromise === undefined)
         {
-            this.tenantConfigPromise = SqlRealmConfigStore.Open(this.session).catch(e => { this.tenantConfigPromise = undefined; throw e })
+            this.environmentConfigPromise = SqlRealmConfigStore.Open(this.session).catch(e => { this.environmentConfigPromise = undefined; throw e })
         }
-        return this.tenantConfigPromise
+        return this.environmentConfigPromise
     }
 }

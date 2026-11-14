@@ -7,12 +7,12 @@ import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticClient, WsMessageSocket } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { RedisTenantOwnership } from '../../tenancy/redis-tenant-ownership.js'
+import { RedisEnvironmentOwnership } from '../../environments/redis-environment-ownership.js'
 import { MachineTls } from '../machine-tls.js'
 import type { MachineTlsRef } from '../machine-tls.js'
 import { WorkerHost } from '../worker-host.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import { NodePlatform } from '../../platform/node-platform.js'
 import type { IdentityStoreSet } from '@pragmatic-tech-ai/todl-identity'
 
@@ -43,11 +43,11 @@ class WorkerFixture
         return { certFile: join(dir, 'client.pem'), keyFile: join(dir, 'client.key'), caFile: join(dir, 'ca.pem') }
     }
 
-    public static Start(...tenantIds: string[]): { baseDir: string }
+    public static Start(...environmentIds: string[]): { baseDir: string }
     {
         const baseDir = mkdtempSync(join(tmpdir(), 'ps-wh-'))
         const fixture = join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution')
-        for (const id of tenantIds)
+        for (const id of environmentIds)
         {
             mkdirSync(join(baseDir, id), { recursive: true })
             cpSync(fixture, join(baseDir, id, 'solution'), { recursive: true })
@@ -56,17 +56,17 @@ class WorkerFixture
         return { baseDir }
     }
 
-    public static Provisioning(...tenantIds: string[]): InMemoryTenantProvisioning
+    public static Provisioning(...environmentIds: string[]): InMemoryEnvironmentProvisioning
     {
-        const entries = new Map<string, TenantProvisioning>()
-        for (const id of tenantIds)
+        const entries = new Map<string, EnvironmentProvisioning>()
+        for (const id of environmentIds)
         {
             entries.set(id, { displayName: id })
         }
-        return new InMemoryTenantProvisioning(entries)
+        return new InMemoryEnvironmentProvisioning(entries)
     }
 
-    public static Options(baseDir: string, provisioning: InMemoryTenantProvisioning)
+    public static Options(baseDir: string, provisioning: InMemoryEnvironmentProvisioning)
     {
         return { host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: WorkerFixture.KeyEnv }, provisioning, tls: WorkerFixture.TlsRef() }
     }
@@ -191,7 +191,7 @@ test('gated-live: a worker rejects a tenant already owned by another holder (own
         return
     }
     const { baseDir } = WorkerFixture.Start('t1')
-    const other = new RedisTenantOwnership(url, 'other-holder')
+    const other = new RedisEnvironmentOwnership(url, 'other-holder')
     await other.Start()
     assert.equal(await other.Acquire('t1'), true)
     const worker = await WorkerHost.StartAsync({ ...WorkerFixture.Options(baseDir, WorkerFixture.Provisioning('t1')), redisUrl: url })

@@ -9,7 +9,7 @@ import type { CypherParamValue, CypherQueryPageDto } from '@pragmatic-tech-ai/pr
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { CypherLimits } from '../../config/cypher-limits.js'
-import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
+import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import type { IGraphCypherQuery, IDevCypherRequest } from '../engine/engine-cypher-query.js'
@@ -65,7 +65,7 @@ class CypherPagingWorld
     public Connect(): PragmaticClient
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, CypherPagingFixture.Permissive(), undefined, this.cypher, undefined, undefined, undefined, undefined, undefined, this.limits, TenantPurpose.Development)
+        const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, CypherPagingFixture.Permissive(), undefined, this.cypher, undefined, undefined, undefined, undefined, undefined, this.limits, EnvironmentPurpose.Development)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         this.connections.push({ client, handler })
         return client

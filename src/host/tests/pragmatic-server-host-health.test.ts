@@ -6,16 +6,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 
 class HealthFixture
 {
-    public static Provisioning(): InMemoryTenantProvisioning
+    public static Provisioning(): InMemoryEnvironmentProvisioning
     {
-        const entries = new Map<string, TenantProvisioning>()
+        const entries = new Map<string, EnvironmentProvisioning>()
         entries.set('t1', { displayName: 'Tenant One' })
-        return new InMemoryTenantProvisioning(entries)
+        return new InMemoryEnvironmentProvisioning(entries)
     }
 
     public static async Get(port: number, path: string): Promise<number>

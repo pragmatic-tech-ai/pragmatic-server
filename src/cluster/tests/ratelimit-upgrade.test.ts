@@ -10,8 +10,8 @@ import { WorkerHost } from '../worker-host.js'
 import { MachineTls } from '../machine-tls.js'
 import type { MachineTlsRef } from '../machine-tls.js'
 import type { IWorkerRouter, WorkerEndpoint } from '../worker-router.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import { RateLimitGuard } from '../../host/rate-limit-guard.js'
 import { TokenBucketRateLimiter } from '../../host/rate-limiter.js'
 
@@ -19,7 +19,7 @@ class CountingRouter implements IWorkerRouter
 {
     public Calls = 0
 
-    public RouteOrSpawn(_tenantId: string): Promise<WorkerEndpoint>
+    public RouteOrSpawn(_environmentId: string): Promise<WorkerEndpoint>
     {
         this.Calls++
         return Promise.resolve({ host: '127.0.0.1', port: 1 })
@@ -54,7 +54,7 @@ class Fixtures
 
     public static Guard(): RateLimitGuard
     {
-        return new RateLimitGuard(new TokenBucketRateLimiter({ perTenant: { Rps: 0.001, Burst: 1 } }))
+        return new RateLimitGuard(new TokenBucketRateLimiter({ perEnvironment: { Rps: 0.001, Burst: 1 } }))
     }
 
     public static Status(ws: WebSocket): Promise<{ status: number, retryAfter: string | undefined }>
@@ -103,8 +103,8 @@ test('the worker host rejects a per-tenant upgrade breach with 429 + Retry-After
     mkdirSync(join(baseDir, 't1'), { recursive: true })
     cpSync(join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution'), join(baseDir, 't1', 'solution'), { recursive: true })
     process.env[Fixtures.KeyEnv] = randomBytes(32).toString('base64')
-    const entries = new Map<string, TenantProvisioning>([['t1', { displayName: 't1' }]])
-    const worker = await WorkerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: Fixtures.KeyEnv }, provisioning: new InMemoryTenantProvisioning(entries), tls: Fixtures.ServerTls(), rateLimit: Fixtures.Guard() })
+    const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 't1' }]])
+    const worker = await WorkerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: Fixtures.KeyEnv }, provisioning: new InMemoryEnvironmentProvisioning(entries), tls: Fixtures.ServerTls(), rateLimit: Fixtures.Guard() })
     const client = MachineTls.Client(Fixtures.ClientTls())
     const dial = (): WebSocket => new WebSocket(`wss://${worker.Address().host}:${worker.Address().port}/`, { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, headers: { 'x-pragmatic-environment': 't1' } })
     try

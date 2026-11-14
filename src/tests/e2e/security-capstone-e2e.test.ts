@@ -32,7 +32,7 @@ import { PlatformDirectory } from '../../../admin/control-plane/platform-directo
 import { PortAllocator } from '../../../admin/control-plane/port-allocator.js'
 import type { IPortProbe } from '../../../admin/control-plane/port-allocator.js'
 import { TenantRegistry } from '../../../admin/control-plane/tenant-registry.js'
-import { TenantPurposeName } from '../../../environments/seed/bundle.js'
+import { EnvironmentPurposeName } from '../../../environments/seed/bundle.js'
 import type { EnvDefinition } from '../../../environments/seed/bundle.js'
 import { DockerEnv } from '../../../environments/seed/docker.js'
 import type { ILogProcess } from '../../../environments/seed/docker.js'
@@ -40,7 +40,7 @@ import { UserSeeder } from '../../../environments/seed/users.js'
 import { ServerBootstrap } from '../../bin/server-bootstrap.js'
 import { ProvisionedSecretsFactory } from '../../config/provisioned-secrets-factory.js'
 import { ServerConfigLoader } from '../../config/server-config-loader.js'
-import { TenantProvisioningFactory } from '../../config/tenant-provisioning-factory.js'
+import { EnvironmentProvisioningFactory } from '../../config/environment-provisioning-factory.js'
 import { PragmaticServerHost } from '../../host/pragmatic-server-host.js'
 import { NullLogger as ServerNullLogger } from '../../observability/logger.js'
 import type { PragmaticServer } from '../../pragmatic-server.js'
@@ -116,7 +116,7 @@ class CapstoneFx
 
     public static Principal(id: string): Principal
     {
-        return new Principal(id, EnvironmentFixture.TenantId, PrincipalKind.User, new Map(), [])
+        return new Principal(id, EnvironmentFixture.EnvironmentId, PrincipalKind.User, new Map(), [])
     }
 
     /** An admin-wire connection as `principalId` (tenant Owner), over the admin service the host builds. */
@@ -591,16 +591,16 @@ class InProcessDocker implements IDockerEnv
         const read = (path: string): string => readFileSync(path, InProcessDocker.Utf8)
         const config = ServerConfigLoader.Load({
             [DockerEnv.EnvBaseDir]: join(bundleDir, DockerEnv.DataSubdir),
-            [DockerEnv.EnvTenantsFile]: join(bundleDir, DockerEnv.TenantsFile),
+            [DockerEnv.EnvEnvironmentsFile]: join(bundleDir, DockerEnv.EnvironmentsFile),
             [DockerEnv.EnvMasterKeyFile]: join(bundleDir, DockerEnv.MasterKeyFile),
             [DockerEnv.EnvSecretsFile]: join(bundleDir, DockerEnv.SecretsFile),
             [DockerEnv.EnvPort]: String(def.hostPort),
             [DockerEnv.EnvDeploymentMode]: DockerEnv.DeploymentModeLocal,
-            ...(def.purpose === TenantPurposeName.Runtime ? { [DockerEnv.EnvAllowedOrigins]: DockerEnv.LocalhostOriginPrefix + String(def.hostPort) } : {}),
+            ...(def.purpose === EnvironmentPurposeName.Runtime ? { [DockerEnv.EnvAllowedOrigins]: DockerEnv.LocalhostOriginPrefix + String(def.hostPort) } : {}),
         }, read)
         const logger = new ServerNullLogger()
         const audit = ServerBootstrap.AuditSink(config, logger)
-        const options = ServerBootstrap.ComposeOptions(config, TenantProvisioningFactory.Build(config, read).provisioning, undefined, ProvisionedSecretsFactory.Build(config, read), logger,
+        const options = ServerBootstrap.ComposeOptions(config, EnvironmentProvisioningFactory.Build(config, read).provisioning, undefined, ProvisionedSecretsFactory.Build(config, read), logger,
             undefined, audit, ServerBootstrap.RateLimit(config, audit, undefined, logger))
         this.host = await PragmaticServerHost.StartAsync(options)
     }
@@ -707,7 +707,7 @@ class DevEnvFx
     public static readonly EmailDomain = '@dev-ana.test'
     public static readonly Prefix = 'ps-capstone-cp-'
     public static readonly CoarseRole = AdminEnums.NameOfRole(Role.Editor)
-    public static readonly TenantKind = AdminEnums.NameOfResourceKind(ResourceKind.Realm)
+    public static readonly RealmKindName = AdminEnums.NameOfResourceKind(ResourceKind.Realm)
     private static readonly Create = 'CREATE (e:`hr.Employee`) SET e.name = $name RETURN e.name AS name'
     private static readonly Employees = 'MATCH (e:`hr.Employee`) RETURN e.name AS name ORDER BY name'
     private static readonly Loopback = '127.0.0.1'
@@ -736,11 +736,11 @@ class DevEnvFx
     /** The control plane over the temp `root` and the in-process Docker seam; environments live under `<root>/<name>`. */
     public static async Service(root: string, docker: InProcessDocker, port: number): Promise<EnvironmentService>
     {
-        const [envs, clients, tenants, hives] = DevEnvFx.RegistryFiles.map(file => join(root, file))
+        const [envs, clients, environments, hives] = DevEnvFx.RegistryFiles.map(file => join(root, file))
         const probe = new FreeProbe()
         const registry = new EnvironmentRegistry(envs, probe)
         await registry.Load()
-        const directory = new PlatformDirectory(new ClientRegistry(clients), new TenantRegistry(tenants), new HiveRegistry(hives), registry)
+        const directory = new PlatformDirectory(new ClientRegistry(clients), new TenantRegistry(environments), new HiveRegistry(hives), registry)
         await directory.Load()
         const runtime = new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter())
         return new EnvironmentService(registry, new PortAllocator(port, probe), new EnvironmentRuntimeResolver(runtime, runtime, directory, new HiveOrchestratorFactory()),
@@ -950,7 +950,7 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
                 const tokens = (await cap.Server.Pack()).SourceTokens
                 assert.ok(tokens instanceof LocalSourceTokenProvider, SalesFx.SaysTheLocalIdPIssuesThePer)
                 const opened = cap.Fx.Source.Opened.filter(connection => connection.Config[CallerCredentialAdapterFactory.CredentialsKey] === ConnectionCredentialMode.Caller)
-                const subjects = await Promise.all(opened.map(connection => tokens.Verify(EnvironmentFixture.TenantId, connection.Secret ?? SalesFx.NoSecret, SalesFx.Resource)))
+                const subjects = await Promise.all(opened.map(connection => tokens.Verify(EnvironmentFixture.EnvironmentId, connection.Secret ?? SalesFx.NoSecret, SalesFx.Resource)))
                 assert.deepEqual(subjects.sort(), [SalesFx.Alice, SalesFx.Bob], SalesFx.SaysEachCallersReadReachedTheSource)
             })
         })
@@ -1011,7 +1011,7 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
                 {
                     await service.AdminCreateAccount(DevEnvFx.Name, { email: DevEnvFx.EmailOf(user), principalId: user, password: DevEnvFx.UserPassword })
                     // the identity RBAC still gates the endpoints (the coarse role); tier 1 decides the rows
-                    await service.AdminGrantRole(DevEnvFx.Name, { subject: user, role: DevEnvFx.CoarseRole, resourceKind: DevEnvFx.TenantKind, resourcePath: [] })
+                    await service.AdminGrantRole(DevEnvFx.Name, { subject: user, role: DevEnvFx.CoarseRole, resourceKind: DevEnvFx.RealmKindName, resourcePath: [] })
                 }
                 await service.AdminSetSecurityModel(DevEnvFx.Name, DevEnvFx.Setting())
                 const compiler = new EnvironmentFixture()

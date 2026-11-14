@@ -12,7 +12,7 @@ import type { Browser } from 'playwright'
 import { PragmaticClient, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { BaseRole } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
-import { BundleBuilder, EnvKind, TenantPurposeName } from '../../../environments/seed/bundle.js'
+import { BundleBuilder, EnvKind, EnvironmentPurposeName } from '../../../environments/seed/bundle.js'
 import { HelloAppBuilder } from './hello-app-builder.js'
 import type { BuiltHelloApp } from './hello-app-builder.js'
 
@@ -83,17 +83,17 @@ class RuntimeSecurityModel
  * materialization would fail. A real deployment supplies a volume whose ownership the runtime user can write (an
  * orchestrator fsGroup / init chown); this ephemeral test needs no persistence and so avoids the volume entirely.
  */
-class RuntimeTenant
+class RuntimeEnvironment
 {
     private static readonly Image = 'pragmatic-server:sp0'
-    private static readonly TenantId = 'sp0'
+    private static readonly EnvironmentId = 'sp0'
     private static readonly EnvName = 'sp0'
     private static readonly BundlePrefix = 'sp0-bundle-'
     private static readonly SeedPrefix = 'sp0-seed-'
     private static readonly NamePrefix = 'sp0-e2e-'
     private static readonly SecretsFile = 'provisioned-secrets.json'
     private static readonly MasterKeyFile = 'master.key'
-    private static readonly TenantsFile = 'tenants.json'
+    private static readonly EnvironmentsFile = 'tenants.json'
     private static readonly SecurityModelFile = 'security-model.json'
     private static readonly Utf8 = 'utf8'
     private static readonly Docker = 'docker'
@@ -108,7 +108,7 @@ class RuntimeTenant
     private static readonly RemoveVerb = 'rm'
     private static readonly ForceFlag = '-f'
     private static readonly ContainerPort = '8080'
-    private static readonly TenantsMount = ':/cfg/tenants.json:ro'
+    private static readonly EnvironmentsMount = ':/cfg/tenants.json:ro'
     private static readonly SecretsMount = ':/cfg/provisioned-secrets.json:ro'
     private static readonly MasterKeyMount = ':/run/secrets/master_key:ro'
     // The generated bundle's data dir holds identity/tenant-config.json (with the security model) and is also
@@ -131,7 +131,7 @@ class RuntimeTenant
     private static readonly HealthNeverReady = 'the runtime tenant container never reported /healthz=200'
     private static readonly PortEnv = 'PRAGMATIC_PORT=8080'
     private static readonly BaseDirEnv = 'PRAGMATIC_BASE_DIR=/home/pragmatic/data'
-    private static readonly TenantsFileEnv = 'PRAGMATIC_TENANTS_FILE=/cfg/tenants.json'
+    private static readonly EnvironmentsFileEnv = 'PRAGMATIC_TENANTS_FILE=/cfg/tenants.json'
     private static readonly MasterKeyEnv = 'PRAGMATIC_MASTER_KEY_FILE=/run/secrets/master_key'
     private static readonly SecretsEnv = 'PRAGMATIC_PROVISIONED_SECRETS_FILE=/cfg/provisioned-secrets.json'
     private static readonly DeploymentModeEnv = 'PRAGMATIC_DEPLOYMENT_MODE=local'
@@ -145,56 +145,56 @@ class RuntimeTenant
     public constructor(private readonly port: number)
     {
         const unique = randomBytes(6).toString('hex')
-        this.bundleDir = mkdtempSync(join(tmpdir(), RuntimeTenant.BundlePrefix))
-        this.seedDir = mkdtempSync(join(tmpdir(), RuntimeTenant.SeedPrefix))
-        this.container = RuntimeTenant.NamePrefix + unique
+        this.bundleDir = mkdtempSync(join(tmpdir(), RuntimeEnvironment.BundlePrefix))
+        this.seedDir = mkdtempSync(join(tmpdir(), RuntimeEnvironment.SeedPrefix))
+        this.container = RuntimeEnvironment.NamePrefix + unique
     }
 
     public get Base(): string
     {
-        return RuntimeTenant.Loopback + this.port
+        return RuntimeEnvironment.Loopback + this.port
     }
 
     public get WsUrl(): string
     {
-        return RuntimeTenant.WsScheme + this.port + RuntimeTenant.WsPath
+        return RuntimeEnvironment.WsScheme + this.port + RuntimeEnvironment.WsPath
     }
 
     public get Origin(): string
     {
-        return RuntimeTenant.Loopback + this.port
+        return RuntimeEnvironment.Loopback + this.port
     }
 
     public get AppUrl(): string
     {
-        return this.Base + RuntimeTenant.AppPath
+        return this.Base + RuntimeEnvironment.AppPath
     }
 
     public get BrowserLoginUrl(): string
     {
-        return this.Base + RuntimeTenant.BrowserLoginPath
+        return this.Base + RuntimeEnvironment.BrowserLoginPath
     }
 
     public get Email(): string
     {
-        return BundleBuilder.AdminEmailPrefix + RuntimeTenant.TenantId + BundleBuilder.AdminEmailSuffix
+        return BundleBuilder.AdminEmailPrefix + RuntimeEnvironment.EnvironmentId + BundleBuilder.AdminEmailSuffix
     }
 
     public get Password(): string
     {
-        const secrets = JSON.parse(readFileSync(join(this.bundleDir, RuntimeTenant.SecretsFile), RuntimeTenant.Utf8)) as Record<string, string>
-        return secrets[RuntimeTenant.TenantId + BundleBuilder.AdminSecretSuffix]!
+        const secrets = JSON.parse(readFileSync(join(this.bundleDir, RuntimeEnvironment.SecretsFile), RuntimeEnvironment.Utf8)) as Record<string, string>
+        return secrets[RuntimeEnvironment.EnvironmentId + BundleBuilder.AdminSecretSuffix]!
     }
 
     public static RequireImage(): void
     {
         try
         {
-            execFileSync(RuntimeTenant.Docker, [RuntimeTenant.ImageInspect, RuntimeTenant.InspectVerb, RuntimeTenant.Image], { stdio: 'ignore' })
+            execFileSync(RuntimeEnvironment.Docker, [RuntimeEnvironment.ImageInspect, RuntimeEnvironment.InspectVerb, RuntimeEnvironment.Image], { stdio: 'ignore' })
         }
         catch
         {
-            throw new Error(RuntimeTenant.ImageMissing)
+            throw new Error(RuntimeEnvironment.ImageMissing)
         }
     }
 
@@ -202,11 +202,11 @@ class RuntimeTenant
     {
         // Seed the tenant's security model before Generate reads it: without one, an identity-configured tenant denies
         // all reads and the browser's live query would come back empty.
-        writeFileSync(join(this.seedDir, RuntimeTenant.SecurityModelFile), JSON.stringify(RuntimeSecurityModel.Config()))
+        writeFileSync(join(this.seedDir, RuntimeEnvironment.SecurityModelFile), JSON.stringify(RuntimeSecurityModel.Config()))
         await BundleBuilder.Generate(
-            { name: RuntimeTenant.EnvName, kind: EnvKind.Dev, environmentId: RuntimeTenant.TenantId, purpose: TenantPurposeName.Runtime, hostPort: this.port },
+            { name: RuntimeEnvironment.EnvName, kind: EnvKind.Dev, environmentId: RuntimeEnvironment.EnvironmentId, purpose: EnvironmentPurposeName.Runtime, hostPort: this.port },
             this.bundleDir, this.seedDir)
-        execFileSync(RuntimeTenant.Docker, this.RunArgs(), { stdio: 'ignore' })
+        execFileSync(RuntimeEnvironment.Docker, this.RunArgs(), { stdio: 'ignore' })
         this.started = true
         await this.WaitForHealthy()
     }
@@ -214,12 +214,12 @@ class RuntimeTenant
     /** Obtains an admin bearer token the way a Node publisher would, via the Bearer login route. */
     public async BearerAsync(): Promise<string>
     {
-        const response = await fetch(this.Base + RuntimeTenant.LoginPath, {
-            method: RuntimeTenant.PostMethod,
-            headers: RuntimeTenant.JsonHeader,
+        const response = await fetch(this.Base + RuntimeEnvironment.LoginPath, {
+            method: RuntimeEnvironment.PostMethod,
+            headers: RuntimeEnvironment.JsonHeader,
             body: JSON.stringify({ email: this.Email, password: this.Password }),
         })
-        assert.equal(response.status, RuntimeTenant.OkStatus)
+        assert.equal(response.status, RuntimeEnvironment.OkStatus)
         return ((await response.json()) as { token: string }).token
     }
 
@@ -227,51 +227,51 @@ class RuntimeTenant
     {
         if (this.started)
         {
-            RuntimeTenant.Quiet(() => execFileSync(RuntimeTenant.Docker, [RuntimeTenant.RemoveVerb, RuntimeTenant.ForceFlag, this.container], { stdio: 'ignore' }))
+            RuntimeEnvironment.Quiet(() => execFileSync(RuntimeEnvironment.Docker, [RuntimeEnvironment.RemoveVerb, RuntimeEnvironment.ForceFlag, this.container], { stdio: 'ignore' }))
         }
-        RuntimeTenant.Quiet(() => rmSync(this.bundleDir, { recursive: true, force: true }))
-        RuntimeTenant.Quiet(() => rmSync(this.seedDir, { recursive: true, force: true }))
+        RuntimeEnvironment.Quiet(() => rmSync(this.bundleDir, { recursive: true, force: true }))
+        RuntimeEnvironment.Quiet(() => rmSync(this.seedDir, { recursive: true, force: true }))
     }
 
     private RunArgs(): string[]
     {
         return [
-            RuntimeTenant.RunVerb, RuntimeTenant.RunFlag, RuntimeTenant.NameFlag, this.container,
-            RuntimeTenant.PortFlag, this.port + ':' + RuntimeTenant.ContainerPort,
-            RuntimeTenant.VolumeFlag, join(this.bundleDir, RuntimeTenant.TenantsFile) + RuntimeTenant.TenantsMount,
-            RuntimeTenant.VolumeFlag, join(this.bundleDir, RuntimeTenant.SecretsFile) + RuntimeTenant.SecretsMount,
-            RuntimeTenant.VolumeFlag, join(this.bundleDir, RuntimeTenant.MasterKeyFile) + RuntimeTenant.MasterKeyMount,
-            RuntimeTenant.VolumeFlag, join(this.bundleDir, RuntimeTenant.DataDir) + RuntimeTenant.DataMount,
-            RuntimeTenant.EnvFlag, RuntimeTenant.BaseDirEnv,
-            RuntimeTenant.EnvFlag, RuntimeTenant.TenantsFileEnv,
-            RuntimeTenant.EnvFlag, RuntimeTenant.MasterKeyEnv,
-            RuntimeTenant.EnvFlag, RuntimeTenant.SecretsEnv,
-            RuntimeTenant.EnvFlag, RuntimeTenant.PortEnv,
-            RuntimeTenant.EnvFlag, RuntimeTenant.DeploymentModeEnv,
-            RuntimeTenant.EnvFlag, RuntimeTenant.AllowedOriginsEnv + this.Origin,
-            RuntimeTenant.Image,
+            RuntimeEnvironment.RunVerb, RuntimeEnvironment.RunFlag, RuntimeEnvironment.NameFlag, this.container,
+            RuntimeEnvironment.PortFlag, this.port + ':' + RuntimeEnvironment.ContainerPort,
+            RuntimeEnvironment.VolumeFlag, join(this.bundleDir, RuntimeEnvironment.EnvironmentsFile) + RuntimeEnvironment.EnvironmentsMount,
+            RuntimeEnvironment.VolumeFlag, join(this.bundleDir, RuntimeEnvironment.SecretsFile) + RuntimeEnvironment.SecretsMount,
+            RuntimeEnvironment.VolumeFlag, join(this.bundleDir, RuntimeEnvironment.MasterKeyFile) + RuntimeEnvironment.MasterKeyMount,
+            RuntimeEnvironment.VolumeFlag, join(this.bundleDir, RuntimeEnvironment.DataDir) + RuntimeEnvironment.DataMount,
+            RuntimeEnvironment.EnvFlag, RuntimeEnvironment.BaseDirEnv,
+            RuntimeEnvironment.EnvFlag, RuntimeEnvironment.EnvironmentsFileEnv,
+            RuntimeEnvironment.EnvFlag, RuntimeEnvironment.MasterKeyEnv,
+            RuntimeEnvironment.EnvFlag, RuntimeEnvironment.SecretsEnv,
+            RuntimeEnvironment.EnvFlag, RuntimeEnvironment.PortEnv,
+            RuntimeEnvironment.EnvFlag, RuntimeEnvironment.DeploymentModeEnv,
+            RuntimeEnvironment.EnvFlag, RuntimeEnvironment.AllowedOriginsEnv + this.Origin,
+            RuntimeEnvironment.Image,
         ]
     }
 
     private async WaitForHealthy(): Promise<void>
     {
-        const deadline = Date.now() + RuntimeTenant.HealthTimeoutMs
+        const deadline = Date.now() + RuntimeEnvironment.HealthTimeoutMs
         while (Date.now() < deadline)
         {
             if (await this.Healthy())
             {
                 return
             }
-            await new Promise<void>(resolve => setTimeout(resolve, RuntimeTenant.HealthPollMs))
+            await new Promise<void>(resolve => setTimeout(resolve, RuntimeEnvironment.HealthPollMs))
         }
-        throw new Error(RuntimeTenant.HealthNeverReady)
+        throw new Error(RuntimeEnvironment.HealthNeverReady)
     }
 
     private async Healthy(): Promise<boolean>
     {
         try
         {
-            return (await fetch(this.Base + RuntimeTenant.HealthPath)).status === RuntimeTenant.OkStatus
+            return (await fetch(this.Base + RuntimeEnvironment.HealthPath)).status === RuntimeEnvironment.OkStatus
         }
         catch
         {
@@ -297,12 +297,12 @@ class BrowserProof
 {
     private static readonly RenderTimeoutMs = 60000
 
-    public static async AssertLiveValue(tenant: RuntimeTenant, needle: string): Promise<void>
+    public static async AssertLiveValue(environment: RuntimeEnvironment, needle: string): Promise<void>
     {
         const browser = await chromium.launch()
         try
         {
-            await BrowserProof.Render(browser, tenant, needle)
+            await BrowserProof.Render(browser, environment, needle)
         }
         finally
         {
@@ -310,13 +310,13 @@ class BrowserProof
         }
     }
 
-    private static async Render(browser: Browser, tenant: RuntimeTenant, needle: string): Promise<void>
+    private static async Render(browser: Browser, environment: RuntimeEnvironment, needle: string): Promise<void>
     {
         const context = await browser.newContext()
-        const login = await context.request.post(tenant.BrowserLoginUrl, { data: { email: tenant.Email, password: tenant.Password } })
+        const login = await context.request.post(environment.BrowserLoginUrl, { data: { email: environment.Email, password: environment.Password } })
         assert.ok(login.ok())
         const page = await context.newPage()
-        await page.goto(tenant.AppUrl)
+        await page.goto(environment.AppUrl)
         await page.getByText(needle).first().waitFor({ timeout: BrowserProof.RenderTimeoutMs })
     }
 }
@@ -342,25 +342,25 @@ class HelloExpectation
 
 test('SP0 capstone: a remote app deploys to a Docker runtime tenant and a browser renders a live tenant value', { skip: !Gate.Enabled, timeout: 600000 }, async () =>
 {
-    RuntimeTenant.RequireImage()
-    const tenant = new RuntimeTenant(await FreePort.Acquire())
+    RuntimeEnvironment.RequireImage()
+    const environment = new RuntimeEnvironment(await FreePort.Acquire())
     let built: BuiltHelloApp | undefined
     let client: PragmaticClient | undefined
     try
     {
-        await tenant.StartAsync()
+        await environment.StartAsync()
         built = await HelloAppBuilder.Build()
         HelloExpectation.AssertDeployShape(built)
-        const bearer = await tenant.BearerAsync()
-        client = await PragmaticClient.ConnectAsync(tenant.WsUrl, { bearerToken: bearer })
+        const bearer = await environment.BearerAsync()
+        client = await PragmaticClient.ConnectAsync(environment.WsUrl, { bearerToken: bearer })
         const result = await client.DeployApplication(built.DeployParams())
         assert.equal(result.status, AppWriteStatus.Applied)
-        await BrowserProof.AssertLiveValue(tenant, HelloExpectation.LiveValue)
+        await BrowserProof.AssertLiveValue(environment, HelloExpectation.LiveValue)
     }
     finally
     {
         await client?.DisposeAsync()
-        tenant.Stop()
+        environment.Stop()
         built?.Dispose()
     }
 })

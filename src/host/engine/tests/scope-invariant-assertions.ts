@@ -45,7 +45,7 @@ export class InvariantText
     public static readonly Projected = 'projected unreadable '
     public static readonly FilterLeak = 'a filter on an unreadable attribute selected rows'
     public static readonly NotApplied = 'statement was not applied'
-    public static readonly NoTenantAuthorization = 'the security-model reload is not the tenant read authorization'
+    public static readonly NoEnvironmentAuthorization = 'the security-model reload is not the tenant read authorization'
     public static readonly ModelCount = 'the fixture has two models'
     /** Common to every unreadable-member message (Field, Ref, Attr, EdgeVia, Projected). */
     public static readonly Unreadable = 'unreadable '

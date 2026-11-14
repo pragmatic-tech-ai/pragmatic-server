@@ -7,7 +7,7 @@ export interface IRevocableConnection
 /** Forces every live connection of a principal closed. */
 export interface IPrincipalInvalidator
 {
-    InvalidatePrincipal(tenantId: string, principalId: string): void
+    InvalidatePrincipal(environmentId: string, principalId: string): void
 }
 
 /** Indexes live connections by (tenantId, principalId) so a revoke can tear them all down. */
@@ -18,9 +18,9 @@ export class PrincipalConnectionRegistry implements IPrincipalInvalidator
     private readonly byKey = new Map<string, Set<IRevocableConnection>>()
     private readonly keyOf = new Map<IRevocableConnection, string>()
 
-    public Add(tenantId: string, principalId: string, handler: IRevocableConnection): void
+    public Add(environmentId: string, principalId: string, handler: IRevocableConnection): void
     {
-        const key = PrincipalConnectionRegistry.KeyFor(tenantId, principalId)
+        const key = PrincipalConnectionRegistry.KeyFor(environmentId, principalId)
         let bucket = this.byKey.get(key)
         if (bucket === undefined)
         {
@@ -51,9 +51,9 @@ export class PrincipalConnectionRegistry implements IPrincipalInvalidator
         }
     }
 
-    public InvalidatePrincipal(tenantId: string, principalId: string): void
+    public InvalidatePrincipal(environmentId: string, principalId: string): void
     {
-        const bucket = this.byKey.get(PrincipalConnectionRegistry.KeyFor(tenantId, principalId))
+        const bucket = this.byKey.get(PrincipalConnectionRegistry.KeyFor(environmentId, principalId))
         if (bucket === undefined)
         {
             return
@@ -66,8 +66,8 @@ export class PrincipalConnectionRegistry implements IPrincipalInvalidator
         }
     }
 
-    private static KeyFor(tenantId: string, principalId: string): string
+    private static KeyFor(environmentId: string, principalId: string): string
     {
-        return `${tenantId}${PrincipalConnectionRegistry.KeySeparator}${principalId}`
+        return `${environmentId}${PrincipalConnectionRegistry.KeySeparator}${principalId}`
     }
 }

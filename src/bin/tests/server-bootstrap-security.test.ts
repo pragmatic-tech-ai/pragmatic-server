@@ -32,14 +32,14 @@ class SecurityFixture
         return { host: '0.0.0.0', port: 8080, baseDir: '/d', masterKey: { keyFilePath: '/k' }, deploymentMode: DeploymentMode.Local }
     }
 
-    public static Tenant(): { scope: RateLimitScope; tenant: string; key: string }
+    public static Environment(): { scope: RateLimitScope; environment: string; key: string }
     {
-        return { scope: RateLimitScope.Tenant, tenant: 't1', key: 't1' }
+        return { scope: RateLimitScope.Environment, environment: 't1', key: 't1' }
     }
 
-    public static Context(): { surface: AuditSurface; tenant: string; methodOrPath: string }
+    public static Context(): { surface: AuditSurface; environment: string; methodOrPath: string }
     {
-        return { surface: AuditSurface.Upgrade, tenant: 't1', methodOrPath: 'ws' }
+        return { surface: AuditSurface.Upgrade, environment: 't1', methodOrPath: 'ws' }
     }
 }
 
@@ -56,8 +56,8 @@ test('AuditSink=file builds a FileAccessAuditSink that writes to the path', asyn
     {
         const sink = ServerBootstrap.AuditSink({ ...SecurityFixture.BaseConfig(), auditSink: AuditSinkKind.File, auditFile: path }, new NullLogger())
         assert.ok(sink instanceof FileAccessAuditSink)
-        await sink.Record({ Timestamp: new Date(), TenantId: 't1', Surface: AuditSurface.Rpc, MethodOrPath: 'm', Outcome: AuditOutcome.Allow })
-        assert.ok(readFileSync(path, 'utf8').includes('"tenant":"t1"'))
+        await sink.Record({ Timestamp: new Date(), EnvironmentId: 't1', Surface: AuditSurface.Rpc, MethodOrPath: 'm', Outcome: AuditOutcome.Allow })
+        assert.ok(readFileSync(path, 'utf8').includes('"environment":"t1"'))
     }
     finally
     {
@@ -71,7 +71,7 @@ test('AuditSink=sql with a cloud store builds a SqlAuditAccessSink; without one 
     const config = { ...SecurityFixture.BaseConfig(), auditSink: AuditSinkKind.Sql }
     const sink = ServerBootstrap.AuditSink(config, new NullLogger(), undefined, store)
     assert.ok(sink instanceof SqlAuditAccessSink)
-    await sink.Record({ Timestamp: new Date(), TenantId: 't1', Surface: AuditSurface.Rpc, MethodOrPath: 'm', Outcome: AuditOutcome.Allow })
+    await sink.Record({ Timestamp: new Date(), EnvironmentId: 't1', Surface: AuditSurface.Rpc, MethodOrPath: 'm', Outcome: AuditOutcome.Allow })
     assert.equal(store.Events.length, 1)
     assert.throws(() => ServerBootstrap.AuditSink(config, new NullLogger()), /cloud audit store/)
 })
@@ -81,16 +81,16 @@ test('RateLimit returns a pass-through guard when unconfigured and an enforcing 
     const disabled = ServerBootstrap.RateLimit(SecurityFixture.BaseConfig(), new NullAccessAuditSink())
     for (let i = 0; i < 20; i++)
     {
-        assert.equal(disabled.Check(SecurityFixture.Tenant(), SecurityFixture.Context()).Allowed, true)
+        assert.equal(disabled.Check(SecurityFixture.Environment(), SecurityFixture.Context()).Allowed, true)
     }
-    const enforcing = ServerBootstrap.RateLimit({ ...SecurityFixture.BaseConfig(), rateLimit: { perTenant: { Rps: 0.001, Burst: 1 } } }, new NullAccessAuditSink())
-    assert.equal(enforcing.Check(SecurityFixture.Tenant(), SecurityFixture.Context()).Allowed, true)
-    assert.equal(enforcing.Check(SecurityFixture.Tenant(), SecurityFixture.Context()).Allowed, false)
+    const enforcing = ServerBootstrap.RateLimit({ ...SecurityFixture.BaseConfig(), rateLimit: { perEnvironment: { Rps: 0.001, Burst: 1 } } }, new NullAccessAuditSink())
+    assert.equal(enforcing.Check(SecurityFixture.Environment(), SecurityFixture.Context()).Allowed, true)
+    assert.equal(enforcing.Check(SecurityFixture.Environment(), SecurityFixture.Context()).Allowed, false)
 })
 
 test('the startup line reports audit + ratelimit tokens and never the audit path', () =>
 {
-    const line = ServerBootstrap.StartupLine({ ...SecurityFixture.BaseConfig(), auditSink: AuditSinkKind.File, auditFile: '/secret/path/audit.log', rateLimit: { perTenant: { Rps: 1, Burst: 1 } } }, 1)
+    const line = ServerBootstrap.StartupLine({ ...SecurityFixture.BaseConfig(), auditSink: AuditSinkKind.File, auditFile: '/secret/path/audit.log', rateLimit: { perEnvironment: { Rps: 1, Burst: 1 } } }, 1)
     assert.ok(line.includes('audit=file'))
     assert.ok(line.includes('ratelimit=on'))
     assert.equal(line.includes('/secret/path/audit.log'), false)

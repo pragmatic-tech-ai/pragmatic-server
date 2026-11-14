@@ -75,7 +75,7 @@ class ViewFx
 
     public static Principal(id: string): Principal
     {
-        return new Principal(id, EnvironmentFixture.TenantId, PrincipalKind.User, new Map(), [])
+        return new Principal(id, EnvironmentFixture.EnvironmentId, PrincipalKind.User, new Map(), [])
     }
 
     /** crm live, the server started with `options`. */

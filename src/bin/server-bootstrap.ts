@@ -1,6 +1,6 @@
 import { DeploymentMode } from '../platform/deployment-mode.js'
 import type { PlatformServices } from '../platform/platform-services.js'
-import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
+import type { IEnvironmentProvisioning } from '../environments/environment-provisioning.js'
 import type { PragmaticServerHostOptions } from '../host/pragmatic-server-host.js'
 import type { ServerConfig, GatewayConfig } from '../config/server-config.js'
 import type { WorkerHostOptions } from '../cluster/worker-host.js'
@@ -63,7 +63,7 @@ export class ServerBootstrap
     private static readonly RateLimitOff = 'off'
     private static readonly WorkerNeedsTls = 'worker requires TLS (set PRAGMATIC_TLS_CERT_FILE/KEY_FILE/CA_FILE)'
 
-    public static ComposeOptions(config: ServerConfig, provisioning: ITenantProvisioning, platform?: PlatformServices, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger, observability?: Observability, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard): PragmaticServerHostOptions
+    public static ComposeOptions(config: ServerConfig, provisioning: IEnvironmentProvisioning, platform?: PlatformServices, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger, observability?: Observability, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard): PragmaticServerHostOptions
     {
         if (config.deploymentMode === DeploymentMode.Cloud && platform === undefined)
         {
@@ -105,14 +105,23 @@ export class ServerBootstrap
         return new PagingLimits(config.pagingPageSize, config.pagingMaxPageSize)
     }
 
-    public static StartupLine(config: ServerConfig, tenantCount: number): string
+    /** Logs each legacy configuration name the loader accepted (one warning line each). */
+    public static LogDeprecations(config: ServerConfig, logger: ILogger): void
+    {
+        for (const line of config.deprecations ?? [])
+        {
+            logger.Warn(line)
+        }
+    }
+
+    public static StartupLine(config: ServerConfig, environmentCount: number): string
     {
         const ownership = ServerBootstrap.HasRedis(config) ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership
         const secrets = config.provisionedSecretsFile !== undefined && config.provisionedSecretsFile.length > 0 ? ServerBootstrap.SecretsFile : ServerBootstrap.SecretsNone
-        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} tenants=${tenantCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}${ServerBootstrap.OidcFlowToken}${ownership}${ServerBootstrap.Otel(config)}${ServerBootstrap.Security(config)}${ServerBootstrap.Drain(config)}${ServerBootstrap.AuditAnchor(config)}`
+        return `pragmatic-server listening on ${config.host}:${config.port} mode=${config.deploymentMode} environments=${environmentCount} ownership=${ownership} secrets=${secrets}${ServerBootstrap.ClientMtls(config.clientTls)}${ServerBootstrap.OidcFlowToken}${ownership}${ServerBootstrap.Otel(config)}${ServerBootstrap.Security(config)}${ServerBootstrap.Drain(config)}${ServerBootstrap.AuditAnchor(config)}`
     }
 
-    public static ComposeWorkerOptions(config: ServerConfig, provisioning: ITenantProvisioning, platform?: PlatformServices, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger, observability?: Observability, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard): WorkerHostOptions
+    public static ComposeWorkerOptions(config: ServerConfig, provisioning: IEnvironmentProvisioning, platform?: PlatformServices, provisionedSecrets?: IProvisionedSecretSource, logger?: ILogger, observability?: Observability, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard): WorkerHostOptions
     {
         if (config.tls === undefined)
         {

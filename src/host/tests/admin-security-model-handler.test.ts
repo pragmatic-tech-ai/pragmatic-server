@@ -66,7 +66,7 @@ class AdminClient
 
     public static async Stored(server: PragmaticServer): Promise<string>
     {
-        return JSON.stringify((await (await server.RealmConfigStore()).Get(EnvironmentFixture.TenantId))?.SecurityModel)
+        return JSON.stringify((await (await server.RealmConfigStore()).Get(EnvironmentFixture.EnvironmentId))?.SecurityModel)
     }
 
     public static Refused(code: number, message: string): (error: unknown) => boolean

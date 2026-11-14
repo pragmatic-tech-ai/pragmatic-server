@@ -6,12 +6,12 @@ import type { PragmaticServer } from '../../../pragmatic-server.js'
 export class PpSecurityHarness
 {
     public static readonly KeyEnv = 'PS_SP3B_KEY'
-    public static readonly TenantId = 't1'
+    public static readonly EnvironmentId = 't1'
     public static readonly Concept = 'Widget'
     public static readonly OwningBuField = 'owningBu'
     public static readonly SalesBu = 'sales'
     public static readonly RootBu = 'root'
-    private static readonly TenantName = 'Tenant One'
+    private static readonly EnvironmentName = 'Tenant One'
     private static readonly NotSeededError = 'tenant config was not seeded on boot'
 
     public static SetKey(): void
@@ -29,27 +29,27 @@ export class PpSecurityHarness
         return {
             identityRoot,
             masterKey: { base64Env: PpSecurityHarness.KeyEnv },
-            tenant: { id: PpSecurityHarness.TenantId, displayName: PpSecurityHarness.TenantName },
+            environment: { id: PpSecurityHarness.EnvironmentId, displayName: PpSecurityHarness.EnvironmentName },
         }
     }
 
     public static Context(principalId: string): AccessContext
     {
-        const realm = new Realm(PpSecurityHarness.TenantId, RealmKind.SelfHosted, PpSecurityHarness.TenantName)
-        const principal = new Principal(principalId, PpSecurityHarness.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Realm, PpSecurityHarness.TenantId, []))]
+        const realm = new Realm(PpSecurityHarness.EnvironmentId, RealmKind.SelfHosted, PpSecurityHarness.EnvironmentName)
+        const principal = new Principal(principalId, PpSecurityHarness.EnvironmentId, PrincipalKind.User, new Map(), [])
+        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Realm, PpSecurityHarness.EnvironmentId, []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
     public static async Seed(server: PragmaticServer, model: ISecurityModelConfig): Promise<void>
     {
         const store = await server.RealmConfigStore()
-        const seeded = await store.Get(PpSecurityHarness.TenantId)
+        const seeded = await store.Get(PpSecurityHarness.EnvironmentId)
         if (seeded === null)
         {
             throw new Error(PpSecurityHarness.NotSeededError)
         }
         const merged = new IdentityConfig(seeded.PackId, seeded.DelegationDepth, seeded.ProviderSettings, seeded.GroupRoleMap, seeded.ClaimsMapping, model)
-        await store.Save(PpSecurityHarness.TenantId, merged)
+        await store.Save(PpSecurityHarness.EnvironmentId, merged)
     }
 }

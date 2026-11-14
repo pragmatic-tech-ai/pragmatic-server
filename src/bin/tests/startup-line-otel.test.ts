@@ -8,7 +8,7 @@ class Fixtures
 {
     public static Base(): ServerConfig
     {
-        return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { keyFilePath: '/run/secrets/key' }, deploymentMode: DeploymentMode.Local, singleTenant: { id: 't1', displayName: 'Tenant One' } }
+        return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { keyFilePath: '/run/secrets/key' }, deploymentMode: DeploymentMode.Local, singleEnvironment: { id: 't1', displayName: 'Tenant One' } }
     }
 }
 

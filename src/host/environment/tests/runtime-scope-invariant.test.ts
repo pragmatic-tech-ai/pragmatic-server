@@ -137,7 +137,7 @@ class RuntimeFx
 
     public static Context(fx: EnvironmentFixture, id: string): AccessContext
     {
-        return fx.ContextFor(new Principal(id, EnvironmentFixture.TenantId, PrincipalKind.User, new Map(), []))
+        return fx.ContextFor(new Principal(id, EnvironmentFixture.EnvironmentId, PrincipalKind.User, new Map(), []))
     }
 
     /** The tenant on disk and started, nodes and links seeded, a2 shared to the BU reader by the administrator. */
@@ -430,7 +430,7 @@ describe('scope invariant: no runtime endpoint returns a row or member outside i
         {
             const connect = async (principal: string): Promise<PragmaticClient> =>
             {
-                const client = await fx.Connect(new Principal(principal, EnvironmentFixture.TenantId, PrincipalKind.User, new Map(), []))
+                const client = await fx.Connect(new Principal(principal, EnvironmentFixture.EnvironmentId, PrincipalKind.User, new Map(), []))
                 await client.OpenApplication(RuntimeFx.CrmApp)
                 return client
             }

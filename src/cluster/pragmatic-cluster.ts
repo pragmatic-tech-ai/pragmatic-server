@@ -1,5 +1,5 @@
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
-import type { ITenantProvisioning } from '../tenancy/tenant-provisioning.js'
+import type { IEnvironmentProvisioning } from '../environments/environment-provisioning.js'
 import type { WebSocketAddress } from '../host/pragmatic-server-host.js'
 import { WorkerHost } from './worker-host.js'
 import { Gateway } from './gateway.js'
@@ -16,7 +16,7 @@ export interface ClusterOptions
     port: number
     baseDir: string
     masterKey: MasterKeyRef
-    provisioning: ITenantProvisioning
+    provisioning: IEnvironmentProvisioning
     tls: MachineTlsRef
     platform?: PlatformServices
     deploymentMode?: DeploymentMode

@@ -34,7 +34,7 @@ class ModuleFixture
         return {
             identityRoot: this.identityRoot,
             masterKey: { base64Env: ModuleFixture.KeyEnv },
-            tenant: { id: 't1', displayName: 'Tenant One' },
+            environment: { id: 't1', displayName: 'Tenant One' },
             ...extra,
         }
     }

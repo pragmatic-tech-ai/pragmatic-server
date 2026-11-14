@@ -7,7 +7,7 @@ import { InMemoryMessageSocket, PragmaticClient, ErrorCodes } from '@pragmatic-t
 import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
-import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
+import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
 
 class Fixtures
 {
@@ -37,7 +37,7 @@ class Harness
         this.Client = client
     }
 
-    public static async Create(purpose: TenantPurpose): Promise<Harness>
+    public static async Create(purpose: EnvironmentPurpose): Promise<Harness>
     {
         const server = new PragmaticServer({ packagesRoot: mkdtempSync(join(tmpdir(), 'ps-pkgs-purpose-')) })
         await server.Start()
@@ -73,7 +73,7 @@ class Harness
 
 test('a runtime tenant rejects Language requests as method-not-found', async () =>
 {
-    const harness = await Harness.Create(TenantPurpose.Runtime)
+    const harness = await Harness.Create(EnvironmentPurpose.Runtime)
     try
     {
         assert.equal(await Harness.ErrorCodeOf(() => harness.Client.DocumentSymbols(Fixtures.Uri)), ErrorCodes.MethodNotFound)
@@ -86,7 +86,7 @@ test('a runtime tenant rejects Language requests as method-not-found', async () 
 
 test('a runtime tenant rejects Solution requests as method-not-found', async () =>
 {
-    const harness = await Harness.Create(TenantPurpose.Runtime)
+    const harness = await Harness.Create(EnvironmentPurpose.Runtime)
     try
     {
         assert.equal(await Harness.ErrorCodeOf(() => harness.Client.OpenSolution(Fixtures.Location)), ErrorCodes.MethodNotFound)
@@ -100,7 +100,7 @@ test('a runtime tenant rejects Solution requests as method-not-found', async () 
 
 test('a development tenant still registers Language and Solution requests', async () =>
 {
-    const harness = await Harness.Create(TenantPurpose.Development)
+    const harness = await Harness.Create(EnvironmentPurpose.Development)
     try
     {
         assert.notEqual(await Harness.ErrorCodeOf(() => harness.Client.DocumentSymbols(Fixtures.Uri)), ErrorCodes.MethodNotFound)
@@ -115,7 +115,7 @@ test('a development tenant still registers Language and Solution requests', asyn
 
 test('a runtime tenant still registers non-gated requests', async () =>
 {
-    const harness = await Harness.Create(TenantPurpose.Runtime)
+    const harness = await Harness.Create(EnvironmentPurpose.Runtime)
     try
     {
         assert.notEqual(await Harness.ErrorCodeOf(() => harness.Client.ModelView(Fixtures.Member)), ErrorCodes.MethodNotFound)

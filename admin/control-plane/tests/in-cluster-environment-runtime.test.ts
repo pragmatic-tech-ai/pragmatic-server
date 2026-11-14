@@ -49,6 +49,13 @@ class FakeKubectl
         }
         this.Applied.push(manifestJson)
     }
+
+    public readonly Deleted: string[] = []
+
+    public async DeleteManifest(manifestJson: string): Promise<void>
+    {
+        this.Deleted.push(manifestJson)
+    }
 }
 
 class FakeOrchestrator implements IHiveOrchestrator
@@ -304,7 +311,7 @@ test('Prepare generates the bundle and a second Prepare keeps master.key byte-id
 {
     const h = new Harness()
     await h.Runtime.Prepare(h.Ctx)
-    for (const f of ['master.key', 'provisioned-secrets.json', 'tenants.json'])
+    for (const f of ['master.key', 'provisioned-secrets.json', 'environments.json'])
     {
         assert.ok(existsSync(join(h.BundleDir, f)), f)
     }

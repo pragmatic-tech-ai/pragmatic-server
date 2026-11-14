@@ -64,8 +64,8 @@ spec:
               value: {{ .Values.cluster.worker.healthPort | quote }}
             - name: PRAGMATIC_DEPLOYMENT_MODE
               value: {{ .Values.deploymentMode | quote }}
-            - name: PRAGMATIC_TENANTS_FILE
-              value: /cfg/tenants.json
+            - name: PRAGMATIC_ENVIRONMENTS_FILE
+              value: /cfg/environments.json
             - name: PRAGMATIC_MASTER_KEY_B64_ENV
               value: PRAGMATIC_MASTER_KEY
             - name: PRAGMATIC_MASTER_KEY

@@ -30,10 +30,23 @@ test('values default replicaCount is 1 (single-replica-safe for local mode)', ()
     assert.match(text, /replicaCount:\s*1/)
 })
 
-test('configmap wraps tenants under the tenants key', () =>
+test('configmap writes environments.json under the environments key, falling back to a legacy tenants value', () =>
 {
     const text = readFileSync(join(Chart.Dir(), 'templates', 'configmap.yaml'), 'utf8')
-    assert.ok(text.includes('dict "tenants"'))
+    assert.match(text, /environments\.json:/)
+    assert.ok(text.includes('dict "environments"'))
+    assert.ok(text.includes('.Values.environments | default .Values.tenants'))
+    assert.doesNotMatch(text, /tenants\.json:/)
+})
+
+test('the deployment and the worker point PRAGMATIC_ENVIRONMENTS_FILE at the mounted environments.json', () =>
+{
+    for (const name of ['deployment.yaml', 'worker-statefulset.yaml'])
+    {
+        const text = readFileSync(join(Chart.Dir(), 'templates', name), 'utf8')
+        assert.match(text, /name: PRAGMATIC_ENVIRONMENTS_FILE\s+value: \/cfg\/environments\.json/, name)
+        assert.doesNotMatch(text, /PRAGMATIC_TENANTS_FILE/, name)
+    }
 })
 
 test('deployment pins a numeric runAsUser', () =>

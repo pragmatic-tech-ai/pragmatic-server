@@ -14,7 +14,7 @@ import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import { PragmaticServer } from '../../../pragmatic-server.js'
-import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
+import { EnvironmentPurpose } from '../../../environments/environment-purpose.js'
 import { PragmaticAppsRegistry } from '../../apps/pragmatic-apps-registry.js'
 import { MemorySourceAdapter, MemorySourceAdapterFactory } from '../../engine/tests/memory-source-adapter.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
@@ -56,7 +56,7 @@ export interface IEnvironmentFixtureOptions
  */
 export class EnvironmentFixture
 {
-    public static readonly TenantId = 'env1'
+    public static readonly EnvironmentId = 'env1'
     public static readonly KeyEnv = 'PS_ENVIRONMENT_FIXTURE_KEY'
     private static readonly DisplayName = 'Environment One'
     private static readonly RootPrefix = 'ps-env-'
@@ -71,11 +71,11 @@ export class EnvironmentFixture
     private static readonly NotSeededMessage = 'tenant config was not seeded on boot'
 
     public readonly Root = mkdtempSync(join(tmpdir(), EnvironmentFixture.RootPrefix))
-    public readonly TenantDir = join(this.Root, EnvironmentFixture.TenantId)
-    public readonly PackagesDir = join(this.TenantDir, EnvironmentFixture.PackagesDir)
-    public readonly AppsDir = join(this.TenantDir, EnvironmentFixture.ApplicationsDir)
-    public readonly GraphsDir = join(this.TenantDir, EnvironmentFixture.GraphsDir)
-    public readonly IdentityDir = join(this.TenantDir, EnvironmentFixture.IdentityDir)
+    public readonly EnvironmentDir = join(this.Root, EnvironmentFixture.EnvironmentId)
+    public readonly PackagesDir = join(this.EnvironmentDir, EnvironmentFixture.PackagesDir)
+    public readonly AppsDir = join(this.EnvironmentDir, EnvironmentFixture.ApplicationsDir)
+    public readonly GraphsDir = join(this.EnvironmentDir, EnvironmentFixture.GraphsDir)
+    public readonly IdentityDir = join(this.EnvironmentDir, EnvironmentFixture.IdentityDir)
     /** The engine store path the server's environment host uses. */
     public readonly StorePath = join(this.GraphsDir, EnvironmentEngineHost.StoreDir)
     /** Serves every SQL datasource of the tenant (over `adapter`, default a fresh MemorySourceAdapter). */
@@ -157,13 +157,13 @@ export class EnvironmentFixture
     private async Boot(options: IEnvironmentFixtureOptions): Promise<void>
     {
         this.server = new PragmaticServer({
-            purpose: TenantPurpose.Runtime,
+            purpose: EnvironmentPurpose.Runtime,
             packagesRoot: this.PackagesDir,
             applicationsRoot: this.AppsDir,
             graphsRoot: this.GraphsDir,
             adapterFactories: [this.Source],
             ...(options.Identity === true
-                ? { identity: { identityRoot: this.IdentityDir, masterKey: { base64Env: EnvironmentFixture.KeyEnv }, tenant: { id: EnvironmentFixture.TenantId, displayName: EnvironmentFixture.DisplayName }, directorySyncOnStart: options.DirectorySyncOnStart ?? false } }
+                ? { identity: { identityRoot: this.IdentityDir, masterKey: { base64Env: EnvironmentFixture.KeyEnv }, environment: { id: EnvironmentFixture.EnvironmentId, displayName: EnvironmentFixture.DisplayName }, directorySyncOnStart: options.DirectorySyncOnStart ?? false } }
                 : {}),
         })
         await this.server.Start()
@@ -214,8 +214,8 @@ export class EnvironmentFixture
     /** `principal` with an Owner grant on the tenant (the gate admits it; the scope decides). */
     public ContextFor(principal: Principal): AccessContext
     {
-        const realm = new Realm(EnvironmentFixture.TenantId, RealmKind.SelfHosted, EnvironmentFixture.DisplayName)
-        const grants = [new Grant(principal.Id, Role.Owner, new ResourceRef(ResourceKind.Realm, EnvironmentFixture.TenantId, []))]
+        const realm = new Realm(EnvironmentFixture.EnvironmentId, RealmKind.SelfHosted, EnvironmentFixture.DisplayName)
+        const grants = [new Grant(principal.Id, Role.Owner, new ResourceRef(ResourceKind.Realm, EnvironmentFixture.EnvironmentId, []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
@@ -270,9 +270,9 @@ export class EnvironmentFixture
     public async SaveSecurityModel(model: ISecurityModelConfig): Promise<void>
     {
         const store = await this.Server.RealmConfigStore()
-        const seeded = await store.Get(EnvironmentFixture.TenantId)
+        const seeded = await store.Get(EnvironmentFixture.EnvironmentId)
         assert.ok(seeded !== null, EnvironmentFixture.NotSeededMessage)
-        await store.Save(EnvironmentFixture.TenantId, new IdentityConfig(seeded.PackId, seeded.DelegationDepth, seeded.ProviderSettings, seeded.GroupRoleMap, seeded.ClaimsMapping, model))
+        await store.Save(EnvironmentFixture.EnvironmentId, new IdentityConfig(seeded.PackId, seeded.DelegationDepth, seeded.ProviderSettings, seeded.GroupRoleMap, seeded.ClaimsMapping, model))
         ;(await this.Server.SecuritySetting()).Invalidate()
     }
 }

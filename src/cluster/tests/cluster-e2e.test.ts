@@ -10,8 +10,8 @@ import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-s
 import { PragmaticCluster } from '../pragmatic-cluster.js'
 import type { WorkerHost } from '../worker-host.js'
 import type { MachineTlsRef } from '../machine-tls.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 
 class ClusterFixture
 {
@@ -24,11 +24,11 @@ class ClusterFixture
         return { certFile: join(dir, 'server.pem'), keyFile: join(dir, 'server.key'), caFile: join(dir, 'ca.pem') }
     }
 
-    public static Start(...tenantIds: string[]): { baseDir: string }
+    public static Start(...environmentIds: string[]): { baseDir: string }
     {
         const baseDir = mkdtempSync(join(tmpdir(), 'ps-cl-'))
         const fixture = join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution')
-        for (const id of tenantIds)
+        for (const id of environmentIds)
         {
             mkdirSync(join(baseDir, id), { recursive: true })
             cpSync(fixture, join(baseDir, id, 'solution'), { recursive: true })
@@ -37,17 +37,17 @@ class ClusterFixture
         return { baseDir }
     }
 
-    public static Provisioning(...tenantIds: string[]): InMemoryTenantProvisioning
+    public static Provisioning(...environmentIds: string[]): InMemoryEnvironmentProvisioning
     {
-        const entries = new Map<string, TenantProvisioning>()
-        for (const id of tenantIds)
+        const entries = new Map<string, EnvironmentProvisioning>()
+        for (const id of environmentIds)
         {
             entries.set(id, { displayName: id })
         }
-        return new InMemoryTenantProvisioning(entries)
+        return new InMemoryEnvironmentProvisioning(entries)
     }
 
-    public static Options(baseDir: string, provisioning: InMemoryTenantProvisioning)
+    public static Options(baseDir: string, provisioning: InMemoryEnvironmentProvisioning)
     {
         return { host: ClusterFixture.Host, port: 0, baseDir, masterKey: { base64Env: ClusterFixture.KeyEnv }, provisioning, tls: ClusterFixture.TlsRef() }
     }

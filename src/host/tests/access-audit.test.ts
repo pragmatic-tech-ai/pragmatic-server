@@ -10,7 +10,7 @@ const SecretKeyShape = /token|secret|password|credential|fingerprint|verifier|se
 
 const ExpectedFieldNames: readonly string[] = [
     'Timestamp',
-    'TenantId',
+    'EnvironmentId',
     'PrincipalId',
     'Surface',
     'MethodOrPath',
@@ -26,7 +26,7 @@ test('a fully-populated event has exactly the expected field set, none secret-sh
 {
     const event: FullAccessAuditEvent = {
         Timestamp: new Date('2026-01-01T00:00:00.000Z'),
-        TenantId: 't1',
+        EnvironmentId: 't1',
         PrincipalId: 'p1',
         Surface: AuditSurface.Rpc,
         MethodOrPath: 'solution/open',
@@ -49,7 +49,7 @@ test('an auth-failure event is valid without Action or ResourceKind', () =>
 {
     const event: AccessAuditEvent = {
         Timestamp: new Date(),
-        TenantId: 't1',
+        EnvironmentId: 't1',
         Surface: AuditSurface.Http,
         MethodOrPath: '/auth/login',
         Outcome: AuditOutcome.AuthFailure,
@@ -63,7 +63,7 @@ test('NullAccessAuditSink.Record resolves to undefined', async () =>
     const sink: IAccessAuditSink = new NullAccessAuditSink()
     const event: AccessAuditEvent = {
         Timestamp: new Date(),
-        TenantId: 't1',
+        EnvironmentId: 't1',
         Surface: AuditSurface.Upgrade,
         MethodOrPath: 'ws',
         Outcome: AuditOutcome.Allow,

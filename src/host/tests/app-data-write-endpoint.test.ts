@@ -9,7 +9,7 @@ import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-s
 import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
-import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
+import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
 import type { PragmaticAppsRegistry } from '../apps/pragmatic-apps-registry.js'
 import type { IEnvironmentDataService } from '../environment/environment-data-service.js'
 
@@ -85,7 +85,7 @@ class EndpointFixture
         }
     }
 
-    public static async With(purpose: TenantPurpose, context: AccessContext, write: (name: string, ops: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, body: (client: PragmaticClient) => Promise<void>): Promise<void>
+    public static async With(purpose: EnvironmentPurpose, context: AccessContext, write: (name: string, ops: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>, body: (client: PragmaticClient) => Promise<void>): Promise<void>
     {
         const packages = mkdtempSync(join(tmpdir(), EndpointFixture.PackagesPrefix))
         const server = new PragmaticServer({ packagesRoot: packages })
@@ -93,7 +93,7 @@ class EndpointFixture
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const runtime = purpose === TenantPurpose.Runtime
+        const runtime = purpose === EnvironmentPurpose.Runtime
         const applications = { List: async () => [], LiveApplicationFor: async (name: string) => ({ Manifest: { name, version: '1.0.0' } }) } as unknown as PragmaticAppsRegistry
         const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, context, undefined, server.DevCypher(), undefined, undefined, undefined, undefined, undefined, undefined, purpose, runtime ? applications : undefined, runtime ? new WriteOnlyData(write) : undefined)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
@@ -114,7 +114,7 @@ class EndpointFixture
 
 test('data/write on a development tenant is rejected', async () =>
 {
-    await EndpointFixture.With(TenantPurpose.Development, EndpointFixture.Owner(), EndpointFixture.Applied(), async client =>
+    await EndpointFixture.With(EnvironmentPurpose.Development, EndpointFixture.Owner(), EndpointFixture.Applied(), async client =>
     {
         await assert.rejects(() => client.WriteAppData({ operations: EndpointFixture.SampleOps }), /runtime/i)
     })
@@ -122,7 +122,7 @@ test('data/write on a development tenant is rejected', async () =>
 
 test('data/write before application/open is rejected', async () =>
 {
-    await EndpointFixture.With(TenantPurpose.Runtime, EndpointFixture.Owner(), EndpointFixture.Applied(), async client =>
+    await EndpointFixture.With(EnvironmentPurpose.Runtime, EndpointFixture.Owner(), EndpointFixture.Applied(), async client =>
     {
         await assert.rejects(() => client.WriteAppData({ operations: EndpointFixture.SampleOps }), /no application selected/i)
     })
@@ -131,7 +131,7 @@ test('data/write before application/open is rejected', async () =>
 test('a principal without Write is rejected by the policy gate', async () =>
 {
     EndpointFixture.ReceivedOps = undefined
-    await EndpointFixture.With(TenantPurpose.Runtime, EndpointFixture.NoGrants(), EndpointFixture.Applied(), async client =>
+    await EndpointFixture.With(EnvironmentPurpose.Runtime, EndpointFixture.NoGrants(), EndpointFixture.Applied(), async client =>
     {
         await assert.rejects(() => client.WriteAppData({ operations: EndpointFixture.SampleOps }), (e: unknown) => !/no application selected/i.test(String((e as { message?: string }).message ?? e)))
         assert.equal(EndpointFixture.ReceivedOps, undefined)
@@ -140,7 +140,7 @@ test('a principal without Write is rejected by the policy gate', async () =>
 
 test('runtime tenant routes an opened app write to the provider', async () =>
 {
-    await EndpointFixture.With(TenantPurpose.Runtime, EndpointFixture.Owner(), EndpointFixture.Applied(), async client =>
+    await EndpointFixture.With(EnvironmentPurpose.Runtime, EndpointFixture.Owner(), EndpointFixture.Applied(), async client =>
     {
         await client.OpenApplication(EndpointFixture.AppName)
         const out = await client.WriteAppData({ operations: EndpointFixture.SampleOps })

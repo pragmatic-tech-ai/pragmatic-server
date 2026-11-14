@@ -8,8 +8,8 @@ import { PresentedSecret, Grant, Role, ResourceRef, ResourceKind } from '@pragma
 import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 
 class LoginFixture
 {
@@ -28,8 +28,8 @@ class LoginFixture
 
     public static Options(baseDir: string, keyEnv: string)
     {
-        const entries = new Map<string, TenantProvisioning>([['t1', { displayName: 'Tenant One' }]])
-        return { host: LoginFixture.Host, port: 0, baseDir, masterKey: { base64Env: keyEnv }, provisioning: new InMemoryTenantProvisioning(entries) }
+        const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Tenant One' }]])
+        return { host: LoginFixture.Host, port: 0, baseDir, masterKey: { base64Env: keyEnv }, provisioning: new InMemoryEnvironmentProvisioning(entries) }
     }
 
     public static Cleanup(...dirs: string[]): void

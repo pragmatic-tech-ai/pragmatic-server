@@ -14,13 +14,13 @@ class Fixture
     public static readonly DbPassword = 'SENTINEL-DB-PW-9f3a'
     public static readonly AdminPw = 'SENTINEL-ADMIN-PW-77'
     public static readonly MasterKey = Buffer.from('SENTINEL-MASTER-KEY-BYTES-0123456789')
-    public static readonly Tenants = '[{"id":"env-1","purpose":"1"}]'
+    public static readonly Environments = '{"environments":{"env-1":{"displayName":"env-1","purpose":1}}}'
 
     public static Write(dir: string): void
     {
         writeFileSync(join(dir, 'master.key'), Fixture.MasterKey)
         writeFileSync(join(dir, 'provisioned-secrets.json'), JSON.stringify({ 'env-1-admin-pw': Fixture.AdminPw, [Fixture.DbRef]: Fixture.DbPassword }))
-        writeFileSync(join(dir, 'tenants.json'), Fixture.Tenants)
+        writeFileSync(join(dir, 'environments.json'), Fixture.Environments)
     }
 }
 
@@ -86,12 +86,32 @@ describe('EnvServerSeedSource', () =>
         assert.equal(objs.length, 1)
     })
 
-    it('ConfigMap carries tenants.json as plain data', () =>
+    it('the env seed writes ConfigMap <env>-environment with environments.json and PRAGMATIC_ENVIRONMENTS_FILE', () =>
     {
         const cm = new EnvServerSeedSource(dir, Fixture.Env, Fixture.DbRef).ConfigMapManifest()
         assert.equal(cm.kind, 'ConfigMap')
-        assert.equal((cm.data as Record<string, string>)['tenants.json'], Fixture.Tenants)
+        assert.equal((cm.metadata as { name: string }).name, 'acme-environment')
+        assert.deepEqual(Object.keys(cm.data as Record<string, string>), ['environments.json'])
+        assert.equal((cm.data as Record<string, string>)['environments.json'], Fixture.Environments)
         assert.ok(!JSON.stringify(cm).includes('SENTINEL'))
+        const workload = { environmentName: Fixture.Env, environmentId: 'env-1', hiveId: 'h', image: 'i', serverPort: 8080, env: {}, secretRefs: [] }
+        const deployment = (JSON.parse(new K8sManifestBuilder().Render(workload)).items as any[]).find(i => i.kind === 'Deployment')
+        const env = deployment.spec.template.spec.containers[0].env as { name: string; value?: string }[]
+        assert.ok(env.some(e => e.name === 'PRAGMATIC_ENVIRONMENTS_FILE' && e.value!.endsWith('/environments.json')))
+        assert.ok(!env.some(e => e.name === 'PRAGMATIC_TENANTS_FILE'))
+        assert.ok(deployment.spec.template.spec.volumes.some((v: any) => v.configMap?.name === 'acme-environment'))
+    })
+
+    it('re-applying an environment removes the legacy <env>-tenants ConfigMap', async () =>
+    {
+        const kubectl = new CapturingKubectl()
+        await EnvServerSeedSource.ApplyBundle(kubectl as never, dir, Fixture.Env, 'env-1', Fixture.DbRef)
+        assert.equal(kubectl.Applied.length, 1)
+        assert.equal(kubectl.Deleted.length, 1)
+        const legacy = JSON.parse(kubectl.Deleted[0]!)
+        assert.equal(legacy.kind, 'ConfigMap')
+        assert.equal(legacy.metadata.name, 'acme-tenants')
+        assert.equal(legacy.metadata.namespace, K8sManifestBuilder.NamespaceOf(Fixture.Env))
     })
 
     it('two sources over the same bundle render identical Secrets', () =>
@@ -262,7 +282,7 @@ describe('EnvServerSeedSource seed-tree projection', () =>
         {
             SeedFixture.WriteTree(bundle, SeedFixture.Id, SeedFixture.Files)
             let applied = ''
-            const kubectl = { Apply: async (json: string) => { applied = json } } as unknown as IKubectl
+            const kubectl = { Apply: async (json: string) => { applied = json }, DeleteManifest: async () => undefined } as unknown as IKubectl
             await EnvServerSeedSource.ApplyBundle(kubectl, bundle, SeedFixture.Name, SeedFixture.Id)
             const items = (JSON.parse(applied) as { items: { kind: string, metadata: { name: string } }[] }).items
             assert.ok(items.some(i => i.kind === 'Secret' && i.metadata.name === EnvServerSeedSource.SeedSecretNameOf(SeedFixture.Name)))
@@ -277,10 +297,16 @@ describe('EnvServerSeedSource seed-tree projection', () =>
 class CapturingKubectl
 {
     public Applied: string[] = []
+    public Deleted: string[] = []
 
     public async Apply(manifestJson: string): Promise<void>
     {
         this.Applied.push(manifestJson)
+    }
+
+    public async DeleteManifest(manifestJson: string): Promise<void>
+    {
+        this.Deleted.push(manifestJson)
     }
 }
 

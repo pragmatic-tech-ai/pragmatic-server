@@ -22,7 +22,7 @@ export enum AuditOutcome
 export interface AccessAuditEvent
 {
     Timestamp: Date
-    TenantId: string
+    EnvironmentId: string
     PrincipalId?: string
     Surface: AuditSurface
     MethodOrPath: string

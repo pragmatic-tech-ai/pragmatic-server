@@ -11,8 +11,8 @@ import { randomBytes } from 'node:crypto'
 import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { PragmaticServerHost } from '../../host/pragmatic-server-host.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import { Observability, ObservabilityRole } from '../../observability/observability.js'
 import { FileAccessAuditSink } from '../../host/file-access-audit-sink.js'
 import { StructuredLogger } from '../../observability/logger.js'
@@ -20,7 +20,7 @@ import { StructuredLogger } from '../../observability/logger.js'
 class Soak
 {
     private static readonly SoakFlag = process.env.PRAGMATIC_SOAK
-    public static readonly Tenant = 't1'
+    public static readonly Environment = 't1'
     public static readonly Concurrency = 8
     public static readonly RequestsPerClient = 40
     public static readonly P95CeilingMs = 10000
@@ -53,7 +53,7 @@ class Soak
     public static readonly LoadDirPrefix = 'ps-soak-'
     public static readonly SigDirPrefix = 'ps-soak-sig-'
     private static readonly AuditFileName = 'audit.log'
-    private static readonly TenantsFileName = 'tenants.json'
+    private static readonly EnvironmentsFileName = 'environments.json'
     private static readonly KeyFileName = 'key'
     private static readonly SolutionDir = 'solution'
     private static readonly ReadyzPath = '/readyz'
@@ -71,7 +71,7 @@ class Soak
     private static readonly EnvHost = 'PRAGMATIC_HOST'
     private static readonly EnvPort = 'PRAGMATIC_PORT'
     private static readonly EnvBaseDir = 'PRAGMATIC_BASE_DIR'
-    private static readonly EnvTenantsFile = 'PRAGMATIC_TENANTS_FILE'
+    private static readonly EnvEnvironmentsFile = 'PRAGMATIC_TENANTS_FILE'
     private static readonly EnvMasterKeyEnv = 'PRAGMATIC_MASTER_KEY_B64_ENV'
     private static readonly EnvMetricsPort = 'PRAGMATIC_METRICS_PORT'
     private static readonly EnvDrainTimeout = 'PRAGMATIC_DRAIN_TIMEOUT_MS'
@@ -99,9 +99,9 @@ class Soak
         return process.platform === 'win32' ? Soak.WindowsSkip : false
     }
 
-    public static Provisioning(): InMemoryTenantProvisioning
+    public static Provisioning(): InMemoryEnvironmentProvisioning
     {
-        return new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>([[Soak.Tenant, { displayName: Soak.DisplayName }]]))
+        return new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([[Soak.Environment, { displayName: Soak.DisplayName }]]))
     }
 
     public static Fixture(): string
@@ -111,10 +111,10 @@ class Soak
 
     public static async TokenFor(host: PragmaticServerHost): Promise<string>
     {
-        const pack = await host.IdentityPackForTest(Soak.Tenant)
-        await pack.Grants.Save(new Grant(Soak.Tenant, Role.Admin, new ResourceRef(ResourceKind.Realm, Soak.Tenant, [])))
-        const tenant = await host.RealmForTest(Soak.Tenant)
-        return (await pack.Tokens.Issue(tenant, Soak.Tenant, [], null)).Token
+        const pack = await host.IdentityPackForTest(Soak.Environment)
+        await pack.Grants.Save(new Grant(Soak.Environment, Role.Admin, new ResourceRef(ResourceKind.Realm, Soak.Environment, [])))
+        const environment = await host.RealmForTest(Soak.Environment)
+        return (await pack.Tokens.Issue(environment, Soak.Environment, [], null)).Token
     }
 
     public static Percentile(samples: number[], p: number): number
@@ -125,7 +125,7 @@ class Soak
 
     public static WsUrl(host: string, port: number): string
     {
-        return `ws://${host}:${port}/?environment=${Soak.Tenant}`
+        return `ws://${host}:${port}/?environment=${Soak.Environment}`
     }
 
     public static MakeBaseDir(prefix: string): string
@@ -135,12 +135,12 @@ class Soak
 
     public static SolutionPath(baseDir: string): string
     {
-        return join(baseDir, Soak.Tenant, Soak.SolutionDir)
+        return join(baseDir, Soak.Environment, Soak.SolutionDir)
     }
 
     public static SeedLoadDir(baseDir: string): { keyPath: string, auditFile: string }
     {
-        mkdirSync(join(baseDir, Soak.Tenant), { recursive: true })
+        mkdirSync(join(baseDir, Soak.Environment), { recursive: true })
         cpSync(Soak.Fixture(), Soak.SolutionPath(baseDir), { recursive: true })
         const keyPath = join(baseDir, Soak.KeyFileName)
         writeFileSync(keyPath, randomBytes(32))
@@ -244,14 +244,14 @@ class Soak
         return join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'bin', 'server-main.ts')
     }
 
-    public static ChildEnv(baseDir: string, tenantsFile: string): NodeJS.ProcessEnv
+    public static ChildEnv(baseDir: string, environmentsFile: string): NodeJS.ProcessEnv
     {
         return {
             ...process.env,
             [Soak.EnvHost]: Soak.LocalHost,
             [Soak.EnvPort]: String(Soak.ChildPort),
             [Soak.EnvBaseDir]: baseDir,
-            [Soak.EnvTenantsFile]: tenantsFile,
+            [Soak.EnvEnvironmentsFile]: environmentsFile,
             [Soak.EnvMasterKeyEnv]: Soak.KeyEnv,
             [Soak.KeyEnv]: randomBytes(32).toString(Soak.Base64),
             [Soak.EnvMetricsPort]: String(Soak.ChildMetricsPort),
@@ -259,11 +259,11 @@ class Soak
         }
     }
 
-    public static WriteTenantsFile(baseDir: string): string
+    public static WriteEnvironmentsFile(baseDir: string): string
     {
-        const tenantsFile = join(baseDir, Soak.TenantsFileName)
-        writeFileSync(tenantsFile, JSON.stringify({ tenants: { [Soak.Tenant]: { displayName: Soak.DisplayName } } }))
-        return tenantsFile
+        const environmentsFile = join(baseDir, Soak.EnvironmentsFileName)
+        writeFileSync(environmentsFile, JSON.stringify({ environments: { [Soak.Environment]: { displayName: Soak.DisplayName } } }))
+        return environmentsFile
     }
 
     /** Spawns the Node process directly (no shell wrapper) so SIGTERM reaches the process that installed the handler. */
@@ -343,7 +343,7 @@ test('soak: concurrent WS+HTTP load stays within thresholds, leaks no connection
 test('mid-load SIGTERM drains cleanly and the child process exits 0 within the grace period (Review Focus 1, 5)', { skip: Soak.PosixOnly(), timeout: Soak.SigtermTestTimeoutMs }, async () =>
 {
     const baseDir = Soak.MakeBaseDir(Soak.SigDirPrefix)
-    const child = Soak.SpawnServer(Soak.ChildEnv(baseDir, Soak.WriteTenantsFile(baseDir)))
+    const child = Soak.SpawnServer(Soak.ChildEnv(baseDir, Soak.WriteEnvironmentsFile(baseDir)))
     let spawnError: Error | undefined
     const exited = new Promise<number>(resolve =>
     {

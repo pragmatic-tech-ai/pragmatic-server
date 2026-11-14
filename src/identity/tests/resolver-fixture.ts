@@ -20,7 +20,7 @@ export class ResolverFixture
     public static readonly AuthCode = 'auth-code'
     public static readonly BearerType = 'Bearer'
     private static readonly TempPrefix = 'ps7-'
-    private static readonly TenantIdPrefix = 't-'
+    private static readonly RealmIdPrefix = 't-'
     private static readonly DiscoveryPath = '/.well-known/openid-configuration'
 
     private roots: string[] = []
@@ -78,7 +78,7 @@ export class ResolverFixture
         const flowStates = new InMemoryOidcFlowStateStore()
         const stores = await this.Stores()
         const config = new IdentityConfig(packId, depth, settings, groupRoleMap, new Map())
-        const realm = new Realm(ResolverFixture.TenantIdPrefix + packId, RealmKind.Saas, packId)
+        const realm = new Realm(ResolverFixture.RealmIdPrefix + packId, RealmKind.Saas, packId)
         const resolver = new IdentityPackResolver(http, flowStates)
         const resolved = resolver.Resolve(realm, config, stores)
         const begun = await resolved.Oidc!.BeginAuthorization(realm)

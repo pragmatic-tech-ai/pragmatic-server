@@ -9,8 +9,8 @@ import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
 import type { PragmaticServerHostOptions } from '../pragmatic-server-host.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 
 class HostFixture
 {
@@ -41,8 +41,8 @@ class HostFixture
     public static Options(baseDir: string): PragmaticServerHostOptions
     {
         process.env[HostFixture.KeyEnv] = randomBytes(32).toString('base64')
-        const entries = new Map<string, TenantProvisioning>([['t1', { displayName: 'Tenant One' }]])
-        return { host: HostFixture.Host, port: 0, baseDir, masterKey: { base64Env: HostFixture.KeyEnv }, provisioning: new InMemoryTenantProvisioning(entries) }
+        const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Tenant One' }]])
+        return { host: HostFixture.Host, port: 0, baseDir, masterKey: { base64Env: HostFixture.KeyEnv }, provisioning: new InMemoryEnvironmentProvisioning(entries) }
     }
 
     public static async Token(host: PragmaticServerHost): Promise<string>

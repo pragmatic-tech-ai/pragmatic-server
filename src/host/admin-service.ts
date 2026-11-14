@@ -105,13 +105,13 @@ export class UnknownTeamError extends Error
 }
 
 /** Raised when a grant mutation targets a resource that belongs to a different tenant. */
-export class ForeignTenantResourceError extends Error
+export class ForeignRealmResourceError extends Error
 {
     private static readonly Message = 'resource does not belong to this tenant'
 
     public constructor()
     {
-        super(ForeignTenantResourceError.Message)
+        super(ForeignRealmResourceError.Message)
         this.name = 'ForeignTenantResourceError'
     }
 }
@@ -185,7 +185,7 @@ export class AdminService
 
     public async GrantRole(actor: string, subject: string, role: Role, resource: ResourceRef): Promise<void>
     {
-        this.AssertOwnTenant(resource)
+        this.AssertOwnRealm(resource)
         await this.Serialized(this.realm.Id, async () =>
         {
             await this.grants.Save(new Grant(subject, role, resource))
@@ -195,7 +195,7 @@ export class AdminService
 
     public async RevokeRole(actor: string, subject: string, role: Role, resource: ResourceRef): Promise<void>
     {
-        this.AssertOwnTenant(resource)
+        this.AssertOwnRealm(resource)
         await this.Serialized(this.realm.Id, async () =>
         {
             if (subject === actor && role === Role.Owner && resource.Kind === ResourceKind.Realm && resource.Path.length === 0)
@@ -471,11 +471,11 @@ export class AdminService
         return this.packs.ListScriptAllowlist()
     }
 
-    private AssertOwnTenant(resource: ResourceRef): void
+    private AssertOwnRealm(resource: ResourceRef): void
     {
         if (resource.RealmId !== this.realm.Id)
         {
-            throw new ForeignTenantResourceError()
+            throw new ForeignRealmResourceError()
         }
     }
 

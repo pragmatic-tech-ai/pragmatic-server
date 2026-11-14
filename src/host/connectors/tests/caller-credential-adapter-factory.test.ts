@@ -13,7 +13,7 @@ import type { ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { CallerCredentialAdapterFactory, CallerCredentialError, CallerCredentialErrorCode, ConnectionCredentialMode } from '../caller-credential-adapter-factory.js'
 import { CallerCredentials } from '../caller-credentials.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
-import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
+import { EnvironmentPurpose } from '../../../environments/environment-purpose.js'
 
 /** An inner adapter that answers every read with the secret it was opened with; `AuthFails` makes reads fail as Auth. */
 class TokenEchoAdapter implements IDataSourceAdapter
@@ -440,7 +440,7 @@ describe('caller credentials registration', () =>
 {
     test('every adapter kind the server registers is wrapped in the caller\'s credentials', async () =>
     {
-        const server = new CatalogServer({ purpose: TenantPurpose.Runtime })
+        const server = new CatalogServer({ purpose: EnvironmentPurpose.Runtime })
         try
         {
             const catalog = server.Catalog()

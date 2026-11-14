@@ -27,7 +27,7 @@ export class IntervalSyncTimer implements ISyncTimer
 /** Where a failed sync is reported (by error name only, no directory content). */
 export interface ISyncDiagnostics
 {
-    Failed(tenantId: string, error: Error): void
+    Failed(environmentId: string, error: Error): void
 }
 
 /** Reports a failed sync as one warning on the server logger, by error name only. */
@@ -40,9 +40,9 @@ export class LoggerSyncDiagnostics implements ISyncDiagnostics
     {
     }
 
-    public Failed(tenantId: string, error: Error): void
+    public Failed(environmentId: string, error: Error): void
     {
-        this.logger.Warn(LoggerSyncDiagnostics.Line + tenantId + LoggerSyncDiagnostics.Separator + error.name)
+        this.logger.Warn(LoggerSyncDiagnostics.Line + environmentId + LoggerSyncDiagnostics.Separator + error.name)
     }
 }
 

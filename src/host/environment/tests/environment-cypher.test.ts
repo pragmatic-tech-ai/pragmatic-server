@@ -103,7 +103,7 @@ class CypherFx
 
     public static Principal(id: string): Principal
     {
-        return new Principal(id, EnvironmentFixture.TenantId, PrincipalKind.User, new Map(), [])
+        return new Principal(id, EnvironmentFixture.EnvironmentId, PrincipalKind.User, new Map(), [])
     }
 
     /** crm and ext live, the Customer source holding one row, the server started with `options`. */

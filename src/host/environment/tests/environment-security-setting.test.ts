@@ -13,7 +13,7 @@ class FaultyConfigStore implements IRealmConfigStore
     {
     }
 
-    public async Get(_tenantId: string): Promise<IdentityConfig | null>
+    public async Get(_environmentId: string): Promise<IdentityConfig | null>
     {
         if (this.error !== undefined) throw this.error
         return new IdentityConfig(SettingFx.PackId, DelegationDepth.FullAuthz, new Map(), new Map(), new Map(), Tier1Fx.Setting())
@@ -35,7 +35,7 @@ class FaultyDirectoryStore implements IIdpDirectoryStore
     {
     }
 
-    public async Get(_tenantId: string): Promise<IdpDirectorySnapshot | null>
+    public async Get(_environmentId: string): Promise<IdpDirectorySnapshot | null>
     {
         if (this.error !== undefined) throw this.error
         return null
@@ -50,7 +50,7 @@ class CountingDiagnostics implements ISecuritySettingDiagnostics
 {
     public readonly Reported: string[] = []
 
-    public Unreadable(_tenantId: string, error: Error): void
+    public Unreadable(_environmentId: string, error: Error): void
     {
         this.Reported.push(error.name)
     }
@@ -59,10 +59,10 @@ class CountingDiagnostics implements ISecuritySettingDiagnostics
 class SettingFx
 {
     public static readonly PackId = 'local'
-    public static readonly TenantId = 'env1'
+    public static readonly EnvironmentId = 'env1'
     public static readonly Path = 'teams[0].businessUnitId'
     public static readonly Reason = 'unknown business unit: nope'
-    public static readonly Realm = new Realm(SettingFx.TenantId, RealmKind.SelfHosted, SettingFx.TenantId)
+    public static readonly Realm = new Realm(SettingFx.EnvironmentId, RealmKind.SelfHosted, SettingFx.EnvironmentId)
 
     public static async AssertDenyAll(setting: EnvironmentSecuritySetting): Promise<void>
     {
@@ -88,7 +88,7 @@ test('invalid stored setting is deny all and reported once', async () =>
 test('an unreadable directory record fails closed too', async () =>
 {
     const diagnostics = new CountingDiagnostics()
-    const unreadable = new UnreadableIdpDirectoryRecordError(SettingFx.TenantId, SettingFx.Reason)
+    const unreadable = new UnreadableIdpDirectoryRecordError(SettingFx.EnvironmentId, SettingFx.Reason)
     const setting = new EnvironmentSecuritySetting(new FaultyConfigStore(undefined), new FaultyDirectoryStore(unreadable), SettingFx.Realm, diagnostics)
     await SettingFx.AssertDenyAll(setting)
     assert.deepEqual(diagnostics.Reported, [unreadable.name])

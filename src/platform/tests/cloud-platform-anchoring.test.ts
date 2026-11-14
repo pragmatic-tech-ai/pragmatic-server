@@ -59,9 +59,9 @@ class AnchoringFixture
         return new PgSession(new pg.Pool() as unknown as Pool)
     }
 
-    public static Event(tenant: string, action: string): AuditEvent
+    public static Event(environment: string, action: string): AuditEvent
     {
-        return new AuditEvent(AuditEventKind.AdminAction, tenant, 'p1', new Date('2026-01-01T00:00:00Z'), new Map([['action', action]]))
+        return new AuditEvent(AuditEventKind.AdminAction, environment, 'p1', new Date('2026-01-01T00:00:00Z'), new Map([['action', action]]))
     }
 }
 

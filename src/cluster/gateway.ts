@@ -65,7 +65,7 @@ export class Gateway
     private static readonly UnauthorizedResponse = 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'
     private static readonly BadGatewayStatus = 502
     private static readonly BadRequestStatus = 400
-    private static readonly TenantPattern = /^[A-Za-z0-9._-]+$/
+    private static readonly EnvironmentPattern = /^[A-Za-z0-9._-]+$/
     private static readonly ServiceUnavailableResponse = 'HTTP/1.1 503 Service Unavailable\r\nRetry-After: 1\r\nConnection: close\r\n\r\n'
     private static readonly DrainBeginEvent = 'drain-begin'
     private static readonly DrainCompleteEvent = 'drain-complete'
@@ -330,15 +330,15 @@ export class Gateway
         }
         try
         {
-            const environmentId = this.TenantHint(req)
+            const environmentId = this.EnvironmentHint(req)
             if (environmentId === null)
             {
                 this.Reject(socket)
                 return
             }
             const limit = this.rateLimit.Check(
-                { scope: RateLimitScope.Tenant, tenant: environmentId, key: environmentId },
-                { surface: AuditSurface.Upgrade, tenant: environmentId, methodOrPath: RateLimitGuard.UpgradeMethodName() })
+                { scope: RateLimitScope.Environment, environment: environmentId, key: environmentId },
+                { surface: AuditSurface.Upgrade, environment: environmentId, methodOrPath: RateLimitGuard.UpgradeMethodName() })
             if (!limit.Allowed)
             {
                 this.RejectRateLimited(socket, limit.RetryAfterMs)
@@ -500,7 +500,7 @@ export class Gateway
                 res.end(health.body)
                 return
             }
-            const environmentId = this.TenantHint(req)
+            const environmentId = this.EnvironmentHint(req)
             if (environmentId === null)
             {
                 res.writeHead(Gateway.BadRequestStatus)
@@ -569,23 +569,23 @@ export class Gateway
         return typeof header === 'string' ? header : null
     }
 
-    private TenantHint(req: IncomingMessage): string | null
+    private EnvironmentHint(req: IncomingMessage): string | null
     {
-        let tenant: string | null
+        let environment: string | null
         try
         {
             const url = new URL(req.url ?? '/', Gateway.BaseUrl)
-            tenant = url.searchParams.get(Gateway.EnvironmentParam)
+            environment = url.searchParams.get(Gateway.EnvironmentParam)
         }
         catch
         {
             return null
         }
-        if (tenant === null || tenant.length === 0 || !Gateway.TenantPattern.test(tenant))
+        if (environment === null || environment.length === 0 || !Gateway.EnvironmentPattern.test(environment))
         {
             return null
         }
-        return tenant
+        return environment
     }
 
     private RejectRateLimited(socket: Socket, retryAfterMs: number): void

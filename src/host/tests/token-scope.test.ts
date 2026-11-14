@@ -11,8 +11,8 @@ import { ConnectionAuthenticator } from '../connection-authenticator.js'
 class ScopeFixture
 {
     public static readonly Custom = 'custom'
-    public static readonly TenantId = 't1'
-    public static readonly TenantName = 'Tenant One'
+    public static readonly EnvironmentId = 't1'
+    public static readonly EnvironmentName = 'Tenant One'
     public static readonly ServiceId = 'svc1'
     public static readonly Email = 'a@x.io'
     public static readonly Password = 'pw-123456'
@@ -20,7 +20,7 @@ class ScopeFixture
 
     public static Realm1(): Realm
     {
-        return new Realm(ScopeFixture.TenantId, RealmKind.SelfHosted, ScopeFixture.TenantName)
+        return new Realm(ScopeFixture.EnvironmentId, RealmKind.SelfHosted, ScopeFixture.EnvironmentName)
     }
 }
 
@@ -65,7 +65,7 @@ test('a service-token context carries its scopes; a session context is unscoped 
     assert.equal(TokenScopeGate.ForContext(serviceContext).Allows(GraphProtocol.Contribute.method), true)
 
     await pack.Registrar.Register(realm, ScopeFixture.Email, ScopeFixture.UserId, new PresentedSecret(ScopeFixture.Password))
-    const session = await pack.Sessions.Issue(new Principal(ScopeFixture.UserId, ScopeFixture.TenantId, PrincipalKind.User, new Map(), [TokenScope.ApplicationDeploy]))
+    const session = await pack.Sessions.Issue(new Principal(ScopeFixture.UserId, ScopeFixture.EnvironmentId, PrincipalKind.User, new Map(), [TokenScope.ApplicationDeploy]))
     const sessionContext = await new ConnectionAuthenticator().ResolveAsync(session.Id, realm, pack)
     assert.ok(sessionContext !== null && !(sessionContext instanceof ScopedAccessContext))
     assert.equal(TokenScopeGate.ForContext(sessionContext).Allows(GraphProtocol.Delete.method), true)

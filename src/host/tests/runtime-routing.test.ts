@@ -8,7 +8,7 @@ import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-s
 import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
-import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
+import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
 
 class RuntimeRoutingFixture
 {
@@ -33,7 +33,7 @@ class RuntimeRoutingFixture
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, RuntimeRoutingFixture.Permissive(), undefined, server.DevCypher(), undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development)
+        const handler = ServerConnectionHandler.Attach(serverSocket, languageService, manager, RuntimeRoutingFixture.Permissive(), undefined, server.DevCypher(), undefined, undefined, undefined, undefined, undefined, undefined, EnvironmentPurpose.Development)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
         try
         {

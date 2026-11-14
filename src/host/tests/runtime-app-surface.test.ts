@@ -7,7 +7,7 @@ import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, ResponseError } fro
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
-import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
+import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 
 /**
@@ -30,9 +30,9 @@ class RuntimeSurfaceFixture
     public static readonly Alpha = 'alpha'
     public static readonly NotRuntime = /operation requires a runtime tenant/
     public static readonly NameMismatch = /does not match requested name/
-    public static readonly TenantId = 't1'
+    public static readonly EnvironmentId = 't1'
     public static readonly PrincipalId = 'p1'
-    public static readonly TenantName = 'Tenant One'
+    public static readonly EnvironmentName = 'Tenant One'
     public static readonly Renamed = 'other-name'
 
     public readonly Packages = mkdtempSync(join(tmpdir(), RuntimeSurfaceFixture.PkgPrefix))
@@ -41,9 +41,9 @@ class RuntimeSurfaceFixture
 
     public static Permissive(): AccessContext
     {
-        const realm = new Realm(RuntimeSurfaceFixture.TenantId, RealmKind.SelfHosted, RuntimeSurfaceFixture.TenantName)
-        const principal = new Principal(RuntimeSurfaceFixture.PrincipalId, RuntimeSurfaceFixture.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant(RuntimeSurfaceFixture.PrincipalId, Role.Owner, new ResourceRef(ResourceKind.Realm, RuntimeSurfaceFixture.TenantId, []))]
+        const realm = new Realm(RuntimeSurfaceFixture.EnvironmentId, RealmKind.SelfHosted, RuntimeSurfaceFixture.EnvironmentName)
+        const principal = new Principal(RuntimeSurfaceFixture.PrincipalId, RuntimeSurfaceFixture.EnvironmentId, PrincipalKind.User, new Map(), [])
+        const grants = [new Grant(RuntimeSurfaceFixture.PrincipalId, Role.Owner, new ResourceRef(ResourceKind.Realm, RuntimeSurfaceFixture.EnvironmentId, []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
@@ -71,7 +71,7 @@ class RuntimeSurfaceFixture
     /** Starts a Runtime server over the fixture's directories and returns a function producing connected clients. */
     public async Runtime(): Promise<() => Promise<PragmaticClient>>
     {
-        const server = new PragmaticServer({ packagesRoot: this.Packages, applicationsRoot: this.Apps, purpose: TenantPurpose.Runtime })
+        const server = new PragmaticServer({ packagesRoot: this.Packages, applicationsRoot: this.Apps, purpose: EnvironmentPurpose.Runtime })
         await server.Start()
         this.disposables.push(async () =>
         {

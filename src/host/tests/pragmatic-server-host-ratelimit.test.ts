@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import { RateLimitGuard } from '../rate-limit-guard.js'
 import { TokenBucketRateLimiter } from '../rate-limiter.js'
 import { AuditSurface, AuditOutcome } from '../access-audit.js'
@@ -56,9 +56,9 @@ test('a per-tenant upgrade breach returns 429 with Retry-After and audits a Rate
     const keyEnv = 'PS_RL_KEY'
     process.env[keyEnv] = randomBytes(32).toString('base64')
     const sink = new CapturingSink()
-    const guard = new RateLimitGuard(new TokenBucketRateLimiter({ perTenant: { Rps: 0.001, Burst: 1 } }), sink)
-    const entries = new Map<string, TenantProvisioning>([['t1', { displayName: 'Tenant One' }]])
-    const host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: keyEnv }, provisioning: new InMemoryTenantProvisioning(entries), rateLimit: guard })
+    const guard = new RateLimitGuard(new TokenBucketRateLimiter({ perEnvironment: { Rps: 0.001, Burst: 1 } }), sink)
+    const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Tenant One' }]])
+    const host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: keyEnv }, provisioning: new InMemoryEnvironmentProvisioning(entries), rateLimit: guard })
     const base = `ws://${host.Address().host}:${host.Address().port}/?environment=t1`
     try
     {
@@ -70,7 +70,7 @@ test('a per-tenant upgrade breach returns 429 with Retry-After and audits a Rate
         const limited = sink.Events.filter(e => e.Outcome === AuditOutcome.RateLimited)
         assert.equal(limited.length, 1)
         assert.equal(limited[0]!.Surface, AuditSurface.Upgrade)
-        assert.equal(limited[0]!.TenantId, 't1')
+        assert.equal(limited[0]!.EnvironmentId, 't1')
     }
     finally
     {

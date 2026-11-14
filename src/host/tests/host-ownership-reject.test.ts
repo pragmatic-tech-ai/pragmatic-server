@@ -2,8 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { request } from 'node:http'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 
 class Probe
 {
@@ -44,7 +44,7 @@ class Probe
 
 test('readyz is 200 after a clean start and healthz is 200', async () =>
 {
-    const provisioning = new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>())
+    const provisioning = new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>())
     const host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir: 'C:/tmp/ro-test', masterKey: { base64Env: 'PRAGMATIC_MASTER_KEY' }, provisioning })
     try
     {
@@ -59,7 +59,7 @@ test('readyz is 200 after a clean start and healthz is 200', async () =>
 
 test('an upgrade for an owned-elsewhere tenant is rejected with a retryable 503', async () =>
 {
-    const provisioning = new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>([['acme', { displayName: 'Acme' }]]))
+    const provisioning = new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([['acme', { displayName: 'Acme' }]]))
     const host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir: 'C:/tmp/ro-test', masterKey: { base64Env: 'PRAGMATIC_MASTER_KEY' }, provisioning })
     try
     {
@@ -74,7 +74,7 @@ test('an upgrade for an owned-elsewhere tenant is rejected with a retryable 503'
 
 test('readyz is 503 when ownership is unhealthy (Redis-down fail-closed)', async () =>
 {
-    const provisioning = new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>())
+    const provisioning = new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>())
     const host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir: 'C:/tmp/ro-test', masterKey: { base64Env: 'PRAGMATIC_MASTER_KEY' }, provisioning })
     try
     {
@@ -90,7 +90,7 @@ test('readyz is 503 when ownership is unhealthy (Redis-down fail-closed)', async
 
 test('an HTTP request for an owned-elsewhere tenant returns a retryable 503', async () =>
 {
-    const provisioning = new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>([['acme', { displayName: 'Acme' }]]))
+    const provisioning = new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([['acme', { displayName: 'Acme' }]]))
     const host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir: 'C:/tmp/ro-test', masterKey: { base64Env: 'PRAGMATIC_MASTER_KEY' }, provisioning })
     try
     {

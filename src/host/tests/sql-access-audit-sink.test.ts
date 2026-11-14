@@ -37,7 +37,7 @@ test('bridges a policy decision to an AccessDecision AuditEvent with a secret-fr
     const store = new CapturingStore()
     await new SqlAuditAccessSink(store).Record({
         Timestamp: new Date('2026-01-01T00:00:00.000Z'),
-        TenantId: 't1',
+        EnvironmentId: 't1',
         PrincipalId: 'p1',
         Surface: AuditSurface.Rpc,
         MethodOrPath: 'solution/open',
@@ -67,7 +67,7 @@ test('maps an http auth event to an Authentication AuditEvent with a null princi
     const store = new CapturingStore()
     await new SqlAuditAccessSink(store).Record({
         Timestamp: new Date(),
-        TenantId: 't1',
+        EnvironmentId: 't1',
         Surface: AuditSurface.Http,
         MethodOrPath: '/auth/login',
         Outcome: AuditOutcome.AuthFailure,
@@ -82,7 +82,7 @@ test('maps optional fields into Detail when present and omits them when absent',
     const sink = new SqlAuditAccessSink(store)
     await sink.Record({
         Timestamp: new Date(),
-        TenantId: 't1',
+        EnvironmentId: 't1',
         Surface: AuditSurface.Rpc,
         MethodOrPath: 'x',
         ResourcePath: 'my-solution',
@@ -90,7 +90,7 @@ test('maps optional fields into Detail when present and omits them when absent',
         Reason: 'insufficient-role',
         CorrelationId: 'trace-abc',
     })
-    await sink.Record({ Timestamp: new Date(), TenantId: 't1', Surface: AuditSurface.Rpc, MethodOrPath: 'x', Outcome: AuditOutcome.Allow })
+    await sink.Record({ Timestamp: new Date(), EnvironmentId: 't1', Surface: AuditSurface.Rpc, MethodOrPath: 'x', Outcome: AuditOutcome.Allow })
     const present = store.Events[0]!.Detail
     assert.equal(present.get('resourcePath'), 'my-solution')
     assert.equal(present.get('reason'), 'insufficient-role')
@@ -107,7 +107,7 @@ test('a synchronously throwing store is swallowed and logged', async () =>
     const logger = new CapturingLogger()
     await new SqlAuditAccessSink(new ThrowingStore(), logger).Record({
         Timestamp: new Date(),
-        TenantId: 't1',
+        EnvironmentId: 't1',
         Surface: AuditSurface.Rpc,
         MethodOrPath: 'x',
         Outcome: AuditOutcome.Allow,
@@ -121,7 +121,7 @@ test('a rejecting store is swallowed and logged', async () =>
     const logger = new CapturingLogger()
     await new SqlAuditAccessSink(new RejectingStore(), logger).Record({
         Timestamp: new Date(),
-        TenantId: 't1',
+        EnvironmentId: 't1',
         Surface: AuditSurface.Rpc,
         MethodOrPath: 'x',
         Outcome: AuditOutcome.Allow,
@@ -152,7 +152,7 @@ test('Drain resolves only after every fire-and-forget insert has finished (the l
 {
     const store = new HeldStore()
     const sink = new SqlAuditAccessSink(store)
-    const event = { Timestamp: new Date(), TenantId: 't1', Surface: AuditSurface.Rpc, MethodOrPath: 'x', Outcome: AuditOutcome.Allow }
+    const event = { Timestamp: new Date(), EnvironmentId: 't1', Surface: AuditSurface.Rpc, MethodOrPath: 'x', Outcome: AuditOutcome.Allow }
     void sink.Record(event)
     void sink.Record(event)
     let drained = false
@@ -168,7 +168,7 @@ test('Drain with nothing in flight resolves at once, and a failed insert does no
 {
     await new SqlAuditAccessSink(new CapturingStore()).Drain()
     const sink = new SqlAuditAccessSink(new RejectingStore(), new CapturingLogger())
-    void sink.Record({ Timestamp: new Date(), TenantId: 't1', Surface: AuditSurface.Rpc, MethodOrPath: 'x', Outcome: AuditOutcome.Allow })
+    void sink.Record({ Timestamp: new Date(), EnvironmentId: 't1', Surface: AuditSurface.Rpc, MethodOrPath: 'x', Outcome: AuditOutcome.Allow })
     await sink.Drain()
 })
 
@@ -182,7 +182,7 @@ test('Drain gives up on an insert that never settles after its bound, logging on
 {
     const logger = new CapturingLogger()
     const sink = new SqlAuditAccessSink(new StalledStore(), logger, new DrainController(30, undefined, undefined, 5))
-    void sink.Record({ Timestamp: new Date(), TenantId: 't1', PrincipalId: 'principal-secret-id', Surface: AuditSurface.Rpc, MethodOrPath: 'x', Outcome: AuditOutcome.Allow })
+    void sink.Record({ Timestamp: new Date(), EnvironmentId: 't1', PrincipalId: 'principal-secret-id', Surface: AuditSurface.Rpc, MethodOrPath: 'x', Outcome: AuditOutcome.Allow })
     await sink.Drain()
     assert.equal(logger.Errors.length, 1)
     assert.equal(logger.Errors[0]!.message, 'access audit drain gave up with sql writes still in flight')

@@ -15,9 +15,9 @@ import { PragmaticClient, WsMessageSocket } from '@pragmatic-tech-ai/pragmatic-p
 import { WorkerHost } from '../worker-host.js'
 import { MachineTls } from '../machine-tls.js'
 import type { MachineTlsRef } from '../machine-tls.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 
 interface Reply
 {
@@ -68,7 +68,7 @@ test('a worker dispatches /app/<tenant>/<app>/ to AppServingEndpoint exactly lik
     writeFileSync(join(apps, 'shop', 'ui', 'assets', 'app.js'), 'console.log(1)')
     writeFileSync(join(apps, 'secret.txt'), 'TOP-SECRET')
     writeFileSync(join(apps, 'shop', 'application.json'), JSON.stringify({ name: 'shop', version: '1.0.0', packages: [], ui: { entry: 'index.html', assets: ['assets/app.js'] } }))
-    const provisioning = new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>([['t1', { displayName: 'T1', purpose: TenantPurpose.Runtime }]]))
+    const provisioning = new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'T1', purpose: EnvironmentPurpose.Runtime }]]))
     const worker = await WorkerHost.StartAsync({ port: 0, baseDir, masterKey: { base64Env: WorkerServeFixture.KeyEnv }, provisioning, tls: WorkerServeFixture.Server() })
     try
     {
@@ -96,7 +96,7 @@ test('a worker dispatches /app/<tenant>/<app>/ to AppServingEndpoint exactly lik
 /** A runtime tenant on a worker delivering package `crm` (one seeded account) through the live app `crm-app`. */
 class RuntimeWorkerFx
 {
-    public static readonly Tenant = 'rt1'
+    public static readonly Environment = 'rt1'
     public static readonly KeyEnv = 'PS_WHAS_RUNTIME_KEY'
     public static readonly Prefix = 'ps-whrt-'
     public static readonly LocalHost = '127.0.0.1'
@@ -122,9 +122,9 @@ class RuntimeWorkerFx
     public static async Start(): Promise<string>
     {
         const baseDir = mkdtempSync(join(tmpdir(), RuntimeWorkerFx.Prefix))
-        const tenantDir = join(baseDir, RuntimeWorkerFx.Tenant)
-        const packages = join(tenantDir, RuntimeWorkerFx.PackagesDir)
-        const appDir = join(tenantDir, RuntimeWorkerFx.ApplicationsDir, RuntimeWorkerFx.App)
+        const environmentDir = join(baseDir, RuntimeWorkerFx.Environment)
+        const packages = join(environmentDir, RuntimeWorkerFx.PackagesDir)
+        const appDir = join(environmentDir, RuntimeWorkerFx.ApplicationsDir, RuntimeWorkerFx.App)
         mkdirSync(packages, { recursive: true })
         mkdirSync(join(appDir, RuntimeWorkerFx.AppVersion), { recursive: true })
         const outcome = compilePackage([], [{ uri: RuntimeWorkerFx.Crm.id + RuntimeWorkerFx.SourceSuffix, text: RuntimeWorkerFx.CrmTodl }], RuntimeWorkerFx.Crm, [])
@@ -137,24 +137,24 @@ class RuntimeWorkerFx
         return baseDir
     }
 
-    public static Provisioning(): InMemoryTenantProvisioning
+    public static Provisioning(): InMemoryEnvironmentProvisioning
     {
-        return new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>([[RuntimeWorkerFx.Tenant, { displayName: RuntimeWorkerFx.Tenant, purpose: TenantPurpose.Runtime }]]))
+        return new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([[RuntimeWorkerFx.Environment, { displayName: RuntimeWorkerFx.Environment, purpose: EnvironmentPurpose.Runtime }]]))
     }
 
     /** An Owner token for the tenant principal, and a security model letting it read every account. */
     public static async TokenFor(worker: WorkerHost): Promise<string>
     {
-        const server = await worker.RegistryForTest().ServerFor(RuntimeWorkerFx.Tenant)
+        const server = await worker.RegistryForTest().ServerFor(RuntimeWorkerFx.Environment)
         const pack = await server.Pack()
-        await pack.Grants.Save(new Grant(RuntimeWorkerFx.Tenant, Role.Owner, new ResourceRef(ResourceKind.Realm, RuntimeWorkerFx.Tenant, [])))
+        await pack.Grants.Save(new Grant(RuntimeWorkerFx.Environment, Role.Owner, new ResourceRef(ResourceKind.Realm, RuntimeWorkerFx.Environment, [])))
         const store = await server.RealmConfigStore()
-        const current = await store.Get(RuntimeWorkerFx.Tenant)
+        const current = await store.Get(RuntimeWorkerFx.Environment)
         const config = current === null
             ? new IdentityConfig(RuntimeWorkerFx.PackId, DelegationDepth.AuthnDirectory, new Map(), new Map(), new Map(), RuntimeWorkerFx.ReadingModel())
             : new IdentityConfig(current.PackId, current.DelegationDepth, current.ProviderSettings, current.GroupRoleMap, current.ClaimsMapping, RuntimeWorkerFx.ReadingModel())
-        await store.Save(RuntimeWorkerFx.Tenant, config)
-        return (await pack.Tokens.Issue(server.Realm(), RuntimeWorkerFx.Tenant, [], null)).Token
+        await store.Save(RuntimeWorkerFx.Environment, config)
+        return (await pack.Tokens.Issue(server.Realm(), RuntimeWorkerFx.Environment, [], null)).Token
     }
 
     /** The token's principal is the environment's System Administrator: it reads every row (tier 1). */
@@ -162,9 +162,9 @@ class RuntimeWorkerFx
     {
         return {
             businessUnits: [{ id: RuntimeWorkerFx.RootUnit, name: RuntimeWorkerFx.RootUnitName }],
-            users: [{ principalId: RuntimeWorkerFx.Tenant, businessUnitId: RuntimeWorkerFx.RootUnit }],
+            users: [{ principalId: RuntimeWorkerFx.Environment, businessUnitId: RuntimeWorkerFx.RootUnit }],
             teams: [],
-            roleAssignments: [{ role: BaseRole.SystemAdministrator, principalIds: [RuntimeWorkerFx.Tenant], teamIds: [] }],
+            roleAssignments: [{ role: BaseRole.SystemAdministrator, principalIds: [RuntimeWorkerFx.Environment], teamIds: [] }],
             profileAssignments: [],
             roleOverrides: [],
             profileOverrides: [],
@@ -175,7 +175,7 @@ class RuntimeWorkerFx
     {
         const client = MachineTls.Client(WorkerServeFixture.Client())
         const address = worker.Address()
-        const headers = { [RuntimeWorkerFx.EnvironmentHeader]: RuntimeWorkerFx.Tenant, authorization: `Bearer ${token}` }
+        const headers = { [RuntimeWorkerFx.EnvironmentHeader]: RuntimeWorkerFx.Environment, authorization: `Bearer ${token}` }
         const ws = new WebSocket(`wss://${address.host}:${address.port}/`, { key: client.key, cert: client.cert, ca: client.ca, rejectUnauthorized: true, headers })
         await new Promise<void>((resolve, reject) => { ws.on('open', () => resolve()); ws.on('error', reject) })
         return PragmaticClient.CreateOverSocket(new WsMessageSocket(ws))

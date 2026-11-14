@@ -12,7 +12,7 @@ import { VoidSignal } from '../engine/access-scope-source.js'
 /** Where an unreadable stored setting is reported (once per generation). */
 export interface ISecuritySettingDiagnostics
 {
-    Unreadable(tenantId: string, error: Error): void
+    Unreadable(environmentId: string, error: Error): void
 }
 
 /** Reports an unreadable setting as one warning on the server logger, by error name only (no setting content). */
@@ -25,9 +25,9 @@ export class LoggerSecuritySettingDiagnostics implements ISecuritySettingDiagnos
     {
     }
 
-    public Unreadable(tenantId: string, error: Error): void
+    public Unreadable(environmentId: string, error: Error): void
     {
-        this.logger.Warn(LoggerSecuritySettingDiagnostics.Line + tenantId + LoggerSecuritySettingDiagnostics.Separator + error.name)
+        this.logger.Warn(LoggerSecuritySettingDiagnostics.Line + environmentId + LoggerSecuritySettingDiagnostics.Separator + error.name)
     }
 }
 

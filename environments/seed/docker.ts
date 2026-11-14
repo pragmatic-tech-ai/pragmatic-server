@@ -1,11 +1,11 @@
 import { execFile, spawn } from 'node:child_process'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { get } from 'node:http'
-import { TenantPurposeName } from './bundle.js'
+import { EnvironmentPurposeName } from './bundle.js'
 import type { EnvDefinition, EnvDatabase } from './bundle.js'
 import { EnvConventions } from './env-conventions.js'
 
-export { EnvKind, TenantPurposeName } from './bundle.js'
+export { EnvKind, EnvironmentPurposeName } from './bundle.js'
 export type { EnvDefinition } from './bundle.js'
 
 /** A long-lived child process whose combined stdout+stderr is streamed as utf8 text. */
@@ -111,10 +111,10 @@ export class DockerEnv
     private static readonly Sh = 'sh'
     private static readonly ShCommandFlag = '-c'
 
-    private static readonly TenantsMount = '/cfg/tenants.json'
+    private static readonly EnvironmentsMount = '/cfg/environments.json'
     private static readonly SecretsMount = '/cfg/provisioned-secrets.json'
     private static readonly MasterKeyMount = '/run/secrets/master_key'
-    public static readonly TenantsFile = 'tenants.json'
+    public static readonly EnvironmentsFile = 'environments.json'
     public static readonly SecretsFile = 'provisioned-secrets.json'
     public static readonly MasterKeyFile = 'master.key'
     public static readonly DataSubdir = 'data'
@@ -125,7 +125,7 @@ export class DockerEnv
     private static readonly HostGatewayEntry = 'host.docker.internal:host-gateway'
 
     public static readonly EnvBaseDir = 'PRAGMATIC_BASE_DIR'
-    public static readonly EnvTenantsFile = 'PRAGMATIC_TENANTS_FILE'
+    public static readonly EnvEnvironmentsFile = 'PRAGMATIC_ENVIRONMENTS_FILE'
     public static readonly EnvMasterKeyFile = 'PRAGMATIC_MASTER_KEY_FILE'
     public static readonly EnvSecretsFile = 'PRAGMATIC_PROVISIONED_SECRETS_FILE'
     public static readonly EnvPort = 'PRAGMATIC_PORT'
@@ -216,12 +216,12 @@ export class DockerEnv
             DockerEnv.Run, DockerEnv.Detach, DockerEnv.NameFlag, EnvConventions.ContainerName(def),
             DockerEnv.PortFlag, `${def.hostPort}:${DockerEnv.InternalPort}`,
             DockerEnv.VolumeFlag, `${EnvConventions.VolumeName(def)}:${DockerEnv.DataMount}`,
-            DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.TenantsFile}:${DockerEnv.TenantsMount}${DockerEnv.ReadOnly}`,
+            DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.EnvironmentsFile}:${DockerEnv.EnvironmentsMount}${DockerEnv.ReadOnly}`,
             DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.SecretsFile}:${DockerEnv.SecretsMount}${DockerEnv.ReadOnly}`,
             DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.MasterKeyFile}:${DockerEnv.MasterKeyMount}${DockerEnv.ReadOnly}`,
             DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.DataSubdir}:${DockerEnv.DataSeedMount}${DockerEnv.ReadOnly}`,
             DockerEnv.EnvFlag, `${DockerEnv.EnvBaseDir}=${DockerEnv.DataMount}`,
-            DockerEnv.EnvFlag, `${DockerEnv.EnvTenantsFile}=${DockerEnv.TenantsMount}`,
+            DockerEnv.EnvFlag, `${DockerEnv.EnvEnvironmentsFile}=${DockerEnv.EnvironmentsMount}`,
             DockerEnv.EnvFlag, `${DockerEnv.EnvMasterKeyFile}=${DockerEnv.MasterKeyMount}`,
             DockerEnv.EnvFlag, `${DockerEnv.EnvSecretsFile}=${DockerEnv.SecretsMount}`,
             DockerEnv.EnvFlag, `${DockerEnv.EnvPort}=${DockerEnv.InternalPort}`,
@@ -238,7 +238,7 @@ export class DockerEnv
         {
             args.push(DockerEnv.NetworkFlag, EnvConventions.NetworkName(def))
         }
-        if (def.purpose === TenantPurposeName.Runtime)
+        if (def.purpose === EnvironmentPurposeName.Runtime)
         {
             args.push(DockerEnv.EnvFlag, `${DockerEnv.EnvAllowedOrigins}=${DockerEnv.LocalhostOriginPrefix}${def.hostPort}`)
         }

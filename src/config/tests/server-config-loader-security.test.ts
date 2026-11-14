@@ -64,7 +64,7 @@ test('rate-limit env builds a per-tenant and per-principal config', () =>
 {
     const env = { ...LoaderFixture.Minimal(), PRAGMATIC_RATELIMIT_ENVIRONMENT_RPS: '50', PRAGMATIC_RATELIMIT_ENVIRONMENT_BURST: '100', PRAGMATIC_RATELIMIT_PRINCIPAL_RPS: '10', PRAGMATIC_RATELIMIT_PRINCIPAL_BURST: '20' }
     const config = ServerConfigLoader.Load(env, LoaderFixture.NoRead)
-    assert.deepEqual(config.rateLimit?.perTenant, { Rps: 50, Burst: 100 })
+    assert.deepEqual(config.rateLimit?.perEnvironment, { Rps: 50, Burst: 100 })
     assert.deepEqual(config.rateLimit?.perPrincipal, { Rps: 10, Burst: 20 })
 })
 
@@ -87,7 +87,7 @@ test('a partial rate-limit scope (rps without burst) fails closed', () =>
 test('the gateway loader parses the security block too', () =>
 {
     const env = { PRAGMATIC_TLS_CERT_FILE: '/c', PRAGMATIC_TLS_KEY_FILE: '/k', PRAGMATIC_TLS_CA_FILE: '/ca', PRAGMATIC_REDIS_URL: 'redis://x', PRAGMATIC_RATELIMIT_ENVIRONMENT_RPS: '5', PRAGMATIC_RATELIMIT_ENVIRONMENT_BURST: '10' }
-    assert.deepEqual(ServerConfigLoader.LoadGateway(env).rateLimit?.perTenant, { Rps: 5, Burst: 10 })
+    assert.deepEqual(ServerConfigLoader.LoadGateway(env).rateLimit?.perEnvironment, { Rps: 5, Burst: 10 })
 })
 
 test('the gateway rejects auditSink=sql early but accepts file and none', () =>

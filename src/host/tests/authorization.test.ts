@@ -8,14 +8,14 @@ import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-
 import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 
 class AuthzFixture
 {
     public static readonly Host = '127.0.0.1'
 
-    public static TenantRoot(): ResourceRef
+    public static EnvironmentRoot(): ResourceRef
     {
         return new ResourceRef(ResourceKind.Realm, 't1', [])
     }
@@ -33,8 +33,8 @@ class AuthzFixture
 
     public static Options(baseDir: string, keyEnv: string)
     {
-        const entries = new Map<string, TenantProvisioning>([['t1', { displayName: 'Tenant One' }]])
-        return { host: AuthzFixture.Host, port: 0, baseDir, masterKey: { base64Env: keyEnv }, provisioning: new InMemoryTenantProvisioning(entries) }
+        const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Tenant One' }]])
+        return { host: AuthzFixture.Host, port: 0, baseDir, masterKey: { base64Env: keyEnv }, provisioning: new InMemoryEnvironmentProvisioning(entries) }
     }
 
     public static Cleanup(...dirs: string[]): void
@@ -52,12 +52,12 @@ test('the dispatch gate enforces the role ladder for open vs read', async () =>
     const host = await PragmaticServerHost.StartAsync(AuthzFixture.Options(baseDir, keyEnv))
     const url = `ws://${host.Address().host}:${host.Address().port}/?environment=t1`
     const pack = await host.IdentityPackForTest('t1')
-    const tenant = await host.RealmForTest('t1')
-    await pack.Grants.Save(new Grant('admin', Role.Admin, AuthzFixture.TenantRoot()))
-    await pack.Grants.Save(new Grant('viewer', Role.Viewer, AuthzFixture.TenantRoot()))
-    const adminToken = (await pack.Tokens.Issue(tenant, 'admin', [], null)).Token
-    const viewerToken = (await pack.Tokens.Issue(tenant, 'viewer', [], null)).Token
-    const nograntToken = (await pack.Tokens.Issue(tenant, 'nobody', [], null)).Token
+    const environment = await host.RealmForTest('t1')
+    await pack.Grants.Save(new Grant('admin', Role.Admin, AuthzFixture.EnvironmentRoot()))
+    await pack.Grants.Save(new Grant('viewer', Role.Viewer, AuthzFixture.EnvironmentRoot()))
+    const adminToken = (await pack.Tokens.Issue(environment, 'admin', [], null)).Token
+    const viewerToken = (await pack.Tokens.Issue(environment, 'viewer', [], null)).Token
+    const nograntToken = (await pack.Tokens.Issue(environment, 'nobody', [], null)).Token
 
     const admin = await PragmaticClient.ConnectAsync(url, { bearerToken: adminToken })
     const viewer = await PragmaticClient.ConnectAsync(url, { bearerToken: viewerToken })
@@ -90,10 +90,10 @@ test('graph-change pushes reach a readable connection but not a no-grant one', a
     const host = await PragmaticServerHost.StartAsync(AuthzFixture.Options(baseDir, keyEnv))
     const url = `ws://${host.Address().host}:${host.Address().port}/?environment=t1`
     const pack = await host.IdentityPackForTest('t1')
-    const tenant = await host.RealmForTest('t1')
-    await pack.Grants.Save(new Grant('admin', Role.Admin, AuthzFixture.TenantRoot()))
-    const adminToken = (await pack.Tokens.Issue(tenant, 'admin', [], null)).Token
-    const nograntToken = (await pack.Tokens.Issue(tenant, 'nobody', [], null)).Token
+    const environment = await host.RealmForTest('t1')
+    await pack.Grants.Save(new Grant('admin', Role.Admin, AuthzFixture.EnvironmentRoot()))
+    const adminToken = (await pack.Tokens.Issue(environment, 'admin', [], null)).Token
+    const nograntToken = (await pack.Tokens.Issue(environment, 'nobody', [], null)).Token
 
     const admin = await PragmaticClient.ConnectAsync(url, { bearerToken: adminToken })
     const nobody = await PragmaticClient.ConnectAsync(url, { bearerToken: nograntToken })

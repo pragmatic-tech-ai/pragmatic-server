@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { TemplateCatalog, InvalidEnvironmentNameError } from '../template-catalog.js'
 import { Template, EnvType } from '../environment-record.js'
 import { EnvConventions } from '../../../environments/seed/env-conventions.js'
-import { EnvKind, TenantPurposeName } from '../../../environments/seed/bundle.js'
+import { EnvKind, EnvironmentPurposeName } from '../../../environments/seed/bundle.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 
 class CatalogFixture
@@ -31,7 +31,7 @@ describe('TemplateCatalog', () =>
         const r = TemplateCatalog.Resolve(Template.DemoContoso, 'demo1', 8081, EnvType.Runtime)
         assert.equal(r.def.kind, EnvKind.Demo)
         assert.equal(r.def.environmentId, 'contoso')
-        assert.equal(r.def.purpose, TenantPurposeName.Runtime)
+        assert.equal(r.def.purpose, EnvironmentPurposeName.Runtime)
         assert.equal(r.def.name, 'demo1')
         assert.equal(r.def.hostPort, 8081)
         assert.ok(CatalogFixture.Norm(r.seedDir).endsWith(CatalogFixture.DemoSuffix))
@@ -44,7 +44,7 @@ describe('TemplateCatalog', () =>
         const r = TemplateCatalog.Resolve(Template.DevBlank, 'dev1', 8080, EnvType.Development)
         assert.equal(r.def.kind, EnvKind.Dev)
         assert.equal(r.def.environmentId, 'dev1')
-        assert.equal(r.def.purpose, TenantPurposeName.Development)
+        assert.equal(r.def.purpose, EnvironmentPurposeName.Development)
         assert.ok(existsSync(r.seedDir))
         assert.ok(!existsSync(join(r.seedDir, CatalogFixture.SecurityModel)))
     })
@@ -71,8 +71,8 @@ describe('TemplateCatalog', () =>
 
     it('maps the explicit type to the tenant purpose, overriding the template default', () =>
     {
-        assert.equal(TemplateCatalog.Resolve(Template.DevBlank, CatalogFixture.DevName, 8080, EnvType.Runtime).def.purpose, TenantPurposeName.Runtime)
-        assert.equal(TemplateCatalog.Resolve(Template.DemoContoso, CatalogFixture.DemoName, 8081, EnvType.Development).def.purpose, TenantPurposeName.Development)
+        assert.equal(TemplateCatalog.Resolve(Template.DevBlank, CatalogFixture.DevName, 8080, EnvType.Runtime).def.purpose, EnvironmentPurposeName.Runtime)
+        assert.equal(TemplateCatalog.Resolve(Template.DemoContoso, CatalogFixture.DemoName, 8081, EnvType.Development).def.purpose, EnvironmentPurposeName.Development)
     })
 
     it('still takes kind, seedDir and environmentId from the template', () =>
@@ -97,7 +97,7 @@ describe('TemplateCatalog', () =>
     it('RuntimePostgres resolves to a runtime def with an appdb database', () =>
     {
         const r = TemplateCatalog.Resolve(Template.RuntimePostgres, 'e', 8080, EnvType.Runtime)
-        assert.equal(r.def.purpose, TenantPurposeName.Runtime)
+        assert.equal(r.def.purpose, EnvironmentPurposeName.Runtime)
         const db = r.def.database
         assert.ok(db)
         assert.equal(db.connectionName, 'appdb')

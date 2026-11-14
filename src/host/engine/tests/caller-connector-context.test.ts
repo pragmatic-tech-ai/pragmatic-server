@@ -44,7 +44,7 @@ describe('caller connector context', () =>
         await Tier1Fx.Run({ Identity: true, SecurityModel: Tier1Fx.Setting() }, async (fx, server) =>
         {
             const recording = new RecordingEngine(await Tier1Fx.Engine(server))
-            const client = await fx.Connect(new Principal(Tier1Fx.Alice, EnvironmentFixture.TenantId, PrincipalKind.User, new Map(), []))
+            const client = await fx.Connect(new Principal(Tier1Fx.Alice, EnvironmentFixture.EnvironmentId, PrincipalKind.User, new Map(), []))
             await client.CypherQuery(ContextFx.Query)
             const executed = await client.CypherExecute(ContextFx.Create, { [ContextFx.NameParameter]: ContextFx.Created })
             assert.equal(executed.status, AppWriteStatus.Applied, JSON.stringify(executed))

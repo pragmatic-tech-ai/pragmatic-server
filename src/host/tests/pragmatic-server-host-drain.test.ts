@@ -10,8 +10,8 @@ import { WebSocket } from 'ws'
 import { TransportCloseCode } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import { StructuredLogger } from '../../observability/logger.js'
 import { DrainController } from '../../observability/drain-controller.js'
 import type { Observability } from '../../observability/observability.js'
@@ -19,9 +19,9 @@ import type { IInFlightSource } from '../../observability/drain-controller.js'
 
 class DrainFixture
 {
-    public static Provisioning(): InMemoryTenantProvisioning
+    public static Provisioning(): InMemoryEnvironmentProvisioning
     {
-        return new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>([['t1', { displayName: 'Tenant One' }]]))
+        return new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Tenant One' }]]))
     }
 
     public static async Start(baseDir: string, drainTimeoutMs: number, lines?: string[], observability?: Observability): Promise<PragmaticServerHost>
@@ -90,14 +90,14 @@ class FakeClock
 
 class WsFixture
 {
-    public static async Connect(host: PragmaticServerHost, tenantId: string): Promise<WebSocket>
+    public static async Connect(host: PragmaticServerHost, environmentId: string): Promise<WebSocket>
     {
-        const pack = await host.IdentityPackForTest(tenantId)
-        await pack.Grants.Save(new Grant(tenantId, Role.Admin, new ResourceRef(ResourceKind.Realm, tenantId, [])))
-        const tenant = await host.RealmForTest(tenantId)
-        const token = (await pack.Tokens.Issue(tenant, tenantId, [], null)).Token
+        const pack = await host.IdentityPackForTest(environmentId)
+        await pack.Grants.Save(new Grant(environmentId, Role.Admin, new ResourceRef(ResourceKind.Realm, environmentId, [])))
+        const environment = await host.RealmForTest(environmentId)
+        const token = (await pack.Tokens.Issue(environment, environmentId, [], null)).Token
         const address = host.Address()
-        const ws = new WebSocket(`ws://${address.host}:${address.port}/?environment=${tenantId}`, { headers: { authorization: `Bearer ${token}` } })
+        const ws = new WebSocket(`ws://${address.host}:${address.port}/?environment=${environmentId}`, { headers: { authorization: `Bearer ${token}` } })
         await new Promise<void>((resolve, reject) =>
         {
             ws.once('open', () => resolve())

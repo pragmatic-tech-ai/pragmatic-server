@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import { DeploymentMode } from '../../platform/deployment-mode.js'
 import { ServerBootstrap } from '../server-bootstrap.js'
 import { InMemoryWorkerRouter } from '../../cluster/worker-router.js'
-import { InMemoryTenantProvisioning } from '../../tenancy/tenant-registry.js'
+import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import type { ServerConfig, GatewayConfig } from '../../config/server-config.js'
-import type { TenantProvisioning } from '../../tenancy/tenant-provisioning.js'
+import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import type { PlatformServices } from '../../platform/platform-services.js'
 
 class Fixture
@@ -20,9 +20,9 @@ class Fixture
         return { host: '0.0.0.0', port: 8080, tls: { certFile: '/c.pem', keyFile: '/k.pem', caFile: '/ca.pem' }, redisUrl: 'redis://user:secret@r:6379', workerServerName: 'pragmatic-worker', healthPort: 8081 }
     }
 
-    public static Provisioning(): InMemoryTenantProvisioning
+    public static Provisioning(): InMemoryEnvironmentProvisioning
     {
-        return new InMemoryTenantProvisioning(new Map<string, TenantProvisioning>())
+        return new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>())
     }
 }
 

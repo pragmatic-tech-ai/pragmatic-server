@@ -36,7 +36,7 @@ export interface AdapterPacksConfig
     readonly scriptAllowlist?: readonly string[]
 }
 
-export interface SingleTenantConfig
+export interface SingleEnvironmentConfig
 {
     id: string
     displayName: string
@@ -60,8 +60,10 @@ export interface ServerConfig
     masterKey: MasterKeyRef
     deploymentMode: DeploymentMode
     allowedOrigins?: readonly string[]
-    tenantsFile?: string
-    singleTenant?: SingleTenantConfig
+    environmentsFile?: string
+    /** One line per legacy configuration name the loader still accepted; the process entry point logs each once. */
+    deprecations?: readonly string[]
+    singleEnvironment?: SingleEnvironmentConfig
     idleTtlMs?: number
     idleSweepMs?: number
     redisUrl?: string

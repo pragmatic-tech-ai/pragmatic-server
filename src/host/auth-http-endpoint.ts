@@ -40,7 +40,7 @@ export class AuthHttpEndpoint
     private static readonly SessionPath = '/auth/session'
     private static readonly LogoutPath = '/auth/logout'
     private static readonly SetCookieHeader = 'Set-Cookie'
-    private static readonly TenantKey = 'tenant'
+    private static readonly EnvironmentKey = 'environment'
     private static readonly PrincipalIdKey = 'principalId'
     private static readonly NoContentStatus = 204
     private static readonly UnauthenticatedError = 'unauthenticated'
@@ -115,7 +115,7 @@ export class AuthHttpEndpoint
             else
             {
                 const method = `${req.method ?? AuthHttpEndpoint.GetMethod} ${AuthHttpEndpoint.HttpSurface}`
-                await this.instrumentation.Run({ method, tenant: this.realm.Id, principal: '' }, () => this.Route(req, res))
+                await this.instrumentation.Run({ method, environment: this.realm.Id, principal: '' }, () => this.Route(req, res))
             }
         }
         catch
@@ -255,7 +255,7 @@ export class AuthHttpEndpoint
             this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.UnauthenticatedError)
             return
         }
-        this.WriteBody(res, AuthHttpEndpoint.OkStatus, JSON.stringify({ [AuthHttpEndpoint.TenantKey]: session.RealmId, [AuthHttpEndpoint.PrincipalIdKey]: session.PrincipalId, [AuthHttpEndpoint.ExpiresAtKey]: session.ExpiresAt.toISOString() }))
+        this.WriteBody(res, AuthHttpEndpoint.OkStatus, JSON.stringify({ [AuthHttpEndpoint.EnvironmentKey]: session.RealmId, [AuthHttpEndpoint.PrincipalIdKey]: session.PrincipalId, [AuthHttpEndpoint.ExpiresAtKey]: session.ExpiresAt.toISOString() }))
     }
 
     private async Logout(req: IncomingMessage, res: ServerResponse): Promise<void>
@@ -277,7 +277,7 @@ export class AuthHttpEndpoint
     private async ResolveCookieSession(req: IncomingMessage, requireOrigin: boolean): Promise<Session | null>
     {
         const credential = this.browser.Credential(req, requireOrigin)
-        if (credential === null || credential.Tenant !== this.realm.Id)
+        if (credential === null || credential.Environment !== this.realm.Id)
         {
             return null
         }
@@ -392,7 +392,7 @@ export class AuthHttpEndpoint
     {
         const event: AccessAuditEvent = {
             Timestamp: new Date(),
-            TenantId: this.realm.Id,
+            EnvironmentId: this.realm.Id,
             PrincipalId: principalId,
             Surface: AuditSurface.Http,
             MethodOrPath: path,
@@ -417,7 +417,7 @@ export class AuthHttpEndpoint
         if (browser)
         {
             res.setHeader(AuthHttpEndpoint.SetCookieHeader, this.browser.BuildSetCookie(res.req, this.realm.Id, session.Id, session.ExpiresAt))
-            this.WriteBody(res, AuthHttpEndpoint.OkStatus, JSON.stringify({ [AuthHttpEndpoint.TenantKey]: this.realm.Id, [AuthHttpEndpoint.PrincipalIdKey]: session.PrincipalId, [AuthHttpEndpoint.ExpiresAtKey]: session.ExpiresAt.toISOString() }))
+            this.WriteBody(res, AuthHttpEndpoint.OkStatus, JSON.stringify({ [AuthHttpEndpoint.EnvironmentKey]: this.realm.Id, [AuthHttpEndpoint.PrincipalIdKey]: session.PrincipalId, [AuthHttpEndpoint.ExpiresAtKey]: session.ExpiresAt.toISOString() }))
             return
         }
         this.WriteBody(res, AuthHttpEndpoint.OkStatus, JSON.stringify({ [AuthHttpEndpoint.TokenKey]: session.Id, [AuthHttpEndpoint.ExpiresAtKey]: session.ExpiresAt.toISOString() }))

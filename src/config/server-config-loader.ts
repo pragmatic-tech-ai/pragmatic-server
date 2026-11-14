@@ -8,7 +8,7 @@ import type { RateLimitConfig, RateLimitSettings } from '../host/rate-limiter.js
 import { OtlpProtocol } from '../observability/otlp-protocol.js'
 import { SandboxStrategy } from './server-config.js'
 import { PagingLimits } from './paging-limits.js'
-import type { AdapterPacksConfig, AdapterPacksEviction, AdapterPacksResourceLimits, GatewayConfig, ServerConfig, SingleTenantConfig, WsResilienceConfig } from './server-config.js'
+import type { AdapterPacksConfig, AdapterPacksEviction, AdapterPacksResourceLimits, GatewayConfig, ServerConfig, SingleEnvironmentConfig, WsResilienceConfig } from './server-config.js'
 
 interface ConfigFile
 {
@@ -27,7 +27,11 @@ export class ServerConfigLoader
     private static readonly DefaultPort = 8080
     private static readonly MissingBaseDir = 'PRAGMATIC_BASE_DIR is required'
     private static readonly MissingMasterKey = 'master key is required: set PRAGMATIC_MASTER_KEY_FILE or PRAGMATIC_MASTER_KEY_B64_ENV'
-    private static readonly MissingTenant = 'a tenant source is required: set PRAGMATIC_TENANTS_FILE or PRAGMATIC_ENVIRONMENT_ID'
+    private static readonly MissingEnvironment = 'an environment source is required: set PRAGMATIC_ENVIRONMENTS_FILE or PRAGMATIC_ENVIRONMENT_ID'
+    private static readonly EnvironmentsFileVar = 'PRAGMATIC_ENVIRONMENTS_FILE'
+    /** Read for one release when the new variable is unset; the new variable wins when both are set. */
+    private static readonly LegacyEnvironmentsFileVar = 'PRAGMATIC_TENANTS_FILE'
+    private static readonly LegacyEnvironmentsFileLine = 'PRAGMATIC_TENANTS_FILE is deprecated: set PRAGMATIC_ENVIRONMENTS_FILE instead'
     private static readonly BadMode = 'PRAGMATIC_DEPLOYMENT_MODE must be local or cloud'
 
     private static readonly TlsCertMissing = 'PRAGMATIC_TLS_CERT_FILE is required when TLS is configured'
@@ -300,13 +304,13 @@ export class ServerConfigLoader
 
     private static RateLimitOf(env: Record<string, string | undefined>): RateLimitConfig | undefined
     {
-        const perTenant = ServerConfigLoader.SettingsOf(env[ServerConfigLoader.EnvEnvironmentRps], env[ServerConfigLoader.EnvEnvironmentBurst])
+        const perEnvironment = ServerConfigLoader.SettingsOf(env[ServerConfigLoader.EnvEnvironmentRps], env[ServerConfigLoader.EnvEnvironmentBurst])
         const perPrincipal = ServerConfigLoader.SettingsOf(env[ServerConfigLoader.EnvPrincipalRps], env[ServerConfigLoader.EnvPrincipalBurst])
-        if (perTenant === undefined && perPrincipal === undefined)
+        if (perEnvironment === undefined && perPrincipal === undefined)
         {
             return undefined
         }
-        return { perTenant, perPrincipal }
+        return { perEnvironment, perPrincipal }
     }
 
     private static SettingsOf(rps: string | undefined, burst: string | undefined): RateLimitSettings | undefined
@@ -565,11 +569,13 @@ export class ServerConfigLoader
             throw new Error(ServerConfigLoader.MissingBaseDir)
         }
         const masterKey = ServerConfigLoader.MasterKey(env)
-        const tenantsFile = env.PRAGMATIC_TENANTS_FILE
-        const singleTenant = ServerConfigLoader.SingleTenant(env)
-        if (tenantsFile === undefined && singleTenant === undefined)
+        const legacyEnvironmentsFile = env[ServerConfigLoader.EnvironmentsFileVar] === undefined ? env[ServerConfigLoader.LegacyEnvironmentsFileVar] : undefined
+        const environmentsFile = env[ServerConfigLoader.EnvironmentsFileVar] ?? legacyEnvironmentsFile
+        const deprecations = legacyEnvironmentsFile === undefined ? [] : [ServerConfigLoader.LegacyEnvironmentsFileLine]
+        const singleEnvironment = ServerConfigLoader.SingleEnvironment(env)
+        if (environmentsFile === undefined && singleEnvironment === undefined)
         {
-            throw new Error(ServerConfigLoader.MissingTenant)
+            throw new Error(ServerConfigLoader.MissingEnvironment)
         }
         const redis = ServerConfigLoader.Redis(env, file.redisUrl)
         const provisionedSecretsFile = env.PRAGMATIC_PROVISIONED_SECRETS_FILE
@@ -584,8 +590,9 @@ export class ServerConfigLoader
             masterKey,
             deploymentMode,
             allowedOrigins: ServerConfigLoader.CsvNames(env[ServerConfigLoader.EnvAllowedOrigins]),
-            tenantsFile,
-            singleTenant,
+            environmentsFile,
+            deprecations,
+            singleEnvironment,
             idleTtlMs: ServerConfigLoader.Int(env.PRAGMATIC_IDLE_TTL_MS) ?? file.idleTtlMs,
             idleSweepMs: ServerConfigLoader.Int(env.PRAGMATIC_IDLE_SWEEP_MS) ?? file.idleSweepMs,
             ...redis,
@@ -817,7 +824,7 @@ export class ServerConfigLoader
         throw new Error(ServerConfigLoader.MissingMasterKey)
     }
 
-    private static SingleTenant(env: Record<string, string | undefined>): SingleTenantConfig | undefined
+    private static SingleEnvironment(env: Record<string, string | undefined>): SingleEnvironmentConfig | undefined
     {
         const id = env.PRAGMATIC_ENVIRONMENT_ID
         if (id === undefined || id.length === 0)

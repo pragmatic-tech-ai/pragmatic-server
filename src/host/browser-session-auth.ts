@@ -4,7 +4,7 @@ import type { TLSSocket } from 'node:tls'
 /** A tenant-bound session token presented by a browser cookie. The token is a secret: never log or echo it. */
 export interface BrowserCredential
 {
-    Tenant: string
+    Environment: string
     Token: string
 }
 
@@ -25,7 +25,7 @@ export class BrowserSessionAuth
     private static readonly PlainOriginScheme = 'http://'
     private static readonly PairSeparator = ';'
     private static readonly NameValueSeparator = '='
-    private static readonly TenantTokenSeparator = '.'
+    private static readonly EnvironmentTokenSeparator = '.'
     private static readonly TokenPattern = /^[A-Za-z0-9_-]+$/
     private static readonly CookieAttributes = '; Path=/; HttpOnly; SameSite=Strict'
     private static readonly SecureAttribute = '; Secure'
@@ -41,10 +41,10 @@ export class BrowserSessionAuth
         this.trustForwardedProto = trustForwardedProto
     }
 
-    public BuildSetCookie(req: IncomingMessage | undefined, tenantId: string, token: string, expiresAt: Date, now: Date = new Date()): string
+    public BuildSetCookie(req: IncomingMessage | undefined, environmentId: string, token: string, expiresAt: Date, now: Date = new Date()): string
     {
         const seconds = Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / BrowserSessionAuth.MillisPerSecond))
-        const value = encodeURIComponent(tenantId) + BrowserSessionAuth.TenantTokenSeparator + token
+        const value = encodeURIComponent(environmentId) + BrowserSessionAuth.EnvironmentTokenSeparator + token
         return BrowserSessionAuth.CookieName + BrowserSessionAuth.NameValueSeparator + value + BrowserSessionAuth.CookieAttributes
             + BrowserSessionAuth.MaxAgeAttribute + seconds + (this.IsSecure(req) ? BrowserSessionAuth.SecureAttribute : '')
     }
@@ -62,9 +62,9 @@ export class BrowserSessionAuth
     }
 
     /** The tenant named by the session cookie, or null. Unauthenticated: a routing hint only (the token still has to validate). */
-    public CookieTenant(headers: IncomingHttpHeaders): string | null
+    public CookieEnvironment(headers: IncomingHttpHeaders): string | null
     {
-        return this.Parse(headers)?.Tenant ?? null
+        return this.Parse(headers)?.Environment ?? null
     }
 
     /** The cookie credential if the request carries a well-formed cookie and its Origin is acceptable; otherwise null (deny).
@@ -132,7 +132,7 @@ export class BrowserSessionAuth
         {
             return null
         }
-        const split = value.lastIndexOf(BrowserSessionAuth.TenantTokenSeparator)
+        const split = value.lastIndexOf(BrowserSessionAuth.EnvironmentTokenSeparator)
         if (split <= 0)
         {
             return null
@@ -144,8 +144,8 @@ export class BrowserSessionAuth
         }
         try
         {
-            const tenant = decodeURIComponent(value.slice(0, split))
-            return tenant.length > 0 ? { Tenant: tenant, Token: token } : null
+            const environment = decodeURIComponent(value.slice(0, split))
+            return environment.length > 0 ? { Environment: environment, Token: token } : null
         }
         catch
         {
