@@ -177,7 +177,8 @@ export class LoopOrchestrator
     private static readonly AuthoritySep = '//'
     private static readonly WsEnvironmentQuery = '/?environment='
     private static readonly ViewerRole = 'Viewer'
-    private static readonly RealmKind = 'Realm'
+    /** 'Tenant' on the admin wire for one release (older environment servers know only that name). */
+    private static readonly RealmKind = 'Tenant'
     private static readonly ReaderPrincipal = 'loop-reader'
     private static readonly ReaderEmail = 'r@t.io'
     private static readonly UngrantedPrincipal = 'loop-ungranted'

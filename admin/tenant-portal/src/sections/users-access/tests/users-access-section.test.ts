@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { ServiceKey, type IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
+import { RelayCommand, ServiceKey, type IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
 import { ConfirmDialogViewModel } from '../../../shell/confirm-dialog-view-model.js'
 import { PendingWork, type IHoldsPendingWork } from '../../../shell/holds-pending-work.js'
 import { TenantPageViewModel, PageState } from '../../../shell/tenant-page-view-model.js'
@@ -8,7 +8,7 @@ import { TenantSectionService } from '../../../shell/tenant-section-service.js'
 import type { TenantSessionService } from '../../../shell/tenant-session-service.js'
 import { FakeTenantApi, Inspect, TenantTestHost, TestRail, Tick, type FakeDialogService } from '../../../shell/tests/tenant-test-fixtures.js'
 import { EnvType, TenantRole, type AdminCapabilitiesDto } from '../../../tenant-types.js'
-import { AccountDetailPageViewModel } from '../account-detail-page-view-model.js'
+import { AccountDetailPageViewModel, GrantRowViewModel } from '../account-detail-page-view-model.js'
 import { CreateAccountDialogViewModel } from '../create-account-dialog-view-model.js'
 import { IssueTokenDialogViewModel } from '../issue-token-dialog-view-model.js'
 import { TokenDuration, TokenDurations } from '../token-duration.js'
@@ -380,6 +380,17 @@ describe('Users tab', () =>
     })
 })
 
+describe('GrantRowViewModel', () =>
+{
+    it('shows a whole-environment grant the same way whether the server calls its kind Realm or Tenant', () =>
+    {
+        const revoke = new RelayCommand(() => undefined)
+        const texts = ['Realm', 'Tenant', 'tenant'].map(kind => new GrantRowViewModel({ subject: 'p', role: 'Viewer', resourceKind: kind, resourcePath: [] }, revoke).ResourceText)
+        assert.deepEqual(texts, ['environment', 'environment', 'environment'])
+        assert.equal(new GrantRowViewModel({ subject: 'p', role: 'Editor', resourceKind: 'Model', resourcePath: ['sales'] }, revoke).ResourceText, 'Model / sales')
+    })
+})
+
 describe('AccountDetailPageViewModel', () =>
 {
     it('shows the account and its grants, and grants a role (Viewer by default)', async () =>
@@ -389,7 +400,7 @@ describe('AccountDetailPageViewModel', () =>
         assert.equal(detail.Email, 'jane@example.test')
         assert.equal(detail.StatusLabel, 'Active')
         assert.equal(detail.IsYou, false)
-        assert.deepEqual(detail.Grants.ToArray().map(g => [g.Role, g.ResourceText]), [['Viewer', 'tenant'], ['Editor', 'model / sales / eu']])
+        assert.deepEqual(detail.Grants.ToArray().map(g => [g.Role, g.ResourceText]), [['Viewer', 'environment'], ['Editor', 'model / sales / eu']])
         assert.equal(detail.SelectedRole?.Value, TenantRole.Viewer)
         assert.deepEqual(detail.Roles.ToArray().map(r => r.Label), ['Owner', 'Admin', 'Editor', 'Viewer', 'Maker'])
         detail.SelectedRole = detail.Roles.ToArray()[1]

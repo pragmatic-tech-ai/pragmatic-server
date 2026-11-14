@@ -310,6 +310,71 @@ class CapturingKubectl
     }
 }
 
+class ConfigMapKubectl
+{
+    public Applied: string[] = []
+    public Deleted: string[] = []
+
+    public constructor(private readonly existing: Map<string, string>)
+    {
+    }
+
+    public async Find(namespace: string, resource: string): Promise<string | undefined>
+    {
+        return this.existing.get(namespace + '/' + resource)
+    }
+
+    public async Apply(manifestJson: string): Promise<void>
+    {
+        this.Applied.push(manifestJson)
+    }
+
+    public async DeleteManifest(manifestJson: string): Promise<void>
+    {
+        this.Deleted.push(manifestJson)
+    }
+}
+
+class LegacyMapFx
+{
+    public static readonly Env = 'old'
+    public static readonly Text = '{"tenants":{"old-1":{"displayName":"Old"}}}'
+
+    public static Namespace(): string
+    {
+        return K8sManifestBuilder.NamespaceOf(LegacyMapFx.Env)
+    }
+
+    public static Legacy(): Map<string, string>
+    {
+        return new Map([[LegacyMapFx.Namespace() + '/configmap/old-tenants', JSON.stringify({ kind: 'ConfigMap', metadata: { name: 'old-tenants' }, data: { 'tenants.json': LegacyMapFx.Text } })]])
+    }
+}
+
+it('an environment created before the rename gets <env>-environment from its <env>-tenants ConfigMap before a re-apply', async () =>
+{
+    const kubectl = new ConfigMapKubectl(LegacyMapFx.Legacy())
+    await EnvServerSeedSource.MigrateLegacyConfigMap(kubectl as never, LegacyMapFx.Env)
+    assert.equal(kubectl.Applied.length, 1)
+    const cm = JSON.parse(kubectl.Applied[0]!)
+    assert.equal(cm.metadata.name, 'old-environment')
+    assert.equal(cm.metadata.namespace, LegacyMapFx.Namespace())
+    assert.deepEqual(cm.data, { 'environments.json': LegacyMapFx.Text })
+    assert.equal(JSON.parse(kubectl.Deleted[0]!).metadata.name, 'old-tenants')
+})
+
+it('the legacy ConfigMap migration does nothing when <env>-environment exists or there is no legacy ConfigMap', async () =>
+{
+    const both = LegacyMapFx.Legacy()
+    both.set(LegacyMapFx.Namespace() + '/configmap/old-environment', '{}')
+    for (const existing of [both, new Map<string, string>()])
+    {
+        const kubectl = new ConfigMapKubectl(existing)
+        await EnvServerSeedSource.MigrateLegacyConfigMap(kubectl as never, LegacyMapFx.Env)
+        assert.deepEqual([kubectl.Applied.length, kubectl.Deleted.length], [0, 0])
+    }
+})
+
 it('ApplyIdpCa applies a Secret carrying ca.crt ONLY in the env namespace (never a server key)', async () =>
 {
     const kubectl = new CapturingKubectl()

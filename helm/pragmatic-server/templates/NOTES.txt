@@ -1,5 +1,9 @@
 pragmatic-server {{ .Chart.AppVersion }} deployed as {{ include "pragmatic-server.fullname" . }}.
 
+Upgrading from a release before the Tenant -> Realm rename: scale the server and workers to 0 before the
+upgrade, not a rolling update; the new image renames the shared identity schema in place, and the upgrade is
+forward-only (see the chart README).
+
 Connect locally:
 
   kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "pragmatic-server.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}

@@ -96,6 +96,8 @@ export class EnvServerSeedSource
     public static readonly ConfigMapNameSuffix = '-environment'
     /** The ConfigMap suffix before the rename; ApplyBundle deletes `<env>-tenants` after writing the new one (one release). */
     private static readonly LegacyConfigMapNameSuffix = '-tenants'
+    private static readonly LegacyEnvironmentsFile = 'tenants.json'
+    private static readonly ConfigMapResource = 'configmap/'
     public static readonly PasswordKey = 'password'
     public static readonly SeedSecretNameSuffix = '-env-seed'
     public static readonly SeedKey = 'seed.json'
@@ -171,6 +173,40 @@ export class EnvServerSeedSource
     public static ConfigMapNameOf(environmentName: string): string
     {
         return `${environmentName}${EnvServerSeedSource.ConfigMapNameSuffix}`
+    }
+
+    /**
+     * For an environment created before the rename: when `<env>-environment` is missing and `<env>-tenants` exists, writes
+     * `<env>-environment` with the legacy file text under `environments.json` (the server still reads the legacy `tenants`
+     * root key) and deletes `<env>-tenants`. Called before every re-apply of the rendered workload, whose Deployment mounts
+     * `<env>-environment`; a no-op for new environments and for ones already migrated.
+     */
+    public static async MigrateLegacyConfigMap(kubectl: IKubectl, environmentName: string): Promise<void>
+    {
+        const S = EnvServerSeedSource
+        const namespace = K8sManifestBuilder.NamespaceOf(environmentName)
+        if (await kubectl.Find(namespace, S.ConfigMapResource + S.ConfigMapNameOf(environmentName)) !== undefined)
+        {
+            return
+        }
+        const legacy = await kubectl.Find(namespace, S.ConfigMapResource + environmentName + S.LegacyConfigMapNameSuffix)
+        if (legacy === undefined)
+        {
+            return
+        }
+        const text = ((JSON.parse(legacy) as { data?: Record<string, unknown> }).data ?? {})[S.LegacyEnvironmentsFile]
+        if (typeof text !== 'string')
+        {
+            return
+        }
+        const current = {
+            [S.ApiVersionKey]: S.ApiVersion,
+            [S.KindKey]: S.ConfigMapKind,
+            [S.MetadataKey]: { [S.NameKey]: S.ConfigMapNameOf(environmentName), [S.NamespaceKey]: namespace },
+            [S.DataKey]: { [S.EnvironmentsFile]: text },
+        }
+        await kubectl.Apply(JSON.stringify(current))
+        await kubectl.DeleteManifest(JSON.stringify(S.LegacyConfigMapManifest(environmentName)))
     }
 
     /** The pre-rename ConfigMap (`<env>-tenants`) as a delete manifest: name and namespace only. */

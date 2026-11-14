@@ -50,6 +50,15 @@ test('RunArgs sets PRAGMATIC_ALLOWED_ORIGINS to the served origin for runtime en
     assert.equal(args[args.length - 1], DockerEnv.ImageName)
 })
 
+test('RunArgs of an environment whose bundle predates the rename mounts its tenants.json as /cfg/environments.json', () =>
+{
+    const legacyOnly = (path: string): boolean => path.endsWith('/tenants.json')
+    const args = DockerEnv.RunArgs(RunArgsProbe.DevelopmentDef(RunArgsProbe.DevelopmentHostPort), RunArgsProbe.BundleDir, undefined, legacyOnly)
+    assert.ok(RunArgsProbe.HasAdjacentPair(args, DockerEnv.VolumeFlag, `${RunArgsProbe.BundleDir}/tenants.json:/cfg/environments.json:ro`))
+    const current = DockerEnv.RunArgs(RunArgsProbe.DevelopmentDef(RunArgsProbe.DevelopmentHostPort), RunArgsProbe.BundleDir, undefined, () => true)
+    assert.ok(RunArgsProbe.HasAdjacentPair(current, DockerEnv.VolumeFlag, `${RunArgsProbe.BundleDir}/environments.json:/cfg/environments.json:ro`))
+})
+
 test('RunArgs omits PRAGMATIC_ALLOWED_ORIGINS for development envs and keeps the image last', () =>
 {
     const args = DockerEnv.RunArgs(RunArgsProbe.DevelopmentDef(RunArgsProbe.DevelopmentHostPort), RunArgsProbe.BundleDir)

@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { get } from 'node:http'
 import { EnvironmentPurposeName } from './bundle.js'
 import type { EnvDefinition, EnvDatabase } from './bundle.js'
@@ -105,7 +106,7 @@ export class DockerEnv
     private static readonly Rm = '--rm'
     private static readonly NameFlag = '--name'
     private static readonly PortFlag = '-p'
-    private static readonly VolumeFlag = '-v'
+    public static readonly VolumeFlag = '-v'
     public static readonly EnvFlag = '-e'
     private static readonly EntrypointFlag = '--entrypoint'
     private static readonly Sh = 'sh'
@@ -115,6 +116,7 @@ export class DockerEnv
     private static readonly SecretsMount = '/cfg/provisioned-secrets.json'
     private static readonly MasterKeyMount = '/run/secrets/master_key'
     public static readonly EnvironmentsFile = 'environments.json'
+    private static readonly LegacyEnvironmentsFile = 'tenants.json'
     public static readonly SecretsFile = 'provisioned-secrets.json'
     public static readonly MasterKeyFile = 'master.key'
     public static readonly DataSubdir = 'data'
@@ -210,13 +212,21 @@ export class DockerEnv
         ]
     }
 
-    public static RunArgs(def: EnvDefinition, bundleDir: string, caHostPath?: string): string[]
+    /** A bundle generated before the rename holds tenants.json (still read: the server accepts its `tenants` root key). */
+    private static EnvironmentsSource(bundleDir: string, exists: (path: string) => boolean): string
+    {
+        const current = `${bundleDir}/${DockerEnv.EnvironmentsFile}`
+        const legacy = `${bundleDir}/${DockerEnv.LegacyEnvironmentsFile}`
+        return !exists(current) && exists(legacy) ? legacy : current
+    }
+
+    public static RunArgs(def: EnvDefinition, bundleDir: string, caHostPath?: string, exists: (path: string) => boolean = existsSync): string[]
     {
         const args = [
             DockerEnv.Run, DockerEnv.Detach, DockerEnv.NameFlag, EnvConventions.ContainerName(def),
             DockerEnv.PortFlag, `${def.hostPort}:${DockerEnv.InternalPort}`,
             DockerEnv.VolumeFlag, `${EnvConventions.VolumeName(def)}:${DockerEnv.DataMount}`,
-            DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.EnvironmentsFile}:${DockerEnv.EnvironmentsMount}${DockerEnv.ReadOnly}`,
+            DockerEnv.VolumeFlag, `${DockerEnv.EnvironmentsSource(bundleDir, exists)}:${DockerEnv.EnvironmentsMount}${DockerEnv.ReadOnly}`,
             DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.SecretsFile}:${DockerEnv.SecretsMount}${DockerEnv.ReadOnly}`,
             DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.MasterKeyFile}:${DockerEnv.MasterKeyMount}${DockerEnv.ReadOnly}`,
             DockerEnv.VolumeFlag, `${bundleDir}/${DockerEnv.DataSubdir}:${DockerEnv.DataSeedMount}${DockerEnv.ReadOnly}`,

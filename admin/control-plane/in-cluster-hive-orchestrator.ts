@@ -8,6 +8,7 @@ import { EnvNamespaceGuard, EnvNamespaceRefusal, EnvNamespaceRefusedError } from
 import { SystemInstallClock, type IInstallClock } from './hive-agent-installer.js'
 import { IngressTlsPolicy, IngressTlsSource, type IngressTls } from './ingress-tls.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import { EnvServerSeedSource } from './env-server-seed.js'
 import { KubeApiClient, KubeApiError, KubeResourceCatalog, type KubeTypeRef } from './kube-api-client.js'
 import { KubectlHiveOrchestrator, type OrchestratorPolling } from './kubectl-hive-orchestrator.js'
 
@@ -93,8 +94,13 @@ export class InClusterHiveOrchestrator implements IHiveOrchestrator
             throw new Error(InClusterHiveOrchestrator.NoNamespaceItem + ns)
         }
         const rest = items.filter(i => i !== namespaceItem)
-        await this.CreateNamespace(ns, namespaceItem)
+        const existed = await this.CreateNamespace(ns, namespaceItem)
         await this.CreateConsoleBinding(ns)
+        if (existed)
+        {
+            // An environment created before the rename mounts <env>-tenants; the rendered Deployment mounts <env>-environment.
+            await this.RetryingForbidden(() => EnvServerSeedSource.MigrateLegacyConfigMap(this.kubectl, w.environmentName))
+        }
         const tls = w.federation?.ingressTls
         if (tls !== undefined && IngressTlsPolicy.CopiesSecret(tls))
         {
@@ -152,16 +158,18 @@ export class InClusterHiveOrchestrator implements IHiveOrchestrator
      * POST the Namespace (no patch: the admission fence admits only creates); on 409 adopt it only when it is this hive's and enforces
      * an admitted Pod Security level (the console cannot add the label to an older namespace).
      */
-    private async CreateNamespace(ns: string, item: ManifestItem): Promise<void>
+    /** Creates the namespace; answers true when it already existed (and is this hive's). */
+    private async CreateNamespace(ns: string, item: ManifestItem): Promise<boolean>
     {
         const created = await this.setup.client.Create(KubeResourceCatalog.PathOf(KubeResourceCatalog.NamespaceType, undefined), item)
         if (created)
         {
-            return
+            return false
         }
         const existing = await this.setup.client.Get(InClusterHiveOrchestrator.NamespacePath(ns))
         InClusterHiveOrchestrator.AssertOwned(existing, ns, this.setup.identity.hiveId)
         EnvNamespaceGuard.AssertPodSecurityEnforced(existing, ns)
+        return true
     }
 
     /** Binds the console's env ClusterRole to its ServiceAccount inside the namespace; an existing binding (409) is fine. */

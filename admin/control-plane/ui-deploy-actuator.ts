@@ -114,6 +114,8 @@ export class UiDeployActuator implements IUiDeployActuator
         const updated: EnvironmentRecord = { ...record, appDeployment: { appName, appVersion, repo, artifactTag, manifestDigest: pushedDigest } }
         await this.records.Put(updated)
 
+        // An environment created before the rename mounts <env>-tenants; the rendered Deployment mounts <env>-environment.
+        await EnvServerSeedSource.MigrateLegacyConfigMap(kubectl, record.name)
         await kubectl.Apply(this.manifests.Render(EnvironmentWorkloadFactory.From(updated, hive)))
         const namespace = K8sManifestBuilder.NamespaceOf(record.name)
         const deployment = K8sManifestBuilder.ServerDeploymentOf(record.name)

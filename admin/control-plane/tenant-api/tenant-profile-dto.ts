@@ -10,6 +10,9 @@ export type TenantProfileDto = {
     email?: string
     roleLabel: string
     tenant: { id: string; displayName: string; organisation?: string }
+    /** @deprecated The old name of `tenant`, sent alongside it for one release so a portal page loaded before
+     *  the upgrade keeps working. Remove with the other tenant -> realm/environment compatibility readers. */
+    environment: { id: string; displayName: string; organisation?: string }
     hive?: { id: string; displayName: string }
     capabilities: AdminCapabilitiesDto
     ownerContact?: string
@@ -35,6 +38,7 @@ export class TenantProfileMapper
             principalId: session.principalId,
             roleLabel: caps.roleLabel,
             tenant: tenantPart,
+            environment: tenantPart,
             capabilities: { ...caps.capabilities },
         }
         if (hive !== undefined)

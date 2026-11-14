@@ -168,7 +168,9 @@ export class EnvironmentService implements IAdminAccess
     private static readonly OidcSecretEncoding = 'base64url'
     private static readonly MakerPrincipalId = 'maker'
     private static readonly MakerRoleName = 'Maker'
-    private static readonly RealmKindName = 'Realm'
+    /** The realm's kind name on the admin wire. Still 'Tenant' for one release: an environment on an older server image
+     *  knows only that name; servers from the rename on read both. */
+    private static readonly RealmKindName = 'Tenant'
     private static readonly MakerScope = 'graph-contribute'
     /** The maker also holds Viewer so graph/list passes the role check; the token scope still limits it to contribute + list. */
     private static readonly MakerListRoleName = 'Viewer'

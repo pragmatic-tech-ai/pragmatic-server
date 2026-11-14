@@ -77,9 +77,12 @@ class FakeKubectl implements IKubectl
     {
     }
 
-    public async Find(_namespace: string, _resource: string): Promise<string | undefined>
+    /** Objects Find answers, keyed by '<namespace>/<kind>/<name>'. */
+    public readonly Existing = new Map<string, string>()
+
+    public async Find(namespace: string, resource: string): Promise<string | undefined>
     {
-        return undefined
+        return this.Existing.get(namespace + '/' + resource)
     }
 
     public async DeleteBySelector(_namespace: string, _resource: string, _selector: string): Promise<void>
@@ -219,6 +222,18 @@ describe('UiDeployActuator', () =>
         const tail = fx.events.slice(fx.events.indexOf('put'))
         assert.deepEqual(tail, ['put', 'apply', 'restart', 'status'])
         assert.ok(fx.kubectl.Applied[1].includes('PRAGMATIC_UI_REPO'), 'rendered manifest carries the unpack init container')
+    })
+
+    it('a UI publish to an environment created before the rename writes <env>-environment before re-applying the workload', async () =>
+    {
+        const ns = K8sManifestBuilder.NamespaceOf(Fixture.Env)
+        fx.kubectl.Existing.set(ns + '/configmap/' + Fixture.Env + '-tenants', JSON.stringify({ data: { 'tenants.json': '{"tenants":{}}' } }))
+        await fx.actuator.DeployAppToEnvironment(fx.Record(), fx.Hive(Fixture.Ref), fx.Bundle())
+        const applied = fx.kubectl.Applied.map(text => JSON.parse(text))
+        const configMap = applied.findIndex(o => o.kind === 'ConfigMap' && o.metadata?.name === EnvServerSeedSource.ConfigMapNameOf(Fixture.Env))
+        const workload = applied.findIndex(o => o.kind === 'List')
+        assert.ok(configMap >= 0 && configMap < workload, 'the ConfigMap is written before the workload re-apply')
+        assert.deepEqual(applied[configMap].data, { 'environments.json': '{"tenants":{}}' })
     })
 
     it('awaits rollout status on the env Deployment after the restart', async () =>

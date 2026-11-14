@@ -52,7 +52,8 @@ describe('GET /tenant-api/profile', () =>
         const { res, dto } = await Fx.Get(Fx.Tenant({ ownerPrincipalId: 'p1', ownerEmail: 'o@x.io' }), 'Acme', Fx.Session('p1', 'o@x.io'))
         assert.equal(res.status, 200)
         const wire = JSON.parse(res.body) as Record<string, unknown>
-        assert.ok('tenant' in wire && !('environment' in wire), 'the profile names the customer tenant "tenant"')
+        assert.ok('tenant' in wire, 'the profile names the customer tenant "tenant"')
+        assert.deepEqual(wire.environment, wire.tenant, 'the old field name is still sent for one release, for a portal page loaded before the upgrade')
         assert.equal(dto.tenant.displayName, 'Tenant One')
         assert.equal(dto.tenant.organisation, 'Acme')
         assert.deepEqual(dto.hive, { id: 'h1', displayName: 'Hive One' })
