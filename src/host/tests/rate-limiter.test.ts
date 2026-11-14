@@ -42,7 +42,7 @@ test('a drained bucket refills at the configured steady rate via the injected cl
     assert.equal(limiter.Check({ scope: RateLimitScope.Environment, environment: 't1', key: 't1' }).Allowed, false)
 })
 
-test('tenant and principal buckets are independent', () =>
+test('environment and principal buckets are independent', () =>
 {
     const clock = new FakeClock()
     const limiter = new TokenBucketRateLimiter({ perEnvironment: { Rps: 1, Burst: 1 }, perPrincipal: { Rps: 1, Burst: 1 } }, clock.Tick)
@@ -51,7 +51,7 @@ test('tenant and principal buckets are independent', () =>
     assert.equal(limiter.Check({ scope: RateLimitScope.Principal, environment: 't1', key: 'p1' }).Allowed, true)
 })
 
-test('two different tenants have independent buckets', () =>
+test('two different environments have independent buckets', () =>
 {
     const clock = new FakeClock()
     const limiter = new TokenBucketRateLimiter({ perEnvironment: { Rps: 1, Burst: 1 } }, clock.Tick)
@@ -78,7 +78,7 @@ test('Allow and Reject factory invariants', () =>
     assert.equal(RateLimitDecision.Reject(250).RetryAfterMs, 250)
 })
 
-test('the same principal id under two tenants has independent buckets', () =>
+test('the same principal id under two environments has independent buckets', () =>
 {
     const clock = new FakeClock()
     const limiter = new TokenBucketRateLimiter({ perPrincipal: { Rps: 1, Burst: 1 } }, clock.Tick)
@@ -87,7 +87,7 @@ test('the same principal id under two tenants has independent buckets', () =>
     assert.equal(limiter.Check({ scope: RateLimitScope.Principal, environment: 't2', key: 'alice' }).Allowed, true)
 })
 
-test('principal composite keys cannot collide across (tenant, key) pairs', () =>
+test('principal composite keys cannot collide across (environment, key) pairs', () =>
 {
     const clock = new FakeClock()
     const limiter = new TokenBucketRateLimiter({ perPrincipal: { Rps: 1, Burst: 1 } }, clock.Tick)

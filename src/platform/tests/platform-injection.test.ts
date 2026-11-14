@@ -18,7 +18,7 @@ class RecordingPlatform implements PlatformServices
     public static readonly PromptCall = 'prompt'
     public static readonly MasterKeyCall = 'masterKey'
     public static readonly IdentityStoresCall = 'identityStores'
-    public static readonly EnvironmentConfigCall = 'tenantConfig'
+    public static readonly EnvironmentConfigCall = 'realmConfig'
 
     private readonly inner = new NodePlatform()
     public readonly calls: string[] = []

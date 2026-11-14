@@ -118,9 +118,9 @@ class Sp1SecurityModel
 }
 
 /**
- * Stands up a one-tenant Runtime server inside the captured Docker image (same recipe as SP0): seeds a config
+ * Stands up a one-environment Runtime server inside the captured Docker image (same recipe as SP0): seeds a config
  * bundle, mounts it read-only, runs the published image, polls /healthz. Deliberately seeds NO security model,
- * so an identity-configured tenant fails closed until the admin configures roles live through the admin path.
+ * so an identity-configured environment fails closed until the admin configures roles live through the admin path.
  */
 class RuntimeEnvironment
 {
@@ -164,7 +164,7 @@ class RuntimeEnvironment
     private static readonly HealthTimeoutMs = 120000
     private static readonly HealthPollMs = 1000
     private static readonly ImageMissing = 'the pragmatic-server:sp1 image is absent: build it first (DOCKER_BUILDKIT=1 docker build -f pragmatic-server/docker/Dockerfile --secret id=npmrc,src=<npmrc> -t pragmatic-server:sp1 .)'
-    private static readonly HealthNeverReady = 'the runtime tenant container never reported /healthz=200'
+    private static readonly HealthNeverReady = 'the runtime environment container never reported /healthz=200'
     private static readonly PortEnv = 'PRAGMATIC_PORT=8080'
     private static readonly BaseDirEnv = 'PRAGMATIC_BASE_DIR=/home/pragmatic/data'
     private static readonly EnvironmentsFileEnv = 'PRAGMATIC_TENANTS_FILE=/cfg/tenants.json'
@@ -242,7 +242,7 @@ class RuntimeEnvironment
 
     public async StartAsync(): Promise<void>
     {
-        // Intentionally seed NO security model: an identity-configured tenant with none fails closed, so the
+        // Intentionally seed NO security model: an identity-configured environment with none fails closed, so the
         // admin's first create is denied until roles are configured live below (proving the gate + config path).
         await BundleBuilder.Generate(
             { name: RuntimeEnvironment.EnvName, kind: EnvKind.Dev, environmentId: RuntimeEnvironment.EnvironmentId, purpose: EnvironmentPurposeName.Runtime, hostPort: this.port },
@@ -506,8 +506,8 @@ test('SP1 capstone: generate a per-concept CRUD app, configure roles live, admin
         assert.equal(deployed.status, AppWriteStatus.Applied)
 
         // (c) Before any role config, an admin create is DENIED — the per-concept gate is real.
-        // This denial is FAIL-CLOSED: the tenant is seeded with NO security model, so an
-        // identity-configured tenant denies every write until roles are configured below. (Contrast
+        // This denial is FAIL-CLOSED: the environment is seeded with NO security model, so an
+        // identity-configured environment denies every write until roles are configured below. (Contrast
         // the post-config reader denial in step (f), which is the per-concept RULE denial — the reader
         // has coarse Write yet only a Read privilege on this concept.)
         admin = await DataSession.Open(environment, await environment.AdminBearer())

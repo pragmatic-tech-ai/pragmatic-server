@@ -17,7 +17,7 @@ export class ProvisionedSecretMissingError extends Error
     }
 }
 
-/** Writes a tenant's named secret refs through from a provisioned source into its encrypted store.
+/** Writes an environment's named secret refs through from a provisioned source into its encrypted store.
  *  The source is authoritative (write-through overwrites); a named ref satisfiable by neither the
  *  source nor the existing store fails closed. */
 export class EnvironmentSecretProvisioner

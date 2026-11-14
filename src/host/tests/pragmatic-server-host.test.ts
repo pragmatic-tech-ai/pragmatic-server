@@ -41,7 +41,7 @@ class HostFixture
     public static Options(baseDir: string): PragmaticServerHostOptions
     {
         process.env[HostFixture.KeyEnv] = randomBytes(32).toString('base64')
-        const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Tenant One' }]])
+        const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Environment One' }]])
         return { host: HostFixture.Host, port: 0, baseDir, masterKey: { base64Env: HostFixture.KeyEnv }, provisioning: new InMemoryEnvironmentProvisioning(entries) }
     }
 

@@ -63,7 +63,7 @@ test('a declared connection merges settings then inline Config (inline wins) (Re
     assert.equal(resolved.Config.database, 'override')
 })
 
-test('resolves the connection secretRef from the per-tenant secret store', async () =>
+test('resolves the connection secretRef from the per-environment secret store', async () =>
 {
     const resolver = new FileConnectionResolver(Fixture.Map([['crm', { Settings: { database: 'd' }, SecretRef: 't1/crm/pw' }]]))
     const resolved = await resolver.Resolve(Fixture.Spec({ Connection: 'crm' }), Fixture.Provider(new Map([['t1/crm/pw', 's3cr3t']])))

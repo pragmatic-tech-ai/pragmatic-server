@@ -3,10 +3,10 @@ import type { IConnectionResolver, ConnectorSpec, ResolvedConnection } from '@pr
 import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import type { ConnectorsPolicy } from './connector-policy.js'
 
-/** Enforces a tenant's ConnectorsPolicy at connection-resolve time (the seam the catalog hits on every
+/** Enforces an environment's ConnectorsPolicy at connection-resolve time (the seam the catalog hits on every
  *  adapter open): rejects a disallowed adapter kind; under catalog-only, inline resolution is never used —
  *  an unnamed spec is rejected, and a named spec resolves only when a catalog resolver is injected (the
- *  deferred named-connection catalog). With no such resolver a catalog-only tenant can open no connector
+ *  deferred named-connection catalog). With no such resolver a catalog-only environment can open no connector
  *  (fail-closed). Otherwise delegates to the inner resolver. The provider-override fields
  *  (AllowProviderOverride/ProviderAllowlist) are NOT enforced here: ConnectorSpec.Provider now exists, and that
  *  gate is enforced by the composed NpmAdapterPackProvider, which runs earlier (the catalog resolves the adapter
@@ -30,7 +30,7 @@ export class PolicyConnectionResolver implements IConnectionResolver
 
     public Resolve(spec: ConnectorSpec, services: IServiceProvider): Promise<ResolvedConnection>
     {
-        // The built-in default store is server-internal (a local file/SQLite under the tenant's own data root:
+        // The built-in default store is server-internal (a local file/SQLite under the environment's own data root:
         // no external reach, no credential), so it is exempt from the external-adapter policy.
         if (spec.Kind === DataSourceKind.Builtin)
         {

@@ -48,7 +48,7 @@ class UpgradeProbe
     }
 }
 
-test('a per-tenant upgrade breach returns 429 with Retry-After and audits a RateLimited Upgrade event', async () =>
+test('a per-environment upgrade breach returns 429 with Retry-After and audits a RateLimited Upgrade event', async () =>
 {
     const baseDir = mkdtempSync(join(tmpdir(), 'ps-base-'))
     mkdirSync(join(baseDir, 't1'), { recursive: true })
@@ -57,7 +57,7 @@ test('a per-tenant upgrade breach returns 429 with Retry-After and audits a Rate
     process.env[keyEnv] = randomBytes(32).toString('base64')
     const sink = new CapturingSink()
     const guard = new RateLimitGuard(new TokenBucketRateLimiter({ perEnvironment: { Rps: 0.001, Burst: 1 } }), sink)
-    const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Tenant One' }]])
+    const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Environment One' }]])
     const host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: keyEnv }, provisioning: new InMemoryEnvironmentProvisioning(entries), rateLimit: guard })
     const base = `ws://${host.Address().host}:${host.Address().port}/?environment=t1`
     try

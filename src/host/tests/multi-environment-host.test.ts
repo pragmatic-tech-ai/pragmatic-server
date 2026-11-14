@@ -69,7 +69,7 @@ class MtFixture
         return (await pack.Tokens.Issue(environment, environmentId, [], null)).Token
     }
 
-    /** Resolves once the host has seen every connection close (its close handler releases the tenant synchronously). */
+    /** Resolves once the host has seen every connection close (its close handler releases the environment synchronously). */
     public static async UntilReleased(host: PragmaticServerHost): Promise<void>
     {
         const deadline = Date.now() + MtFixture.ReleaseWaitMs
@@ -87,7 +87,7 @@ class MtFixture
     }
 }
 
-test('two tenants connect by hint and each opens only its own solution', async () =>
+test('two environments connect by hint and each opens only its own solution', async () =>
 {
     const { baseDir } = MtFixture.Start('t1', 't2')
     const host = await PragmaticServerHost.StartAsync(MtFixture.Options(baseDir, MtFixture.Provisioning('t1', 't2')))
@@ -120,7 +120,7 @@ test('two tenants connect by hint and each opens only its own solution', async (
     }
 })
 
-test('a token minted by tenant t1 presented with ?environment=t2 is rejected', async () =>
+test('a token minted by environment t1 presented with ?environment=t2 is rejected', async () =>
 {
     const { baseDir } = MtFixture.Start('t1', 't2')
     const host = await PragmaticServerHost.StartAsync(MtFixture.Options(baseDir, MtFixture.Provisioning('t1', 't2')))
@@ -138,7 +138,7 @@ test('a token minted by tenant t1 presented with ?environment=t2 is rejected', a
     }
 })
 
-test('an unprovisioned or missing tenant hint is rejected', async () =>
+test('an unprovisioned or missing environment hint is rejected', async () =>
 {
     const { baseDir } = MtFixture.Start('t1')
     const host = await PragmaticServerHost.StartAsync(MtFixture.Options(baseDir, MtFixture.Provisioning('t1')))
@@ -157,7 +157,7 @@ test('an unprovisioned or missing tenant hint is rejected', async () =>
     }
 })
 
-test('closing the only connection releases the tenant so an idle sweep evicts it', async () =>
+test('closing the only connection releases the environment so an idle sweep evicts it', async () =>
 {
     const { baseDir } = MtFixture.Start('t1')
     const host = await PragmaticServerHost.StartAsync(MtFixture.Options(baseDir, MtFixture.Provisioning('t1')))
@@ -184,7 +184,7 @@ test('closing the only connection releases the tenant so an idle sweep evicts it
     }
 })
 
-test('a platform passed in the host options is forwarded into the per-tenant server', async () =>
+test('a platform passed in the host options is forwarded into the per-environment server', async () =>
 {
     const { baseDir } = MtFixture.Start('t1')
     const platform = new RecordingPlatform()

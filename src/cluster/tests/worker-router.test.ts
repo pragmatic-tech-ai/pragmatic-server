@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { InMemoryWorkerRouter } from '../worker-router.js'
 
-test('routes every tenant to the single configured worker endpoint', async () =>
+test('routes every environment to the single configured worker endpoint', async () =>
 {
     const router = new InMemoryWorkerRouter({ host: '127.0.0.1', port: 9123 })
     const a = await router.RouteOrSpawn('t1')

@@ -57,7 +57,7 @@ test('an explicit identity wins over a flat oidc block', () =>
     assert.equal(environment?.identity?.PackId, 'entra')
 })
 
-test('a tenant with neither leaves identity and machine unset', () =>
+test('an environment with neither leaves identity and machine unset', () =>
 {
     const environment = FileEnvironmentProvisioning.FromText(Fixture.Environment({})).OptionsFor('acme')
     assert.equal(environment?.identity, undefined)
@@ -95,7 +95,7 @@ const MoreMalformed: [string, Record<string, unknown>, string][] = [
 
 for (const [name, extra, field] of MoreMalformed)
 {
-    test(`malformed tenant (${name}) fails closed naming the field without leaking values`, () =>
+    test(`malformed environment (${name}) fails closed naming the field without leaking values`, () =>
     {
         assert.throws(() => FileEnvironmentProvisioning.FromText(Fixture.Environment(extra)), (error: Error) =>
             error.message.includes(field) && !error.message.includes('Secret') && !error.message.includes(Secret))

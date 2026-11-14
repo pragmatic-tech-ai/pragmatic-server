@@ -256,7 +256,7 @@ class EngineRead
 }
 
 /**
- * The dev tenant's `model/view` and `model/resources` visibility (PragmaticServer.DevModelView()). STRUCTURE comes from
+ * The dev environment's `model/view` and `model/resources` visibility (PragmaticServer.DevModelView()). STRUCTURE comes from
  * the language service as before (nodes, attrs, edges, provenance, unsaved buffers included); instance VISIBILITY and
  * attribute MASKING come from the caller's engine scope (AccessScopeSource under DevScopeRules: with identity, access
  * depth and field security), read off the saved engine snapshot. The endpoint decides nothing beyond mapping the

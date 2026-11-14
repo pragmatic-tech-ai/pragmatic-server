@@ -34,7 +34,7 @@ class ModuleFixture
         return {
             identityRoot: this.identityRoot,
             masterKey: { base64Env: ModuleFixture.KeyEnv },
-            environment: { id: 't1', displayName: 'Tenant One' },
+            environment: { id: 't1', displayName: 'Environment One' },
             ...extra,
         }
     }
@@ -107,7 +107,7 @@ test('a machine map adds the Machine authenticator to the server pack', async ()
     }
 })
 
-test('a tenant with no identityConfig and no oidc falls back to a local-only pack', async () =>
+test('an environment with no identityConfig and no oidc falls back to a local-only pack', async () =>
 {
     const fixture = new ModuleFixture()
     const server = fixture.Server(fixture.Identity({}))

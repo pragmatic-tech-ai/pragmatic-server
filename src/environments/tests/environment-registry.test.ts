@@ -60,7 +60,7 @@ class RegistryFixture
     }
 }
 
-test('two tenants get isolated servers that each see only their own solution', async () =>
+test('two environments get isolated servers that each see only their own solution', async () =>
 {
     const { baseDir, fixture } = RegistryFixture.Dirs()
     const s1 = RegistryFixture.SeedSolution(baseDir, 't1', fixture)
@@ -88,7 +88,7 @@ test('two tenants get isolated servers that each see only their own solution', a
     }
 })
 
-test('an unprovisioned tenant is rejected with no server created', async () =>
+test('an unprovisioned environment is rejected with no server created', async () =>
 {
     const { baseDir } = RegistryFixture.Dirs()
     const registry = RegistryFixture.Registry(baseDir, RegistryFixture.Provisioning('t1'))
@@ -104,7 +104,7 @@ test('an unprovisioned tenant is rejected with no server created', async () =>
     }
 })
 
-test('idle-evict disposes a zero-connection tenant; a connected one survives; re-request cold-rebuilds', async () =>
+test('idle-evict disposes a zero-connection environment; a connected one survives; re-request cold-rebuilds', async () =>
 {
     const { baseDir } = RegistryFixture.Dirs()
     const registry = RegistryFixture.Registry(baseDir, RegistryFixture.Provisioning('t1', 't2'))
@@ -115,7 +115,7 @@ test('idle-evict disposes a zero-connection tenant; a connected one survives; re
         registry.Acquire('t2') // t2 has a live connection
         await registry.EvictIdle(Number.MAX_SAFE_INTEGER, 0)
         assert.notEqual(await registry.ServerFor('t1'), first) // t1 was evicted -> cold rebuild = new instance
-        assert.equal(await registry.ServerFor('t2'), t2) // connected tenant survived
+        assert.equal(await registry.ServerFor('t2'), t2) // connected environment survived
         registry.Release('t2')
     }
     finally
@@ -126,7 +126,7 @@ test('idle-evict disposes a zero-connection tenant; a connected one survives; re
     }
 })
 
-test('concurrent cold builds of the same tenant dedupe to one server', async () =>
+test('concurrent cold builds of the same environment dedupe to one server', async () =>
 {
     const { baseDir } = RegistryFixture.Dirs()
     const registry = RegistryFixture.Registry(baseDir, RegistryFixture.Provisioning('t1'))
@@ -143,7 +143,7 @@ test('concurrent cold builds of the same tenant dedupe to one server', async () 
     }
 })
 
-test('TenantRegistry threads the injected platform to each tenant server', async () =>
+test('EnvironmentRegistry threads the injected platform to each environment server', async () =>
 {
     const { baseDir } = RegistryFixture.Dirs()
     process.env[RegistryFixture.KeyEnv] = randomBytes(32).toString('base64')
@@ -162,7 +162,7 @@ test('TenantRegistry threads the injected platform to each tenant server', async
     }
 })
 
-test('TenantRegistry threads deploymentMode: Cloud with no platform fails closed', async () =>
+test('EnvironmentRegistry threads deploymentMode: Cloud with no platform fails closed', async () =>
 {
     const { baseDir } = RegistryFixture.Dirs()
     process.env[RegistryFixture.KeyEnv] = randomBytes(32).toString('base64')

@@ -8,7 +8,7 @@ class Configs
 {
     public static Single(): ServerConfig
     {
-        return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { keyFilePath: '/k' }, deploymentMode: DeploymentMode.Local, singleEnvironment: { id: 't1', displayName: 'Tenant One' } }
+        return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { keyFilePath: '/k' }, deploymentMode: DeploymentMode.Local, singleEnvironment: { id: 't1', displayName: 'Environment One' } }
     }
 
     public static File(): ServerConfig
@@ -17,10 +17,10 @@ class Configs
     }
 }
 
-test('builds a single-tenant provisioning from env config', () =>
+test('builds a single-environment provisioning from env config', () =>
 {
     const result = EnvironmentProvisioningFactory.Build(Configs.Single(), () => { throw new Error('no read') })
-    assert.equal(result.provisioning.OptionsFor('t1')?.displayName, 'Tenant One')
+    assert.equal(result.provisioning.OptionsFor('t1')?.displayName, 'Environment One')
     assert.equal(result.provisioning.OptionsFor('other'), null)
     assert.equal(result.environmentCount, 1)
 })

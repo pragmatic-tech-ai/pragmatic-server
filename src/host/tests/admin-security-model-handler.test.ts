@@ -113,9 +113,9 @@ test('refused set leaves the setting unchanged', async () =>
     })
 })
 
-test('development tenant refuses the setting', async () =>
+test('development environment refuses the setting', async () =>
 {
-    // a Development tenant's server gives the admin service no security setting (PragmaticServer.SecurityAdmin, PR13)
+    // a Development environment's server gives the admin service no security setting (PragmaticServer.SecurityAdmin, PR13)
     await AdminClient.Run(async (server, admin) =>
     {
         const before = await AdminClient.Stored(server)

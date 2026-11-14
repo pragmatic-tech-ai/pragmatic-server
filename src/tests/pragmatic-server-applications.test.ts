@@ -17,20 +17,20 @@ class ApplicationsServerFixture
     }
 }
 
-test('Applications throws on a development tenant', () =>
+test('Applications throws on a development environment', () =>
 {
     const f = new ApplicationsServerFixture()
     try
     {
         const server = new PragmaticServer({ applicationsRoot: f.Dir })
-        assert.throws(() => server.Applications(), /runtime-tenant feature/)
+        assert.throws(() => server.Applications(), /runtime-environment feature/)
         const dev = new PragmaticServer({ purpose: EnvironmentPurpose.Development, applicationsRoot: f.Dir })
-        assert.throws(() => dev.Applications(), /runtime-tenant feature/)
+        assert.throws(() => dev.Applications(), /runtime-environment feature/)
     }
     finally { f.Dispose() }
 })
 
-test('Applications and AppsStorage are memoised on a runtime tenant', () =>
+test('Applications and AppsStorage are memoised on a runtime environment', () =>
 {
     const f = new ApplicationsServerFixture()
     try
@@ -42,7 +42,7 @@ test('Applications and AppsStorage are memoised on a runtime tenant', () =>
     finally { f.Dispose() }
 })
 
-test('Applications throws when a runtime tenant has no applicationsRoot', () =>
+test('Applications throws when a runtime environment has no applicationsRoot', () =>
 {
     const server = new PragmaticServer({ purpose: EnvironmentPurpose.Runtime })
     assert.throws(() => server.Applications(), /applicationsRoot is required/)

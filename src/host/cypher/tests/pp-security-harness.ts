@@ -11,8 +11,8 @@ export class PpSecurityHarness
     public static readonly OwningBuField = 'owningBu'
     public static readonly SalesBu = 'sales'
     public static readonly RootBu = 'root'
-    private static readonly EnvironmentName = 'Tenant One'
-    private static readonly NotSeededError = 'tenant config was not seeded on boot'
+    private static readonly EnvironmentName = 'Environment One'
+    private static readonly NotSeededError = 'realm config was not seeded on boot'
 
     public static SetKey(): void
     {

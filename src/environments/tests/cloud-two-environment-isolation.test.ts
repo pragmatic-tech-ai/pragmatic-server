@@ -42,8 +42,8 @@ class TwoEnvironmentFixture
     public static Provisioning(): InMemoryEnvironmentProvisioning
     {
         const entries = new Map<string, EnvironmentProvisioning>([
-            [TwoEnvironmentFixture.EnvironmentOneId, { displayName: 'Tenant One', bootstrap: { adminEmail: TwoEnvironmentFixture.Admin1Email, adminPrincipalId: TwoEnvironmentFixture.Admin1Id, adminPasswordRef: TwoEnvironmentFixture.Admin1Ref, ownerGrant: true } }],
-            [TwoEnvironmentFixture.EnvironmentTwoId, { displayName: 'Tenant Two', bootstrap: { adminEmail: TwoEnvironmentFixture.Admin2Email, adminPrincipalId: TwoEnvironmentFixture.Admin2Id, adminPasswordRef: TwoEnvironmentFixture.Admin2Ref, ownerGrant: true } }],
+            [TwoEnvironmentFixture.EnvironmentOneId, { displayName: 'Environment One', bootstrap: { adminEmail: TwoEnvironmentFixture.Admin1Email, adminPrincipalId: TwoEnvironmentFixture.Admin1Id, adminPasswordRef: TwoEnvironmentFixture.Admin1Ref, ownerGrant: true } }],
+            [TwoEnvironmentFixture.EnvironmentTwoId, { displayName: 'Environment Two', bootstrap: { adminEmail: TwoEnvironmentFixture.Admin2Email, adminPrincipalId: TwoEnvironmentFixture.Admin2Id, adminPasswordRef: TwoEnvironmentFixture.Admin2Ref, ownerGrant: true } }],
         ])
         return new InMemoryEnvironmentProvisioning(entries)
     }
@@ -87,7 +87,7 @@ class TwoEnvironmentFixture
     }
 }
 
-test('two cloud tenants over one DB + object store authenticate independently and stay isolated', async () =>
+test('two cloud environments over one DB + object store authenticate independently and stay isolated', async () =>
 {
     await TwoEnvironmentFixture.Run()
 })

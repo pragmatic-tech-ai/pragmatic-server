@@ -77,7 +77,7 @@ class Fixtures
     }
 }
 
-test('the gateway rejects a per-tenant upgrade breach with 429 + Retry-After before routing', async () =>
+test('the gateway rejects a per-environment upgrade breach with 429 + Retry-After before routing', async () =>
 {
     const router = new CountingRouter()
     const gateway = await Gateway.StartAsync({ port: 0, router, tls: Fixtures.ServerTls(), rateLimit: Fixtures.Guard() })
@@ -97,7 +97,7 @@ test('the gateway rejects a per-tenant upgrade breach with 429 + Retry-After bef
     }
 })
 
-test('the worker host rejects a per-tenant upgrade breach with 429 + Retry-After', async () =>
+test('the worker host rejects a per-environment upgrade breach with 429 + Retry-After', async () =>
 {
     const baseDir = mkdtempSync(join(tmpdir(), 'ps-wh-rl-'))
     mkdirSync(join(baseDir, 't1'), { recursive: true })

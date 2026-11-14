@@ -112,7 +112,7 @@ namespace shop {
     }
 }
 
-test('a tenant opens a connector through a file-declared connection; an undeclared connection fails closed (Review Focus 1, 2)', async () =>
+test('an environment opens a connector through a file-declared connection; an undeclared connection fails closed (Review Focus 1, 2)', async () =>
 {
     await Fixture.Run()
 })

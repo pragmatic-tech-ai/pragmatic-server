@@ -11,8 +11,8 @@ export interface IBundleBuilder
 /** Seeds an environment's users over its admin protocol. */
 export interface IUserSeeder
 {
-    Login(baseHttpUrl: string, tenant: string, email: string, password: string): Promise<string>
-    Connect(wsUrl: string, tenant: string, token: string): Promise<unknown>
+    Login(baseHttpUrl: string, environment: string, email: string, password: string): Promise<string>
+    Connect(wsUrl: string, environment: string, token: string): Promise<unknown>
     SeedUsers(conn: unknown, users: UserSeed[]): Promise<void>
     Dispose(conn: unknown): void
 }
@@ -31,14 +31,14 @@ export class UserSeederAdapter implements IUserSeeder
     {
     }
 
-    public Login(baseHttpUrl: string, tenant: string, email: string, password: string): Promise<string>
+    public Login(baseHttpUrl: string, environment: string, email: string, password: string): Promise<string>
     {
-        return this.seeder.Login(baseHttpUrl, tenant, email, password)
+        return this.seeder.Login(baseHttpUrl, environment, email, password)
     }
 
-    public Connect(wsUrl: string, tenant: string, token: string): Promise<unknown>
+    public Connect(wsUrl: string, environment: string, token: string): Promise<unknown>
     {
-        return this.seeder.Connect(wsUrl, tenant, token)
+        return this.seeder.Connect(wsUrl, environment, token)
     }
 
     public SeedUsers(conn: unknown, users: UserSeed[]): Promise<void>

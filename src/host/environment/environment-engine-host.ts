@@ -34,7 +34,7 @@ export type EnvironmentSnapshot = IEngineSnapshot & {
 }
 
 /**
- * The runtime-side promote seam a runtime tenant exposes (`graph/load`, `graph/loaded`); the handler reaches it without
+ * The runtime-side promote seam a runtime environment exposes (`graph/load`, `graph/loaded`); the handler reaches it without
  * knowing the server type.
  */
 export interface IEnvironmentGraphHost
@@ -232,7 +232,7 @@ class OpenedEnvironment implements IDisposable
 
 /**
  * The ONE embedded graph engine of a runtime environment (rulings S2, S3, S4). It lives inside the runtime
- * `PragmaticServer`, which `TenantRegistry` builds only while it holds the tenant-ownership lease; `dispose()` (lease
+ * `PragmaticServer`, which `EnvironmentRegistry` builds only while it holds the environment-ownership lease; `dispose()` (lease
  * lost, idle eviction, shutdown) disposes the engine, which closes the store.
  *
  * Opens lazily on first use over the catalog `EnvironmentCatalogComposer.Compose` builds from `deliveries.Current()`
@@ -271,7 +271,7 @@ class OpenedEnvironment implements IDisposable
  */
 export class EnvironmentEngineHost implements IGraphEngineHost, IDeliveryGate, IDisposable
 {
-    /** The store directory under the tenant's graphs root (Q7). */
+    /** The store directory under the environment's graphs root (Q7). */
     public static readonly StoreDir = 'environment-engine'
     public static readonly PrepareTimeoutMs = 30000
     public static readonly OpenAttempts = 3

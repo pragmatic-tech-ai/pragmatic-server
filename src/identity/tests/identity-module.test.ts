@@ -141,7 +141,7 @@ test('an active provisioned source seeds the admin with no manual Put', async ()
     }
 })
 
-test('an active source missing a named ref fails the tenant build closed (Review Focus 1, 5)', async () =>
+test('an active source missing a named ref fails the environment build closed (Review Focus 1, 5)', async () =>
 {
     const { identityRoot, packagesRoot, keyEnv } = IdentityFixture.Dirs()
     const base = IdentityFixture.Options(identityRoot, packagesRoot, keyEnv)

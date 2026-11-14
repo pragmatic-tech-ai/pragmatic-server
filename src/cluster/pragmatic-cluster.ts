@@ -24,7 +24,7 @@ export interface ClusterOptions
 }
 
 /** In-process gateway + worker composition over a real loopback mutual-TLS wss channel.
- *  Starts a WorkerHost on an ephemeral port, routes every tenant to it, and fronts it with a public-ws Gateway. */
+ *  Starts a WorkerHost on an ephemeral port, routes every environment to it, and fronts it with a public-ws Gateway. */
 export class PragmaticCluster
 {
     private static readonly DefaultHost = '127.0.0.1'

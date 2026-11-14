@@ -12,13 +12,13 @@ class Fixture
 {
     public static Config(mode: DeploymentMode): ServerConfig
     {
-        return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { keyFilePath: '/run/secrets/key' }, deploymentMode: mode, singleEnvironment: { id: 't1', displayName: 'Tenant One' }, idleTtlMs: 1000 }
+        return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { keyFilePath: '/run/secrets/key' }, deploymentMode: mode, singleEnvironment: { id: 't1', displayName: 'Environment One' }, idleTtlMs: 1000 }
     }
 
     public static Provisioning(): InMemoryEnvironmentProvisioning
     {
         const entries = new Map<string, EnvironmentProvisioning>()
-        entries.set('t1', { displayName: 'Tenant One' })
+        entries.set('t1', { displayName: 'Environment One' })
         return new InMemoryEnvironmentProvisioning(entries)
     }
 }

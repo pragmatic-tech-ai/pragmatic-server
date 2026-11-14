@@ -12,7 +12,7 @@ class ScopeFixture
 {
     public static readonly Custom = 'custom'
     public static readonly EnvironmentId = 't1'
-    public static readonly EnvironmentName = 'Tenant One'
+    public static readonly EnvironmentName = 'Environment One'
     public static readonly ServiceId = 'svc1'
     public static readonly Email = 'a@x.io'
     public static readonly Password = 'pw-123456'

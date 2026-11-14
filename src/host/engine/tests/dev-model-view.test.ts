@@ -281,7 +281,7 @@ class ViewFx
     public static readonly OwnerId = 'p1'
     public static readonly OtherId = 'p2'
     public static readonly ReaderId = 'u1'
-    public static readonly EnvironmentName = 'Tenant One'
+    public static readonly EnvironmentName = 'Environment One'
     public static readonly All = 1000
 }
 

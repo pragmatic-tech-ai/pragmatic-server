@@ -1,4 +1,4 @@
-/** A read-only lookup of provisioned secret values, keyed by the ref strings used in tenant config. */
+/** A read-only lookup of provisioned secret values, keyed by the ref strings used in environment config. */
 export interface IProvisionedSecretSource
 {
     Lookup(reference: string): string | null

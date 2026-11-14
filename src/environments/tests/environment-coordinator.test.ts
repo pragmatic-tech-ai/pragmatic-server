@@ -12,7 +12,7 @@ class Clock
     }
 }
 
-test('an idle tenant past the TTL is an evict candidate; a fresh one is not', () =>
+test('an idle environment past the TTL is an evict candidate; a fresh one is not', () =>
 {
     const clock = new Clock()
     const coordinator = new InMemoryEnvironmentCoordinator(clock.Now)
@@ -22,7 +22,7 @@ test('an idle tenant past the TTL is an evict candidate; a fresh one is not', ()
     assert.deepEqual(coordinator.EvictCandidates(999, 1000), [])
 })
 
-test('a tenant with an active connection is never an evict candidate', () =>
+test('an environment with an active connection is never an evict candidate', () =>
 {
     const clock = new Clock()
     const coordinator = new InMemoryEnvironmentCoordinator(clock.Now)
@@ -34,7 +34,7 @@ test('a tenant with an active connection is never an evict candidate', () =>
     assert.deepEqual(coordinator.EvictCandidates(clock.Value + 1000, 1000), ['t1'])
 })
 
-test('Release clamps at zero and Forget drops the tenant', () =>
+test('Release clamps at zero and Forget drops the environment', () =>
 {
     const coordinator = new InMemoryEnvironmentCoordinator(() => 0)
     coordinator.Note('t1')

@@ -143,7 +143,7 @@ describe('SettingsPageViewModel', () =>
         ])
         const sparse = Fixture.Api()
         sparse.ProfileDto = {
-            principalId: 'p', roleLabel: 'Viewer', environment: { id: 't', displayName: 'T' },
+            principalId: 'p', roleLabel: 'Viewer', tenant: { id: 't', displayName: 'T' },
             capabilities: TenantTestHost.AllCapabilities,
         }
         const other = await Fixture.Page(sparse)

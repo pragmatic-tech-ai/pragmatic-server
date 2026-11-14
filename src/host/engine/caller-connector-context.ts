@@ -16,7 +16,7 @@ export class CallerConnectorContext
         return ConnectorContext.For(principal.Id)
     }
 
-    /** The environment's system principal's context: Key = `SystemPrincipal.IdFor(tenant.Id)`. */
+    /** The environment's system principal's context: Key = `SystemPrincipal.IdFor(realm.Id)`. */
     public static System(realm: Realm): ConnectorContext
     {
         return ConnectorContext.For(SystemPrincipal.IdFor(realm.Id))

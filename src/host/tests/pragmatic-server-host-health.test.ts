@@ -14,7 +14,7 @@ class HealthFixture
     public static Provisioning(): InMemoryEnvironmentProvisioning
     {
         const entries = new Map<string, EnvironmentProvisioning>()
-        entries.set('t1', { displayName: 'Tenant One' })
+        entries.set('t1', { displayName: 'Environment One' })
         return new InMemoryEnvironmentProvisioning(entries)
     }
 
@@ -52,7 +52,7 @@ test('a started host answers /healthz and /readyz with 200', async () =>
     }
 })
 
-test('an unknown path without a tenant hint still 404s (health does not shadow it)', async () =>
+test('an unknown path without an environment hint still 404s (health does not shadow it)', async () =>
 {
     const dir = mkdtempSync(join(tmpdir(), 'ph8-health-'))
     const keyPath = join(dir, 'key')

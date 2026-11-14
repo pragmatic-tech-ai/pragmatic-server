@@ -53,7 +53,7 @@ class MachineHarness
     }
 }
 
-test('a Local tenant with a machine map authenticates a mapped fingerprint as a Machine principal', async () =>
+test('a Local realm with a machine map authenticates a mapped fingerprint as a Machine principal', async () =>
 {
     const fixture = new ResolverFixture()
     try
@@ -104,7 +104,7 @@ test('an empty machine map adds no Machine authenticator', async () =>
     }
 })
 
-test('an Entra tenant keeps the OIDC authenticator alongside the Machine one', async () =>
+test('an Entra realm keeps the OIDC authenticator alongside the Machine one', async () =>
 {
     const fixture = new ResolverFixture()
     try

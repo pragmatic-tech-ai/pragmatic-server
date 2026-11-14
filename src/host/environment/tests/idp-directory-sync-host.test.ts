@@ -302,7 +302,7 @@ describe('idp directory sync host', () =>
         assert.equal(fx.source.Requests.length, 0, 'a disposed host does not sync')
     })
 
-    test('a runtime tenant syncs when it starts serving, without any connection', async () =>
+    test('a runtime environment syncs when it starts serving, without any connection', async () =>
     {
         const fx = new EnvironmentFixture()
         let restarted: PragmaticServer | undefined

@@ -11,7 +11,7 @@ export interface EnvironmentProvisioningResult
 
 export class EnvironmentProvisioningFactory
 {
-    private static readonly NoSource = 'no tenant source in config'
+    private static readonly NoSource = 'no environment source in config'
 
     public static Build(config: ServerConfig, readTextFile: (path: string) => string): EnvironmentProvisioningResult
     {

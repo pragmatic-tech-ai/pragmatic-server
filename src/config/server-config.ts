@@ -25,7 +25,7 @@ export interface AdapterPacksEviction
     readonly maxAgeMs?: number
 }
 
-/** Deployment-global adapter-pack settings; each tenant builds its own provider from these plus its ConnectorsPolicy gate. */
+/** Deployment-global adapter-pack settings; each environment builds its own provider from these plus its ConnectorsPolicy gate. */
 export interface AdapterPacksConfig
 {
     readonly cacheDir: string

@@ -13,10 +13,10 @@ export interface ResolvedPack
     Oidc: OidcIdentityProviderPackBase | undefined
 }
 
-/** Resolves a tenant's composite identity pack from its stored IdentityConfig: the base ServerIdentityPack
+/** Resolves a realm's composite identity pack from its stored IdentityConfig: the base ServerIdentityPack
  *  authenticators (service-token + local-password) plus, for an OIDC pack id, the cloud Entra/Google pack's
  *  depth-aware OIDC authenticator, at the config's delegation depth (and Entra's on-behalf-of source tokens). The
- *  OIDC pack is wired over the SAME tenant store-set so group->grant writes are read back by the resource policy. */
+ *  OIDC pack is wired over the SAME realm store-set so group->grant writes are read back by the resource policy. */
 export class IdentityPackResolver
 {
     private static readonly GenericScopes: readonly string[] = ['openid', 'email', 'profile']

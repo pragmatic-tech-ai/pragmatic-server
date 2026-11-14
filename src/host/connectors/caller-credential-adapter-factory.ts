@@ -117,7 +117,7 @@ export class Capabilities
 
 /**
  * A connection in caller's-identity mode (spec section 6, PR12; ruling R28). Each Query / QueryPage / Apply acquires
- * the caller's source token (`SourceTokenRequest(tenant, context.Key, resource)`) and runs on that principal's own
+ * the caller's source token (`SourceTokenRequest(realm, context.Key, resource)`) and runs on that principal's own
  * inner adapter, opened with the token as its secret; the inner adapter is reopened when the token is renewed (the old
  * one is disposed once its in-flight calls end). Inner adapters are keyed by the context key and never lent across
  * principals; the connection's own secret (app credentials) is never used, and no adapter is ever opened without a

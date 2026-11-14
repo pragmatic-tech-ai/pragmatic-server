@@ -31,14 +31,14 @@ class AdminGateFixture
 
     public static Gate(role: Role | null): PolicyGate
     {
-        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const grants = role === null ? [] : [new Grant('p1', role, new ResourceRef(ResourceKind.Realm, 't1', []))]
         return new PolicyGate(new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy()), () => [])
     }
 }
 
-test('Admin and Owner tenant grants are allowed every admin method', () =>
+test('Admin and Owner realm grants are allowed every admin method', () =>
 {
     for (const role of [Role.Admin, Role.Owner])
     {

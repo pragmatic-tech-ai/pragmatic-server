@@ -70,7 +70,7 @@ export class ResolverFixture
         ])
     }
 
-    /** Resolve a pack for one tenant, run begin, mint a matching id_token, and arm the token endpoint. */
+    /** Resolve a pack for one realm, run begin, mint a matching id_token, and arm the token endpoint. */
     public async Flow(packId: string, issuer: string, settings: Map<string, string>, depth: DelegationDepth, groupRoleMap: ReadonlyMap<string, Role>, groupsClaim: string)
     {
         const idp = await FakeOidcIdp.Create(issuer)

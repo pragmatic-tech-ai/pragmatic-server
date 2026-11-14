@@ -18,7 +18,7 @@ export interface ISecuritySettingDiagnostics
 /** Reports an unreadable setting as one warning on the server logger, by error name only (no setting content). */
 export class LoggerSecuritySettingDiagnostics implements ISecuritySettingDiagnostics
 {
-    private static readonly Line = 'security setting unreadable, environment denies all access: tenant '
+    private static readonly Line = 'security setting unreadable, environment denies all access: environment '
     private static readonly Separator = ': '
 
     public constructor(private readonly logger: ILogger = StructuredLogger.ToStdout())
@@ -96,8 +96,8 @@ export class EnvironmentSecuritySetting implements IDisposable
     }
 
     /**
-     * Stores `config` as the setting, keeping the tenant config's other sections (as the admin save does), then
-     * `Invalidate`; call inside `Exclusive`. Nothing is stored when the tenant has no stored config (it then holds no
+     * Stores `config` as the setting, keeping the realm config's other sections (as the admin save does), then
+     * `Invalidate`; call inside `Exclusive`. Nothing is stored when the realm has no stored config (it then holds no
      * setting either).
      */
     public async Replace(config: ISecurityModelConfig): Promise<void>

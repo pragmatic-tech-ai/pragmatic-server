@@ -119,7 +119,7 @@ class CapstoneFx
         return new Principal(id, EnvironmentFixture.EnvironmentId, PrincipalKind.User, new Map(), [])
     }
 
-    /** An admin-wire connection as `principalId` (tenant Owner), over the admin service the host builds. */
+    /** An admin-wire connection as `principalId` (realm Owner), over the admin service the host builds. */
     public async Admin(principalId: string): Promise<WsAdminConnection>
     {
         const server = this.Server

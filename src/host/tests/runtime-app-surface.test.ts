@@ -28,11 +28,11 @@ class RuntimeSurfaceFixture
     public static readonly AppA = 'demo'
     public static readonly ServiceLabels = 'MATCH (a:Service) RETURN a.label'
     public static readonly Alpha = 'alpha'
-    public static readonly NotRuntime = /operation requires a runtime tenant/
+    public static readonly NotRuntime = /operation requires a runtime environment/
     public static readonly NameMismatch = /does not match requested name/
     public static readonly EnvironmentId = 't1'
     public static readonly PrincipalId = 'p1'
-    public static readonly EnvironmentName = 'Tenant One'
+    public static readonly EnvironmentName = 'Environment One'
     public static readonly Renamed = 'other-name'
 
     public readonly Packages = mkdtempSync(join(tmpdir(), RuntimeSurfaceFixture.PkgPrefix))
@@ -138,7 +138,7 @@ class RuntimeSurfaceFixture
     }
 }
 
-test('runtime e2e: runtime tenant rejects solution/open (cross-purpose)', async () =>
+test('runtime e2e: runtime environment rejects solution/open (cross-purpose)', async () =>
 {
     await RuntimeSurfaceFixture.Run(async fx =>
     {
@@ -147,7 +147,7 @@ test('runtime e2e: runtime tenant rejects solution/open (cross-purpose)', async 
     })
 })
 
-test('runtime e2e: development tenant rejects application/* but still queries its solution', async () =>
+test('runtime e2e: development environment rejects application/* but still queries its solution', async () =>
 {
     await RuntimeSurfaceFixture.Run(async fx =>
     {

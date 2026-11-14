@@ -158,10 +158,10 @@ test('CreateRuntime answers the fixed keys over the opened reach, grants only th
     const h = new Harness()
     const d = await h.orchestrator.CreateRuntime()
     const round = JSON.parse(JSON.stringify(d)) as RuntimeDescriptor
-    assert.deepEqual(Object.keys(round).sort(), ['appOriginBase', 'reader', 'runtimeEnv', 'runtimeWsUrl', 'tenant', 'ungranted'])
+    assert.deepEqual(Object.keys(round).sort(), ['appOriginBase', 'environment', 'reader', 'runtimeEnv', 'runtimeWsUrl', 'ungranted'])
     assert.equal(round.appOriginBase, Fixture.Origin)
     assert.equal(round.runtimeWsUrl, 'ws://localhost:18100/?environment=loop-rt')
-    assert.equal(round.tenant, 'loop-rt')
+    assert.equal(round.environment, 'loop-rt')
     assert.deepEqual(h.envs.created[0], { name: 'loop-rt', template: Template.RuntimePostgres, type: EnvType.Runtime })
     assert.deepEqual(h.reach.opened, ['loop-rt'])
     assert.deepEqual(h.envs.accounts.map(a => a.email), ['r@t.io', 'u@t.io'])

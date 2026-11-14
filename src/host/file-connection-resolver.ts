@@ -3,7 +3,7 @@ import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import { SecretStoreKey } from '@pragmatic-tech-ai/todl-identity'
 
 /** A file-declared external connection: flat string settings merged into the resolved Config, plus an optional
- *  by-reference secret (resolved from the per-tenant secret store) or an environment-variable token. */
+ *  by-reference secret (resolved from the per-environment secret store) or an environment-variable token. */
 export interface FileConnection
 {
     Settings: Record<string, string>
@@ -11,13 +11,13 @@ export interface FileConnection
     TokenEnvVar?: string
 }
 
-/** A model referenced a named connection the tenant did not declare. */
+/** A model referenced a named connection the environment did not declare. */
 export class ConnectionNotDeclaredError extends Error
 {
     private static readonly ErrorName = 'ConnectionNotDeclaredError'
     private static readonly Prefix = "connector '"
     private static readonly Middle = "': connection '"
-    private static readonly Suffix = "' is not declared for this tenant"
+    private static readonly Suffix = "' is not declared for this environment"
 
     public readonly Connector: string
     public readonly Connection: string
@@ -31,8 +31,8 @@ export class ConnectionNotDeclaredError extends Error
     }
 }
 
-/** Resolves a connector spec against a per-tenant map of file-declared connections: merges a named connection's
- *  settings with the model's inline Config (inline wins) and resolves the secret from the per-tenant secret store
+/** Resolves a connector spec against a per-environment map of file-declared connections: merges a named connection's
+ *  settings with the model's inline Config (inline wins) and resolves the secret from the per-environment secret store
  *  or an environment variable. An inline spec (no Connection) passes through; an undeclared connection fails closed. */
 export class FileConnectionResolver implements IConnectionResolver
 {

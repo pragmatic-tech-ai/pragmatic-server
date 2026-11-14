@@ -107,7 +107,7 @@ describe('TenantApiClient fetch', () =>
             principalId: 'p',
             email: 'a@b',
             roleLabel: 'Tenant owner',
-            environment: { id: 't', displayName: 'T', organisation: 'Org' },
+            tenant: { id: 't', displayName: 'T', organisation: 'Org' },
             hive: { id: 'h', displayName: 'H' },
             capabilities: { envs: true, adopt: true, access: true, settings: true },
             ownerContact: 'o@b'
@@ -240,7 +240,7 @@ describe('TenantApiClient admin (users and access)', () =>
 
     it('GetAdminSnapshot GETs the snapshot route and returns accounts + grants', async () =>
     {
-        const snap = { accounts: [{ principalId: 'p1', email: 'a@b', disabled: false }], grants: [{ subject: 'p1', role: 'Admin', resourceKind: 'Tenant', resourcePath: [] }] }
+        const snap = { accounts: [{ principalId: 'p1', email: 'a@b', disabled: false }], grants: [{ subject: 'p1', role: 'Admin', resourceKind: 'Realm', resourcePath: [] }] }
         FetchStub.Install(snap)
         assert.deepEqual(await new TestClient(new FakeWebSocketFactory()).GetAdminSnapshot('envA'), snap)
         assert.equal(FetchStub.Calls[0]!.route, '/tenant-api/environments/envA/admin/snapshot')

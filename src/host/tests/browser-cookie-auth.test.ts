@@ -67,7 +67,7 @@ class CookieFixture
         this.baseDir = mkdtempSync(join(tmpdir(), 'ps-cookie-'))
         process.env[CookieFixture.KeyEnv] = randomBytes(32).toString('base64')
         const entries = new Map<string, EnvironmentProvisioning>([['t1', {
-            displayName: 'Tenant One',
+            displayName: 'Environment One',
             bootstrap: { adminEmail: CookieFixture.Email, adminPrincipalId: 'admin', adminPasswordRef: 't1-admin-pw', ownerGrant: true },
         }]])
         this.host = await PragmaticServerHost.StartAsync({
@@ -211,7 +211,7 @@ test('WebSocket is denied for a disallowed or missing Origin even with a valid c
     }
 })
 
-test('missing, forged, wrong-tenant and revoked cookies are denied with a clean 401', async () =>
+test('missing, forged, wrong-environment and revoked cookies are denied with a clean 401', async () =>
 {
     const fixture = new CookieFixture()
     await fixture.StartAsync()

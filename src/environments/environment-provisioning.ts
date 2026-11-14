@@ -17,8 +17,8 @@ export interface EnvironmentProvisioning
     machine?: MachinePrincipalMap
 }
 
-/** Source of per-tenant provisioning (display name + optional bootstrap/OIDC). 5B/5C back this with a
- *  RealmConfigStore; 5A uses an in-memory map. OptionsFor returns null for an unprovisioned tenant. */
+/** Source of per-environment provisioning (display name + optional bootstrap/OIDC). 5B/5C back this with a
+ *  RealmConfigStore; 5A uses an in-memory map. OptionsFor returns null for an unprovisioned environment. */
 export interface IEnvironmentProvisioning
 {
     OptionsFor(environmentId: string): EnvironmentProvisioning | null

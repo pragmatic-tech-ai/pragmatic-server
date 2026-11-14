@@ -6,7 +6,7 @@ import type { IRateLimiter, RateLimitRequest } from './rate-limiter.js'
 import { NullAccessAuditSink, AuditOutcome } from './access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent, AuditSurface } from './access-audit.js'
 
-/** The non-limiter context a rejection needs to audit itself: surface, tenant (metric label), the method/path,
+/** The non-limiter context a rejection needs to audit itself: surface, environment (metric label), the method/path,
  *  the optional principal (audit only, never a metric label), and the correlation id. */
 export interface RateLimitContext
 {
@@ -18,7 +18,7 @@ export interface RateLimitContext
 }
 
 /** Wraps an IRateLimiter so every rejection is a first-class audited (RateLimited) + metered
- *  (rate_limited_total{scope,tenant}) outcome. A bare guard (NullRateLimiter, no sink, no counter) is pure
+ *  (rate_limited_total{scope,environment}) outcome. A bare guard (NullRateLimiter, no sink, no counter) is pure
  *  pass-through, so an unconfigured server is byte-unchanged. */
 export class RateLimitGuard
 {

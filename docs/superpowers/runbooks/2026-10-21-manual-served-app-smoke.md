@@ -121,8 +121,8 @@ only needed the first time; it seeds the operator and is ignored afterwards).
 In the portal, create a **demo-contoso** environment. That seeds the Contoso
 security model and four demo users, and runs as a `pragmatic-server:dev` container
 on an allocated host port. Note the **host port** the portal reports (call it
-`PORT`) and the tenant, which is `contoso`. The environment is reachable at
-`http://localhost:PORT` and `ws://localhost:PORT/?tenant=contoso`.
+`PORT`) and the environment id, which is `contoso`. The environment is reachable at
+`http://localhost:PORT` and `ws://localhost:PORT/?environment=contoso`.
 
 A demo-contoso environment starts with an **empty environment graph** — until you
 promote/publish into it, the app route has nothing to serve. If you only want to
@@ -133,10 +133,10 @@ routes now; to see data render you need step 3.
 
 Launch the built Plexus app. Open a solution (the Contoso fixture under
 `apps/plexus/e2e/fixtures/contoso` is the one the e2e uses), run **Generate UI** for
-the entrypoint concept, then run the **Publish to tenant** command for that project
-(`tenant.publish`; the separate environment-graph publish was retired 2026-11-13, since every
+the entrypoint concept, then run the **Publish to environment** command for that project
+(`environment.publish`; the separate environment-graph publish was retired 2026-11-13, since every
 published app reads the environment graph). It needs the runtime's WebSocket URL
-(`ws://localhost:PORT/?tenant=contoso`) and a **deploy token** for the environment —
+(`ws://localhost:PORT/?environment=contoso`) and a **deploy token** for the environment —
 both come from the control plane when the environment is created. This publish step
 is the one the e2e automates end-to-end; doing it by hand is the fiddly part, so if
 you only need to *observe* the console, Path A is the surer reproduction.
@@ -146,7 +146,7 @@ you only need to *observe* the console, Path A is the surer reproduction.
 Open the app route in Chrome (or any browser):
 
 ```
-http://localhost:PORT/app/<tenant>/<appId>/
+http://localhost:PORT/app/<environment>/<appId>/
 ```
 
 The shell loads **without** auth (so you can watch the rendering/console
@@ -154,13 +154,13 @@ immediately); the session is only needed for live data. For the Contoso fixture
 the app id is `contoso`.
 
 There is **no login web page** — authentication is a POST JSON API
-(`/auth/browser-login?tenant=<tenant>`), not a URL you navigate to (a GET
+(`/auth/browser-login?environment=<environment>`), not a URL you navigate to (a GET
 returns `method not allowed`). To get a session in a plain browser, POST the
 credentials from the app page's own origin so the `SameSite=Strict` cookie is
 stored. On the app page, open DevTools → Console and run:
 
 ```js
-fetch('/auth/browser-login?tenant=<tenant>', {
+fetch('/auth/browser-login?environment=<environment>', {
   method: 'POST',
   headers: { 'content-type': 'application/json' },
   body: JSON.stringify({ email: '<reader-email>', password: '<reader-password>' }),

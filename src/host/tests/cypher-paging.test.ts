@@ -93,7 +93,7 @@ class CypherPagingWorld
         assert.fail(CypherPagingFixture.NoUpgradeMessage)
     }
 
-    /** How many times any attached handler asked for the tenant graph (ran a query on the dev engine). */
+    /** How many times any attached handler asked for the environment graph (ran a query on the dev engine). */
     public get GraphFetches(): number
     {
         return this.cypher.Runs
@@ -131,7 +131,7 @@ class CypherPagingFixture
 
     public static Permissive(): AccessContext
     {
-        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const grants = [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Realm, 't1', []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())

@@ -57,7 +57,7 @@ class Fixture
 
     public static Context(): AccessContext
     {
-        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
         const principal = new Principal('principal-xyz', 't1', PrincipalKind.User, new Map(), [])
         const grants = [new Grant('principal-xyz', Role.Owner, new ResourceRef(ResourceKind.Realm, 't1', []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
@@ -65,7 +65,7 @@ class Fixture
 
     public static ViewerContext(): AccessContext
     {
-        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
         const principal = new Principal('viewer-1', 't1', PrincipalKind.User, new Map(), [])
         const grants = [new Grant('viewer-1', Role.Viewer, new ResourceRef(ResourceKind.Realm, 't1', []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())

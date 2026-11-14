@@ -21,7 +21,7 @@ class DrainFixture
 {
     public static Provisioning(): InMemoryEnvironmentProvisioning
     {
-        return new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Tenant One' }]]))
+        return new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Environment One' }]]))
     }
 
     public static async Start(baseDir: string, drainTimeoutMs: number, lines?: string[], observability?: Observability): Promise<PragmaticServerHost>

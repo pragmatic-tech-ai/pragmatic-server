@@ -111,7 +111,7 @@ test('an Entra config without aadTenantId fails closed at resolve', async () =>
     finally { fixture.Dispose() }
 })
 
-test('tenant isolation: an in-flight OIDC state cannot be completed under a different pack instance', async () =>
+test('realm isolation: an in-flight OIDC state cannot be completed under a different pack instance', async () =>
 {
     const fixture = new ResolverFixture()
     try

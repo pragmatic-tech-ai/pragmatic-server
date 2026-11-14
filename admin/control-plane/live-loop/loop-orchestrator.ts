@@ -58,7 +58,8 @@ export interface DevDescriptor
 export interface RuntimeDescriptor
 {
     runtimeEnv: string
-    tenant: string
+    /** The runtime environment's id (was `tenant` before the rename; the Plexus e2e reads both for one release). */
+    environment: string
     runtimeWsUrl: string
     appOriginBase: string
     reader: CredentialDescriptor
@@ -176,7 +177,7 @@ export class LoopOrchestrator
     private static readonly AuthoritySep = '//'
     private static readonly WsEnvironmentQuery = '/?environment='
     private static readonly ViewerRole = 'Viewer'
-    private static readonly TenantKind = 'Tenant'
+    private static readonly RealmKind = 'Realm'
     private static readonly ReaderPrincipal = 'loop-reader'
     private static readonly ReaderEmail = 'r@t.io'
     private static readonly UngrantedPrincipal = 'loop-ungranted'
@@ -285,7 +286,7 @@ export class LoopOrchestrator
         const origin = await this.reach.Open(name)
         return {
             runtimeEnv: name,
-            tenant: rec.environmentId,
+            environment: rec.environmentId,
             runtimeWsUrl: L.WsUrlOf(origin, rec.environmentId),
             appOriginBase: origin,
             reader,
@@ -432,7 +433,7 @@ export class LoopOrchestrator
         await this.envs.AdminCreateAccount(env, { email, principalId, password })
         if (grantViewer)
         {
-            await this.envs.AdminGrantRole(env, { subject: principalId, role: LoopOrchestrator.ViewerRole, resourceKind: LoopOrchestrator.TenantKind, resourcePath: [] })
+            await this.envs.AdminGrantRole(env, { subject: principalId, role: LoopOrchestrator.ViewerRole, resourceKind: LoopOrchestrator.RealmKind, resourcePath: [] })
         }
         return { email, password }
     }

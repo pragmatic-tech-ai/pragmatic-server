@@ -19,7 +19,7 @@ class PurposeFixture
     }
 }
 
-test('OptionsFor threads Runtime purpose and the per-tenant applications root', () =>
+test('OptionsFor threads Runtime purpose and the per-environment applications root', () =>
 {
     const options = PurposeFixture.Registry().OptionsFor(PurposeFixture.EnvironmentId, { displayName: PurposeFixture.Display, purpose: EnvironmentPurpose.Runtime })
     assert.equal(options.purpose, EnvironmentPurpose.Runtime)

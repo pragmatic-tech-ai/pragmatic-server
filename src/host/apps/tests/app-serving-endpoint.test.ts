@@ -56,7 +56,7 @@ class ServeFixture
         const keyPath = join(this.Dir, 'key')
         writeFileSync(keyPath, randomBytes(32))
         const entries = new Map<string, EnvironmentProvisioning>()
-        entries.set(ServeFixture.Environment, { displayName: 'Tenant One', purpose: EnvironmentPurpose.Runtime })
+        entries.set(ServeFixture.Environment, { displayName: 'Environment One', purpose: EnvironmentPurpose.Runtime })
         const apps = join(this.Dir, ServeFixture.Environment, 'applications')
         if (legacy)
         {
@@ -127,7 +127,7 @@ test('app routes serve the shell, assets, client routes; refuse unknown and trav
         assert.match(shell.type, /^text\/html/)
         assert.ok(shell.body.includes('shell'))
         assert.ok(shell.body.includes('<meta name="pragmatic-app" content="shop">'))
-        assert.ok(!shell.body.includes('t1'), 'no tenant baked into the shell')
+        assert.ok(!shell.body.includes('t1'), 'no environment baked into the shell')
 
         const entry = await fixture.Fetch(port,base + 'index.html')
         assert.equal(entry.status, 200)
@@ -159,7 +159,7 @@ test('app routes serve the shell, assets, client routes; refuse unknown and trav
         assert.equal((await fixture.Fetch(port,'/readyz')).status, 200)
         assert.equal((await fixture.Fetch(port,'/nope')).status, 404)
         assert.equal((await fixture.Fetch(port,'/auth/anything')).status, 404)
-        // /auth/* with ?environment= routes to AuthHttpEndpoint (method-checked JSON), not the app route or the no-tenant 404.
+        // /auth/* with ?environment= routes to AuthHttpEndpoint (method-checked JSON), not the app route or the no-environment 404.
         const login = await fixture.Fetch(port,'/auth/login?environment=t1')
         assert.equal(login.status, 405)
         assert.match(login.type, /^application\/json/)

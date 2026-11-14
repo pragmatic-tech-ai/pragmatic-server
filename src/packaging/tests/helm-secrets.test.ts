@@ -51,7 +51,7 @@ test('the ConfigMap never carries a provisioned secret value', () =>
     assert.doesNotMatch(configmap, /secrets\.provisioned/)
 })
 
-test('NOTES mention provisioned per-tenant secrets', () =>
+test('NOTES mention provisioned per-environment secrets', () =>
 {
     const notes = Chart.Text(join('templates', 'NOTES.txt'))
     assert.match(notes, /provisioned/i)

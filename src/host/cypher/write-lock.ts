@@ -1,23 +1,23 @@
 import { AsyncMutex } from './async-mutex.js'
 
-/** One held tenant write lease. `Held` re-verifies ownership at the moment it is asked (a check before persisting, not a storage fence). */
+/** One held environment write lease. `Held` re-verifies ownership at the moment it is asked (a check before persisting, not a storage fence). */
 export interface IWriteLease
 {
     Held(): Promise<boolean>
     Release(): Promise<void>
 }
 
-/** A tenant's write lock: at most one lease is held at a time across every process that serves the tenant. */
+/** An environment's write lock: at most one lease is held at a time across every process that serves the environment. */
 export interface IWriteLock
 {
     /** Waits (bounded) for the lease; rejects with WriteLockBusyError when it stays held elsewhere or the lock service is unreachable. */
     Acquire(): Promise<IWriteLease>
 }
 
-/** The tenant write lease could not be obtained in time (another worker is writing, or the lock service is unreachable). */
+/** The environment write lease could not be obtained in time (another worker is writing, or the lock service is unreachable). */
 export class WriteLockBusyError extends Error
 {
-    private static readonly MessageText = 'another write to this tenant is in progress'
+    private static readonly MessageText = 'another write to this environment is in progress'
     private static readonly ErrorName = 'WriteLockBusyError'
 
     constructor()
@@ -27,7 +27,7 @@ export class WriteLockBusyError extends Error
     }
 }
 
-/** Single-process lock: correct when one process serves the tenant (no cluster coordination configured). */
+/** Single-process lock: correct when one process serves the environment (no cluster coordination configured). */
 export class InProcessWriteLock implements IWriteLock
 {
     private readonly mutex = new AsyncMutex()

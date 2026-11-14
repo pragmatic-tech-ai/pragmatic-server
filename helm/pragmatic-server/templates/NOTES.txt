@@ -16,9 +16,9 @@ Install with --set secrets.masterKeyB64=<base64 key>.
 {{- if and (gt (int .Values.replicaCount) 1) (not .Values.redis.url) (not .Values.redis.existingSecret) }}
 
 WARNING: replicaCount is {{ .Values.replicaCount }} but no Redis is configured. replicaCount > 1 is only safe with
-redis.url (or redis.existingSecret) set -- the tenant ownership lease stops two replicas from writing one tenant.
-Without it, several replicas can open the same tenant's storage at once. Set redis.url, or scale to replicaCount 1.
-Route tenants with session affinity (or rely on client retry) when scaling out, since a non-owner replica rejects
+redis.url (or redis.existingSecret) set -- the environment ownership lease stops two replicas from writing one environment.
+Without it, several replicas can open the same environment's storage at once. Set redis.url, or scale to replicaCount 1.
+Route environments with session affinity (or rely on client retry) when scaling out, since a non-owner replica rejects
 with a retryable 503.
 {{- end }}
 {{- if .Values.clientTls.existingSecret }}
@@ -32,19 +32,19 @@ NOTE: multi-replica OIDC login requires redis.url -- the OIDC flow-state store i
 per-replica otherwise, so a login callback landing on a different replica fails.
 {{- if or .Values.secrets.provisioned .Values.secrets.provisionedExistingSecret }}
 
-Per-tenant provisioned secrets are wired: every oidc.clientSecretRef and bootstrap.adminPasswordRef
-named in tenants.json must have a matching key in the provisioned Secret (chart-managed
-secrets.provisioned, or secrets.provisionedExistingSecret). A tenant naming a ref with no matching
-value fails that tenant closed.
-A tenant may set bootstrap.allowAdminPasswordRotation: true in tenants.json to re-hash the bootstrap admin
+Per-environment provisioned secrets are wired: every oidc.clientSecretRef and bootstrap.adminPasswordRef
+named in environments.json must have a matching key in the provisioned Secret (chart-managed
+secrets.provisioned, or secrets.provisionedExistingSecret). An environment naming a ref with no matching
+value fails that environment closed.
+An environment may set bootstrap.allowAdminPasswordRotation: true in environments.json to re-hash the bootstrap admin
 credential when the value behind its adminPasswordRef changes (default: no rotation).
 {{- end }}
 {{- if .Values.cluster.enabled }}
 
 Cluster mode is enabled: a worker StatefulSet ({{ .Values.cluster.worker.replicas }}) behind a gateway
 Deployment ({{ .Values.cluster.gateway.replicas }}). The worker tier REQUIRES Redis -- the ownership lease
-keeps one worker per tenant. Set redis.url (or redis.existingSecret); without it two workers could open one
-tenant's storage. mTLS material must be supplied via cluster.tls.existingSecret (tls.crt, tls.key, ca.crt);
+keeps one worker per environment. Set redis.url (or redis.existingSecret); without it two workers could open one
+environment's storage. mTLS material must be supplied via cluster.tls.existingSecret (tls.crt, tls.key, ca.crt);
 all workers share one server cert whose SAN equals cluster.workerServerName.
 {{- if and (not .Values.redis.url) (not .Values.redis.existingSecret) }}
 

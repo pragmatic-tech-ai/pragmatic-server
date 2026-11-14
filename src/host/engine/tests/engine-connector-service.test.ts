@@ -22,7 +22,7 @@ import { EngineHostFx, FakeSolution, HeldFence, ManualTimer, MemoryStorage } fro
 import { MemorySourceAdapter, MemorySourceAdapterFactory } from './memory-source-adapter.js'
 
 /**
- * A runtime tenant delivering `crm` (crm.Account, engine-stored, owned by its `owner` field) and `ext` over the
+ * A runtime environment delivering `crm` (crm.Account, engine-stored, owned by its `owner` field) and `ext` over the
  * fixture's MemorySourceAdapter: ext.Customer (writable; `name` in `nm`, the integer `amount` in `amt`), ext.Vendor
  * (read-only), ext.Order (optimistic, version field `ver`) and ext.Ledger (an integer id member). With identity, p1
  * reads every account and deletes only its own; p3 reads only its own. Neither holds anything on the ext concepts (connector data is outside platform

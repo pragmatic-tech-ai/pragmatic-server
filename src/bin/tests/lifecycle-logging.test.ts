@@ -30,7 +30,7 @@ class Fixtures
 
     public static Config(): ServerConfig
     {
-        return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { keyFilePath: Fixtures.KeyPath }, deploymentMode: DeploymentMode.Local, singleEnvironment: { id: 't1', displayName: 'Tenant One' } }
+        return { host: '0.0.0.0', port: 8080, baseDir: '/data', masterKey: { keyFilePath: Fixtures.KeyPath }, deploymentMode: DeploymentMode.Local, singleEnvironment: { id: 't1', displayName: 'Environment One' } }
     }
 }
 

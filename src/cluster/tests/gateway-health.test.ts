@@ -52,7 +52,7 @@ test('the gateway serves /healthz and /readyz on its front door', async () =>
     }
 })
 
-test('a non-health request without a tenant still returns 400 (health does not shadow the proxy path)', async () =>
+test('a non-health request without an environment still returns 400 (health does not shadow the proxy path)', async () =>
 {
     const router = new InMemoryWorkerRouter({ host: '127.0.0.1', port: 1 })
     const gateway = await Gateway.StartAsync({ port: 0, router, tls: Tls.Ref() })

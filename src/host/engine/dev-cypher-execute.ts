@@ -85,7 +85,7 @@ export interface IDevExecuteDiagnostics extends IExecuteDiagnostics
 {
     /**
      * A write's connector writes did not settle within `DevCypherExecute.MaxSettleMs` (a hung connector call): the
-     * tenant is wedged (every execute is Failed) until they do; the lease stays held meanwhile.
+     * environment is wedged (every execute is Failed) until they do; the lease stays held meanwhile.
      */
     WritesUnsettled(): void
 }
@@ -135,20 +135,20 @@ class LeaseFence implements IWriteFence
 }
 
 /**
- * Runs the dev tenant's Cypher writes on its embedded graph engine, under the caller's dev scope: the scope alone
+ * Runs the dev environment's Cypher writes on its embedded graph engine, under the caller's dev scope: the scope alone
  * decides what the write may see and do (the engine's WriteGate judges every op at commit); this class never filters,
  * masks or authorizes by itself. A CREATE is placed in `modelId` by `IGraphScope.Placement(modelId)` (TodlNodePlacement
  * + the security model's create defaults) and every write is confined to `modelId` ({@link ModelWriteScopes}, an
- * engine scope conjunct); reads stay tenant-wide. The engine's `.todl` file connector writes the model's saved sources
+ * engine scope conjunct); reads stay environment-wide. The engine's `.todl` file connector writes the model's saved sources
  * (ServerModelWorkspace), and the host upgrades to them.
  *
  * - `modelId` must be one of `DevSnapshot.Models` (the `cypher/models` list), else InvalidParams "model not found".
- * - Serialized per tenant: an in-process mutex, then the tenant write lease (`IWriteLock`; busy -> Conflict) held
+ * - Serialized per environment: an in-process mutex, then the environment write lease (`IWriteLock`; busy -> Conflict) held
  *   across the whole write and installed as the workspace's write fence (`IDevGraphEngine.InstallWriteFence`); both
  *   are released only after `IDevGraphEngine.WhenWritesSettled`, so a connector still writing after a write-through
  *   timeout (or its late revert) finishes before the next write starts, on success, failure and throw alike. Each
  *   attempt first checks `expectedRevision` against the language service's `GraphRevision` (else Conflict "graph
- *   revision has advanced") and the lease (`Held()`, else Conflict "the tenant write lease was lost before the write
+ *   revision has advanced") and the lease (`Held()`, else Conflict "the environment write lease was lost before the write
  *   could persist"); each draft session checks the fence again right before its first file write, so nothing persists
  *   once the lease is lost (same Conflict). Like the legacy fence, a check and not a storage fence.
  * - Status mapping ({@link DevWriteFailure}): `CypherWriteErrorCode.Conflict` (engine ConflictError) is retried once
@@ -171,14 +171,14 @@ class LeaseFence implements IWriteFence
 export class DevCypherExecute implements IGraphCypherExecute
 {
     public static readonly MaxAttempts = 2
-    /** How long a write waits for its connector writes to settle before the tenant is wedged (ruling F-f). */
+    /** How long a write waits for its connector writes to settle before the environment is wedged (ruling F-f). */
     public static readonly MaxSettleMs = 2 * DevGraphEngineHost.PrepareTimeoutMs
     private static readonly WedgedReason = 'an earlier write is still persisting; retry later'
     private static readonly MaxSettles = 5
     private static readonly ModelNotFoundMessage = `${InvalidParamsPrefix.Text}model not found`
     private static readonly ModelIdRequiredMessage = `${InvalidParamsPrefix.Text}modelId is required: a write must name its target model`
     private static readonly RevisionReason = 'graph revision has advanced'
-    private static readonly LeaseLostReason = 'the tenant write lease was lost before the write could persist'
+    private static readonly LeaseLostReason = 'the environment write lease was lost before the write could persist'
     private static readonly SourcesChangedReason = 'model sources changed during the write'
     private static readonly DeniedReason = 'the caller\'s access does not allow the write'
     private static readonly InvalidReason = 'the write is not valid against the model'
@@ -256,7 +256,7 @@ export class DevCypherExecute implements IGraphCypherExecute
         {
             // on every path: a write-through that timed out may still be writing files (and then reverting them); the
             // next writer starts only once they settle, so the fence, lease and mutex are released after. Bounded
-            // (F-f): past MaxSettleMs the mutex is released but the tenant is wedged, keeping the lease and the fence
+            // (F-f): past MaxSettleMs the mutex is released but the environment is wedged, keeping the lease and the fence
             // until the writes settle in the background.
             const settling = this.host.WhenWritesSettled()
             if (await BoundedWait.Within(settling, DevCypherExecute.MaxSettleMs, this.settleTimer))

@@ -8,27 +8,27 @@ import type { IAdapterPackAdmin } from './adapter-pack-admin.js'
 import type { SecuritySettingIssue } from './environment/security-setting-catalog-check.js'
 import type { IPrincipalInvalidator } from './principal-connection-registry.js'
 
-/** Raised when a caller tries to revoke their own tenant-Owner grant. */
+/** Raised when a caller tries to revoke their own realm-Owner grant. */
 export class AdminSelfLockoutError extends Error
 {
     public constructor()
     {
-        super('cannot revoke your own tenant-Owner grant')
+        super('cannot revoke your own realm-Owner grant')
         this.name = 'AdminSelfLockoutError'
     }
 }
 
-/** Raised when revoking a grant would leave the tenant with no administrator. */
+/** Raised when revoking a grant would leave the realm with no administrator. */
 export class LastAdministratorError extends Error
 {
     public constructor()
     {
-        super('cannot revoke the tenant\'s last administrator')
+        super('cannot revoke the realm\'s last administrator')
         this.name = 'LastAdministratorError'
     }
 }
 
-/** Raised when a service token reference is unknown to this tenant. */
+/** Raised when a service token reference is unknown to this realm. */
 export class AdminTokenNotFoundError extends Error
 {
     public constructor(public readonly TokenRef: string)
@@ -38,20 +38,20 @@ export class AdminTokenNotFoundError extends Error
     }
 }
 
-/** Raised when the tenant has no stored identity config. */
+/** Raised when the realm has no stored identity config. */
 export class AdminConfigMissingError extends Error
 {
     public constructor()
     {
-        super('tenant identity config is missing')
+        super('realm identity config is missing')
         this.name = 'AdminConfigMissingError'
     }
 }
 
-/** Raised when the tenant takes no security setting: a Development tenant (program ruling PR13). */
+/** Raised when the environment takes no security setting: a Development environment (program ruling PR13). */
 export class AdminSecurityModelUnavailableError extends Error
 {
-    private static readonly Message = 'a development tenant has no security setting; its access is the tenant role grants'
+    private static readonly Message = 'a development environment has no security setting; its access is the realm role grants'
 
     public constructor()
     {
@@ -70,13 +70,13 @@ export class AdminSecuritySettingRefusedError extends Error
     }
 }
 
-/** What the admin save and reads need of a Runtime environment's security (EnvironmentSecurityAdmin); absent on a Development tenant. */
+/** What the admin save and reads need of a Runtime environment's security (EnvironmentSecurityAdmin); absent on a Development environment. */
 export interface ISecuritySettingAdmin
 {
     /** The catalog issues of `config` against the deployed packages; throws InvalidSecurityModelError when it is structurally invalid. */
     Issues(config: ISecurityModelConfig): Promise<readonly SecuritySettingIssue[]>
     /**
-     * Runs `write` (a store of the tenant config) under the setting's write lock, after re-checking `config` (when
+     * Runs `write` (a store of the realm config) under the setting's write lock, after re-checking `config` (when
      * given) against the catalog the setting was last reconciled to; the issues found, `write` not run when any.
      */
     Locked(config: ISecurityModelConfig | undefined, write: () => Promise<void>): Promise<readonly SecuritySettingIssue[]>
@@ -104,23 +104,23 @@ export class UnknownTeamError extends Error
     }
 }
 
-/** Raised when a grant mutation targets a resource that belongs to a different tenant. */
+/** Raised when a grant mutation targets a resource that belongs to a different realm. */
 export class ForeignRealmResourceError extends Error
 {
-    private static readonly Message = 'resource does not belong to this tenant'
+    private static readonly Message = 'resource does not belong to this realm'
 
     public constructor()
     {
         super(ForeignRealmResourceError.Message)
-        this.name = 'ForeignTenantResourceError'
+        this.name = 'ForeignRealmResourceError'
     }
 }
 
-/** RBAC-gated admin operations over the tenant's grant store, config store and audit sink.
+/** RBAC-gated admin operations over the realm's grant store, config store and audit sink.
  *  Every mutation is audited (awaited, fail-closed) with identifiers only, never secrets. */
 export class AdminService
 {
-    /** Process-shared per-tenant lock chain: every AdminService instance (one per connection) serializes through it. */
+    /** Process-shared per-realm lock chain: every AdminService instance (one per connection) serializes through it. */
     private static readonly Locks = new Map<string, Promise<unknown>>()
     private static readonly ActorKey = 'actor'
     private static readonly ActionKey = 'action'
@@ -229,7 +229,7 @@ export class AdminService
 
     /**
      * Replaces the whole config; a carried security setting is checked as SetSecurityModel checks it (and triggers a
-     * directory sync, as SetSecurityModel does). On a Runtime tenant a config without a security setting keeps the
+     * directory sync, as SetSecurityModel does). On a Runtime environment a config without a security setting keeps the
      * stored one: dropping it would leave the environment deny-all.
      */
     public async SetConfig(actor: string, config: IdentityConfig): Promise<void>
@@ -263,14 +263,14 @@ export class AdminService
         await this.evict()
     }
 
-    /** The tenant's current access SecurityModel, or undefined when no config or no model is stored. */
+    /** The realm's current access SecurityModel, or undefined when no config or no model is stored. */
     public async GetSecurityModel(): Promise<ISecurityModelConfig | undefined>
     {
         const config = await this.configStore.Get(this.realm.Id)
         return config?.SecurityModel
     }
 
-    /** The environment's security catalog (the admin's editing vocabulary); refused on a Development tenant (PR13). */
+    /** The environment's security catalog (the admin's editing vocabulary); refused on a Development environment (PR13). */
     public async GetSecurityCatalog(): Promise<IEnvironmentCatalog>
     {
         if (this.security === undefined)
@@ -280,7 +280,7 @@ export class AdminService
         return this.security.Catalog()
     }
 
-    /** The environment's security change log, newest first; refused on a Development tenant (PR13). */
+    /** The environment's security change log, newest first; refused on a Development environment (PR13). */
     public async ListSecurityChanges(): Promise<SecurityChangesDto[]>
     {
         if (this.security === undefined)
@@ -290,7 +290,7 @@ export class AdminService
         return this.security.SecurityChanges()
     }
 
-    /** A team's effective membership rows; refused on a Development tenant (PR13); UnknownTeamError for an unknown team. */
+    /** A team's effective membership rows; refused on a Development environment (PR13); UnknownTeamError for an unknown team. */
     public async ListTeamMembers(teamId: string): Promise<readonly TeamMembershipRow[]>
     {
         if (this.security === undefined)
@@ -301,11 +301,11 @@ export class AdminService
     }
 
     /**
-     * Replaces ONLY the tenant's security setting (every other config field is preserved), persists it, then invalidates
+     * Replaces ONLY the environment's security setting (every other config field is preserved), persists it, then invalidates
      * the cached setting so the change takes effect on the next scope without a restart. Refused before any write: on a
-     * Development tenant (AdminSecurityModelUnavailableError, PR13), a structurally invalid setting
+     * Development environment (AdminSecurityModelUnavailableError, PR13), a structurally invalid setting
      * (InvalidSecurityModelError) and one the deployed packages cannot mean (AdminSecuritySettingRefusedError); the
-     * tenant must already have a stored config.
+     * realm must already have a stored config.
      */
     public async SetSecurityModel(actor: string, model: ISecurityModelConfig): Promise<void>
     {

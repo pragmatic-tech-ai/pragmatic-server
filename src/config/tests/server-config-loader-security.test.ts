@@ -60,7 +60,7 @@ test('a bogus auditSink fails closed', () =>
     assert.throws(() => ServerConfigLoader.Load({ ...LoaderFixture.Minimal(), PRAGMATIC_AUDIT_SINK: 'syslog' }, LoaderFixture.NoRead), /PRAGMATIC_AUDIT_SINK/)
 })
 
-test('rate-limit env builds a per-tenant and per-principal config', () =>
+test('rate-limit env builds a per-environment and per-principal config', () =>
 {
     const env = { ...LoaderFixture.Minimal(), PRAGMATIC_RATELIMIT_ENVIRONMENT_RPS: '50', PRAGMATIC_RATELIMIT_ENVIRONMENT_BURST: '100', PRAGMATIC_RATELIMIT_PRINCIPAL_RPS: '10', PRAGMATIC_RATELIMIT_PRINCIPAL_BURST: '20' }
     const config = ServerConfigLoader.Load(env, LoaderFixture.NoRead)

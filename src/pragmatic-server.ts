@@ -119,7 +119,7 @@ export interface PragmaticServerIdentityOptions
     httpClient?: IHttpClient
     flowStateStore?: IOidcFlowStateStore
     /**
-     * Whether a Runtime tenant starts its IdP directory sync at Start (default true). Only a host that drives the sync
+     * Whether a Runtime environment starts its IdP directory sync at Start (default true). Only a host that drives the sync
      * itself sets false (tests over synthetic principals that have no accounts, which an authoritative local directory
      * would deprovision).
      */
@@ -138,34 +138,34 @@ export interface PragmaticServerOptions
     connectors?: ConnectorsHostOptions
     connectorsPolicy?: ConnectorsPolicy
     readonly adapterPacks?: AdapterPacksConfig
-    /** Cross-process tenant write lock (cluster); absent => in-process only, correct for a single replica. */
+    /** Cross-process environment write lock (cluster); absent => in-process only, correct for a single replica. */
     writeLock?: IWriteLock
     /** The host's logger (dev access-scope diagnostics, ...); absent => nothing is logged. */
     logger?: ILogger
     /** The runtime environment engine's store kind (ruling S2); absent => LMDB at `<graphsRoot>/environment-engine`. */
     environmentEngineStorage?: StorageKind
     /**
-     * Extra data-source adapter factories registered on this tenant's adapter catalog after the built-in ones (a factory
+     * Extra data-source adapter factories registered on this environment's adapter catalog after the built-in ones (a factory
      * replaces the built-in one of its kind); absent => the built-ins only. Test sources plug in here.
      */
     adapterFactories?: readonly IDataSourceAdapterFactory[]
 }
 
-/** Headless single-tenant in-process host: composes the engine over the lazy root and opens a solution. */
+/** Headless single-environment in-process host: composes the engine over the lazy root and opens a solution. */
 export class PragmaticServer implements IEnvironmentGraphHost
 {
     private static readonly DefaultPackagesDir = 'packages'
     private static readonly DefaultGraphsDir = 'graphs'
-    private static readonly ApplicationsRootRequiredError = 'applicationsRoot is required for a runtime tenant'
+    private static readonly ApplicationsRootRequiredError = 'applicationsRoot is required for a runtime environment'
     private static readonly ErrorSeparator = '; '
 
     private static readonly SharingRequiresIdentityError = 'record sharing requires an identity subsystem'
     private static readonly AssignRequiresIdentityError = 'record assignment requires an identity subsystem'
     private static readonly NotStartedError = 'server not started'
-    private static readonly ApplicationsRuntimeOnlyError = 'applications are a runtime-tenant feature'
+    private static readonly ApplicationsRuntimeOnlyError = 'applications are a runtime-environment feature'
     private static readonly IdentityNotConfiguredError = 'identity not configured'
 
-    private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
+    private static readonly NotDevelopmentMessage = 'operation requires a development environment'
     private static readonly DisposedMessage = 'The server has been disposed'
     private static readonly DirectorySyncStartFailedLine = 'directory sync: start failed: '
     private static readonly UnknownErrorName = 'unknown'
@@ -237,7 +237,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return { ...options.connectors, connectionResolver: resolver, provider }
     }
 
-    /** Builds this tenant's adapter-pack provider: its own ConnectorsPolicy gate over the deployment-global pack settings. */
+    /** Builds this environment's adapter-pack provider: its own ConnectorsPolicy gate over the deployment-global pack settings. */
     private static AdapterPackProvider(options: PragmaticServerOptions): IDataSourceAdapterProvider | undefined
     {
         const packs = options.adapterPacks
@@ -287,7 +287,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * A Runtime tenant with identity starts its IdP directory sync when it starts serving (Task 10 start rule): the
+     * A Runtime environment with identity starts its IdP directory sync when it starts serving (Task 10 start rule): the
      * first run and the R27 deprovisioning follow begin at Start, not at the first connection. A failure to build it
      * is logged by error name only (a later `DirectorySync()` retries).
      */
@@ -330,9 +330,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * The environment's security setting (contract C5; EnvironmentSecuritySetting over the tenant config store and the
-     * IdP directory store), memoized for this tenant (a failed build is retried) and disposed with the server after the
-     * environment scopes. Runtime tenants with identity only: a Development tenant has no setting (PR13).
+     * The environment's security setting (contract C5; EnvironmentSecuritySetting over the realm config store and the
+     * IdP directory store), memoized for this environment (a failed build is retried) and disposed with the server after the
+     * environment scopes. Runtime environments with identity only: a Development environment has no setting (PR13).
      */
     public SecuritySetting(): Promise<EnvironmentSecuritySetting>
     {
@@ -358,7 +358,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
 
     /**
      * What the admin save checks a security setting against and reloads (EnvironmentSecurityAdmin); undefined on a
-     * Development tenant, which refuses the setting (PR13). Requires identity.
+     * Development environment, which refuses the setting (PR13). Requires identity.
      */
     public async SecurityAdmin(): Promise<ISecuritySettingAdmin | undefined>
     {
@@ -377,10 +377,10 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * The tenant's IdP directory sync host (S4 Task 10): pulls the directory on start, after each `SetSecurityModel` and
+     * The environment's IdP directory sync host (S4 Task 10): pulls the directory on start, after each `SetSecurityModel` and
      * every {@link IdpDirectorySyncHost.IntervalMs}, invalidating {@link SecuritySetting} after a run that changed it. Memoized (a
-     * failed build is retried) and disposed with the server before the setting. Runtime tenants with identity only; one
-     * `PragmaticServer` holds the tenant lease, so exactly one replica polls.
+     * failed build is retried) and disposed with the server before the setting. Runtime environments with identity only; one
+     * `PragmaticServer` holds the environment lease, so exactly one replica polls.
      */
     public DirectorySync(): Promise<IdpDirectorySyncHost>
     {
@@ -417,7 +417,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         // R27: a deprovisioned principal's stored upstream tokens, cached source tokens and inner connections go
         this.deprovisioned?.dispose()
         this.deprovisioned = this.callerCredentials.Follow(host.Deprovisioned)
-        // one run when the tenant's server starts serving (Start builds this: StartDirectorySync)
+        // one run when the environment's server starts serving (Start builds this: StartDirectorySync)
         void host.RunNow()
         return host
     }
@@ -451,8 +451,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * Ingests a deployed application onto this runtime tenant through the environment engine's delivery gate (ruling
-     * S4); the caller has already authorized Administer on the tenant.
+     * Ingests a deployed application onto this runtime environment through the environment engine's delivery gate (ruling
+     * S4); the caller has already authorized Administer on the environment.
      */
     public async DeployApplication(params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>
     {
@@ -461,7 +461,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.appIngest.Ingest(params)
     }
 
-    /** The container-owned graph catalog; development tenants only. */
+    /** The container-owned graph catalog; development environments only. */
     public GraphService(): IDevGraphService
     {
         this.AssertDevelopmentPurpose()
@@ -474,7 +474,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
      * gate composes every live app plus this set (an EnvironmentCatalogError is InvalidParams with its message, and the
      * promote record is left as it was), persists the promote record (it replaces the previous set) and upgrades the
      * environment engine (a failure there is InternalError; the record stays and the engine retries on next use).
-     * Returns the record. Runtime tenants only.
+     * Returns the record. Runtime environments only.
      */
     public async LoadEnvironmentGraph(params: GraphLoadParamsDto): Promise<GraphLoadedDto>
     {
@@ -515,7 +515,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
      * The runtime environment's ONE graph engine (rulings S2-S4), over every live app plus the promote record, opened
      * on first use (LMDB at `<graphsRoot>/environment-engine` unless `environmentEngineStorage` says otherwise; Q7: the
      * graphs root must be on storage the next lease holder reaches). Memoized; disposed with the server before the
-     * connectors host (its connectors borrow that host's adapters). Runtime tenants only.
+     * connectors host (its connectors borrow that host's adapters). Runtime environments only.
      */
     public EnvironmentEngine(): EnvironmentEngineHost
     {
@@ -540,7 +540,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
      * EnvironmentScopeRules, ruling S5 as amended by A3, placement S6): with identity, the tier-1 scope of the
      * environment security setting (connector-bound concepts outside it), read-only bindings and seeded nodes; without
      * identity Default Allow with the read-only guards. Built on first use (a failed build is retried), disposed with the server
-     * before the engine host. Runtime tenants only.
+     * before the engine host. Runtime environments only.
      */
     public EnvironmentScopes(): Promise<AccessScopeSource>
     {
@@ -567,7 +567,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     /**
      * The runtime `cypher/query` and `cypher/models` (rulings S1, S11, S12): the shared EngineCypherQuery over
      * {@link PragmaticServer.EnvironmentEngine} under each caller's {@link PragmaticServer.EnvironmentScopes}; `modelId`
-     * is a delivered package id. Memoized; runtime tenants only.
+     * is a delivered package id. Memoized; runtime environments only.
      */
     public EnvironmentCypher(): EngineCypherQuery
     {
@@ -579,7 +579,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     /**
      * The runtime `model/view` and `model/resources` (ruling S15): projected from {@link PragmaticServer.EnvironmentEngine}
      * under each caller's {@link PragmaticServer.EnvironmentScopes} AND the S12 model filter; `memberId` is a delivered
-     * package id; `model/resources` is `[]`. Memoized; runtime tenants only.
+     * package id; `model/resources` is `[]`. Memoized; runtime environments only.
      */
     public EnvironmentModelView(): EnvironmentModelView
     {
@@ -588,7 +588,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.environmentModelView
     }
 
-    /** The runtime `cypher/execute` (ruling S13) on the environment engine, under each caller's environment scope. Memoized; runtime tenants only. */
+    /** The runtime `cypher/execute` (ruling S13) on the environment engine, under each caller's environment scope. Memoized; runtime environments only. */
     public EnvironmentExecute(): EnvironmentCypherExecute
     {
         this.AssertRuntimePurpose()
@@ -598,7 +598,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
 
     /**
      * The runtime `connector/*` endpoints (ruling S14) on the environment engine, under each caller's environment scope:
-     * the shared EngineConnectorService over the process-wide adapter catalog. Memoized; runtime tenants only.
+     * the shared EngineConnectorService over the process-wide adapter catalog. Memoized; runtime environments only.
      */
     public EnvironmentConnectors(): EngineConnectorService
     {
@@ -607,7 +607,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.environmentConnectors
     }
 
-    /** The runtime `data/write` (ruling S10) on the environment engine, under each caller's environment scope. Memoized; runtime tenants only. */
+    /** The runtime `data/write` (ruling S10) on the environment engine, under each caller's environment scope. Memoized; runtime environments only. */
     public EnvironmentWriter(): EnvironmentDataWriter
     {
         this.AssertRuntimePurpose()
@@ -618,7 +618,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     /**
      * The runtime `data/changed` push (ruling S16) following {@link PragmaticServer.EnvironmentEngine}'s commits; runtime
      * connections subscribe under their {@link PragmaticServer.EnvironmentScopes}. Memoized, disposed with the server
-     * before the engine host; runtime tenants only (dev tenants keep `solution/graphChanged`).
+     * before the engine host; runtime environments only (dev environments keep `solution/graphChanged`).
      */
     public DataChanges(): DataChangedPush
     {
@@ -635,7 +635,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
      * The system principal's read scope (SystemPrincipalScope) for work no user started. Nothing in the server reads
      * through it yet (the deploy backfill uses `SystemPrincipal()` directly); future background work (connector
      * population, scheduled flows, agents, identity resolution) must run under it. Memoized per scope-source generation (a
-     * security reload or an engine upgrade yields a fresh scope with the same rights). Runtime tenants with identity only.
+     * security reload or an engine upgrade yields a fresh scope with the same rights). Runtime environments with identity only.
      */
     public async SystemScope(): Promise<IGraphScope>
     {
@@ -667,7 +667,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
 
     /**
      * The environment's security change log (`graphs/security-changes.json`, S4 Task 13): the security changes of the
-     * deploys and promotes that changed any, newest first. Memoized; runtime tenants only.
+     * deploys and promotes that changed any, newest first. Memoized; runtime environments only.
      */
     public SecurityChangeLog(): SecurityChangeLog
     {
@@ -678,7 +678,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
 
     /**
      * What a delivery does to the environment's security (DeliverySecurity over {@link SecuritySetting}, {@link
-     * SecurityChangeLog} and {@link SystemPrincipal}), memoized (a failed build is retried). Runtime tenants with identity.
+     * SecurityChangeLog} and {@link SystemPrincipal}), memoized (a failed build is retried). Runtime environments with identity.
      */
     private DeliverySecurity(): Promise<DeliverySecurity>
     {
@@ -744,7 +744,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.promoteRecords
     }
 
-    /** Throws unless this is a Development tenant: the graph catalog exists only there. */
+    /** Throws unless this is a Development environment: the graph catalog exists only there. */
     private AssertDevelopmentPurpose(): void
     {
         if (this.Purpose() !== EnvironmentPurpose.Development)
@@ -753,7 +753,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         }
     }
 
-    /** Throws unless this is a Runtime tenant: deploy and the applications registry exist only there. */
+    /** Throws unless this is a Runtime environment: deploy and the applications registry exist only there. */
     private AssertRuntimePurpose(): void
     {
         if (this.Purpose() !== EnvironmentPurpose.Runtime)
@@ -808,7 +808,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
 
     /**
      * The runtime share service (ruling S8) on the environment engine under each caller's environment scope, with the
-     * caller's tier-1 grants (EnvironmentScopeRules). Memoized; runtime tenants with identity only (else the error is unchanged:
+     * caller's tier-1 grants (EnvironmentScopeRules). Memoized; runtime environments with identity only (else the error is unchanged:
      * "record sharing requires an identity subsystem").
      */
     public EnvironmentShares(): EnvironmentShareService
@@ -873,7 +873,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * The dev tenant's embedded graph engine over the active solution's SAVED sources, opened on first use and
+     * The dev environment's embedded graph engine over the active solution's SAVED sources, opened on first use and
      * upgraded as saves recompile. Memoized: assumes LanguageService() resolves to a stable singleton for this
      * server's lifetime.
      */
@@ -894,7 +894,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * The dev tenant's access scopes over {@link PragmaticServer.DevEngine}: unrestricted for every principal the
+     * The dev environment's access scopes over {@link PragmaticServer.DevEngine}: unrestricted for every principal the
      * PolicyGate admits (AccessScopeSource under DevScopeRules, PR13), diagnostics on the configured logger. Built on first use, disposed
      * with the server.
      */
@@ -980,8 +980,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * The dev `cypher/execute` on the engine, under each caller's dev scope (memoized, one per tenant): CREATEs placed in
-     * `modelId`, which must be one of `cypher/models` (else InvalidParams); serialized per tenant under the write lease.
+     * The dev `cypher/execute` on the engine, under each caller's dev scope (memoized, one per environment): CREATEs placed in
+     * `modelId`, which must be one of `cypher/models` (else InvalidParams); serialized per environment under the write lease.
      */
     public DevExecute(): DevCypherExecute
     {

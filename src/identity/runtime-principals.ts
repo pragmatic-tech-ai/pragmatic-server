@@ -2,11 +2,11 @@ import { Role, ResourceRef, ResourceKind, PresentedSecret } from '@pragmatic-tec
 import type { AdminService } from '../host/admin-service.js'
 import { DeploymentMode } from '../platform/deployment-mode.js'
 
-/** Seeding helpers for the runtime-tenant principals the RBAC proof needs, plus the default local dev account. */
+/** Seeding helpers for the runtime-environment principals the RBAC proof needs, plus the default local dev account. */
 export class RuntimePrincipals
 {
     /**
-     * Coarse role for the read-only reader. The dispatch gate maps data/write to Action.Write on the Tenant, and
+     * Coarse role for the read-only reader. The dispatch gate maps data/write to Action.Write on the Realm, and
      * the coarse taxonomy has exactly one role that confers Write without Administer: Editor (Admin and Owner
      * both add Administer). Editor lets the reader REACH the data/write handler without over-granting
      * administration, so the write is denied by the fine per-concept security-model role (read-only, applied

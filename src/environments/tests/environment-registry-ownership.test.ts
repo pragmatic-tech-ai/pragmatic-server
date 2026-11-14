@@ -56,7 +56,7 @@ class Fixtures
     }
 }
 
-test('ServerFor throws TenantOwnedElsewhereError when ownership denies', async () =>
+test('ServerFor throws EnvironmentOwnedElsewhereError when ownership denies', async () =>
 {
     const ownership = new FakeOwnership()
     ownership.granted = false
@@ -64,7 +64,7 @@ test('ServerFor throws TenantOwnedElsewhereError when ownership denies', async (
     await assert.rejects(() => registry.ServerFor('acme'), EnvironmentOwnedElsewhereError)
 })
 
-test('ServerFor rejects an unprovisioned tenant before acquiring ownership', async () =>
+test('ServerFor rejects an unprovisioned environment before acquiring ownership', async () =>
 {
     const ownership = new FakeOwnership()
     const registry = Fixtures.RegistryWith(ownership)
@@ -81,7 +81,7 @@ test('OwnershipHealthy delegates to the ownership', () =>
     assert.equal(registry.OwnershipHealthy(), false)
 })
 
-test('a tenant server is built with the ownership write lock for that tenant (none without one)', () =>
+test('an environment server is built with the ownership write lock for that environment (none without one)', () =>
 {
     const lock: IWriteLock = { Acquire: () => Promise.reject(new Error('unused')) }
     const scoped: string[] = []

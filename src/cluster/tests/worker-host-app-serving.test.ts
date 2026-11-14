@@ -58,7 +58,7 @@ class WorkerServeFixture
     }
 }
 
-test('a worker dispatches /app/<tenant>/<app>/ to AppServingEndpoint exactly like the main host', async () =>
+test('a worker dispatches /app/<environment>/<app>/ to AppServingEndpoint exactly like the main host', async () =>
 {
     const baseDir = mkdtempSync(join(tmpdir(), 'ps-whas-'))
     process.env[WorkerServeFixture.KeyEnv] = randomBytes(32).toString('base64')
@@ -93,7 +93,7 @@ test('a worker dispatches /app/<tenant>/<app>/ to AppServingEndpoint exactly lik
     }
 })
 
-/** A runtime tenant on a worker delivering package `crm` (one seeded account) through the live app `crm-app`. */
+/** A runtime environment on a worker delivering package `crm` (one seeded account) through the live app `crm-app`. */
 class RuntimeWorkerFx
 {
     public static readonly Environment = 'rt1'
@@ -118,7 +118,7 @@ class RuntimeWorkerFx
     private static readonly RootUnit = 'root'
     private static readonly RootUnitName = 'Root'
 
-    /** The tenant directory with `crm` compiled into `packages/` and `crm-app` live on it. */
+    /** The environment directory with `crm` compiled into `packages/` and `crm-app` live on it. */
     public static async Start(): Promise<string>
     {
         const baseDir = mkdtempSync(join(tmpdir(), RuntimeWorkerFx.Prefix))
@@ -142,7 +142,7 @@ class RuntimeWorkerFx
         return new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([[RuntimeWorkerFx.Environment, { displayName: RuntimeWorkerFx.Environment, purpose: EnvironmentPurpose.Runtime }]]))
     }
 
-    /** An Owner token for the tenant principal, and a security model letting it read every account. */
+    /** An Owner token for the environment principal, and a security model letting it read every account. */
     public static async TokenFor(worker: WorkerHost): Promise<string>
     {
         const server = await worker.RegistryForTest().ServerFor(RuntimeWorkerFx.Environment)

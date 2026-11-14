@@ -1,6 +1,6 @@
 import { DataSourceKind } from '@pragmatic-tech-ai/todl'
 
-/** Per-tenant connectors governance: which adapter kinds a tenant may use, whether inline connections are
+/** Per-environment connectors governance: which adapter kinds an environment may use, whether inline connections are
  *  forbidden (catalog-only), and whether a model may name its own provider package. Carries kind names +
  *  booleans only — never a connection value or secret. */
 export class ConnectorsPolicy

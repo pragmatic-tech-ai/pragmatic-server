@@ -73,7 +73,7 @@ class DirectHttpsServer
     public static async Start(): Promise<DirectHttpsServer>
     {
         const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
-        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
         const authenticator = new MachineCertAuthenticator(new MachinePrincipalMap(new Map([[MachineFixture.Fingerprint(), { PrincipalId: 'svc-1', Groups: ['robots'] }]])))
         const server = httpsCreateServer(MachineTls.OptionalServer(MachineFixture.ServerRef), (req: IncomingMessage, res: ServerResponse) =>
         {
@@ -126,7 +126,7 @@ test('a no-cert client still reaches other auth routes (optional mTLS keeps the 
 test('/auth/machine is 404 when no machine context is supplied', async () =>
 {
     const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
-    const endpoint = new AuthHttpEndpoint(pack, new Realm('t1', RealmKind.SelfHosted, 'Tenant One'))
+    const endpoint = new AuthHttpEndpoint(pack, new Realm('t1', RealmKind.SelfHosted, 'Environment One'))
     const server = httpsCreateServer(MachineTls.OptionalServer(MachineFixture.ServerRef), (req, res) => void endpoint.Handle(req, res))
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()))
     try
@@ -147,7 +147,7 @@ test('/auth/machine rejects an untrusted (unauthorized) cert even when its finge
     assert.ok(identity.Fingerprint.length > 0)
     const map = new MachinePrincipalMap(new Map([[identity.Fingerprint, { PrincipalId: 'svc-1', Groups: [] }]]))
     const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
-    const endpoint = new AuthHttpEndpoint(pack, new Realm('t1', RealmKind.SelfHosted, 'Tenant One'), undefined, { authenticator: new MachineCertAuthenticator(map), identity })
+    const endpoint = new AuthHttpEndpoint(pack, new Realm('t1', RealmKind.SelfHosted, 'Environment One'), undefined, { authenticator: new MachineCertAuthenticator(map), identity })
     const server = httpsCreateServer(MachineTls.OptionalServer(MachineFixture.ServerRef), (req, res) => void endpoint.Handle(req, res))
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()))
     try
@@ -162,13 +162,13 @@ test('/auth/machine rejects an untrusted (unauthorized) cert even when its finge
     }
 })
 
-// The host's cert-PRESENT /auth/machine path is fully exercised once Task 6 wires the Machine authenticator into the tenant pack.
+// The host's cert-PRESENT /auth/machine path is fully exercised once Task 6 wires the Machine authenticator into the realm pack.
 test('a host with clientTls listens over TLS and serves a no-cert client', async () =>
 {
     const dir = mkdtempSync(join(tmpdir(), 'ph7b-tls-'))
     const keyPath = join(dir, 'key')
     writeFileSync(keyPath, randomBytes(32))
-    const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Tenant One' }]])
+    const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Environment One' }]])
     const host = await PragmaticServerHost.StartAsync({ port: 0, baseDir: dir, masterKey: { keyFilePath: keyPath }, provisioning: new InMemoryEnvironmentProvisioning(entries), clientTls: MachineFixture.ServerRef })
     try
     {

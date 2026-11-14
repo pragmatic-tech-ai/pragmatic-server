@@ -2,8 +2,9 @@
 // renamed control-plane. It is NOT part of `npm test` (the class is unit-tested; nothing runs on import).
 //
 // Only the literal persisted FIELD `tenantId` -> `environmentId` changes. Directory names, JSON map keys and
-// secret-ref strings are keyed by the id VALUE and are untouched. The bundle's tenant-config.json carries
-// the id only as a map key (no literal tenantId field), so it needs no migration.
+// secret-ref strings are keyed by the id VALUE and are untouched. The bundle's realm config (tenant-config.json
+// in bundles written before the Realm rename) carries the id only as a map key (no literal tenantId field), so it
+// needs no migration.
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { AtomicJsonFile } from './atomic-json-file.js'

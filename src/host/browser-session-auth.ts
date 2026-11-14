@@ -1,16 +1,16 @@
 import type { IncomingHttpHeaders, IncomingMessage } from 'node:http'
 import type { TLSSocket } from 'node:tls'
 
-/** A tenant-bound session token presented by a browser cookie. The token is a secret: never log or echo it. */
+/** A realm-bound session token presented by a browser cookie. The token is a secret: never log or echo it. */
 export interface BrowserCredential
 {
     Environment: string
     Token: string
 }
 
-/** Browser session-cookie auth: builds the Set-Cookie, parses the cookie back into (tenant, token), and enforces the
+/** Browser session-cookie auth: builds the Set-Cookie, parses the cookie back into (environment, token), and enforces the
  *  Origin allowlist that defends the cookie-authenticated WebSocket upgrade against cross-site hijacking.
- *  The cookie value is `<tenant>.<token>` so a same-origin app that sends no ?environment= still resolves its tenant. */
+ *  The cookie value is `<environment>.<token>` so a same-origin app that sends no ?environment= still resolves its environment. */
 export class BrowserSessionAuth
 {
     public static readonly CookieName = 'ps_session'
@@ -55,13 +55,13 @@ export class BrowserSessionAuth
             + BrowserSessionAuth.MaxAgeAttribute + '0' + (this.IsSecure(req) ? BrowserSessionAuth.SecureAttribute : '')
     }
 
-    /** Cookie-session endpoints answer an unidentified caller with 401 rather than the generic no-tenant 404. */
+    /** Cookie-session endpoints answer an unidentified caller with 401 rather than the generic no-environment 404. */
     public static IsSessionPath(path: string): boolean
     {
         return path === BrowserSessionAuth.SessionPath || path === BrowserSessionAuth.LogoutPath
     }
 
-    /** The tenant named by the session cookie, or null. Unauthenticated: a routing hint only (the token still has to validate). */
+    /** The environment named by the session cookie, or null. Unauthenticated: a routing hint only (the token still has to validate). */
     public CookieEnvironment(headers: IncomingHttpHeaders): string | null
     {
         return this.Parse(headers)?.Environment ?? null

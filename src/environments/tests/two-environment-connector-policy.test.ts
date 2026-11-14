@@ -51,8 +51,8 @@ namespace shop {
         const pool = TwoEnvironmentPolicyFixture.ConnectorPool()
         const connectors = { buildPool: () => pool as never }
         const entries = new Map<string, EnvironmentProvisioning>([
-            [TwoEnvironmentPolicyFixture.EnvironmentOneId, { displayName: 'Tenant One', connectors, connectorsPolicy: new ConnectorsPolicy([DataSourceKind.Sql], true, false, []) }],
-            [TwoEnvironmentPolicyFixture.EnvironmentTwoId, { displayName: 'Tenant Two', connectors, connectorsPolicy: ConnectorsPolicy.Default() }],
+            [TwoEnvironmentPolicyFixture.EnvironmentOneId, { displayName: 'Environment One', connectors, connectorsPolicy: new ConnectorsPolicy([DataSourceKind.Sql], true, false, []) }],
+            [TwoEnvironmentPolicyFixture.EnvironmentTwoId, { displayName: 'Environment Two', connectors, connectorsPolicy: ConnectorsPolicy.Default() }],
         ])
         return new InMemoryEnvironmentProvisioning(entries)
     }
@@ -95,7 +95,7 @@ namespace shop {
     }
 }
 
-test('two tenants get isolated connector policies: catalog-only rejects, permissive reads', async () =>
+test('two environments get isolated connector policies: catalog-only rejects, permissive reads', async () =>
 {
     await TwoEnvironmentPolicyFixture.Run()
 })

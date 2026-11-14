@@ -44,7 +44,7 @@ class Harness
         const service = (await server.LanguageService()) as SolutionLanguageService
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const grants = [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Realm, 't1', []))]
         const context = new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())

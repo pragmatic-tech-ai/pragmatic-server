@@ -67,7 +67,7 @@ test('generate is idempotent: a second run keeps the same master key', async () 
     assert.deepEqual(readFileSync(join(dir, 'master.key')), key1)
 })
 
-test('a RuntimePostgres tenant bundle declares the sql connection and allows sql', async () =>
+test('a RuntimePostgres environment bundle declares the sql connection and allows sql', async () =>
 {
     const dir = mkdtempSync(join(tmpdir(), 'bundle-'))
     const database = { connectionName: 'appdb', host: 'pragmatic-env-rt-db', port: 5432, database: 'appdb', user: 'appuser', password: 'pw-secret', hostPort: 55432 }
@@ -84,7 +84,7 @@ test('a RuntimePostgres tenant bundle declares the sql connection and allows sql
     assert.ok(!JSON.stringify(environment).includes('pw-secret'))
 })
 
-test('a tenant without a database keeps deny-all and no connections', async () =>
+test('an environment without a database keeps deny-all and no connections', async () =>
 {
     const dir = mkdtempSync(join(tmpdir(), 'bundle-'))
     await BundleBuilder.Generate({ name: 'dev', kind: EnvKind.Dev, environmentId: 'dev', purpose: EnvironmentPurposeName.Development, hostPort: 8080 }, dir)

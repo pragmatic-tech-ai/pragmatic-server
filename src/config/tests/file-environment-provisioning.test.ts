@@ -18,7 +18,7 @@ class Files
     })
 }
 
-test('resolves a known tenant with display name, bootstrap and oidc', () =>
+test('resolves a known environment with display name, bootstrap and oidc', () =>
 {
     const provisioning = FileEnvironmentProvisioning.FromText(Files.Acme)
     const options = provisioning.OptionsFor('acme')
@@ -37,7 +37,7 @@ test('reconstructs a ConnectorsPolicy with mapped DataSourceKind', () =>
     assert.equal(options.connectorsPolicy.CatalogOnly, true)
 })
 
-test('returns null for an unknown tenant', () =>
+test('returns null for an unknown environment', () =>
 {
     const provisioning = FileEnvironmentProvisioning.FromText(Files.Acme)
     assert.equal(provisioning.OptionsFor('nobody'), null)
@@ -74,7 +74,7 @@ test('fails closed on an unknown adapter kind', () =>
     assert.throws(() => FileEnvironmentProvisioning.FromText(text), /adapter kind/)
 })
 
-test('a tenant without connectorsPolicy resolves with it undefined', () =>
+test('an environment without connectorsPolicy resolves with it undefined', () =>
 {
     const text = JSON.stringify({ environments: { t: { displayName: 'T' } } })
     const options = FileEnvironmentProvisioning.FromText(text).OptionsFor('t')
@@ -92,7 +92,7 @@ test('fails closed when adapterAllowlist is not an array', () =>
     assert.throws(() => FileEnvironmentProvisioning.FromText(text), /invalid shape/)
 })
 
-test('fails closed on an invalid tenant purpose', () =>
+test('fails closed on an invalid environment purpose', () =>
 {
     const bad = JSON.stringify({ environments: { acme: { displayName: 'Acme',purpose: 'nonsense' } } })
     assert.throws(() => FileEnvironmentProvisioning.FromText(bad).OptionsFor('acme'), /invalid purpose/)

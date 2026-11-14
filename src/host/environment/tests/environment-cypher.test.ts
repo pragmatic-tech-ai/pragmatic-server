@@ -14,7 +14,7 @@ import { EnvironmentFixture } from './environment-fixture.js'
 import type { IEnvironmentFixtureOptions } from './environment-fixture.js'
 
 /**
- * A runtime tenant delivering `crm` (crm.Account, engine-stored, with an owner field) through `crm-app` and `ext`
+ * A runtime environment delivering `crm` (crm.Account, engine-stored, with an owner field) through `crm-app` and `ext`
  * (ext.Customer bound writable over the fixture's MemorySourceAdapter with a text id member, ext.Vendor bound
  * read-only) through `ext-app`; the Customer source holds one row. With identity, p1 and p2 hold User-level access on
  * crm.Account (own rows only).
@@ -236,7 +236,7 @@ describe('runtime cypher on the environment engine', () =>
             const models = (await client.CypherModels()).models
             assert.deepEqual(models, [CypherFx.Crm.id, CypherFx.Ext.id], 'cypher/models lists the delivered packages, sorted, without todl.system')
             assert.ok(!models.includes(CypherFx.System))
-            assert.deepEqual(CypherFx.Column(await client.CypherQuery(CypherFx.Elements)), [CypherFx.Acme, CypherFx.R1], 'tenant-wide: both packages')
+            assert.deepEqual(CypherFx.Column(await client.CypherQuery(CypherFx.Elements)), [CypherFx.Acme, CypherFx.R1], 'environment-wide: both packages')
             assert.deepEqual(CypherFx.Column(await client.CypherQuery(CypherFx.Elements, undefined, undefined, CypherFx.Crm.id)), [CypherFx.R1], 'crm: its engine nodes only')
             assert.deepEqual(CypherFx.Column(await client.CypherQuery(CypherFx.Elements, undefined, undefined, CypherFx.Ext.id)), [CypherFx.Acme], 'ext: its binding\'s external rows only')
             for (const unknown of [CypherFx.Unknown, CypherFx.System])

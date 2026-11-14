@@ -41,7 +41,7 @@ class CountingBackends implements ICloudBackends
     }
 }
 
-/** One cloud-boot scenario. `ns` namespaces tenant ids, secret refs and the master-key ref so runs sharing an emulator do not collide. */
+/** One cloud-boot scenario. `ns` namespaces environment ids, secret refs and the master-key ref so runs sharing an emulator do not collide. */
 class AzureCloudBootFixture
 {
     private static readonly Separator = '-'
@@ -118,8 +118,8 @@ class AzureCloudBootFixture
     public Provisioning(): InMemoryEnvironmentProvisioning
     {
         const entries = new Map<string, EnvironmentProvisioning>([
-            [this.EnvironmentOneId, { displayName: 'Tenant One', bootstrap: { adminEmail: AzureCloudBootFixture.Admin1Email, adminPrincipalId: AzureCloudBootFixture.Admin1Id, adminPasswordRef: this.Admin1Ref, ownerGrant: true } }],
-            [this.EnvironmentTwoId, { displayName: 'Tenant Two', bootstrap: { adminEmail: AzureCloudBootFixture.Admin2Email, adminPrincipalId: AzureCloudBootFixture.Admin2Id, adminPasswordRef: this.Admin2Ref, ownerGrant: true } }],
+            [this.EnvironmentOneId, { displayName: 'Environment One', bootstrap: { adminEmail: AzureCloudBootFixture.Admin1Email, adminPrincipalId: AzureCloudBootFixture.Admin1Id, adminPasswordRef: this.Admin1Ref, ownerGrant: true } }],
+            [this.EnvironmentTwoId, { displayName: 'Environment Two', bootstrap: { adminEmail: AzureCloudBootFixture.Admin2Email, adminPrincipalId: AzureCloudBootFixture.Admin2Id, adminPasswordRef: this.Admin2Ref, ownerGrant: true } }],
         ])
         return new InMemoryEnvironmentProvisioning(entries)
     }
@@ -137,7 +137,7 @@ class AzureCloudBootFixture
         await secrets.Put(this.MasterKeyRef, Buffer.alloc(32, 3).toString('base64'))
     }
 
-    /** Boots a cloud-mode host over the bundle built from `backends`, runs the two-tenant isolation assertions,
+    /** Boots a cloud-mode host over the bundle built from `backends`, runs the two-environment isolation assertions,
      *  then disposes host and bundle. Cleanup is isolated so a cleanup throw never masks an assertion failure. */
     public async BootAndAssert(backends: ICloudBackends, config: ServerConfig): Promise<void>
     {
@@ -308,7 +308,7 @@ test('cloud mode without a platform bundle still fails closed (the gap this stag
     }
 })
 
-test('cloud mode (azure) boots end-to-end over an injected bundle and serves two isolated tenants', async () =>
+test('cloud mode (azure) boots end-to-end over an injected bundle and serves two isolated environments', async () =>
 {
     const fixture = new AzureCloudBootFixture()
     const baseDir = AzureCloudBootFixture.MakeBaseDir()
@@ -324,7 +324,7 @@ test('cloud mode (azure) boots end-to-end over an injected bundle and serves two
     }
 })
 
-test('cloud mode boots over real AzureCloudBackends wiring against local emulators and keeps two tenants isolated', { skip: EmulatorAzureGate.Skip }, async () =>
+test('cloud mode boots over real AzureCloudBackends wiring against local emulators and keeps two environments isolated', { skip: EmulatorAzureGate.Skip }, async () =>
 {
     await EmulatorAzureGate.Run()
 })

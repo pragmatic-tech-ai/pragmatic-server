@@ -9,14 +9,14 @@ import { EnvironmentRegistry, InMemoryEnvironmentProvisioning } from '../environ
 import type { EnvironmentProvisioning } from '../environment-provisioning.js'
 import { ProvisionedSecretSource } from '../../config/provisioned-secret-source.js'
 
-test('the provisioned source threads through the registry and writes both named refs into the tenant store', async () =>
+test('the provisioned source threads through the registry and writes both named refs into the environment store', async () =>
 {
     const baseDir = mkdtempSync(join(tmpdir(), 'ps-reg-sec-'))
     const keyEnv = 'PS_REG_SEC_KEY'
     process.env[keyEnv] = randomBytes(32).toString('base64')
     const entries = new Map<string, EnvironmentProvisioning>()
     entries.set('t1', {
-        displayName: 'Tenant One',
+        displayName: 'Environment One',
         bootstrap: { adminEmail: 'admin@x.io', adminPrincipalId: 'admin', adminPasswordRef: 't1/bootstrap/admin', ownerGrant: true },
         oidc: { issuer: 'https://issuer.test', clientId: 'cid', clientSecretRef: 't1/oidc/client-secret', discoveryUrl: 'https://issuer.test/.well-known/openid-configuration', redirectUri: 'https://app.test/cb', provider: 'generic' },
     })

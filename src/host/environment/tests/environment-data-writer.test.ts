@@ -14,7 +14,7 @@ import { EnvironmentFixture } from './environment-fixture.js'
 import type { IEnvironmentFixtureOptions } from './environment-fixture.js'
 
 /**
- * A runtime tenant delivering `crm` (crm.Account, engine-stored, with an owner field, an integer, a relationship and a
+ * A runtime environment delivering `crm` (crm.Account, engine-stored, with an owner field, an integer, a relationship and a
  * seeded `crm.seeded1`) through `crm-app` and `ext` (ext.Customer bound writable over the fixture's MemorySourceAdapter
  * with a text id member, ext.Vendor bound read-only) through `ext-app`; the Customer source holds one row (k1). With
  * identity, p1 and p2 read every account (Organization) but update and delete only their own (User).

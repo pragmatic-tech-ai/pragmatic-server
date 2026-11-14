@@ -67,7 +67,7 @@ class ClusterFixture
     }
 }
 
-test('two tenants through the gateway each open only their own solution', async () =>
+test('two environments through the gateway each open only their own solution', async () =>
 {
     const { baseDir } = ClusterFixture.Start('t1', 't2')
     const cluster = await PragmaticCluster.StartAsync(ClusterFixture.Options(baseDir, ClusterFixture.Provisioning('t1', 't2')))
@@ -161,7 +161,7 @@ test('a t1 token presented with ?environment=t2 is rejected at the gateway', asy
     }
 })
 
-test('a missing tenant hint is rejected at the gateway', async () =>
+test('a missing environment hint is rejected at the gateway', async () =>
 {
     const { baseDir } = ClusterFixture.Start('t1')
     const cluster = await PragmaticCluster.StartAsync(ClusterFixture.Options(baseDir, ClusterFixture.Provisioning('t1')))
@@ -178,7 +178,7 @@ test('a missing tenant hint is rejected at the gateway', async () =>
     }
 })
 
-test('a CRLF-injected tenant hint is rejected and the gateway keeps serving valid tenants', async () =>
+test('a CRLF-injected environment hint is rejected and the gateway keeps serving valid environments', async () =>
 {
     const { baseDir } = ClusterFixture.Start('t1')
     const cluster = await PragmaticCluster.StartAsync(ClusterFixture.Options(baseDir, ClusterFixture.Provisioning('t1')))

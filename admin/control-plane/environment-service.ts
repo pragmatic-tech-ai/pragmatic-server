@@ -168,7 +168,7 @@ export class EnvironmentService implements IAdminAccess
     private static readonly OidcSecretEncoding = 'base64url'
     private static readonly MakerPrincipalId = 'maker'
     private static readonly MakerRoleName = 'Maker'
-    private static readonly TenantKindName = 'Tenant'
+    private static readonly RealmKindName = 'Realm'
     private static readonly MakerScope = 'graph-contribute'
     /** The maker also holds Viewer so graph/list passes the role check; the token scope still limits it to contribute + list. */
     private static readonly MakerListRoleName = 'Viewer'
@@ -600,8 +600,8 @@ export class EnvironmentService implements IAdminAccess
         }
         return this.WithAdmin(name, async info =>
         {
-            await this.proxy.GrantRole(info, { subject: EnvironmentService.MakerPrincipalId, role: EnvironmentService.MakerRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
-            await this.proxy.GrantRole(info, { subject: EnvironmentService.MakerPrincipalId, role: EnvironmentService.MakerListRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
+            await this.proxy.GrantRole(info, { subject: EnvironmentService.MakerPrincipalId, role: EnvironmentService.MakerRoleName, resourceKind: EnvironmentService.RealmKindName, resourcePath: [] })
+            await this.proxy.GrantRole(info, { subject: EnvironmentService.MakerPrincipalId, role: EnvironmentService.MakerListRoleName, resourceKind: EnvironmentService.RealmKindName, resourcePath: [] })
             return this.proxy.IssueToken(info, { principalId: EnvironmentService.MakerPrincipalId, scopes: [EnvironmentService.MakerScope], expiresInSeconds: EnvironmentService.MakerTokenTtlSeconds })
         })
     }
@@ -616,7 +616,7 @@ export class EnvironmentService implements IAdminAccess
         }
         return this.WithAdmin(name, async info =>
         {
-            await this.proxy.GrantRole(info, { subject: EnvironmentService.DeployerPrincipalId, role: EnvironmentService.DeployerRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
+            await this.proxy.GrantRole(info, { subject: EnvironmentService.DeployerPrincipalId, role: EnvironmentService.DeployerRoleName, resourceKind: EnvironmentService.RealmKindName, resourcePath: [] })
             return this.proxy.IssueToken(info, { principalId: EnvironmentService.DeployerPrincipalId, scopes: [EnvironmentService.DeployScope], expiresInSeconds: EnvironmentService.DeployTtlSeconds })
         })
     }
@@ -631,7 +631,7 @@ export class EnvironmentService implements IAdminAccess
         }
         return this.WithAdmin(name, async info =>
         {
-            await this.proxy.GrantRole(info, { subject: EnvironmentService.AppReaderPrincipalId, role: EnvironmentService.AppReaderRoleName, resourceKind: EnvironmentService.TenantKindName, resourcePath: [] })
+            await this.proxy.GrantRole(info, { subject: EnvironmentService.AppReaderPrincipalId, role: EnvironmentService.AppReaderRoleName, resourceKind: EnvironmentService.RealmKindName, resourcePath: [] })
         })
     }
 

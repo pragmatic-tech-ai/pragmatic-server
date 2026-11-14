@@ -108,7 +108,7 @@ class ModelScopedFixture
     }
 
     /**
-     * A structurally-valid tenant setting placing both principals in sales. The dev graph is governed by RBAC at the
+     * A structurally-valid environment setting placing both principals in sales. The dev graph is governed by RBAC at the
      * PolicyGate only (PR13): the security setting is never read for dev reads, so this only marks identity as configured
      * for the model-scoping and cursor behaviour the kept tests pin.
      */

@@ -42,7 +42,7 @@ export interface GatewayOptions
 }
 
 /** Public plain-ws front door. Holds NO identity pack and never parses JSON-RPC: it reads the ?environment hint,
- *  dials the worker over mutual-TLS wss (forwarding tenant + bearer), and relays raw frames both ways.
+ *  dials the worker over mutual-TLS wss (forwarding environment + bearer), and relays raw frames both ways.
  *  The client-side upgrade completes only after the worker ws opens, so a worker rejection rejects the client. */
 export class Gateway
 {
@@ -169,7 +169,7 @@ export class Gateway
         }
     }
 
-    /** Builds the outbound worker-upgrade carrier: tenant, authorization, anti-spoof fingerprint stamp, and the inbound W3C trace context. */
+    /** Builds the outbound worker-upgrade carrier: environment, authorization, anti-spoof fingerprint stamp, and the inbound W3C trace context. */
     public static OutboundHeaders(req: IncomingMessage, environmentId: string, authorization: string | null, clientTlsConfigured: boolean): Record<string, string>
     {
         const headers: Record<string, string> = { [Gateway.EnvironmentHeader]: environmentId }

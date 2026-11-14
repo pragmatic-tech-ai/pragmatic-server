@@ -8,7 +8,7 @@ import type { CypherCellDto, CypherNodeCellDto, EntityDto, ModelMemberDto } from
  */
 export interface IExpectedVisibility
 {
-    /** Whether the tenant's field security lets the principal read `field` of `concept`. */
+    /** Whether the environment's field security lets the principal read `field` of `concept`. */
     CanRead(concept: string, field: string): boolean
     /** The concept whose field security governs a model/view member, or undefined for structure (schema, models). */
     MemberConcept(id: string): string | undefined
@@ -45,7 +45,7 @@ export class InvariantText
     public static readonly Projected = 'projected unreadable '
     public static readonly FilterLeak = 'a filter on an unreadable attribute selected rows'
     public static readonly NotApplied = 'statement was not applied'
-    public static readonly NoEnvironmentAuthorization = 'the security-model reload is not the tenant read authorization'
+    public static readonly NoEnvironmentAuthorization = 'the security-model reload is not the environment read authorization'
     public static readonly ModelCount = 'the fixture has two models'
     /** Common to every unreadable-member message (Field, Ref, Attr, EdgeVia, Projected). */
     public static readonly Unreadable = 'unreadable '

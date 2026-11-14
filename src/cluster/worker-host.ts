@@ -86,7 +86,7 @@ export interface WorkerHostOptions
 }
 
 /** Internal mutual-TLS wss worker: the gateway (a verified client cert) forwards x-pragmatic-environment + authorization;
- *  the worker owns the tenant's pack, authenticates the bearer against it, isolates each tenant in its own PragmaticServer. */
+ *  the worker owns the environment's pack, authenticates the bearer against it, isolates each environment in its own PragmaticServer. */
 export class WorkerHost
 {
     private static readonly DefaultHost = '127.0.0.1'

@@ -583,7 +583,7 @@ export class TenantTestHost
     {
         return {
             principalId: 'principal-1', email: 'owner@example.test', roleLabel: 'Tenant owner',
-            environment: { id: 'tenant-1', displayName: 'Example Tenant', organisation: 'Example Org' },
+            tenant: { id: 'tenant-1', displayName: 'Example Tenant', organisation: 'Example Org' },
             hive: { id: 'hive-1', displayName: 'Example Hive' }, capabilities, ownerContact: 'owner@example.test',
         }
     }

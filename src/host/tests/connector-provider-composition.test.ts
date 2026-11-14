@@ -300,7 +300,7 @@ test('gate through composition (injected provider): override denied runs no inst
     }
 })
 
-test('allowlist gate: an override-enabled tenant still rejects a provider not on its allowlist before any install', async () =>
+test('allowlist gate: an override-enabled environment still rejects a provider not on its allowlist before any install', async () =>
 {
     const cacheDir = Fixture.TempDir()
     try

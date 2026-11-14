@@ -18,7 +18,7 @@ export interface ICallerCredentialRevoker
 }
 
 /**
- * The server's per-user source credentials (PR12, R27): wraps every data-source adapter factory the tenant's
+ * The server's per-user source credentials (PR12, R27): wraps every data-source adapter factory the environment's
  * connectors use in a {@link CallerCredentialAdapterFactory} over the identity pack's source tokens (behind a per-user
  * cache), and revokes one principal's credentials: its stored upstream tokens (todl-identity-cloud UpstreamTokenVault,
  * where the pack stores them), its cached source tokens and every caller's-identity inner adapter opened for it.
@@ -41,7 +41,7 @@ export class CallerCredentials implements ICallerCredentialWrapper, ICallerCrede
     {
     }
 
-    /** Binds the tenant's identity: factories wrapped from now on acquire through `tokens` (Start). */
+    /** Binds the realm's identity: factories wrapped from now on acquire through `tokens` (Start). */
     public Bind(tokens: ISourceTokenProvider, realm: Realm, vault: UpstreamTokenVault | undefined): void
     {
         this.tokens = new CallerSourceTokens(tokens)

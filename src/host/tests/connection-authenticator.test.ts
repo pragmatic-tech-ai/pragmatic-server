@@ -12,7 +12,7 @@ class AuthenticatorFixture
 
     public static Realm1(): Realm
     {
-        return new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        return new Realm('t1', RealmKind.SelfHosted, 'Environment One')
     }
 }
 
@@ -37,7 +37,7 @@ test('resolves a valid session token to the account principal', async () =>
     assert.equal(context?.Principal.Kind, PrincipalKind.User)
 })
 
-test('returns null for unknown, empty and wrong-tenant tokens', async () =>
+test('returns null for unknown, empty and wrong-environment tokens', async () =>
 {
     const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
     const realm = AuthenticatorFixture.Realm1()
@@ -49,7 +49,7 @@ test('returns null for unknown, empty and wrong-tenant tokens', async () =>
     assert.equal(await authenticator.ResolveAsync(Token, other, pack), null)
 })
 
-test('returns null for a valid session presented under the wrong tenant', async () =>
+test('returns null for a valid session presented under the wrong environment', async () =>
 {
     const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
     const realm = AuthenticatorFixture.Realm1()

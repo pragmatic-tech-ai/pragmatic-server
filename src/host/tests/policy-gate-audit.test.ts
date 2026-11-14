@@ -44,14 +44,14 @@ class Fixtures
 {
     public static Context(role: Role | null): AccessContext
     {
-        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const grants = role === null ? [] : [new Grant('p1', role, new ResourceRef(ResourceKind.Realm, 't1', []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 }
 
-test('an allowed Authorize emits one Allow event with action, kind, principal and tenant', () =>
+test('an allowed Authorize emits one Allow event with action, kind, principal and realm', () =>
 {
     const sink = new CapturingSink()
     const gate = new PolicyGate(Fixtures.Context(Role.Viewer), () => ['my-solution'], sink)

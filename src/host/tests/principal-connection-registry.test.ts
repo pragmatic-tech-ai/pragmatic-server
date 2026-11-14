@@ -52,7 +52,7 @@ describe('PrincipalConnectionRegistry', () =>
         assert.equal(b.RevokeCount, 0)
     })
 
-    it('isolates tenants sharing a principal id', () =>
+    it('isolates environments sharing a principal id', () =>
     {
         const registry = new PrincipalConnectionRegistry()
         const one = new FakeConnection()

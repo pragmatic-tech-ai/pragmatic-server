@@ -36,17 +36,17 @@ export type SeedRow = {
 
 export interface IEnvironmentFixtureOptions
 {
-    /** Boot the identity subsystem (master key, tenant config); absent = no identity (Default Allow). */
+    /** Boot the identity subsystem (master key, realm config); absent = no identity (Default Allow). */
     readonly Identity?: boolean
-    /** With identity: the environment security setting saved into the tenant config after boot. */
+    /** With identity: the environment security setting saved into the realm config after boot. */
     readonly SecurityModel?: ISecurityModelConfig
     /** With identity: start the IdP directory sync at Start (default false: the fixture's principals have no accounts). */
     readonly DirectorySyncOnStart?: boolean
 }
 
 /**
- * A runtime tenant on disk for environment-engine tests (server-own, Task 5): `<root>/<TenantId>/{packages,
- * applications,graphs,identity}` as TenantRegistry lays it out. `Package` compiles TODL with `compilePackage` into
+ * A runtime environment on disk for environment-engine tests (server-own, Task 5): `<root>/<EnvironmentId>/{packages,
+ * applications,graphs,identity}` as EnvironmentRegistry lays it out. `Package` compiles TODL with `compilePackage` into
  * `packages/`; `Live` writes an app manifest and its `live` pointer; `Promote` writes the promote record; `Start` builds
  * a Runtime `PragmaticServer` (identity optional) whose adapter catalog serves the SQL kind from `Source` (a
  * MemorySourceAdapter), so any `kind = sql` datasource is an external binding over it; `Host` builds a standalone
@@ -68,7 +68,7 @@ export class EnvironmentFixture
     private static readonly LivePointerFile = 'live'
     private static readonly SourceSuffix = '.todl'
     private static readonly NotStartedMessage = 'the environment fixture has not been started'
-    private static readonly NotSeededMessage = 'tenant config was not seeded on boot'
+    private static readonly NotSeededMessage = 'realm config was not seeded on boot'
 
     public readonly Root = mkdtempSync(join(tmpdir(), EnvironmentFixture.RootPrefix))
     public readonly EnvironmentDir = join(this.Root, EnvironmentFixture.EnvironmentId)
@@ -78,7 +78,7 @@ export class EnvironmentFixture
     public readonly IdentityDir = join(this.EnvironmentDir, EnvironmentFixture.IdentityDir)
     /** The engine store path the server's environment host uses. */
     public readonly StorePath = join(this.GraphsDir, EnvironmentEngineHost.StoreDir)
-    /** Serves every SQL datasource of the tenant (over `adapter`, default a fresh MemorySourceAdapter). */
+    /** Serves every SQL datasource of the environment (over `adapter`, default a fresh MemorySourceAdapter). */
     public readonly Source: MemorySourceAdapterFactory
 
     private server: PragmaticServer | undefined
@@ -116,7 +116,7 @@ export class EnvironmentFixture
         writeFileSync(join(this.AppsDir, app, EnvironmentFixture.LivePointerFile), version)
     }
 
-    /** Sets a fresh master key in `KeyEnv` (as `Start` does with identity) and returns its reference, for a TenantRegistry over `Root`. */
+    /** Sets a fresh master key in `KeyEnv` (as `Start` does with identity) and returns its reference, for an EnvironmentRegistry over `Root`. */
     public MasterKey(): { base64Env: string }
     {
         process.env[EnvironmentFixture.KeyEnv] = randomBytes(32).toString('base64')
@@ -134,7 +134,7 @@ export class EnvironmentFixture
         return new EnvironmentDeliveries(new PragmaticAppsRegistry(new NodeFsStorage(this.AppsDir)), this.PromoteRecords())
     }
 
-    /** Builds and starts the Runtime server of the tenant. */
+    /** Builds and starts the Runtime server of the environment. */
     public async Start(options: IEnvironmentFixtureOptions = {}): Promise<PragmaticServer>
     {
         if (options.Identity === true) this.MasterKey()
@@ -211,7 +211,7 @@ export class EnvironmentFixture
         return transaction.Commit()
     }
 
-    /** `principal` with an Owner grant on the tenant (the gate admits it; the scope decides). */
+    /** `principal` with an Owner grant on the realm (the gate admits it; the scope decides). */
     public ContextFor(principal: Principal): AccessContext
     {
         const realm = new Realm(EnvironmentFixture.EnvironmentId, RealmKind.SelfHosted, EnvironmentFixture.DisplayName)

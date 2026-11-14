@@ -5,7 +5,7 @@ import type { PragmaticServer } from '../../../pragmatic-server.js'
 
 /**
  * Test-only: reads one concept of the first connector model of a dev server's open solution through
- * `PragmaticServer.DevConnectors()` (the engine path of ruling S14), as an owner of `tenantId`. A read that fails
+ * `PragmaticServer.DevConnectors()` (the engine path of ruling S14), as an owner of `environmentId`. A read that fails
  * rejects with an Error whose message joins the messages of the whole cause chain (the engine wraps a connector's open
  * failure), so a test can match the root cause's text.
  */

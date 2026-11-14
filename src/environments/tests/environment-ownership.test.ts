@@ -22,9 +22,9 @@ test('in-memory ownership never fires the lost handler', async () =>
     assert.equal(fired, false)
 })
 
-test('TenantOwnedElsewhereError is an Error with a stable name', () =>
+test('EnvironmentOwnedElsewhereError is an Error with a stable name', () =>
 {
     const error = new EnvironmentOwnedElsewhereError()
     assert.ok(error instanceof Error)
-    assert.equal(error.name, 'TenantOwnedElsewhereError')
+    assert.equal(error.name, 'EnvironmentOwnedElsewhereError')
 })

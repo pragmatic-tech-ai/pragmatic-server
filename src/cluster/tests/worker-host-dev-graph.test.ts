@@ -17,7 +17,7 @@ import type { EnvironmentProvisioning } from '../../environments/environment-pro
 import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 
-/** One dev tenant on a worker, its solution holding one widget instance in model acme.Shop. */
+/** One dev environment on a worker, its solution holding one widget instance in model acme.Shop. */
 class DevWorkerFx
 {
     public static readonly Environment = 'dev1'
@@ -80,7 +80,7 @@ class DevWorkerFx
     }
 
     /**
-     * A structurally-valid tenant setting placing the token principal. The dev graph is governed by RBAC at the
+     * A structurally-valid environment setting placing the token principal. The dev graph is governed by RBAC at the
      * PolicyGate only (PR13) and never reads the security setting, so this only marks identity as configured; the dev
      * cypher read returns every row regardless.
      */
@@ -97,7 +97,7 @@ class DevWorkerFx
         }
     }
 
-    /** Stores the reading security model in the tenant's identity config (kept fields: the stored ones, if any). */
+    /** Stores the reading security model in the realm's identity config (kept fields: the stored ones, if any). */
     public static async SeedReader(worker: WorkerHost): Promise<void>
     {
         const server = await worker.RegistryForTest().ServerFor(DevWorkerFx.Environment)
@@ -109,7 +109,7 @@ class DevWorkerFx
         await store.Save(DevWorkerFx.Environment, config)
     }
 
-    /** Waits until the tenant's language service has loaded the opened solution. */
+    /** Waits until the environment's language service has loaded the opened solution. */
     public static async Idle(worker: WorkerHost): Promise<void>
     {
         const server = await worker.RegistryForTest().ServerFor(DevWorkerFx.Environment)
@@ -151,7 +151,7 @@ test('worker host serves dev graph endpoints', async () =>
             assert.deepEqual(page.columns, [DevWorkerFx.Column])
             assert.equal(page.items.length, 1)
             assert.match(JSON.stringify(page.items[0]), new RegExp(DevWorkerFx.Label))
-            // the query was served by the tenant's attached dev graph engine: the query itself opened it (the test never did)
+            // the query was served by the environment's attached dev graph engine: the query itself opened it (the test never did)
             assert.equal(host.IsOpen, true, 'the dev cypher/query opened the attached dev graph engine')
         }
         finally

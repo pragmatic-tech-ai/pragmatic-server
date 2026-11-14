@@ -33,7 +33,7 @@ export interface ISyncDiagnostics
 /** Reports a failed sync as one warning on the server logger, by error name only. */
 export class LoggerSyncDiagnostics implements ISyncDiagnostics
 {
-    private static readonly Line = 'IdP directory sync failed, previous snapshot kept: tenant '
+    private static readonly Line = 'IdP directory sync failed, previous snapshot kept: environment '
     private static readonly Separator = ': '
 
     public constructor(private readonly logger: ILogger = StructuredLogger.ToStdout())
@@ -63,9 +63,9 @@ class DeprovisionedSignal implements ISignal<readonly string[]>
 }
 
 /**
- * Drives one tenant's IdP directory sync (S3 `IdpDirectorySync`) on a poll: one run when its server starts serving (the
+ * Drives one environment's IdP directory sync (S3 `IdpDirectorySync`) on a poll: one run when its server starts serving (the
  * creator calls {@link RunNow}), one after each admin `SetSecurityModel`, then every {@link IntervalMs} while the server
- * lives. A `PragmaticServer` exists only while it holds the tenant lease, so exactly one replica polls. Runs are
+ * lives. A `PragmaticServer` exists only while it holds the environment lease, so exactly one replica polls. Runs are
  * serialized; a run requested while one is in flight coalesces into one more. A run whose snapshot differs from the
  * stored one in what security reads (authority, user states, group members; not the timestamp) or that deprovisions
  * anyone invalidates the security setting so the next scope reads the new snapshot; an unchanged run leaves it (and

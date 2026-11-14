@@ -37,8 +37,8 @@ interface IngestPlan
 }
 
 /**
- * Ingests a published remote application onto a runtime tenant. The storages are bound to the per-tenant
- * `PragmaticServer`, so ingest is already tenant-scoped. Everything is validated before the first byte is written;
+ * Ingests a published remote application onto a runtime environment. The storages are bound to the per-environment
+ * `PragmaticServer`, so ingest is already environment-scoped. Everything is validated before the first byte is written;
  * an already-present `name@version` is refused (versions are immutable), package and UI files are staged under
  * unique temp names and renamed into place, and `application.json` is renamed in LAST as the commit marker, so a
  * version tree is never treated as complete while half-ingested. The `<app>/live` pointer, written after the tree, is the app-level

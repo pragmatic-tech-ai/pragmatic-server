@@ -6,7 +6,7 @@ import { RedisEnvironmentOwnership } from '../redis-environment-ownership.js'
 
 const url = process.env.PRAGMATIC_TEST_REDIS_URL
 
-test('redis ownership: exactly one instance owns a tenant; release frees it', { skip: url === undefined ? 'set PRAGMATIC_TEST_REDIS_URL to run' : false }, async () =>
+test('redis ownership: exactly one instance owns an environment; release frees it', { skip: url === undefined ? 'set PRAGMATIC_TEST_REDIS_URL to run' : false }, async () =>
 {
     const environment = `t-${Date.now()}`
     const a = new RedisEnvironmentOwnership(url as string, 'replica-a')
@@ -181,7 +181,7 @@ test('a Release that fails while Redis is down is flushed on the next successful
     await ownership.ReleaseAll()
 })
 
-test('a queued release is dropped when the tenant is re-acquired, so the fresh lease is not deleted', async () =>
+test('a queued release is dropped when the environment is re-acquired, so the fresh lease is not deleted', async () =>
 {
     let failEval = true
     const deletes: string[] = []

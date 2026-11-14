@@ -8,7 +8,7 @@ class GateFixture
 {
     public static ContextWith(role: Role | null): AccessContext
     {
-        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const grants = role === null ? [] : [new Grant('p1', role, new ResourceRef(ResourceKind.Realm, 't1', []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
@@ -97,7 +97,7 @@ test('cypher/query is allowed for a reader and denied with no role', () =>
     assert.equal(GateFixture.Gate(null).Authorize(CypherProtocol.Query.method).Allowed, false)
 })
 
-test('cypher/models is a tenant read: allowed for a reader, denied with no role', () =>
+test('cypher/models is a realm read: allowed for a reader, denied with no role', () =>
 {
     assert.equal(GateFixture.Gate(Role.Viewer).Authorize(CypherProtocol.Models.method).Allowed, true)
     assert.equal(GateFixture.Gate(null).Authorize(CypherProtocol.Models.method).Allowed, false)
@@ -137,7 +137,7 @@ test('connector/readPage is allowed for a reader and denied with no role', () =>
     assert.equal(GateFixture.Gate(null).Authorize(ConnectorProtocol.ReadPage.method).Allowed, false)
 })
 
-test('cypher/execute needs tenant write: Owner allowed, Viewer and no role denied', () =>
+test('cypher/execute needs realm write: Owner allowed, Viewer and no role denied', () =>
 {
     assert.equal(GateFixture.Gate(Role.Owner).Authorize(CypherProtocol.Execute.method).Allowed, true)
     assert.equal(GateFixture.Gate(Role.Viewer).Authorize(CypherProtocol.Execute.method).Allowed, false)

@@ -50,9 +50,9 @@ test('OptionsFor forwards identity config, machine map and the shared runtime pi
     assert.deepEqual(runtime.Calls, [Fixtures.EnvironmentId])
 })
 
-test('ServerFor rejects a tenant id containing a colon (flow-state key collision guard)', async () =>
+test('ServerFor rejects an environment id containing a colon (flow-state key collision guard)', async () =>
 {
-    await assert.rejects(() => Fixtures.Registry().ServerFor('t1:x'), /invalid tenant id/)
+    await assert.rejects(() => Fixtures.Registry().ServerFor('t1:x'), /invalid environment id/)
 })
 
 test('OptionsFor without a runtime leaves the runtime pieces undefined', () =>

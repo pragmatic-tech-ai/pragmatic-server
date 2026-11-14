@@ -90,8 +90,8 @@ export interface WebSocketAddress
     port: number
 }
 
-/** Stateless multi-tenant front door: the ?environment hint selects a tenant's pack, the bearer authenticated against that pack binds the tenant,
- *  each tenant is isolated in its own PragmaticServer, and idle tenants are evicted by the registry sweep. */
+/** Stateless multi-environment front door: the ?environment hint selects an environment's pack, the bearer authenticated against that pack binds the environment,
+ *  each environment is isolated in its own PragmaticServer, and idle environments are evicted by the registry sweep. */
 export class PragmaticServerHost
 {
     private static readonly DefaultHost = '127.0.0.1'

@@ -77,7 +77,7 @@ class SnapshotKey
 }
 
 /**
- * The dev tenant's engine snapshot: every member's SAVED `.todl` sources (never unsaved editor buffers) compiled by
+ * The dev environment's engine snapshot: every member's SAVED `.todl` sources (never unsaved editor buffers) compiled by
  * `SavedModelCompiler` into one package per model id, described by TODL's `ExternalCatalogDescriber` (ruling S18) with
  * the `.todl` file connector as both the default and the local connector, and each accepted model's connector plan
  * (`ConnectorPlanEmitter.PlanFor`, re-keyed to the model's package id, delivered by the solution). External bindings

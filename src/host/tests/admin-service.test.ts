@@ -257,7 +257,7 @@ test('revoking another subject Owner is allowed', async () =>
     assert.equal(f.Grants.Touched, 1)
 })
 
-test('revoking the sole tenant-root Owner is rejected, grant kept, no audit', async () =>
+test('revoking the sole realm-root Owner is rejected, grant kept, no audit', async () =>
 {
     const f = new AdminFixture()
     await f.Seed('u2', Role.Owner)
@@ -267,7 +267,7 @@ test('revoking the sole tenant-root Owner is rejected, grant kept, no audit', as
     assert.equal(f.Audit.Events.length, 0)
 })
 
-test('revoking the sole tenant-root Admin is rejected', async () =>
+test('revoking the sole realm-root Admin is rejected', async () =>
 {
     const f = new AdminFixture()
     await f.Seed('u2', Role.Admin)
@@ -313,7 +313,7 @@ test('Owner plus Admin: Owner revoke allowed, then Admin revoke rejected', async
     assert.equal(await f.RootGrantCount(), 1)
 })
 
-test('tenant-root Viewer revoke is allowed (guard skipped) when an Owner exists', async () =>
+test('realm-root Viewer revoke is allowed (guard skipped) when an Owner exists', async () =>
 {
     const f = new AdminFixture()
     await f.Seed('u2', Role.Owner)
@@ -333,7 +333,7 @@ test('Project-scoped Owner revoke is allowed as the only such grant (guard skipp
     assert.equal(await f.RootGrantCount(), 1)
 })
 
-test('two tenants each with one Owner: revoking A sole Owner is rejected regardless of B', async () =>
+test('two realms each with one Owner: revoking A sole Owner is rejected regardless of B', async () =>
 {
     const f = new AdminFixture()
     await f.Seed('u2', Role.Owner)
@@ -359,11 +359,11 @@ test('ListGrants returns only the subject grants', async () =>
     assert.equal(grants[0].Role, Role.Viewer)
 })
 
-test('ListGrants never returns the same subject grants from another tenant', async () =>
+test('ListGrants never returns the same subject grants from another realm', async () =>
 {
     const f = new AdminFixture()
     await f.Grants.Save(new Grant('u2', Role.Viewer, f.EnvironmentRoot()))
-    await f.Grants.Save(new Grant('u2', Role.Owner, new ResourceRef(ResourceKind.Realm, 'other-tenant', [])))
+    await f.Grants.Save(new Grant('u2', Role.Owner, new ResourceRef(ResourceKind.Realm, 'other-realm', [])))
     const grants = await f.Service.ListGrants('u2')
     assert.equal(grants.length, 1)
     assert.equal(grants[0]!.Resource.RealmId, 't1')
@@ -379,7 +379,7 @@ test('SetConfig then GetConfig round-trips and evicts', async () =>
     assert.ok(f.Config.Calls.includes('evict'))
 })
 
-test('SetConfig audit failure throws before the tenant is evicted', async () =>
+test('SetConfig audit failure throws before the environment is evicted', async () =>
 {
     const f = new AdminFixture()
     const failing = f.ServiceFor(f.Realm, new FailingAuditSink(), async () => { f.Config.Calls.push('evict') })
@@ -492,7 +492,7 @@ test('DisableAccount disables and audits; unknown principal throws LocalAccountN
     assert.equal(f.Audit.Events.length, before)
 })
 
-test('ListAccounts returns only this tenant accounts', async () =>
+test('ListAccounts returns only this realm accounts', async () =>
 {
     const f = new AdminFixture()
     const other = new Realm('t2', RealmKind.SelfHosted, 'T2')
@@ -537,7 +537,7 @@ test('RevokeToken on an unknown tokenRef rejects and records no audit event', as
     assert.equal(f.Audit.Events.length, 0)
 })
 
-test('RevokeToken on another tenant tokenRef rejects and leaves that token unrevoked', async () =>
+test('RevokeToken on another realm tokenRef rejects and leaves that token unrevoked', async () =>
 {
     const f = new AdminFixture()
     const other = f.ServiceFor(new Realm('t2', RealmKind.SelfHosted, 'T2'), f.Audit, async () => {})
@@ -640,19 +640,19 @@ test('SetSecurityModel persists a valid model, preserves other fields and fires 
     assert.equal(f.Audit.Events.length, 1)
 })
 
-test('GrantRole with a foreign-tenant resource is rejected before any store or audit call', async () =>
+test('GrantRole with a foreign-realm resource is rejected before any store or audit call', async () =>
 {
     const f = new AdminFixture()
-    const foreign = new ResourceRef(ResourceKind.Realm, 'other-tenant', [])
+    const foreign = new ResourceRef(ResourceKind.Realm, 'other-realm', [])
     await assert.rejects(f.Service.GrantRole('u1', 'u2', Role.Editor, foreign), ForeignRealmResourceError)
     assert.equal(f.Grants.Touched, 0)
     assert.equal(f.Audit.Events.length, 0)
 })
 
-test('RevokeRole with a foreign-tenant resource is rejected before any store or audit call', async () =>
+test('RevokeRole with a foreign-realm resource is rejected before any store or audit call', async () =>
 {
     const f = new AdminFixture()
-    const foreign = new ResourceRef(ResourceKind.Realm, 'other-tenant', [])
+    const foreign = new ResourceRef(ResourceKind.Realm, 'other-realm', [])
     await f.Seed('u2', Role.Editor, foreign)
     await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Editor, foreign), ForeignRealmResourceError)
     assert.equal(f.Grants.Touched, 0)
@@ -708,7 +708,7 @@ test('concurrent revokes of the last two administrators: exactly one succeeds, o
     assert.equal((await racy.Inner.GrantsOn(root)).length, 1)
 })
 
-test('concurrent revokes via two AdminService instances on one tenant serialize: one succeeds, one administrator remains', async () =>
+test('concurrent revokes via two AdminService instances on one realm serialize: one succeeds, one administrator remains', async () =>
 {
     const f = new AdminFixture()
     const racy = new RacyGrantStore()

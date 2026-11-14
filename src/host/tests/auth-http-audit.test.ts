@@ -46,7 +46,7 @@ class AuthAuditFixture
         cpSync(join(import.meta.dirname, '..', '..', 'tests', 'fixtures', 'sample-solution'), join(baseDir, 't1', 'solution'), { recursive: true })
         const keyEnv = 'PS_AUTH_AUDIT_KEY'
         process.env[keyEnv] = randomBytes(32).toString('base64')
-        const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Tenant One' }]])
+        const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Environment One' }]])
         const host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: keyEnv }, provisioning: new InMemoryEnvironmentProvisioning(entries), audit })
         const pack = await host.IdentityPackForTest('t1')
         await pack.Registrar.Register(await host.RealmForTest('t1'), 'a@x.io', 'p1', new PresentedSecret('pw-123456'))

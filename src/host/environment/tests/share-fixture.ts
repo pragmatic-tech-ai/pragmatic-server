@@ -9,7 +9,7 @@ import type { IGraphScope } from '../../engine/access-scope-source.js'
 import { EnvironmentFixture } from './environment-fixture.js'
 
 /**
- * A runtime tenant with identity delivering `crm` (crm.Account, engine-stored and owned; crm.Memo, not owned) through
+ * A runtime environment with identity delivering `crm` (crm.Account, engine-stored and owned; crm.Memo, not owned) through
  * `crm-app` and `ext` (ext.Customer bound over the fixture's MemorySourceAdapter, one row k1) through `ext-app`;
  * accounts r1 and r2 are owned by p1 in root. Units root > sales, root > marketing; p1 and p3 sit at root, p2 in
  * sales; p3 is a manual member of team t1 (marketing). Tier 1: p1 holds crm.AccountOwner (Read / Update / Delete /

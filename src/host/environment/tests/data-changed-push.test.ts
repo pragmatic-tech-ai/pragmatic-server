@@ -489,7 +489,7 @@ describe('data/changed push', () =>
         }, false)
     })
 
-    test('dev tenants get no data/changed', async () =>
+    test('dev environments get no data/changed', async () =>
     {
         const packages = mkdtempSync(join(tmpdir(), PushFx.DevPrefix))
         const server = new PragmaticServer({ purpose: EnvironmentPurpose.Development, packagesRoot: packages })

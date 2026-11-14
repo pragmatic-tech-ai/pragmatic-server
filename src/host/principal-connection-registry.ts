@@ -10,7 +10,7 @@ export interface IPrincipalInvalidator
     InvalidatePrincipal(environmentId: string, principalId: string): void
 }
 
-/** Indexes live connections by (tenantId, principalId) so a revoke can tear them all down. */
+/** Indexes live connections by (environmentId, principalId) so a revoke can tear them all down. */
 export class PrincipalConnectionRegistry implements IPrincipalInvalidator
 {
     private static readonly KeySeparator = '\u0000'

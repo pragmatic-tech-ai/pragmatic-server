@@ -11,8 +11,8 @@ import { EnvironmentSecretProvisioner } from './environment-secret-provisioner.j
 import type { PragmaticServerIdentityOptions, OidcServerOptions } from '../pragmatic-server.js'
 import type { PlatformServices } from '../platform/platform-services.js'
 
-/** Builds and registers the single-tenant identity stack from the platform bundle: the ServerIdentityPack
- *  (over the platform's identity stores), a SingleTenant provider registry, the secret store and password hasher. */
+/** Builds and registers the single-realm identity stack from the platform bundle: the ServerIdentityPack
+ *  (over the platform's identity stores), a SingleRealm provider registry, the secret store and password hasher. */
 export class IdentityModule
 {
     private static readonly LocalPackId = 'local'
@@ -80,7 +80,7 @@ export class IdentityModule
         return { pack, realm, oidc: resolved.Oidc }
     }
 
-    /** A tenant given only the legacy flat oidc options gets the equivalent generic-oidc config; none means local-only. */
+    /** An environment given only the legacy flat oidc options gets the equivalent generic-oidc config; none means local-only. */
     private static LegacyOrLocal(oidc: OidcServerOptions | undefined): IdentityConfig
     {
         if (oidc === undefined)

@@ -29,7 +29,7 @@ export interface IGraphScope
      */
     Placement(modelId?: string): Cypher.INodePlacement
     /**
-     * Stable, secret-free fingerprint of everything the scope was compiled from (principal digest, tenant, a hash of
+     * Stable, secret-free fingerprint of everything the scope was compiled from (principal digest, realm, a hash of
      * the claims, engine schema version, security-model generation, the prepared rules' digest), for cursors.
      */
     readonly Digest: string
@@ -182,7 +182,7 @@ class GraphScope implements IGraphScope
  * security setting), the rules' `Finish` is applied last (amendment A2: the source composes no policy or depth and
  * holds no identity state itself), and the rules place creates.
  *
- * Scopes are cached per Digest (principal digest, tenant, claims hash, engine schema version, prepared rules' digest:
+ * Scopes are cached per Digest (principal digest, realm, claims hash, engine schema version, prepared rules' digest:
  * the runtime folds the setting generation into it); the cache is dropped when the engine upgrades (host Changed) or
  * the rules change (rules Changed: the runtime raises it when the security setting is invalidated). The rules are prepared on every
  * call against the settled schema. Every compiled scope is checked by the engine itself (a read opened under it)

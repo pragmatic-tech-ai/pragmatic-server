@@ -3,7 +3,7 @@ import type { RedisClientType } from 'redis'
 import { ClusterKeys } from './cluster-keys.js'
 import type { IWorkerRouter, WorkerEndpoint } from './worker-router.js'
 
-/** No live worker is available to serve a tenant. */
+/** No live worker is available to serve an environment. */
 export class NoWorkersAvailableError extends Error
 {
     private static readonly ErrorName = 'NoWorkersAvailableError'
@@ -16,7 +16,7 @@ export class NoWorkersAvailableError extends Error
     }
 }
 
-/** Best-effort tenant->worker routing over Redis (correctness is the worker's ownership lease, not this router): reads the
+/** Best-effort environment->worker routing over Redis (correctness is the worker's ownership lease, not this router): reads the
  *  live-worker set, renews an active route whose worker is still live, else deterministically picks a live worker and
  *  claims the route under a TTL. The URL may carry credentials and is never logged. Injectable clock + clientFactory. */
 export class RedisWorkerRouter implements IWorkerRouter
@@ -83,7 +83,7 @@ export class RedisWorkerRouter implements IWorkerRouter
         }
     }
 
-    /** Deterministic stable pick so every gateway indexes the same sorted live list (FNV-1a over the tenant id). */
+    /** Deterministic stable pick so every gateway indexes the same sorted live list (FNV-1a over the environment id). */
     private static Pick(environmentId: string, live: readonly string[]): string
     {
         const sorted = [...live].sort()

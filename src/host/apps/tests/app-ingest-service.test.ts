@@ -93,7 +93,7 @@ class IngestFixture
 
     public static Realm(): Realm
     {
-        return new Realm(IngestFixture.EnvironmentId, RealmKind.SelfHosted, 'Tenant One')
+        return new Realm(IngestFixture.EnvironmentId, RealmKind.SelfHosted, 'Environment One')
     }
 
     public static Context(role: Role): AccessContext
@@ -278,7 +278,7 @@ class DeployWire
     }
 }
 
-test('RunDeploy denies a principal without tenant Administer and writes nothing', async () =>
+test('RunDeploy denies a principal without environment Administer and writes nothing', async () =>
 {
     await IngestFixture.Run(async fx =>
     {

@@ -48,7 +48,7 @@ test('advertise, server name and health port are parsed', () =>
     assert.equal(config.healthPort, 8081)
 })
 
-test('LoadGateway requires only TLS + redis + port, not baseDir/masterKey/tenant', () =>
+test('LoadGateway requires only TLS + redis + port, not baseDir/masterKey/environment', () =>
 {
     const env = { ...Env.Tls(), PRAGMATIC_REDIS_URL: 'redis://r:6379', PRAGMATIC_PORT: '8080', PRAGMATIC_WORKER_SERVERNAME: 'pragmatic-worker' }
     const gw = ServerConfigLoader.LoadGateway(env)

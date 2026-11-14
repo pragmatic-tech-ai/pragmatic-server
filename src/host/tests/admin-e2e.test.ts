@@ -19,7 +19,7 @@ class AdminHostFixture
     private static readonly OwnerSubject = 'owner1'
     private static readonly ViewerSubject = 'viewer1'
     private static readonly NewSubject = 'bob'
-    private static readonly EnvironmentDisplayName = 'Tenant One'
+    private static readonly EnvironmentDisplayName = 'Environment One'
     public static readonly RoleEditorName = 'Editor'
     public static readonly RoleViewerName = 'Viewer'
     public static readonly AccountEmail = 'dave@example.com'

@@ -49,7 +49,7 @@ class FreePort
 }
 
 /**
- * The runtime tenant's security model (tier 1). An identity-configured tenant with NO security setting fails closed
+ * The runtime environment's security model (tier 1). An identity-configured environment with NO security setting fails closed
  * (the empty model: every runtime scope is deny-all), so the authenticated admin would see nothing. This seeds the
  * minimum that lets the bootstrapped admin read the deployed app: the admin holds the SystemAdministrator base role,
  * which reads every concept unrestricted. A narrower, per-concept admin-read mechanism for non-administrators without
@@ -76,10 +76,10 @@ class RuntimeSecurityModel
 }
 
 /**
- * Stands up a one-tenant Runtime server inside the captured Docker image, following the recipe: it seeds a config bundle,
+ * Stands up a one-environment Runtime server inside the captured Docker image, following the recipe: it seeds a config bundle,
  * mounts it read-only, runs the published image with a unique container, and polls /healthz. The base dir points at the
  * non-root runtime user's own home (a writable, ephemeral location) rather than a fresh Docker volume: a plain named
- * volume mounts into /data owned by root, which the image's non-root user (uid 10001) cannot write, so the first tenant
+ * volume mounts into /data owned by root, which the image's non-root user (uid 10001) cannot write, so the first environment
  * materialization would fail. A real deployment supplies a volume whose ownership the runtime user can write (an
  * orchestrator fsGroup / init chown); this ephemeral test needs no persistence and so avoids the volume entirely.
  */
@@ -128,7 +128,7 @@ class RuntimeEnvironment
     private static readonly HealthTimeoutMs = 120000
     private static readonly HealthPollMs = 1000
     private static readonly ImageMissing = 'the pragmatic-server:sp0 image is absent: build it first (see the SP0 Dockerfile recipe)'
-    private static readonly HealthNeverReady = 'the runtime tenant container never reported /healthz=200'
+    private static readonly HealthNeverReady = 'the runtime environment container never reported /healthz=200'
     private static readonly PortEnv = 'PRAGMATIC_PORT=8080'
     private static readonly BaseDirEnv = 'PRAGMATIC_BASE_DIR=/home/pragmatic/data'
     private static readonly EnvironmentsFileEnv = 'PRAGMATIC_TENANTS_FILE=/cfg/tenants.json'
@@ -200,7 +200,7 @@ class RuntimeEnvironment
 
     public async StartAsync(): Promise<void>
     {
-        // Seed the tenant's security model before Generate reads it: without one, an identity-configured tenant denies
+        // Seed the environment's security model before Generate reads it: without one, an identity-configured environment denies
         // all reads and the browser's live query would come back empty.
         writeFileSync(join(this.seedDir, RuntimeEnvironment.SecurityModelFile), JSON.stringify(RuntimeSecurityModel.Config()))
         await BundleBuilder.Generate(
@@ -324,7 +324,7 @@ class BrowserProof
 /** Shared expectations for the shaped deploy request and the live-only proof value. */
 class HelloExpectation
 {
-    public static readonly LiveValue = 'hello from the tenant'
+    public static readonly LiveValue = 'hello from the environment'
     public static readonly Version = '0.1.0'
     public static readonly PackageId = 'hello-app'
     public static readonly IndexFile = 'index.html'
@@ -340,7 +340,7 @@ class HelloExpectation
     }
 }
 
-test('SP0 capstone: a remote app deploys to a Docker runtime tenant and a browser renders a live tenant value', { skip: !Gate.Enabled, timeout: 600000 }, async () =>
+test('SP0 capstone: a remote app deploys to a Docker runtime environment and a browser renders a live environment value', { skip: !Gate.Enabled, timeout: 600000 }, async () =>
 {
     RuntimeEnvironment.RequireImage()
     const environment = new RuntimeEnvironment(await FreePort.Acquire())

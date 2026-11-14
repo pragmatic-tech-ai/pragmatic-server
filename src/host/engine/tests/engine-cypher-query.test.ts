@@ -137,7 +137,7 @@ class DevCypherFx
     public static readonly ModelB = 'acme.ShopB'
     public static readonly Plain = 'p1'
     public static readonly ViewerId = 'u1'
-    public static readonly EnvironmentName = 'Tenant One'
+    public static readonly EnvironmentName = 'Environment One'
     public static readonly Secret = 'hush'
     public static readonly UnknownModel = 'acme.Nope'
     /** The sample solution's name: its package owns what lies outside every model. */
@@ -193,7 +193,7 @@ class DevCypherFx
         }
     }
 
-    /** The tenant owner (no identity subsystem: depth does not apply). */
+    /** The environment owner (no identity subsystem: depth does not apply). */
     public static Permissive(): AccessContext
     {
         return DevCypherFx.ContextOf(DevCypherFx.Plain, Role.Owner)
@@ -525,7 +525,7 @@ test('model-scoped node cells keep many-valued taxonomy refs', async () =>
     })
 })
 
-test('tenant-wide MATCH (n) also returns the taxonomy terms as todl.Term nodes (ruling T6-c)', async () =>
+test('environment-wide MATCH (n) also returns the taxonomy terms as todl.Term nodes (ruling T6-c)', async () =>
 {
     await DevCypherFx.With(DevCypherFx.Taxonomy, async world =>
     {
@@ -537,7 +537,7 @@ test('tenant-wide MATCH (n) also returns the taxonomy terms as todl.Term nodes (
     })
 })
 
-test('a tenant-wide cursor is stale for another principal', async () =>
+test('an environment-wide cursor is stale for another principal', async () =>
 {
     await DevCypherFx.With(DevCypherFx.Three, async world =>
     {

@@ -318,12 +318,12 @@ export class SettingsPageViewModel extends TenantPageViewModel
         }
         const P = SettingsPageViewModel
         const items: Array<readonly [string, string]> = [
-            [P.KeyTenantName, profile.environment.displayName],
-            [P.KeyTenantId, profile.environment.id],
+            [P.KeyTenantName, profile.tenant.displayName],
+            [P.KeyTenantId, profile.tenant.id],
         ]
-        if (profile.environment.organisation !== undefined)
+        if (profile.tenant.organisation !== undefined)
         {
-            items.push([P.KeyOrganisation, profile.environment.organisation])
+            items.push([P.KeyOrganisation, profile.tenant.organisation])
         }
         if (profile.ownerContact !== undefined)
         {

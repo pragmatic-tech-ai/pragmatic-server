@@ -325,7 +325,7 @@ describe('dev cypher/execute over the connection (ported from host/tests/cypher-
         })
     })
 
-    test('concurrent executes serialize (per-tenant mutex) - both land with distinct revisions', async () =>
+    test('concurrent executes serialize (per-environment mutex) - both land with distinct revisions', async () =>
     {
         await ExecFixture.With(false, async world =>
         {
@@ -736,7 +736,7 @@ class ExecFx
     public static readonly SetSplit = "MATCH (a:Widget {label: 'mine'}), (b:Widget {label: 'third'}) SET a.code = 'A', b.code = 'B'"
     public static readonly FreshCount = "MATCH (w:Widget {label: 'fresh'}) RETURN count(w) AS c"
     public static readonly SourcesChanged = 'model sources changed during the write'
-    public static readonly LeaseLost = 'the tenant write lease was lost before the write could persist'
+    public static readonly LeaseLost = 'the environment write lease was lost before the write could persist'
     public static readonly ZeroCounts = { nodesCreated: 0, nodesDeleted: 0, relationshipsCreated: 0, relationshipsDeleted: 0, propertiesSet: 0 }
     /**
      * The engine's own write-through deadline (a real timer inside the graph engine, which has no timer seam): long
@@ -865,7 +865,7 @@ class DetachFx
 
 describe('DevCypherExecute lease (ported from host/cypher/tests/dev-cypher-executor.test.ts)', () =>
 {
-    test('a write holds the tenant lease across the whole write and releases it', async () =>
+    test('a write holds the environment lease across the whole write and releases it', async () =>
     {
         const lock = new ScriptedLock(false, true)
         await ExecFx.With({ lock }, async fx =>
@@ -910,7 +910,7 @@ describe('DevCypherExecute lease (ported from host/cypher/tests/dev-cypher-execu
         })
     })
 
-    test('a connector call that outlives MaxSettleMs wedges the tenant: Failed at once, lease held, until it settles (F-f)', async () =>
+    test('a connector call that outlives MaxSettleMs wedges the environment: Failed at once, lease held, until it settles (F-f)', async () =>
     {
         const lock = new ScriptedLock(false, true)
         const gate = new ManualGate()
@@ -930,7 +930,7 @@ describe('DevCypherExecute lease (ported from host/cypher/tests/dev-cypher-execu
             const wedged = await fx.Run(ExecFx.SetMine)
             assert.equal(wedged.status, AppWriteStatus.Failed)
             assert.equal(wedged.reason, ExecFx.WedgedReason)
-            assert.equal(lock.Acquired, 1, 'a wedged tenant refuses before taking the lease')
+            assert.equal(lock.Acquired, 1, 'a wedged environment refuses before taking the lease')
             gate.Open()
             // the writes settle (the late revert lands); the background release runs in the following turns
             await fx.Host.WhenWritesSettled()
@@ -949,7 +949,7 @@ describe('DevCypherExecute lease (ported from host/cypher/tests/dev-cypher-execu
             const source = fx.Source()
             const result = await fx.Run(ExecFx.Create)
             assert.equal(result.status, AppWriteStatus.Conflict)
-            assert.equal(result.reason, 'another write to this tenant is in progress')
+            assert.equal(result.reason, 'another write to this environment is in progress')
             assert.equal(fx.Source(), source)
         })
     })
@@ -962,7 +962,7 @@ describe('DevCypherExecute lease (ported from host/cypher/tests/dev-cypher-execu
             const source = fx.Source()
             const result = await fx.Run(ExecFx.Create)
             assert.equal(result.status, AppWriteStatus.Conflict)
-            assert.equal(result.reason, 'the tenant write lease was lost before the write could persist')
+            assert.equal(result.reason, 'the environment write lease was lost before the write could persist')
             assert.equal(fx.Source(), source)
             assert.equal(lock.Released, 1)
         })
@@ -1249,7 +1249,7 @@ describe('DevCypherExecute outcomes', () =>
         })
     })
 
-    test('writes are confined to modelId: another model\'s instance is Denied, reads stay tenant-wide (ruling T7-b)', async () =>
+    test('writes are confined to modelId: another model\'s instance is Denied, reads stay environment-wide (ruling T7-b)', async () =>
     {
         await ExecFx.With({ files: { [ExecFx.ModelFile]: ExecFx.Shop, [ExecFx.OtherFile]: ExecFx.OtherModel } }, async fx =>
         {

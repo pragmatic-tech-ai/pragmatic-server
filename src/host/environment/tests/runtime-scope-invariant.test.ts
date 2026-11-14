@@ -13,7 +13,7 @@ import { EnvironmentFixture } from './environment-fixture.js'
 import type { SeedRow } from './environment-fixture.js'
 
 /**
- * Spec §12, runtime half: no endpoint returns a row or member outside its AccessScope. One runtime tenant with identity
+ * Spec §12, runtime half: no endpoint returns a row or member outside its AccessScope. One runtime environment with identity
  * delivering `crm` (crm.Account) through `crm-app`, `ext` (ext.Customer bound over the fixture's MemorySourceAdapter)
  * through `ext-app` and `notes` (notes.Note) through the promote set, both owned; crm.a2 (root) is shared to the BU
  * reader by a System Administrator. Three principals on tier 1 (security S4 Task 9): one holding no role, a BasicUser
@@ -140,7 +140,7 @@ class RuntimeFx
         return fx.ContextFor(new Principal(id, EnvironmentFixture.EnvironmentId, PrincipalKind.User, new Map(), []))
     }
 
-    /** The tenant on disk and started, nodes and links seeded, a2 shared to the BU reader by the administrator. */
+    /** The environment on disk and started, nodes and links seeded, a2 shared to the BU reader by the administrator. */
     public static async Run(body: (fx: EnvironmentFixture) => Promise<void>): Promise<void>
     {
         const fx = new EnvironmentFixture()
@@ -208,7 +208,7 @@ class RuntimeVisibility implements IExpectedVisibility
         return new RuntimeVisibility(new Set([...stored, ...external]), external, perModel, concepts, scope)
     }
 
-    /** The set for a read scoped to `model` (tenant-wide without one). */
+    /** The set for a read scoped to `model` (environment-wide without one). */
     public CypherFor(model: string | undefined): ReadonlySet<string>
     {
         return model === undefined ? this.Cypher : this.models.get(model)!
@@ -282,7 +282,7 @@ class RuntimeSweep
     ]
 
     public readonly Seen = new Coverage()
-    /** The tenant-wide `MATCH (n) RETURN n` nodes. */
+    /** The environment-wide `MATCH (n) RETURN n` nodes. */
     public readonly AllNodes: CypherNodeCellDto[] = []
     /** The `MATCH (n) RETURN n` node ids per model id. */
     public readonly ModelNodes = new Map<string, string[]>()
@@ -337,7 +337,7 @@ class RuntimeSweep
         }
     }
 
-    /** cypher/execute reads stay tenant-wide even under a model id (only its writes are confined). */
+    /** cypher/execute reads stay environment-wide even under a model id (only its writes are confined). */
     private async CypherExecute(expected: RuntimeVisibility): Promise<void>
     {
         for (const model of [undefined, ...RuntimeFx.Models])

@@ -22,7 +22,7 @@ import { CallerConnectorContext } from '../engine/caller-connector-context.js'
  * scope alone decides what the write may see and do (the engine's WriteGate judges every op at commit, read-only
  * bindings and seeded nodes included, S5); this class never filters, masks or authorizes by itself.
  *
- * - No tenant write lease: the tenant-ownership lease already makes the engine single-owner and its OCC serializes
+ * - No environment write lease: the environment-ownership lease already makes the engine single-owner and its OCC serializes
  *   (S1). Executes of one host run one at a time under an in-process mutex (ruling R37), so the `expectedRevision`
  *   check and the write it guards are atomic against other `cypher/execute` calls only. Other writers (data/write,
  *   share, assign, connector commits) are not under this mutex and can commit between the revision read and the

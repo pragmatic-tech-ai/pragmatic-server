@@ -119,7 +119,7 @@ export class ControlPlaneSmoke
     private static readonly StatusCreated = 201
     private static readonly StatusUnauthorized = 401
     private static readonly ViewerRole = 'Viewer'
-    private static readonly TenantKind = 'Tenant'
+    private static readonly RealmKind = 'Realm'
     private static readonly PollTimeoutMs = 90000
     private static readonly PollIntervalMs = 1000
     private static readonly PassTag = 'PASS '
@@ -457,7 +457,7 @@ export class ControlPlaneSmoke
             try
             {
                 const created = await adminConn.sendRequest(AdminProtocol.CreateAccount, { email: S.EnvReaderEmail, principalId: S.EnvReaderPrincipal, password: S.EnvReaderPassword })
-                const granted = await adminConn.sendRequest(AdminProtocol.GrantRole, { subject: S.EnvReaderPrincipal, role: S.ViewerRole, resourceKind: S.TenantKind, resourcePath: [] })
+                const granted = await adminConn.sendRequest(AdminProtocol.GrantRole, { subject: S.EnvReaderPrincipal, role: S.ViewerRole, resourceKind: S.RealmKind, resourcePath: [] })
                 this.Expect(L.EnvAppReaderCreate, created.ok === true && granted.ok === true, S.AckOkWord + String(created.ok) + S.Comma + String(granted.ok))
             }
             finally

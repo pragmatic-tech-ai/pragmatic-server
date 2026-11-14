@@ -81,7 +81,7 @@ class Fixture
     }
 }
 
-test('gated-live: the gateway routes a tenant to a live worker over mTLS, and re-homes when that worker stops', async t =>
+test('gated-live: the gateway routes an environment to a live worker over mTLS, and re-homes when that worker stops', async t =>
 {
     const url = process.env[Fixture.RedisEnv]
     if (url === undefined)
@@ -107,7 +107,7 @@ test('gated-live: the gateway routes a tenant to a live worker over mTLS, and re
         // 2) Bring up B, stop A: A unregisters + releases its ownership lease.
         workerB = await Fixture.Worker(baseDir, Fixture.PortB, url, environment)
         await workerA.DisposeAsync()
-        // 3) Reconnect: the router re-homes the tenant to B (A no longer live), B acquires ownership and serves.
+        // 3) Reconnect: the router re-homes the environment to B (A no longer live), B acquires ownership and serves.
         await Fixture.OpenAndCheck(addr, baseDir, token, environment)
     }
     finally

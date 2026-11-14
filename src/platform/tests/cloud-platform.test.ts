@@ -67,7 +67,7 @@ test('concurrent CreateIdentityStores on a cold platform share one SQL store set
 {
     const platform = await CloudFixture.Platform()
     const key = platform.ResolveMasterKey({ keyFilePath: 'x' })
-    const [x, y] = await Promise.all([platform.CreateIdentityStores('tenants/a/identity', key), platform.CreateIdentityStores('tenants/b/identity', key)])
+    const [x, y] = await Promise.all([platform.CreateIdentityStores('realms/a/identity', key), platform.CreateIdentityStores('realms/b/identity', key)])
     assert.equal(x.Accounts, y.Accounts)
 })
 
@@ -75,10 +75,10 @@ test('CreateIdentityStores yields a working set; two calls share the SQL stores 
 {
     const platform = await CloudFixture.Platform()
     const key = platform.ResolveMasterKey({ keyFilePath: 'x' })
-    const a = await platform.CreateIdentityStores('tenants/a/identity', key)
-    const b = await platform.CreateIdentityStores('tenants/b/identity', key)
+    const a = await platform.CreateIdentityStores('realms/a/identity', key)
+    const b = await platform.CreateIdentityStores('realms/b/identity', key)
     assert.equal(a.Accounts, b.Accounts)  // shared SQL store instance (opened once -> reopen-safe on pg-mem)
-    assert.notEqual(a.Secrets, b.Secrets)  // per-tenant Secrets
+    assert.notEqual(a.Secrets, b.Secrets)  // per-realm Secrets
     const ta = new Realm(`cp-${randomUUID()}`, RealmKind.Saas, 'A')
     await a.Accounts.CreateAccount(ta, 'a@x.io', 'pa', 'refA')
     assert.equal((await a.Accounts.FindByEmail(ta, 'a@x.io'))!.PrincipalId, 'pa')

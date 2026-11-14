@@ -119,10 +119,10 @@ class GraphFixture
     public static readonly SecretDetail = 'secret detail'
     public static readonly OutsideScopeText = "outside this credential's scope"
     public static readonly UnavailableText = 'graph service is not available'
-    public static readonly NotDevelopmentText = 'operation requires a development tenant'
+    public static readonly NotDevelopmentText = 'operation requires a development environment'
     private static readonly EnvironmentId = 't1'
     private static readonly PrincipalId = 'p1'
-    private static readonly EnvironmentName = 'Tenant One'
+    private static readonly EnvironmentName = 'Environment One'
 
     public readonly Service = new FakeGraphService()
 
@@ -203,7 +203,7 @@ test('graph/list and graph/get route to the service (Development)', async () =>
     })
 })
 
-test('every graph op is rejected on a Runtime tenant with NotDevelopment', async () =>
+test('every graph op is rejected on a Runtime environment with NotDevelopment', async () =>
 {
     const fixture = new GraphFixture()
     await fixture.With(EnvironmentPurpose.Runtime, async client =>
@@ -226,7 +226,7 @@ test('every graph op is rejected on a Runtime tenant with NotDevelopment', async
     })
 })
 
-test('the policy gate maps the graph ops: create/delete=administer, list/get=readTenant', () =>
+test('the policy gate maps the graph ops: create/delete=administer, list/get=readEnvironment', () =>
 {
     const administer = [GraphProtocol.Create.method, GraphProtocol.Delete.method]
     const read = [GraphProtocol.List.method, GraphProtocol.Get.method]
@@ -245,7 +245,7 @@ test('the policy gate maps the graph ops: create/delete=administer, list/get=rea
     }
 })
 
-test('a Development tenant with no graph service rejects graph ops with InvalidRequest (defensive branch)', async () =>
+test('a Development environment with no graph service rejects graph ops with InvalidRequest (defensive branch)', async () =>
 {
     const fixture = new GraphFixture()
     await fixture.With(EnvironmentPurpose.Development, async client =>
@@ -279,7 +279,7 @@ test('graph/contribute with no graph service rejects with the unavailable error'
     }, false)
 })
 
-test('the policy gate maps graph/contribute to the Contribute action on the tenant', () =>
+test('the policy gate maps graph/contribute to the Contribute action on the realm', () =>
 {
     const decision = GraphFixture.Gate(Role.Maker).Authorize(GraphProtocol.Contribute.method)
     assert.equal(decision.Allowed, true)

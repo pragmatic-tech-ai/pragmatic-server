@@ -86,12 +86,12 @@ test('an empty ref never calls the store', async () =>
     await assert.rejects(() => new EnvironmentSecretProvisioner(source).EnsureAsync(new ThrowingStore(), ['']), ProvisionedSecretMissingError)
 })
 
-test('ignores a source key the tenant does not name (Review Focus 4)', async () =>
+test('ignores a source key the environment does not name (Review Focus 4)', async () =>
 {
     const store = new FakeSecretStore()
-    const source = ProvisionedSecretSource.FromText('{"t1/oidc/client-secret":"s","other/tenant/ref":"x"}')
+    const source = ProvisionedSecretSource.FromText('{"t1/oidc/client-secret":"s","other/environment/ref":"x"}')
     await new EnvironmentSecretProvisioner(source).EnsureAsync(store, ['t1/oidc/client-secret'])
-    assert.equal(store.entries.has('other/tenant/ref'), false)
+    assert.equal(store.entries.has('other/environment/ref'), false)
     assert.equal(store.entries.size, 1)
 })
 

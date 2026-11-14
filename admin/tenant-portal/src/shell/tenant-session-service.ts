@@ -128,7 +128,7 @@ export class TenantSessionService extends ServiceBase
     // The identity plate: organisation / tenant / hive. Fixed; there is no switcher.
     public get OrganisationLabel(): string
     {
-        return this.profile?.environment.organisation ?? TenantSessionService.NoText
+        return this.profile?.tenant.organisation ?? TenantSessionService.NoText
     }
 
     public get HasOrganisation(): boolean
@@ -138,7 +138,7 @@ export class TenantSessionService extends ServiceBase
 
     public get TenantLabel(): string
     {
-        return this.profile?.environment.displayName ?? this.session?.tenantId ?? TenantSessionService.NoText
+        return this.profile?.tenant.displayName ?? this.session?.tenantId ?? TenantSessionService.NoText
     }
 
     public get HiveLabel(): string

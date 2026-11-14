@@ -60,7 +60,7 @@ class ReadsClient
         this.handler.Dispose()
     }
 
-    /** A Runtime tenant with the team setting, a no-op directory sync so the hand-stored snapshot is not clobbered, and the stored snapshot. */
+    /** A Runtime environment with the team setting, a no-op directory sync so the hand-stored snapshot is not clobbered, and the stored snapshot. */
     public static async RunWithTeam(body: (server: PragmaticServer, admin: ReadsClient) => Promise<void>): Promise<void>
     {
         await Tier1Fx.Run({ Identity: true, SecurityModel: ReadsClient.TeamModel() }, async (_fx, server) =>
@@ -122,11 +122,11 @@ test('an unknown team is invalid params', async () =>
     })
 })
 
-test('both reads refuse a Development tenant with InvalidRequest', async () =>
+test('both reads refuse a Development environment with InvalidRequest', async () =>
 {
     await Tier1Fx.Run({ Identity: true, SecurityModel: ReadsClient.TeamModel() }, async (_fx, server) =>
     {
-        // security undefined models a Development tenant (PragmaticServer.SecurityAdmin returns undefined there, PR13)
+        // security undefined models a Development environment (PragmaticServer.SecurityAdmin returns undefined there, PR13)
         const admin = await ReadsClient.Open(server, Tier1Fx.Context(Tier1Fx.Admin), undefined)
         try
         {

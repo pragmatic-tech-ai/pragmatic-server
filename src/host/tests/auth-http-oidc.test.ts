@@ -63,7 +63,7 @@ class OidcFixture
             Config: new IdentityConfig('server-pack', DelegationDepth.AuthnDirectory, new Map(), new Map(), new Map()),
             Resolved: resolved,
         })
-        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
         return new OidcFixture(idp, http, store, new AuthHttpEndpoint(pack, realm, new AuthenticatorFrontDoor(authenticator)))
     }
 
@@ -112,7 +112,7 @@ test('OIDC begin issues a 302 with a state and callback mints a session', async 
 test('OIDC routes are 404 when the endpoint has no authenticator', async () =>
 {
     const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
-    const endpoint = new AuthHttpEndpoint(pack, new Realm('t1', RealmKind.SelfHosted, 'Tenant One'))
+    const endpoint = new AuthHttpEndpoint(pack, new Realm('t1', RealmKind.SelfHosted, 'Environment One'))
     const server = createServer((req, res) => void endpoint.Handle(req, res))
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()))
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`

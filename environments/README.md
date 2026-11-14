@@ -1,6 +1,6 @@
 # Local dev and demo environments
 
-Two Docker-backed environments for `pragmatic-server`: a development tenant (`dev`, port 8080) and a runtime demo tenant (`demo`, tenant `contoso`, port 8081) running the Northwind sample application with a Power-Platform-style security model.
+Two Docker-backed environments for `pragmatic-server`: a development environment (`dev`, port 8080) and a runtime demo environment (`demo`, environment `contoso`, port 8081) running the Northwind sample application with a Power-Platform-style security model.
 
 ## One-time image build
 
@@ -28,7 +28,7 @@ npx tsx environments/seed/seed.ts up demo
 
 ## Login
 
-`POST /auth/login?environment=<id>` with `{ "email", "password" }` returns `{ token }`; pass it as `Authorization: Bearer <token>` on the WebSocket upgrade. The admin principal is `admin` / `admin@<tenant>.test`, with the password in the generated `provisioned-secrets.json` under `<tenant>-admin-pw`.
+`POST /auth/login?environment=<id>` with `{ "email", "password" }` returns `{ token }`; pass it as `Authorization: Bearer <token>` on the WebSocket upgrade. The admin principal is `admin` / `admin@<environment>.test`, with the password in the generated `provisioned-secrets.json` under `<environment>-admin-pw`.
 
 Demo users (password under `<principalId>-pw`): `rep-boston`, `rep-atlanta`, `manager-north` (Editor) and `finance` (Viewer), all `@contoso.test`.
 
@@ -41,7 +41,7 @@ npx tsx environments/seed/seed.ts down demo
 
 ## Generated files
 
-`master.key`, `provisioned-secrets.json`, `tenants.json`, and `data/` under each environment dir are generated and gitignored. Copy `demo/seed/provisioned-secrets.example.json` to see the required secret refs; real secrets are generated fresh on first `up`.
+`master.key`, `provisioned-secrets.json`, `environments.json`, `realm-config.json`, and `data/` under each environment dir are generated and gitignored. Copy `demo/seed/provisioned-secrets.example.json` to see the required secret refs; real secrets are generated fresh on first `up`.
 
 ## Integration smoke
 

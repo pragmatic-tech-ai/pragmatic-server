@@ -21,9 +21,9 @@ or, without a POSIX shell:
 
 State lives in the named volume `pragmatic-data` (mounted at `/data`). Use `docker compose down -v` to wipe it.
 
-## 3. Tenants
+## 3. Environments
 
-`docker/tenants.example.json` is mounted read-only as the tenants file. It declares one tenant, `acme`. Copy and edit it for your own tenants, then point the bind mount at your copy.
+`docker/environments.example.json` is mounted read-only at `/cfg/environments.json`. It declares one environment, `acme`. Copy and edit it for your own environments, then point the bind mount at your copy. The old `PRAGMATIC_TENANTS_FILE` and root key `tenants` are still read for one release.
 
 ## 4. Connect a client
 

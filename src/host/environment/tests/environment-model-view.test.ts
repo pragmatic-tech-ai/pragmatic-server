@@ -11,7 +11,7 @@ import { EnvironmentFixture } from './environment-fixture.js'
 import type { IEnvironmentFixtureOptions } from './environment-fixture.js'
 
 /**
- * A runtime tenant delivering `crm` (crm.Account, engine-stored, with an owner field, a secured `secret` and a secured
+ * A runtime environment delivering `crm` (crm.Account, engine-stored, with an owner field, a secured `secret` and a secured
  * `boss` relationship) through `crm-app`. With identity, p1 and p2 hold User-level read on crm.Account (own rows only)
  * and only p2 holds the profile reading the secured members.
  */

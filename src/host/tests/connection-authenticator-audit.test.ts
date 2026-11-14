@@ -42,7 +42,7 @@ test('a resolved token emits an Upgrade Allow event carrying the principal id', 
 {
     const sink = new CapturingSink()
     const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
-    const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+    const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
     const { Token } = await pack.Tokens.Issue(realm, 'svc1', [], null)
     const context = await new ConnectionAuthenticator(undefined, sink).ResolveAsync(Token, realm, pack)
     assert.equal(context?.Principal.Id, 'svc1')
@@ -57,7 +57,7 @@ test('an unresolved token emits an Upgrade AuthFailure event without a principal
 {
     const sink = new CapturingSink()
     const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
-    const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+    const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
     assert.equal(await new ConnectionAuthenticator(undefined, sink).ResolveAsync('garbage', realm, pack), null)
     assert.equal(sink.Events.length, 1)
     assert.equal(sink.Events[0]!.Outcome, AuditOutcome.AuthFailure)
@@ -67,7 +67,7 @@ test('an unresolved token emits an Upgrade AuthFailure event without a principal
 test('a throwing sink does not change the auth result', async () =>
 {
     const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
-    const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+    const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
     assert.equal(await new ConnectionAuthenticator(undefined, new ThrowingSink()).ResolveAsync('garbage', realm, pack), null)
 })
 
@@ -79,7 +79,7 @@ test('a rejecting sink does not change the auth result and raises no unhandled r
     try
     {
         const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
-        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
         const { Token } = await pack.Tokens.Issue(realm, 'svc1', [], null)
         const authenticator = new ConnectionAuthenticator(undefined, new RejectingSink())
         assert.equal((await authenticator.ResolveAsync(Token, realm, pack))?.Principal.Id, 'svc1')
@@ -97,7 +97,7 @@ test('a rejecting sink does not change the auth result and raises no unhandled r
 test('a throwing sink on the success path leaves the returned context unchanged', async () =>
 {
     const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
-    const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+    const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
     const { Token } = await pack.Tokens.Issue(realm, 'svc1', [], null)
     const context = await new ConnectionAuthenticator(undefined, new ThrowingSink()).ResolveAsync(Token, realm, pack)
     assert.equal(context?.Principal.Id, 'svc1')

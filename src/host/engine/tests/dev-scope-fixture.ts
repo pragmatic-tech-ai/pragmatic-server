@@ -14,7 +14,7 @@ export enum ScopeAxis
 
 /**
  * A hand-written engine schema over acme.Widget / acme.Gizmo (a Widget subconcept) / acme.Gear / acme.Gadget /
- * acme.Counter, principals p1 and p2 with an Owner grant on tenant t1, and an in-process judge of a scope's rules.
+ * acme.Counter, principals p1 and p2 with an Owner grant on realm t1, and an in-process judge of a scope's rules.
  */
 export class DevScopeFx
 {
@@ -50,7 +50,7 @@ export class DevScopeFx
 
     public static Context(principalId: string, claims: ReadonlyMap<string, string> = new Map(), groups: readonly string[] = []): AccessContext
     {
-        const realm = new Realm(DevScopeFx.EnvironmentId, RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm(DevScopeFx.EnvironmentId, RealmKind.SelfHosted, 'Environment One')
         const principal = new Principal(principalId, DevScopeFx.EnvironmentId, PrincipalKind.User, claims, groups)
         const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Realm, DevScopeFx.EnvironmentId, []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())

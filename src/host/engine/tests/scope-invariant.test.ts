@@ -20,8 +20,8 @@ import type { IExpectedVisibility } from './scope-invariant-assertions.js'
 
 /**
  * Spec §12 and §5.1 (PR13), dev half: authoring data is governed by the identity RBAC at the PolicyGate only, so every
- * principal the gate admits gets the same unrestricted scope, whatever security setting the tenant config holds, and the
- * model confinement of a model-scoped read (`OwnerIs(modelId)`) is unchanged. One dev tenant, two principals; every dev
+ * principal the gate admits gets the same unrestricted scope, whatever security setting the realm config holds, and the
+ * model confinement of a model-scoped read (`OwnerIs(modelId)`) is unchanged. One dev environment, two principals; every dev
  * read endpoint, and cypher/execute RETURN after writes, is asked over the wire. Every instance id an answer holds must
  * be in the set the ENGINE shows that principal (GraphReader.ScanNodes under AccessScopeSource.ScopeFor(ctx).Scope,
  * intersected for a model-scoped read with an independently built Or(ConceptIs todl.Term, ConceptIs
@@ -64,7 +64,7 @@ class InvariantFx
     public static readonly First = 'p-one'
     public static readonly Second = 'p-two'
     public static readonly Outsider = 'p-outsider'
-    public static readonly EnvironmentName = 'Tenant One'
+    public static readonly EnvironmentName = 'Environment One'
     public static readonly ModelsDir = 'models'
     public static readonly ModelFileName = 'model.todl'
     public static readonly NoConnectors = 'no connectors'
@@ -85,7 +85,7 @@ class InvariantFx
     /**
      * Write-and-return statements cypher/execute runs per model before the principal's expected sets are taken. Writes
      * are confined to the model id (a write to another model's instance is Denied), so each touch names an instance
-     * of its own model; the RETURN rows still read tenant-wide.
+     * of its own model; the RETURN rows still read environment-wide.
      */
     public static readonly TouchA = "MATCH (w:Widget {label: 'alpha'}) SET w.label = w.label RETURN w"
     public static readonly TouchB = "MATCH (w:Widget {label: 'gamma'}) SET w.label = w.label RETURN w"
@@ -134,7 +134,7 @@ class InvariantFx
         }
     }
 
-    /** A principal with no grant on the tenant: the PolicyGate refuses it. */
+    /** A principal with no grant on the realm: the PolicyGate refuses it. */
     public static Ungranted(principalId: string): AccessContext
     {
         const realm = new Realm(PpSecurityHarness.EnvironmentId, RealmKind.SelfHosted, InvariantFx.EnvironmentName)
@@ -154,8 +154,8 @@ class InvariantFx
 
 /**
  * What one principal may see, computed from the engine and its compiled scope alone:
- * - `Cypher`: the ids `ScanNodes(todl.Element)` yields under the principal's scope (tenant-wide reads, and every
- *   cypher/execute read, which stays tenant-wide);
+ * - `Cypher`: the ids `ScanNodes(todl.Element)` yields under the principal's scope (environment-wide reads, and every
+ *   cypher/execute read, which stays environment-wide);
  * - `ModelOf(id)`: `Cypher` intersected with the ids a scan under `Or(ConceptIs todl.Term, ConceptIs ShareGrant, OwnerIs id)` alone yields
  *   (deny-wins conjunction, built here without endpoint code);
  * - `ModelView`: `Cypher` without the term and the class node, plus each of them the engine admits as a hypothetical
@@ -205,7 +205,7 @@ class ExpectedVisibility implements IExpectedVisibility
         return new ExpectedVisibility(cypher, perModel, modelView, concepts, scope)
     }
 
-    /** The cypher set for a read scoped to `model` (tenant-wide without one). */
+    /** The cypher set for a read scoped to `model` (environment-wide without one). */
     public CypherFor(model: string | undefined): ReadonlySet<string>
     {
         return model === undefined ? this.Cypher : this.models.get(model)!
@@ -232,7 +232,7 @@ class ExpectedVisibility implements IExpectedVisibility
 
     private static ModelScope(model: string): EngineScope
     {
-        // R58: the caller's share grants pass the model filter too (none exist on this dev tenant)
+        // R58: the caller's share grants pass the model filter too (none exist on this dev environment)
         const owned = new Or([new ConceptIs(InvariantFx.Term), new ConceptIs(SystemNames.ShareGrant), new OwnerIs(new Set([model]))])
         return AccessScope.Build({ Default: AccessDefault.Allow, Rows: new Map([[InvariantFx.Root, owned]]) })
     }
@@ -340,7 +340,7 @@ class InvariantWorld
     }
 }
 
-/** The tenant-wide and per-model `MATCH (n) RETURN n` rows one sweep saw, for the cross-model checks. */
+/** The environment-wide and per-model `MATCH (n) RETURN n` rows one sweep saw, for the cross-model checks. */
 class SweepRows
 {
     public readonly AllNodes = new Map<string, CypherNodeCellDto[]>()
@@ -405,7 +405,7 @@ class PrincipalSweep
         }
     }
 
-    /** cypher/execute reads stay tenant-wide even under a model id (only its writes are confined). */
+    /** cypher/execute reads stay environment-wide even under a model id (only its writes are confined). */
     private async CypherExecute(expected: ExpectedVisibility): Promise<void>
     {
         for (const model of this.models)
@@ -490,7 +490,7 @@ describe('scope invariant: the dev scope is unrestricted for every gate-passing 
             }
             // the second sweep ran later (its writes created nodes): it sees everything the first saw
             assert.ok([...sweeps[0]!.Expected!.Cypher].every(id => sweeps[1]!.Expected!.Cypher.has(id)), 'every gate-passing principal sees the same')
-            // the PolicyGate still refuses a principal without Read on the tenant
+            // the PolicyGate still refuses a principal without Read on the realm
             const outsider = await world.Connect(InvariantFx.Ungranted(InvariantFx.Outsider))
             await assert.rejects(outsider.CypherQuery(InvariantFx.AllNodes), (error: unknown) => error instanceof ResponseError)
         })

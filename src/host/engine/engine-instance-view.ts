@@ -2,7 +2,7 @@ import type { CellValue, GraphReader, INodeView } from '@pragmatic-tech-ai/graph
 import type { IInstanceView, Scalar } from '@pragmatic-tech-ai/todl'
 
 /**
- * One engine node as the tenant security model's evaluator judges it (`AccessDepthEvaluator.Allows`): its concept and
+ * One engine node as the environment security model's evaluator judges it (`AccessDepthEvaluator.Allows`): its concept and
  * its scalar property values as the reader sees them. A String, Float64 or Boolean value reads as itself, an Int64 as a
  * number when it is a safe integer and as its decimal text otherwise; an unset value and a temporal value read as
  * undefined, so a rule on them fails closed. Built from `GraphReader.ReadNode`, so a node the reader's scope hides is

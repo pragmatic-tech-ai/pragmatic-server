@@ -21,7 +21,7 @@ class Fixtures
 {
     public static OwnerContext(): AccessContext
     {
-        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const grants = [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Realm, 't1', []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())

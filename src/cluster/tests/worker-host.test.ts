@@ -104,7 +104,7 @@ class WorkerFixture
     }
 }
 
-test('a gateway (valid client cert + tenant + bearer) attaches and opens the tenant solution', async () =>
+test('a gateway (valid client cert + environment + bearer) attaches and opens the environment solution', async () =>
 {
     const { baseDir } = WorkerFixture.Start('t1')
     const worker = await WorkerHost.StartAsync(WorkerFixture.Options(baseDir, WorkerFixture.Provisioning('t1')))
@@ -164,7 +164,7 @@ test('a bad bearer is rejected by the worker (ws closes without a usable connect
     }
 })
 
-test('a platform passed in the options is forwarded into the per-tenant server', async () =>
+test('a platform passed in the options is forwarded into the per-environment server', async () =>
 {
     const { baseDir } = WorkerFixture.Start('t1')
     const platform = new RecordingPlatform()
@@ -182,7 +182,7 @@ test('a platform passed in the options is forwarded into the per-tenant server',
     }
 })
 
-test('gated-live: a worker rejects a tenant already owned by another holder (ownership backstop, Review Focus 1)', async t =>
+test('gated-live: a worker rejects an environment already owned by another holder (ownership backstop, Review Focus 1)', async t =>
 {
     const url = process.env.PRAGMATIC_TEST_REDIS_URL
     if (url === undefined)
@@ -197,7 +197,7 @@ test('gated-live: a worker rejects a tenant already owned by another holder (own
     const worker = await WorkerHost.StartAsync({ ...WorkerFixture.Options(baseDir, WorkerFixture.Provisioning('t1')), redisUrl: url })
     try
     {
-        await assert.rejects(() => worker.RegistryForTest().ServerFor('t1'), /TenantOwnedElsewhere/)
+        await assert.rejects(() => worker.RegistryForTest().ServerFor('t1'), /EnvironmentOwnedElsewhere/)
     }
     finally
     {

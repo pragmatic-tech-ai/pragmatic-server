@@ -108,9 +108,9 @@ class TokenBucket
     }
 }
 
-/** Per-replica in-memory token buckets, keyed independently per tenant and per principal. Tenant buckets are keyed by
- *  tenant id; principal buckets by a length-prefixed (tenant, principal) composite so the same principal id in two
- *  tenants never shares a bucket and no (tenant, key) pair can collide with another. Idle buckets are swept once a
+/** Per-replica in-memory token buckets, keyed independently per environment and per principal. Environment buckets are keyed by
+ *  environment id; principal buckets by a length-prefixed (environment, principal) composite so the same principal id in two
+ *  environments never shares a bucket and no (environment, key) pair can collide with another. Idle buckets are swept once a
  *  scope's map exceeds MaxBuckets, bounding memory against attacker-supplied ids. */
 export class TokenBucketRateLimiter implements IRateLimiter
 {

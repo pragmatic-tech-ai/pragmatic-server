@@ -79,11 +79,11 @@ export class ServerConnectionHandler
     private static readonly ModelIdField = 'modelId'
     private static readonly CypherUnavailableMessage = `${InvalidParamsPrefix.Text}cypher not available`
     private static readonly ModelViewUnavailableMessage = `${InvalidParamsPrefix.Text}model view not available`
-    private static readonly NotRuntimeMessage = 'operation requires a runtime tenant'
+    private static readonly NotRuntimeMessage = 'operation requires a runtime environment'
     private static readonly ConnectorsUnavailableMessage = 'connectors are not available on this connection'
-    private static readonly NotDevelopmentMessage = 'operation requires a development tenant'
-    private static readonly GraphServiceUnavailableMessage = 'graph service is not available on this tenant'
-    private static readonly EnvironmentGraphHostUnavailableMessage = 'environment graph host is not available on this tenant'
+    private static readonly NotDevelopmentMessage = 'operation requires a development environment'
+    private static readonly GraphServiceUnavailableMessage = 'graph service is not available on this environment'
+    private static readonly EnvironmentGraphHostUnavailableMessage = 'environment graph host is not available on this environment'
     private static readonly NameMismatchMessage = 'application manifest name does not match requested name: '
     private static readonly AppNotLiveMessage = `${InvalidParamsPrefix.Text}no live application named `
     private static readonly NoApplicationSelectedMessage = 'no application selected: call application/open first'
@@ -100,7 +100,7 @@ export class ServerConnectionHandler
     private readonly accessContext: AccessContext
     private readonly scopeGate: TokenScopeGate
     private readonly gate: PolicyGate
-    /** The `connector/*` endpoints on the tenant's graph engine (dev or environment, ruling S14). */
+    /** The `connector/*` endpoints on the environment's graph engine (dev or environment, ruling S14). */
     private readonly connectors: IGraphConnectorService | undefined
     private readonly graphSubscription: IDisposable
     private readonly buildStateSubscription: IDisposable
@@ -108,22 +108,22 @@ export class ServerConnectionHandler
     private readonly parent: Context | undefined
     private readonly rateLimit: RateLimitGuard | undefined
     private readonly admin: AdminService | undefined
-    /** cypher/query and cypher/models on the tenant's graph engine (dev or environment, ruling S1). */
+    /** cypher/query and cypher/models on the environment's graph engine (dev or environment, ruling S1). */
     private readonly cypherQuery: IGraphCypherQuery | undefined
     private readonly cypherLimits: CypherLimits
     private readonly paging: PagingLimits
     private readonly purpose: EnvironmentPurpose
-    /** cypher/execute on the tenant's graph engine (dev DevCypherExecute or runtime EnvironmentCypherExecute). */
+    /** cypher/execute on the environment's graph engine (dev DevCypherExecute or runtime EnvironmentCypherExecute). */
     private readonly cypherExecute: IGraphCypherExecute | undefined
     private readonly deployProvider: ((params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>) | undefined
     private readonly applications: PragmaticAppsRegistry | undefined
-    /** data/write, the shares and assign on the environment engine (runtime tenants only). */
+    /** data/write, the shares and assign on the environment engine (runtime environments only). */
     private readonly data: IEnvironmentDataService | undefined
     private readonly devGraphService: IDevGraphService | undefined
     private readonly environmentGraphHost: IEnvironmentGraphHost | undefined
-    /** model/view and model/resources on the tenant's graph (dev DevModelView or runtime EnvironmentModelView, ruling S15). */
+    /** model/view and model/resources on the environment's graph (dev DevModelView or runtime EnvironmentModelView, ruling S15). */
     private readonly modelView: IGraphModelView | undefined
-    /** The `data/changed` push of a runtime connection (ruling S16); undefined on dev tenants and without a feed. */
+    /** The `data/changed` push of a runtime connection (ruling S16); undefined on dev environments and without a feed. */
     private readonly dataSubscription: IDisposable | undefined
     /** Where the dispatch reports the failures the client sees scrubbed (an unexpected error, a failed data source). */
     private readonly diagnostics: IDispatchDiagnostics
@@ -219,7 +219,7 @@ export class ServerConnectionHandler
      * The runtime-only Attach arguments: the application registry, the data/write, share and assign providers, deploy,
      * the promote seam, `cypher/query` / `cypher/execute` / `connector/*` on the environment engine (rulings S1, S13,
      * S14) and the `data/changed` feed (S16); all
-     * undefined unless the server is a Runtime tenant.
+     * undefined unless the server is a Runtime environment.
      */
     public static RuntimeAttachArgs(server: { Purpose(): EnvironmentPurpose; Applications(): PragmaticAppsRegistry; WriteForPragmaticApp(context: AccessContext, name: string, operations: readonly AppWriteOpDto[]): Promise<AppWriteResultDto>; ShareForPragmaticApp(context: AccessContext, name: string, params: ShareParams): Promise<ShareResultDto>; UnshareForPragmaticApp(context: AccessContext, name: string, params: UnshareParams): Promise<UnshareResultDto>; ListSharesForPragmaticApp(context: AccessContext, name: string, params: ListSharesParams): Promise<ListSharesResultDto>; AssignForPragmaticApp(context: AccessContext, name: string, params: AssignParams): Promise<AssignResultDto>; DeployApplication(params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>; LoadEnvironmentGraph(params: GraphLoadParamsDto): Promise<GraphLoadedDto>; LoadedGraph(): Promise<GraphLoadedDto | null>; EnvironmentCypher(): IGraphCypherQuery; EnvironmentExecute(): IGraphCypherExecute; EnvironmentConnectors(): IGraphConnectorService; EnvironmentModelView(): IGraphModelView; EnvironmentScopes(): Promise<IGraphScopeSource>; DataChanges(): { Subscribe(scope: () => Promise<IGraphScope>, send: (payload: DataChangedPayload) => void, permits?: () => boolean): IDisposable } }): { applications: PragmaticAppsRegistry | undefined; deployProvider: ((params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>) | undefined; environmentGraphHost: IEnvironmentGraphHost | undefined; cypherQuery: IGraphCypherQuery | undefined; cypherExecute: IGraphCypherExecute | undefined; data: IEnvironmentDataService | undefined; connectors: IGraphConnectorService | undefined; modelView: IGraphModelView | undefined; dataChanges: IEnvironmentDataChanges | undefined }
     {
@@ -240,7 +240,7 @@ export class ServerConnectionHandler
         return { applications: server.Applications(), deployProvider: params => server.DeployApplication(params), environmentGraphHost: server, cypherQuery: server.EnvironmentCypher(), cypherExecute: server.EnvironmentExecute(), data, connectors: server.EnvironmentConnectors(), modelView: server.EnvironmentModelView(), dataChanges }
     }
 
-    /** The development-only Attach arguments (the container-owned graph service; `cypher/query`, `cypher/execute`, `connector/*` and the model view on the dev graph engine); all undefined unless the server is a Development tenant. */
+    /** The development-only Attach arguments (the container-owned graph service; `cypher/query`, `cypher/execute`, `connector/*` and the model view on the dev graph engine); all undefined unless the server is a Development environment. */
     public static DevelopmentAttachArgs(server: { Purpose(): EnvironmentPurpose; GraphService(): IDevGraphService; DevCypher(): IGraphCypherQuery; DevExecute(): IGraphCypherExecute; DevModelView(): IGraphModelView; DevConnectors(): IGraphConnectorService }): { devGraphService: IDevGraphService | undefined; cypherQuery: IGraphCypherQuery | undefined; cypherExecute: IGraphCypherExecute | undefined; modelView: IGraphModelView | undefined; connectors: IGraphConnectorService | undefined }
     {
         if (server.Purpose() !== EnvironmentPurpose.Development)
@@ -479,7 +479,7 @@ export class ServerConnectionHandler
         this.guarded(ConnectorProtocol.Test, p => this.Connectors().Test(p.modelId, p.connectorName))
     }
 
-    /** The tenant's connector endpoints; InvalidRequest when this connection was attached without them. */
+    /** The environment's connector endpoints; InvalidRequest when this connection was attached without them. */
     private Connectors(): IGraphConnectorService
     {
         if (this.connectors === undefined) throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.ConnectorsUnavailableMessage)
@@ -609,9 +609,9 @@ export class ServerConnectionHandler
     }
 
     /**
-     * On a dev tenant `modelId` is required and must be the round-trip-stable canonical model id (`<namespace>Model`): a
+     * On a dev environment `modelId` is required and must be the round-trip-stable canonical model id (`<namespace>Model`): a
      * non-canonical author name is renamed on first write (TODL emitter convention) and the id changes. On a runtime
-     * tenant it is optional (a delivered package id, ruling S13).
+     * environment it is optional (a delivered package id, ruling S13).
      */
     public async RunCypherExecute(params: CypherExecuteParams): Promise<CypherExecuteResultDto>
     {

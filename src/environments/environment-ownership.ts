@@ -2,8 +2,8 @@ import type { IWriteLock } from '../host/cypher/write-lock.js'
 
 export type EnvironmentLostHandler = (environmentId: string) => void
 
-/** Cross-replica single-writer ownership of a tenant. Async because the SaaS impl (Redis) does network I/O;
- *  distinct from the per-replica synchronous ITenantCoordinator (connection-refcount / idle-evict). */
+/** Cross-replica single-writer ownership of an environment. Async because the SaaS impl (Redis) does network I/O;
+ *  distinct from the per-replica synchronous IEnvironmentCoordinator (connection-refcount / idle-evict). */
 export interface IEnvironmentOwnership
 {
     Start(): Promise<void>
@@ -12,15 +12,15 @@ export interface IEnvironmentOwnership
     ReleaseAll(): Promise<void>
     Healthy(): boolean
     OnLost(handler: EnvironmentLostHandler): void
-    /** Optional: the cross-process write lock for one tenant. Absent => the server's in-process lock suffices (single replica). */
+    /** Optional: the cross-process write lock for one environment. Absent => the server's in-process lock suffices (single replica). */
     WriteLock?(environmentId: string): IWriteLock
 }
 
-/** Thrown by TenantRegistry when another replica owns the requested tenant. The front door maps it to a retryable reject. */
+/** Thrown by EnvironmentRegistry when another replica owns the requested environment. The front door maps it to a retryable reject. */
 export class EnvironmentOwnedElsewhereError extends Error
 {
-    private static readonly MessageText = 'tenant owned by another replica'
-    private static readonly ErrorName = 'TenantOwnedElsewhereError'
+    private static readonly MessageText = 'environment owned by another replica'
+    private static readonly ErrorName = 'EnvironmentOwnedElsewhereError'
 
     public constructor()
     {

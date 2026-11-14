@@ -7,7 +7,7 @@ export type DevGraphRecord = { name: string; description: string; slices: Record
 
 type GraphsDocument = { graphs: Record<string, DevGraphRecord> }
 
-/** Returns defensive copies so callers cannot mutate persisted state. Persistent store of a dev environment's graph records: one JSON document in the tenant graphs volume, over IStorage. */
+/** Returns defensive copies so callers cannot mutate persisted state. Persistent store of a dev environment's graph records: one JSON document in the environment graphs volume, over IStorage. */
 export class DevGraphStore
 {
     private static readonly FileName = 'graphs.json'

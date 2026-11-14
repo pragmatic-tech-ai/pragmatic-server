@@ -46,7 +46,7 @@ class PagingGuardFixture
         const language = await server.LanguageService() as SolutionLanguageService
         const manager = await server.Manager()
         await language.WhenIdle()
-        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const context = new AccessContext(principal, realm, [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Realm, 't1', []))], new ResourceAuthorizationPolicy())
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()

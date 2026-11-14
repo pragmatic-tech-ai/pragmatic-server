@@ -14,7 +14,7 @@ interface EnvironmentLiveness
     lastUseMs: number
 }
 
-/** In-process tenant membership + connection-refcount + idle-evict bookkeeping.
+/** In-process environment membership + connection-refcount + idle-evict bookkeeping.
  *  5B replaces this with a Redis-backed coordinator that also routes to workers. */
 export class InMemoryEnvironmentCoordinator implements IEnvironmentCoordinator
 {

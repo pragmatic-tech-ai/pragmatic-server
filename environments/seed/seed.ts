@@ -91,7 +91,7 @@ export class SeedCli
         return BundleBuilder.AdminEmailPrefix + def.environmentId + BundleBuilder.AdminEmailSuffix
     }
 
-    /** The admin password for the tenant, resolved from the generated secrets under (tenant)-admin-pw. */
+    /** The admin password for the environment, resolved from the generated secrets under (environment)-admin-pw. */
     public static AdminPassword(def: EnvDefinition, secrets: Record<string, string>): string
     {
         return SeedCli.Secret(secrets, def.environmentId + BundleBuilder.AdminSecretSuffix)

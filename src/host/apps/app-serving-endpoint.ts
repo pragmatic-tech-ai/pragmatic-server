@@ -5,13 +5,13 @@ import type { PragmaticAppManifest } from './pragmatic-app-manifest.js'
 import type { IAppSessionCheck } from './app-session-check.js'
 import { SignInPage } from '../sign-in-page.js'
 
-/** The slice of a per-tenant server the endpoint needs: its applications storage. */
+/** The slice of a per-environment server the endpoint needs: its applications storage. */
 export interface IAppStorageSource
 {
     AppsStorage(): IStorage
 }
 
-/** Resolves a tenant id to its server; the host registry satisfies this. Rejects for an unknown tenant. */
+/** Resolves an environment id to its server; the host registry satisfies this. Rejects for an unknown environment. */
 export interface IAppServerResolver
 {
     ServerFor(environmentId: string): Promise<IAppStorageSource>
@@ -28,8 +28,8 @@ interface AppRoute
 }
 
 /**
- * Serves a deployed app's SPA shell and UI bundle at `GET /app/<tenant>/<app>/...`, same-origin so the session cookie and
- * the app's own same-origin WebSocket reach this host. The shell never carries a tenant (the tenant is resolved from the
+ * Serves a deployed app's SPA shell and UI bundle at `GET /app/<environment>/<app>/...`, same-origin so the session cookie and
+ * the app's own same-origin WebSocket reach this host. The shell never carries an environment (the environment is resolved from the
  * session cookie at WS auth); only the non-secret app name is injected. Only files the manifest lists (`ui.entry` and
  * `ui.assets`) are served, every path segment is validated, and anything else answers a bare 404. With a session check, a
  * page load without a session for the environment is redirected (302) to the environment's sign-in page, which comes back here.
@@ -223,7 +223,7 @@ export class AppServingEndpoint
         return app + AppServingEndpoint.Separator + version + AppServingEndpoint.Separator
     }
 
-    /** Adds only the (validated, non-secret) app name to the shell; never a tenant. */
+    /** Adds only the (validated, non-secret) app name to the shell; never an environment. */
     private InjectAppName(bytes: Uint8Array, appName: string): Buffer
     {
         const html = Buffer.from(bytes).toString(AppServingEndpoint.Utf8)
@@ -262,7 +262,7 @@ export class AppServingEndpoint
     }
 
     /**
-     * Splits the RAW request path (before URL normalisation could collapse `..`) into tenant, app and remainder.
+     * Splits the RAW request path (before URL normalisation could collapse `..`) into environment, app and remainder.
      * Every segment is percent-decoded once and must be a safe name; any unsafe or traversal segment yields null.
      * The only empty segment allowed is a trailing slash.
      */

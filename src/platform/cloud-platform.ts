@@ -8,7 +8,7 @@ import { HeadlessPromptService } from '@pragmatic-tech-ai/todl-platform-node'
 import type { PlatformServices } from './platform-services.js'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 
-/** The five multi-tenant SQL identity stores opened once and shared across tenants (Secrets is per-tenant,
+/** The five multi-realm SQL identity stores opened once and shared across realms (Secrets is per-realm,
  *  composed separately in CreateIdentityStores). */
 interface SqlIdentityStores
 {
@@ -31,11 +31,11 @@ export interface CloudPlatformOptions
 }
 
 /** Cloud PlatformServices bundle. Composes the object-store registry + the DB-backed identity stores
- *  (over ONE shared ISqlSession) + FileEncryptedSecretStore-over-object-storage for per-tenant pack secrets.
- *  The SQL stores are multi-tenant by data (every row/method carries the tenant), so they are opened ONCE and
- *  shared across tenants - which also avoids re-running CREATE TABLE on one db (pg-mem rejects a repeated
- *  constrained CREATE TABLE). Per CreateIdentityStores call, a fresh per-tenant Secrets store is composed over
- *  a per-tenant object-store namespace, isolating secrets by location. The master key is resolved ONCE from the
+ *  (over ONE shared ISqlSession) + FileEncryptedSecretStore-over-object-storage for per-realm pack secrets.
+ *  The SQL stores are multi-realm by data (every row/method carries the realm), so they are opened ONCE and
+ *  shared across realms - which also avoids re-running CREATE TABLE on one db (pg-mem rejects a repeated
+ *  constrained CREATE TABLE). Per CreateIdentityStores call, a fresh per-realm Secrets store is composed over
+ *  a per-realm object-store namespace, isolating secrets by location. The master key is resolved ONCE from the
  *  secret manager by reference at Create and held; ResolveMasterKey hands out a defensive copy. */
 export class CloudPlatform implements PlatformServices
 {
@@ -109,7 +109,7 @@ export class CloudPlatform implements PlatformServices
         return this.prompt
     }
 
-    /** The shared multi-tenant SQL audit store, for the access-audit bridge in cloud composition. */
+    /** The shared multi-realm SQL audit store, for the access-audit bridge in cloud composition. */
     public async AuditSink(): Promise<IAuditSink>
     {
         return (await this.sqlStores()).Audit

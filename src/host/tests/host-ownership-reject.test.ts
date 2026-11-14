@@ -57,7 +57,7 @@ test('readyz is 200 after a clean start and healthz is 200', async () =>
     }
 })
 
-test('an upgrade for an owned-elsewhere tenant is rejected with a retryable 503', async () =>
+test('an upgrade for an owned-elsewhere environment is rejected with a retryable 503', async () =>
 {
     const provisioning = new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([['acme', { displayName: 'Acme' }]]))
     const host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir: 'C:/tmp/ro-test', masterKey: { base64Env: 'PRAGMATIC_MASTER_KEY' }, provisioning })
@@ -88,7 +88,7 @@ test('readyz is 503 when ownership is unhealthy (Redis-down fail-closed)', async
     }
 })
 
-test('an HTTP request for an owned-elsewhere tenant returns a retryable 503', async () =>
+test('an HTTP request for an owned-elsewhere environment returns a retryable 503', async () =>
 {
     const provisioning = new InMemoryEnvironmentProvisioning(new Map<string, EnvironmentProvisioning>([['acme', { displayName: 'Acme' }]]))
     const host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir: 'C:/tmp/ro-test', masterKey: { base64Env: 'PRAGMATIC_MASTER_KEY' }, provisioning })

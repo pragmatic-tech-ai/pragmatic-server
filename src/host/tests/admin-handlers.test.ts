@@ -47,7 +47,7 @@ class FaultingAccountStore extends LocalAccountStore
 class AdminFixture
 {
     public readonly Grants = new InMemoryRoleGrantStore()
-    public readonly Realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+    public readonly Realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
     public readonly Configs = new InMemoryRealmConfigStore()
     public readonly Audit = new CapturingAuditSink()
     public readonly Accounts = new FaultingAccountStore()
@@ -61,7 +61,7 @@ class AdminFixture
 
     public constructor(role: Role, faultPacks = false)
     {
-        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const context = new AccessContext(principal, realm, [new Grant('p1', role, new ResourceRef(ResourceKind.Realm, 't1', []))], new ResourceAuthorizationPolicy())
         const accounts = this.Accounts
@@ -229,7 +229,7 @@ test('malformed config fields are InvalidParams naming the field and store nothi
     }
 })
 
-test('revoking your own tenant-Owner grant is InvalidRequest and leaves the grant', async () =>
+test('revoking your own realm-Owner grant is InvalidRequest and leaves the grant', async () =>
 {
     const fx = new AdminFixture(Role.Owner)
     try
@@ -245,7 +245,7 @@ test('revoking your own tenant-Owner grant is InvalidRequest and leaves the gran
     }
 })
 
-test('a tenant or tenantId field in the DTO is ignored: the connection tenant is used', async () =>
+test('a tenant or tenantId field in the DTO is ignored: the connection realm is used', async () =>
 {
     const fx = new AdminFixture(Role.Owner)
     try

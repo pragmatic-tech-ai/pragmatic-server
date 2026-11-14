@@ -70,7 +70,7 @@ namespace shop {
     }
 }
 
-test('a catalog-only tenant rejects an inline-datasource connector', async () =>
+test('a catalog-only environment rejects an inline-datasource connector', async () =>
 {
     await Fixture.WithServer(new ConnectorsPolicy([DataSourceKind.Sql], true, false, []), async read =>
     {
@@ -78,7 +78,7 @@ test('a catalog-only tenant rejects an inline-datasource connector', async () =>
     })
 })
 
-test('a permissive tenant reads the same inline-datasource connector', async () =>
+test('a permissive environment reads the same inline-datasource connector', async () =>
 {
     await Fixture.WithServer(ConnectorsPolicy.Default(), async read =>
     {
@@ -87,7 +87,7 @@ test('a permissive tenant reads the same inline-datasource connector', async () 
     })
 })
 
-test('a tenant whose allowlist omits Sql cannot read a SQL connector', async () =>
+test('an environment whose allowlist omits Sql cannot read a SQL connector', async () =>
 {
     await Fixture.WithServer(new ConnectorsPolicy([DataSourceKind.Rest], false, false, []), async read =>
     {

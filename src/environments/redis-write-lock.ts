@@ -26,8 +26,8 @@ export class RedisWriteLockTiming
 }
 
 /**
- * Cross-process tenant write lock over Redis: SET NX PX with a per-lease random token, renewed while held, released by
- * compare-and-delete. Every worker serving the tenant contends on the same key, so plan -> authorize -> commit -> persist
+ * Cross-process environment write lock over Redis: SET NX PX with a per-lease random token, renewed while held, released by
+ * compare-and-delete. Every worker serving the environment contends on the same key, so plan -> authorize -> commit -> persist
  * runs on one worker at a time; `Held` re-reads the key so a lease that expired (pause, partition) is caught before the
  * persist starts. That re-check is not storage-level fencing: a stall longer than the lease TTL between it and the
  * writes can still overlap another worker (the source-hash CAS narrows, but cannot close, that window). An unreachable
@@ -66,7 +66,7 @@ export class RedisWriteLock implements IWriteLock
             }
             catch
             {
-                // the SET may have landed even though we saw an error (e.g. a timeout): release our token so the tenant is
+                // the SET may have landed even though we saw an error (e.g. a timeout): release our token so the environment is
                 // not blocked for the whole TTL by a lease nobody holds
                 await client?.eval(RedisWriteLock.ReleaseScript, { keys: [key], arguments: [token] }).catch(() => undefined)
                 throw new WriteLockBusyError()

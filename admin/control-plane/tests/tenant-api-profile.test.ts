@@ -51,8 +51,10 @@ describe('GET /tenant-api/profile', () =>
     {
         const { res, dto } = await Fx.Get(Fx.Tenant({ ownerPrincipalId: 'p1', ownerEmail: 'o@x.io' }), 'Acme', Fx.Session('p1', 'o@x.io'))
         assert.equal(res.status, 200)
-        assert.equal(dto.environment.displayName, 'Tenant One')
-        assert.equal(dto.environment.organisation, 'Acme')
+        const wire = JSON.parse(res.body) as Record<string, unknown>
+        assert.ok('tenant' in wire && !('environment' in wire), 'the profile names the customer tenant "tenant"')
+        assert.equal(dto.tenant.displayName, 'Tenant One')
+        assert.equal(dto.tenant.organisation, 'Acme')
         assert.deepEqual(dto.hive, { id: 'h1', displayName: 'Hive One' })
         assert.equal(dto.roleLabel, TenantAdminCapabilities.OwnerRoleLabel)
         assert.deepEqual(dto.capabilities, { envs: true, adopt: true, access: true, settings: true })
@@ -64,7 +66,7 @@ describe('GET /tenant-api/profile', () =>
     it('omits organisation, email and ownerContact when unknown', async () =>
     {
         const { dto } = await Fx.Get(Fx.Tenant({}), undefined, Fx.Session('p1'))
-        assert.equal('organisation' in dto.environment, false)
+        assert.equal('organisation' in dto.tenant, false)
         assert.equal('email' in dto, false)
         assert.equal('ownerContact' in dto, false)
     })

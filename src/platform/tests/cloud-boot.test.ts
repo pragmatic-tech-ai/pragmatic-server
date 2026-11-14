@@ -23,11 +23,11 @@ class CloudServerFixture
     public static Options(platform: CloudPlatform, environmentId: string)
     {
         return {
-            packagesRoot: `tenants/${environmentId}/packages`,
+            packagesRoot: `environments/${environmentId}/packages`,
             deploymentMode: DeploymentMode.Cloud,
             platform,
             identity: {
-                identityRoot: `tenants/${environmentId}/identity`,
+                identityRoot: `environments/${environmentId}/identity`,
                 masterKey: { base64Env: 'UNUSED_CLOUD_KEY' },
                 environment: { id: environmentId, displayName: 'Cloud Environment' },
                 bootstrap: { adminEmail: 'admin@x.io', adminPrincipalId: 'admin', adminPasswordRef: `${environmentId}/bootstrap/admin`, ownerGrant: true },

@@ -28,7 +28,7 @@ export class InMemoryEnvironmentProvisioning implements IEnvironmentProvisioning
     }
 }
 
-/** Owns one PragmaticServer per tenant (separate composition root over tenant-rooted storage).
+/** Owns one PragmaticServer per environment (separate composition root over environment-rooted storage).
  *  Spin-up on first use, idle-evict via the coordinator, never evict while connected. */
 export class EnvironmentRegistry
 {
@@ -36,8 +36,8 @@ export class EnvironmentRegistry
     private static readonly ApplicationsDir = 'applications'
     private static readonly GraphsDir = 'graphs'
     private static readonly IdentityDir = 'identity'
-    private static readonly UnprovisionedError = 'tenant is not provisioned'
-    private static readonly InvalidEnvironmentError = 'invalid tenant id'
+    private static readonly UnprovisionedError = 'environment is not provisioned'
+    private static readonly InvalidEnvironmentError = 'invalid environment id'
     private static readonly ParentSegment = '..'
     private static readonly SeparatorPattern = /[\\/:]/
 
@@ -52,7 +52,7 @@ export class EnvironmentRegistry
     private readonly platform: PlatformServices | undefined
     private readonly adapterPacks: AdapterPacksConfig | undefined
     private readonly deploymentMode: DeploymentMode | undefined
-    /** The host's logger, handed to every tenant server it builds. */
+    /** The host's logger, handed to every environment server it builds. */
     private readonly logger: ILogger | undefined
     private readonly servers = new Map<string, PragmaticServer>()
     private readonly pending = new Map<string, Promise<PragmaticServer>>()
@@ -166,7 +166,7 @@ export class EnvironmentRegistry
         this.ownership.OnLost(environmentId => void this.DisposeEnvironment(environmentId))
     }
 
-    /** Fail-closed response to a lost lease: drop the local server so this replica stops writing the tenant.
+    /** Fail-closed response to a lost lease: drop the local server so this replica stops writing the environment.
      *  The ownership key is already gone, so no Release is issued. */
     public async DisposeEnvironment(environmentId: string): Promise<void>
     {
@@ -228,7 +228,7 @@ export class EnvironmentRegistry
         }
     }
 
-    /** Package-visible for tests; Build validates the tenant id before calling (it is used verbatim in flow-state key prefixes). */
+    /** Package-visible for tests; Build validates the environment id before calling (it is used verbatim in flow-state key prefixes). */
     public OptionsFor(environmentId: string, provisioning: EnvironmentProvisioning): PragmaticServerOptions
     {
         return {

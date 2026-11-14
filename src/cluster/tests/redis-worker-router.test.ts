@@ -22,7 +22,7 @@ class Workers
     }
 }
 
-test('routes a tenant to a live worker and claims the route', async () =>
+test('routes an environment to a live worker and claims the route', async () =>
 {
     const store = new FakeRedisStore()
     const clock = new Clock()
@@ -61,7 +61,7 @@ test('re-homes to a live worker when the claimed worker is gone (Review Focus 2)
     await router.Drain()
 })
 
-test('two routers over one store converge to the same worker on a cold tenant (Review Focus 3)', async () =>
+test('two routers over one store converge to the same worker on a cold environment (Review Focus 3)', async () =>
 {
     const store = new FakeRedisStore()
     const clock = new Clock()
@@ -85,7 +85,7 @@ test('an empty worker set fails closed (Review Focus 1)', async () =>
     await router.Drain()
 })
 
-test('gated-live: a registered worker is routed to; after it stops, the tenant re-homes', async t =>
+test('gated-live: a registered worker is routed to; after it stops, the environment re-homes', async t =>
 {
     const url = process.env.PRAGMATIC_TEST_REDIS_URL
     if (url === undefined)

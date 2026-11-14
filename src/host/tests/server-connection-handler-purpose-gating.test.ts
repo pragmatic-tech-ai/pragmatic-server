@@ -17,7 +17,7 @@ class Fixtures
 
     public static OwnerContext(): AccessContext
     {
-        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const grants = [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Realm, 't1', []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
@@ -71,7 +71,7 @@ class Harness
     }
 }
 
-test('a runtime tenant rejects Language requests as method-not-found', async () =>
+test('a runtime environment rejects Language requests as method-not-found', async () =>
 {
     const harness = await Harness.Create(EnvironmentPurpose.Runtime)
     try
@@ -84,7 +84,7 @@ test('a runtime tenant rejects Language requests as method-not-found', async () 
     }
 })
 
-test('a runtime tenant rejects Solution requests as method-not-found', async () =>
+test('a runtime environment rejects Solution requests as method-not-found', async () =>
 {
     const harness = await Harness.Create(EnvironmentPurpose.Runtime)
     try
@@ -98,7 +98,7 @@ test('a runtime tenant rejects Solution requests as method-not-found', async () 
     }
 })
 
-test('a development tenant still registers Language and Solution requests', async () =>
+test('a development environment still registers Language and Solution requests', async () =>
 {
     const harness = await Harness.Create(EnvironmentPurpose.Development)
     try
@@ -113,7 +113,7 @@ test('a development tenant still registers Language and Solution requests', asyn
     }
 })
 
-test('a runtime tenant still registers non-gated requests', async () =>
+test('a runtime environment still registers non-gated requests', async () =>
 {
     const harness = await Harness.Create(EnvironmentPurpose.Runtime)
     try

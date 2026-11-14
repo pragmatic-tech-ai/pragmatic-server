@@ -8,7 +8,7 @@ export interface PragmaticAppSummary
     version: string
 }
 
-/** Lists and loads applications from a tenant's `applications/` storage (`<name>/<live version>/application.json`, or the legacy `<name>/application.json`). */
+/** Lists and loads applications from an environment's `applications/` storage (`<name>/<live version>/application.json`, or the legacy `<name>/application.json`). */
 export class PragmaticAppsRegistry
 {
     private static readonly ManifestFile = 'application.json'

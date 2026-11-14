@@ -95,8 +95,8 @@ export class PolicyGate
         const read: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Model }
         const write: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Model }
         const administer: MethodPolicy = { action: Action.Administer, resourceKind: ResourceKind.Realm }
-        const readEnvironment: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Realm }
-        const writeEnvironment: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Realm }
+        const readRealm: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Realm }
+        const writeRealm: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Realm }
         const contribute: MethodPolicy = { action: Action.Contribute, resourceKind: ResourceKind.Realm }
         const connect: MethodPolicy = { action: Action.Connect, resourceKind: ResourceKind.Connector }
         const readConnector: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Connector }
@@ -118,7 +118,7 @@ export class PolicyGate
             [LanguageProtocol.DiagnosticsFor.method, read],
             [LanguageProtocol.DidChange.method, write],
             [SolutionProtocol.OpenSolution.method, administer],
-            [SolutionProtocol.ActiveSolution.method, readEnvironment],
+            [SolutionProtocol.ActiveSolution.method, readRealm],
             [ModelProtocol.ModelView.method, read],
             [ModelProtocol.Resources.method, read],
             [ConnectorProtocol.List.method, readConnector],
@@ -131,25 +131,25 @@ export class PolicyGate
             [ConnectorProtocol.Prepare.method, connect],
             [ConnectorProtocol.Refresh.method, connect],
             [ConnectorProtocol.RefreshModel.method, connect],
-            [CypherProtocol.Query.method, readEnvironment],
-            [CypherProtocol.Execute.method, writeEnvironment],
-            [CypherProtocol.Models.method, readEnvironment],
-            [AppDataProtocol.Write.method, writeEnvironment],
-            [DataSharingProtocol.Share.method, writeEnvironment],
-            [DataSharingProtocol.Unshare.method, writeEnvironment],
-            [DataSharingProtocol.ListShares.method, readEnvironment],
-            [DataAssignmentProtocol.Assign.method, writeEnvironment],
-            [PragmaticAppProtocol.List.method, readEnvironment],
-            [PragmaticAppProtocol.Open.method, readEnvironment],
+            [CypherProtocol.Query.method, readRealm],
+            [CypherProtocol.Execute.method, writeRealm],
+            [CypherProtocol.Models.method, readRealm],
+            [AppDataProtocol.Write.method, writeRealm],
+            [DataSharingProtocol.Share.method, writeRealm],
+            [DataSharingProtocol.Unshare.method, writeRealm],
+            [DataSharingProtocol.ListShares.method, readRealm],
+            [DataAssignmentProtocol.Assign.method, writeRealm],
+            [PragmaticAppProtocol.List.method, readRealm],
+            [PragmaticAppProtocol.Open.method, readRealm],
             [ApplicationDeployProtocol.Deploy.method, administer],
             [GraphProtocol.Create.method, administer],
             [GraphProtocol.Delete.method, administer],
-            [GraphProtocol.List.method, readEnvironment],
-            [GraphProtocol.Get.method, readEnvironment],
-            [GraphProtocol.Export.method, readEnvironment],
+            [GraphProtocol.List.method, readRealm],
+            [GraphProtocol.Get.method, readRealm],
+            [GraphProtocol.Export.method, readRealm],
             [GraphProtocol.Contribute.method, contribute],
             [GraphProtocol.Load.method, administer],
-            [GraphProtocol.Loaded.method, readEnvironment],
+            [GraphProtocol.Loaded.method, readRealm],
             [AdminProtocol.ListGrants.method, administer],
             [AdminProtocol.GrantRole.method, administer],
             [AdminProtocol.RevokeRole.method, administer],

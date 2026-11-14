@@ -21,7 +21,7 @@ import { LoggerDevWriteDiagnostics, ServerModelWorkspace, WriteFenceSlot } from 
 import type { IDevWriteDiagnostics, IWriteFence } from './server-model-workspace.js'
 
 /**
- * The dev tenant's embedded graph engine, run from the saved solution. `Changed` is raised after each applied
+ * The dev environment's embedded graph engine, run from the saved solution. `Changed` is raised after each applied
  * upgrade (a saved edit recompiled to a new description); `Description` is the snapshot's description the engine
  * currently runs, and `Snapshot` is that whole snapshot in one read (its `Description.Version` equals the engine's
  * `SchemaVersion` except while an upgrade is being applied).
@@ -477,7 +477,7 @@ class OpenedEngine implements IDisposable
 }
 
 /**
- * Hosts the dev tenant's {@link GraphEngine}: opened (memory storage, the `.todl` file connector over the server
+ * Hosts the dev environment's {@link GraphEngine}: opened (memory storage, the `.todl` file connector over the server
  * model workspace) on first use from the saved snapshot, then upgraded as saved sources change.
  *
  * Upgrade: every language-service `GraphChanged` (re)arms a debounce of {@link DevGraphEngineHost.UpgradeDebounceMs};

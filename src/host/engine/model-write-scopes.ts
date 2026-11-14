@@ -8,7 +8,7 @@ import { EngineSchemaCatalog } from './engine-schema-catalog.js'
  * The caller's scope with its writes confined to one model (rulings T7-b, S12, S13; shared by both execute paths,
  * S1): `Or(ConceptIs todl.Term, OwnerIs(modelId))` ANDed into the `todl.Element` Create, Update and Delete rules
  * and Append (a link from a node, R129) rules (deny-wins), so a write to another model's instance (dev) or package's
- * data (runtime) is Denied while reads stay tenant-wide; a link TO another model's node stays the caller's AppendTo
+ * data (runtime) is Denied while reads stay environment-wide; a link TO another model's node stays the caller's AppendTo
  * rule; terms keep the caller's own rules. Cached per scope object (one per schema version) and model id.
  */
 export class ModelWriteScopes

@@ -4,7 +4,7 @@ import type { IEnvironmentOwnership, EnvironmentLostHandler } from './environmen
 import type { IWriteLock } from '../host/cypher/write-lock.js'
 import { RedisWriteLock, type IRedisLockClient } from './redis-write-lock.js'
 
-/** Cross-replica single-writer ownership over Redis: a replica claims a tenant under a TTL-leased key, renews it while
+/** Cross-replica single-writer ownership over Redis: a replica claims an environment under a TTL-leased key, renews it while
  *  serving, and releases it on evict/shutdown. A renewal that finds the key is no longer ours disposes the local server
  *  via the lost handler (fail-closed). The URL may carry credentials and is never logged. */
 export class RedisEnvironmentOwnership implements IEnvironmentOwnership
@@ -29,7 +29,7 @@ export class RedisEnvironmentOwnership implements IEnvironmentOwnership
     private renewing = false
     private readonly lastRenewMs = new Map<string, number>()
     private readonly held = new Set<string>()
-    /** Keys whose Release CAS-delete failed while Redis was down; flushed on reconnect/renew. Bounded by the held-tenant set. */
+    /** Keys whose Release CAS-delete failed while Redis was down; flushed on reconnect/renew. Bounded by the held-environment set. */
     private readonly pendingReleases = new Set<string>()
     private client: RedisClientType | null = null
     private connecting: Promise<RedisClientType> | null = null
@@ -137,7 +137,7 @@ export class RedisEnvironmentOwnership implements IEnvironmentOwnership
         }
     }
 
-    /** The tenant's write lock, contended on the same Redis every replica uses for ownership. */
+    /** The environment's write lock, contended on the same Redis every replica uses for ownership. */
     public WriteLock(environmentId: string): IWriteLock
     {
         return new RedisWriteLock(environmentId, async () => this.LockClient(await this.Connected()))

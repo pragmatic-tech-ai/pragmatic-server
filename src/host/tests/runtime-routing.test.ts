@@ -18,13 +18,13 @@ class RuntimeRoutingFixture
 
     private static Permissive(): AccessContext
     {
-        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const grants = [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Realm, 't1', []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
-    /** A Development tenant's connection (no application registry: application/* belongs to runtime tenants). */
+    /** A Development environment's connection (no application registry: application/* belongs to runtime environments). */
     public static async With(body: (client: PragmaticClient) => Promise<void>): Promise<void>
     {
         const packages = mkdtempSync(join(tmpdir(), RuntimeRoutingFixture.PackagesPrefix))
@@ -50,7 +50,7 @@ class RuntimeRoutingFixture
     }
 }
 
-test('development tenant rejects application/open and application/list', async () =>
+test('development environment rejects application/open and application/list', async () =>
 {
     await RuntimeRoutingFixture.With(async client =>
     {

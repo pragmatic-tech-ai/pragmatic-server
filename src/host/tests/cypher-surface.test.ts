@@ -101,7 +101,7 @@ class CypherSurfaceFixture
 
     public static Permissive(): AccessContext
     {
-        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Environment One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
         const grants = [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Realm, 't1', []))]
         return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
@@ -239,7 +239,7 @@ test('cypher/query node cell rehydrates through SnapshotReader', async () =>
 
 test('cypher/query spans every member project of the active solution', async () =>
 {
-    // v1 scope is the tenant's ACTIVE solution; cross-solution / tenant-wide querying is deferred to SSM.
+    // v1 scope is the environment's ACTIVE solution; cross-solution / environment-wide querying is deferred to SSM.
     await CypherSurfaceFixture.WithOptions({ secondMember: true }, async client =>
     {
         const result = await client.CypherQuery(CypherSurfaceFixture.NameQuery)

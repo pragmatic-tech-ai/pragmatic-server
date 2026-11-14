@@ -20,7 +20,7 @@ export interface OidcFrontDoor
     AuthenticatorFor(method: AuthMethod): IAuthenticator | undefined
 }
 
-/** A verified TLS peer identity plus the tenant's Machine authenticator; absent when client TLS is not configured. */
+/** A verified TLS peer identity plus the realm's Machine authenticator; absent when client TLS is not configured. */
 export interface MachineAuthContext
 {
     authenticator: IAuthenticator
@@ -246,7 +246,7 @@ export class AuthHttpEndpoint
         res.end(html)
     }
 
-    /** Cookie-authenticated whoami: 200 with the session's tenant + principal, else a clean 401 (never echoes the cookie). */
+    /** Cookie-authenticated whoami: 200 with the session's realm + principal, else a clean 401 (never echoes the cookie). */
     private async CurrentSession(req: IncomingMessage, res: ServerResponse): Promise<void>
     {
         const session = await this.ResolveCookieSession(req, false)

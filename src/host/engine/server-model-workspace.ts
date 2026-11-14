@@ -32,7 +32,7 @@ export class LoggerDevWriteDiagnostics implements IDevWriteDiagnostics
     }
 }
 
-/** A writer's hold on the tenant (its write lease): asked once per draft session before its first file write. */
+/** A writer's hold on the environment (its write lease): asked once per draft session before its first file write. */
 export interface IWriteFence
 {
     Held(): Promise<boolean>
@@ -101,8 +101,8 @@ export class WriteFenceSlot
 class ServerDraftSession implements ITodlDraftSession
 {
     private static readonly StaleMessage = 'A model source file changed after its draft was opened'
-    private static readonly FenceLostMessage = 'The tenant write lease was lost before the write could persist'
-    private static readonly NoFenceMessage = 'No tenant write lease is installed; the write cannot persist'
+    private static readonly FenceLostMessage = 'The environment write lease was lost before the write could persist'
+    private static readonly NoFenceMessage = 'No environment write lease is installed; the write cannot persist'
 
     /** What this session last put in a file: its text, or undefined after it deleted the file. */
     private readonly written = new Map<string, string | undefined>()
@@ -166,7 +166,7 @@ class ServerDraftSession implements ITodlDraftSession
     /**
      * Before the session's first write: a fence (the writer's lease) must be installed and still hold, else the write
      * is refused untouched as `Stale` (the connector restores nothing it did not write). No fence installed fails
-     * closed: only a writer holding the tenant lease (DevCypherExecute) may persist. Checked once: a restore of a file
+     * closed: only a writer holding the environment lease (DevCypherExecute) may persist. Checked once: a restore of a file
      * this session wrote is never refused.
      */
     private async Fence(): Promise<void>
@@ -207,7 +207,7 @@ class ServerDraftSession implements ITodlDraftSession
 }
 
 /**
- * The dev tenant's `ITodlModelWorkspace`: a model is editable when one member's SAVED sources declare it. The owning
+ * The dev environment's `ITodlModelWorkspace`: a model is editable when one member's SAVED sources declare it. The owning
  * member, namespace (the model id prefix, else the solution name) and draft all come from storage, never from the
  * language service's unsaved buffers, so the draft agrees with the snapshot the engine was opened from. The solution
  * name and ids no member declares are not editable (the solution package owns the instances outside every model).

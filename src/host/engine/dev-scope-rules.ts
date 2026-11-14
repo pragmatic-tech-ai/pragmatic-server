@@ -40,10 +40,10 @@ class DevPreparedRules implements IPreparedRules
 }
 
 /**
- * The dev tenant's scope rules (AccessScopeSource; spec §5.1, program ruling PR13): authoring data is governed by the
+ * The dev environment's scope rules (AccessScopeSource; spec §5.1, program ruling PR13): authoring data is governed by the
  * identity RBAC at the `PolicyGate` only, so the record part is `AccessScope.Build({ Default: Allow })` for every
  * principal the gate admits, with or without identity; the environment security setting is never read (a Development
- * tenant refuses one). The model confinement of a model-scoped read or write (`OwnerIs(modelId)`) is applied by its
+ * environment refuses one). The model confinement of a model-scoped read or write (`OwnerIs(modelId)`) is applied by its
  * endpoint, unchanged. `Finish` is the identity; placement is TODL's (the model's namespace, the model as owner), and a
  * create with no model is InvalidArgument. `Changed` never fires: the source drops its scopes on the host's Changed.
  */

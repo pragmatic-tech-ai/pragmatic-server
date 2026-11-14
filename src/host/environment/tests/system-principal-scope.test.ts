@@ -17,7 +17,7 @@ class SystemFx
     public static readonly Created = 'created'
     public static readonly HighSalary = 150000
     public static readonly Salaries = 'MATCH (e:`hr.Employee`) RETURN e.Salary AS s ORDER BY s'
-    public static readonly RuntimeOnly = /applications are a runtime-tenant feature/
+    public static readonly RuntimeOnly = /applications are a runtime-environment feature/
     private static readonly SelectPrefix = 'MATCH (n:`'
     private static readonly SelectSuffix = '`) RETURN n.name AS name ORDER BY name'
 
@@ -92,7 +92,7 @@ describe('system principal scope', () =>
         })
     })
 
-    test('development tenant has no system scope', async () =>
+    test('development environment has no system scope', async () =>
     {
         const server = new PragmaticServer({ purpose: EnvironmentPurpose.Development })
         try

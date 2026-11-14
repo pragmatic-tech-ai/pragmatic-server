@@ -16,7 +16,7 @@ import type { EnvironmentEngineHost } from './environment-engine-host.js'
 /**
  * What a runtime connection subscribes `data/changed` through (`ServerConnectionHandler`): the caller's context in,
  * payloads already filtered to its scope out. Built over `PragmaticServer.DataChanges()` by `RuntimeAttachArgs`;
- * undefined off a runtime tenant (dev tenants keep `solution/graphChanged` only).
+ * undefined off a runtime environment (dev environments keep `solution/graphChanged` only).
  */
 export interface IEnvironmentDataChanges
 {

@@ -28,7 +28,7 @@ class LoginFixture
 
     public static Options(baseDir: string, keyEnv: string)
     {
-        const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Tenant One' }]])
+        const entries = new Map<string, EnvironmentProvisioning>([['t1', { displayName: 'Environment One' }]])
         return { host: LoginFixture.Host, port: 0, baseDir, masterKey: { base64Env: keyEnv }, provisioning: new InMemoryEnvironmentProvisioning(entries) }
     }
 
