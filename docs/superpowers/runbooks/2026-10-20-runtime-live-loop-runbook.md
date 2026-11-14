@@ -24,6 +24,7 @@ The test runs against a dedicated stack. It never touches the developer's own co
   - The operator API is on `http://localhost:7000`. The tenant plane, which serves as the tenant's console, is on `http://e2e.lvh.me:7100`.
   - The agent channel is on port 7001. The hive agent's pods dial home to it at `http://host.docker.internal:7001`.
   - Its state lives in `~/.pragmatic/e2e-stack/data`.
+  - When `~/.pragmatic/ghcr-read.json` exists, the control plane uses it as the release registry credential (`PRAGMATIC_RELEASE_CREDENTIAL_FILE`). Platform admin's Refresh from Registry then lists the GHCR releases. An explicitly set `PRAGMATIC_RELEASE_CREDENTIAL_FILE` wins. Without either, Refresh answers "The release registry is not configured".
 - Through the operator API:
   - client `e2e-client`;
   - tenant `e2e` with owner `o@t.io`, plus its IdP container;

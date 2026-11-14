@@ -74,6 +74,9 @@ export class LiveLoopStackNames
     public static readonly TenantPlaneOrigin = 'http://e2e.lvh.me:7100'
     public static readonly StackDir = join(homedir(), '.pragmatic', 'e2e-stack')
     public static readonly DescriptorFile = 'stack.json'
+    /** The developer's GHCR read credential (`{ username, token }`); when present, platform admin's release catalogue uses it. */
+    public static readonly ReleaseCredentialFile = join(homedir(), '.pragmatic', 'ghcr-read.json')
+    public static readonly ReleaseCredentialEnvVar = 'PRAGMATIC_RELEASE_CREDENTIAL_FILE'
 }
 
 /** The operator's seed, as dev-seed.sh does it: client, tenant (its IdP comes up here) and the attached hive. Returns the owner's one-time password. */
@@ -310,6 +313,21 @@ export class LiveLoopStack
         }
     }
 
+    /**
+     * The release-catalogue setting the control plane starts with: an explicitly set PRAGMATIC_RELEASE_CREDENTIAL_FILE wins;
+     * otherwise the developer's GHCR read credential when that file exists; otherwise nothing (Refresh then answers 409).
+     */
+    public static ReleaseEnv(env: NodeJS.ProcessEnv, exists: (path: string) => boolean = existsSync): NodeJS.ProcessEnv
+    {
+        const N = LiveLoopStackNames
+        const explicit = env[N.ReleaseCredentialEnvVar]
+        if (explicit !== undefined && explicit !== '')
+        {
+            return {}
+        }
+        return exists(N.ReleaseCredentialFile) ? { [N.ReleaseCredentialEnvVar]: N.ReleaseCredentialFile } : {}
+    }
+
     public static DescriptorPath(): string
     {
         return join(LiveLoopStackNames.StackDir, LiveLoopStackNames.DescriptorFile)
@@ -428,6 +446,7 @@ export class LiveLoopStack
         const log = openSync(join(N.StackDir, L.LogFileName), L.AppendFlag)
         const env: NodeJS.ProcessEnv = {
             ...process.env,
+            ...L.ReleaseEnv(process.env),
             PRAGMATIC_ADMIN_DATA_ROOT: dataRoot,
             PRAGMATIC_ADMIN_PORT: String(N.OperatorPort),
             PRAGMATIC_ADMIN_OPERATOR_EMAIL: N.OperatorEmail,

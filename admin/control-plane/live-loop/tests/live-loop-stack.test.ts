@@ -132,6 +132,30 @@ describe('LiveLoopStackAgent', () =>
     })
 })
 
+describe('LiveLoopStack.ReleaseEnv', () =>
+{
+    const N = LiveLoopStackNames
+
+    it('points the release catalogue at the developer\'s GHCR read credential when that file exists', () =>
+    {
+        const seen: string[] = []
+        const out = LiveLoopStack.ReleaseEnv({}, path => { seen.push(path); return true })
+        assert.deepEqual(out, { [N.ReleaseCredentialEnvVar]: N.ReleaseCredentialFile })
+        assert.deepEqual(seen, [N.ReleaseCredentialFile])
+    })
+
+    it('adds nothing when the credential file is absent, so Refresh answers not configured', () =>
+    {
+        assert.deepEqual(LiveLoopStack.ReleaseEnv({}, () => false), {})
+    })
+
+    it('leaves an explicitly set credential file alone, and treats a blank one as unset', () =>
+    {
+        assert.deepEqual(LiveLoopStack.ReleaseEnv({ [N.ReleaseCredentialEnvVar]: 'C:/elsewhere.json' }, () => true), {})
+        assert.deepEqual(LiveLoopStack.ReleaseEnv({ [N.ReleaseCredentialEnvVar]: '' }, () => true), { [N.ReleaseCredentialEnvVar]: N.ReleaseCredentialFile })
+    })
+})
+
 describe('LiveLoopStack.Redact', () =>
 {
     it('replaces the stack passwords in any failure text', () =>
