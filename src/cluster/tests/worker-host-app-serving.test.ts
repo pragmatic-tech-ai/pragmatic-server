@@ -147,14 +147,14 @@ class RuntimeWorkerFx
     {
         const server = await worker.RegistryForTest().ServerFor(RuntimeWorkerFx.Tenant)
         const pack = await server.Pack()
-        await pack.Grants.Save(new Grant(RuntimeWorkerFx.Tenant, Role.Owner, new ResourceRef(ResourceKind.Tenant, RuntimeWorkerFx.Tenant, [])))
-        const store = await server.TenantConfigStore()
+        await pack.Grants.Save(new Grant(RuntimeWorkerFx.Tenant, Role.Owner, new ResourceRef(ResourceKind.Realm, RuntimeWorkerFx.Tenant, [])))
+        const store = await server.RealmConfigStore()
         const current = await store.Get(RuntimeWorkerFx.Tenant)
         const config = current === null
             ? new IdentityConfig(RuntimeWorkerFx.PackId, DelegationDepth.AuthnDirectory, new Map(), new Map(), new Map(), RuntimeWorkerFx.ReadingModel())
             : new IdentityConfig(current.PackId, current.DelegationDepth, current.ProviderSettings, current.GroupRoleMap, current.ClaimsMapping, RuntimeWorkerFx.ReadingModel())
         await store.Save(RuntimeWorkerFx.Tenant, config)
-        return (await pack.Tokens.Issue(server.Tenant(), RuntimeWorkerFx.Tenant, [], null)).Token
+        return (await pack.Tokens.Issue(server.Realm(), RuntimeWorkerFx.Tenant, [], null)).Token
     }
 
     /** The token's principal is the environment's System Administrator: it reads every row (tier 1). */

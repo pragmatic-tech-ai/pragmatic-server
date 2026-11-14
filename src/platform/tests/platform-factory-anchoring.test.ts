@@ -37,7 +37,7 @@ for (const [name, factory] of FactoryFixture.Factories)
         const bundle = await factory.CreateWith(backends, 'm', 'a', 1)
         const audit = await bundle.Platform.AuditSink()
         await audit.Record(new AuditEvent(AuditEventKind.AdminAction, 't1', 'p1', new Date('2026-01-01T00:00:00Z'), new Map([['action', 'a']])))
-        const rows = await backends.Session.Query('SELECT seq FROM identity_audit_anchor WHERE tenant_id = $1', ['t1'])
+        const rows = await backends.Session.Query('SELECT seq FROM identity_audit_anchor WHERE realm_id = $1', ['t1'])
         assert.ok(rows.length >= 1)
     })
 

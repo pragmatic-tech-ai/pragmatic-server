@@ -1,5 +1,5 @@
 import { AuthMethod, Credential, PresentedSecret, AuthenticatedResult } from '@pragmatic-tech-ai/todl-identity'
-import type { IAuthenticator, Session, Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { IAuthenticator, Session, Realm } from '@pragmatic-tech-ai/todl-identity'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { RequestBody } from './request-body.js'
@@ -16,7 +16,7 @@ import { SignInPage } from './sign-in-page.js'
  *  Satisfied structurally by the cloud OIDC identity-provider packs. */
 export interface OidcFrontDoor
 {
-    BeginAuthorization(tenant: Tenant): Promise<{ Url: string; State: string }>
+    BeginAuthorization(realm: Realm): Promise<{ Url: string; State: string }>
     AuthenticatorFor(method: AuthMethod): IAuthenticator | undefined
 }
 
@@ -83,7 +83,7 @@ export class AuthHttpEndpoint
     private static readonly NoReferrer = 'no-referrer'
 
     private readonly pack: ServerIdentityPack
-    private readonly tenant: Tenant
+    private readonly realm: Realm
     private readonly oidc: OidcFrontDoor | undefined
     private readonly machine: MachineAuthContext | undefined
     private readonly audit: IAccessAuditSink
@@ -92,7 +92,7 @@ export class AuthHttpEndpoint
     private readonly credentials: ICallerCredentialRevoker | undefined
 
     /** `credentials`: revoked for the principal that signs out (its per-user source credentials, R27). */
-    public constructor(pack: ServerIdentityPack, tenant: Tenant, oidc?: OidcFrontDoor, machine?: MachineAuthContext, instrumentation?: RequestInstrumentation, audit: IAccessAuditSink = new NullAccessAuditSink(), browser: BrowserSessionAuth = new BrowserSessionAuth(), credentials?: ICallerCredentialRevoker)
+    public constructor(pack: ServerIdentityPack, realm: Realm, oidc?: OidcFrontDoor, machine?: MachineAuthContext, instrumentation?: RequestInstrumentation, audit: IAccessAuditSink = new NullAccessAuditSink(), browser: BrowserSessionAuth = new BrowserSessionAuth(), credentials?: ICallerCredentialRevoker)
     {
         this.credentials = credentials
         this.browser = browser
@@ -100,7 +100,7 @@ export class AuthHttpEndpoint
         this.audit = audit
         this.machine = machine
         this.pack = pack
-        this.tenant = tenant
+        this.realm = realm
         this.oidc = oidc
     }
 
@@ -115,7 +115,7 @@ export class AuthHttpEndpoint
             else
             {
                 const method = `${req.method ?? AuthHttpEndpoint.GetMethod} ${AuthHttpEndpoint.HttpSurface}`
-                await this.instrumentation.Run({ method, tenant: this.tenant.Id, principal: '' }, () => this.Route(req, res))
+                await this.instrumentation.Run({ method, tenant: this.realm.Id, principal: '' }, () => this.Route(req, res))
             }
         }
         catch
@@ -236,7 +236,7 @@ export class AuthHttpEndpoint
     /** The sign-in page for this environment (its own id, never the query's text); the return path only if same-origin. */
     private SignIn(url: URL, res: ServerResponse): void
     {
-        const html = SignInPage.Render(this.tenant.Id, SignInPage.SafeReturn(url.searchParams.get(SignInPage.ReturnParam)))
+        const html = SignInPage.Render(this.realm.Id, SignInPage.SafeReturn(url.searchParams.get(SignInPage.ReturnParam)))
         res.statusCode = AuthHttpEndpoint.OkStatus
         res.setHeader(AuthHttpEndpoint.ContentTypeHeader, AuthHttpEndpoint.HtmlContentType)
         res.setHeader(AuthHttpEndpoint.CacheControlHeader, AuthHttpEndpoint.NoStore)
@@ -255,7 +255,7 @@ export class AuthHttpEndpoint
             this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.UnauthenticatedError)
             return
         }
-        this.WriteBody(res, AuthHttpEndpoint.OkStatus, JSON.stringify({ [AuthHttpEndpoint.TenantKey]: session.TenantId, [AuthHttpEndpoint.PrincipalIdKey]: session.PrincipalId, [AuthHttpEndpoint.ExpiresAtKey]: session.ExpiresAt.toISOString() }))
+        this.WriteBody(res, AuthHttpEndpoint.OkStatus, JSON.stringify({ [AuthHttpEndpoint.TenantKey]: session.RealmId, [AuthHttpEndpoint.PrincipalIdKey]: session.PrincipalId, [AuthHttpEndpoint.ExpiresAtKey]: session.ExpiresAt.toISOString() }))
     }
 
     private async Logout(req: IncomingMessage, res: ServerResponse): Promise<void>
@@ -277,12 +277,12 @@ export class AuthHttpEndpoint
     private async ResolveCookieSession(req: IncomingMessage, requireOrigin: boolean): Promise<Session | null>
     {
         const credential = this.browser.Credential(req, requireOrigin)
-        if (credential === null || credential.Tenant !== this.tenant.Id)
+        if (credential === null || credential.Tenant !== this.realm.Id)
         {
             return null
         }
         const session = await this.pack.Sessions.Validate(credential.Token)
-        return session !== null && session.TenantId === this.tenant.Id ? session : null
+        return session !== null && session.RealmId === this.realm.Id ? session : null
     }
 
     private async MachineLogin(machine: MachineAuthContext, res: ServerResponse): Promise<void>
@@ -293,7 +293,7 @@ export class AuthHttpEndpoint
             this.WriteJson(res, AuthHttpEndpoint.UnauthorizedStatus, AuthHttpEndpoint.MachineUnauthorizedError)
             return
         }
-        const result = await machine.authenticator.Authenticate(new Credential(AuthMethod.Machine, machine.identity.Fingerprint), new PresentedSecret(''), this.tenant)
+        const result = await machine.authenticator.Authenticate(new Credential(AuthMethod.Machine, machine.identity.Fingerprint), new PresentedSecret(''), this.realm)
         if (!(result instanceof AuthenticatedResult))
         {
             this.Emit(AuthHttpEndpoint.MachinePath, AuditOutcome.AuthFailure)
@@ -324,7 +324,7 @@ export class AuthHttpEndpoint
         const presented = new PresentedSecret(password)
         try
         {
-            const result = await authenticator.Authenticate(new Credential(AuthMethod.Local, email), presented, this.tenant)
+            const result = await authenticator.Authenticate(new Credential(AuthMethod.Local, email), presented, this.realm)
             if (!(result instanceof AuthenticatedResult))
             {
                 this.Emit(AuthHttpEndpoint.LoginPath, AuditOutcome.AuthFailure)
@@ -347,7 +347,7 @@ export class AuthHttpEndpoint
             this.WriteJson(res, AuthHttpEndpoint.NotFoundStatus, AuthHttpEndpoint.NotFoundError)
             return
         }
-        const begun = await this.oidc.BeginAuthorization(this.tenant)
+        const begun = await this.oidc.BeginAuthorization(this.realm)
         res.statusCode = AuthHttpEndpoint.FoundStatus
         res.setHeader(AuthHttpEndpoint.LocationHeader, begun.Url)
         res.end()
@@ -372,7 +372,7 @@ export class AuthHttpEndpoint
         const presented = new PresentedSecret(code)
         try
         {
-            const result = await authenticator.Authenticate(new Credential(AuthMethod.Oidc, state), presented, this.tenant)
+            const result = await authenticator.Authenticate(new Credential(AuthMethod.Oidc, state), presented, this.realm)
             if (!(result instanceof AuthenticatedResult))
             {
                 this.Emit(AuthHttpEndpoint.OidcCallbackPath, AuditOutcome.AuthFailure)
@@ -392,7 +392,7 @@ export class AuthHttpEndpoint
     {
         const event: AccessAuditEvent = {
             Timestamp: new Date(),
-            TenantId: this.tenant.Id,
+            TenantId: this.realm.Id,
             PrincipalId: principalId,
             Surface: AuditSurface.Http,
             MethodOrPath: path,
@@ -416,8 +416,8 @@ export class AuthHttpEndpoint
         const session = await this.pack.Sessions.Issue(result.Principal)
         if (browser)
         {
-            res.setHeader(AuthHttpEndpoint.SetCookieHeader, this.browser.BuildSetCookie(res.req, this.tenant.Id, session.Id, session.ExpiresAt))
-            this.WriteBody(res, AuthHttpEndpoint.OkStatus, JSON.stringify({ [AuthHttpEndpoint.TenantKey]: this.tenant.Id, [AuthHttpEndpoint.PrincipalIdKey]: session.PrincipalId, [AuthHttpEndpoint.ExpiresAtKey]: session.ExpiresAt.toISOString() }))
+            res.setHeader(AuthHttpEndpoint.SetCookieHeader, this.browser.BuildSetCookie(res.req, this.realm.Id, session.Id, session.ExpiresAt))
+            this.WriteBody(res, AuthHttpEndpoint.OkStatus, JSON.stringify({ [AuthHttpEndpoint.TenantKey]: this.realm.Id, [AuthHttpEndpoint.PrincipalIdKey]: session.PrincipalId, [AuthHttpEndpoint.ExpiresAtKey]: session.ExpiresAt.toISOString() }))
             return
         }
         this.WriteBody(res, AuthHttpEndpoint.OkStatus, JSON.stringify({ [AuthHttpEndpoint.TokenKey]: session.Id, [AuthHttpEndpoint.ExpiresAtKey]: session.ExpiresAt.toISOString() }))

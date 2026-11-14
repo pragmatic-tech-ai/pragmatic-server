@@ -48,9 +48,9 @@ test('a PragmaticServer boots on DeploymentMode.Cloud and authenticates a seeded
         const pack = await server.Pack()
         await pack.Secrets.Put(options.identity.bootstrap.adminPasswordRef, 'admin-pw-12345')
         await server.SeedBootstrapForTest()
-        const result = await pack.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, 'admin@x.io'), new PresentedSecret('admin-pw-12345'), server.Tenant())
+        const result = await pack.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, 'admin@x.io'), new PresentedSecret('admin-pw-12345'), server.Realm())
         assert.ok(result instanceof AuthenticatedResult)
-        const grants = await pack.Grants.GrantsFor('admin', server.Tenant())
+        const grants = await pack.Grants.GrantsFor('admin', server.Realm())
         assert.ok(grants.some(grant => grant.Role === Role.Owner))
     }
     finally
@@ -68,7 +68,7 @@ test('cloud boot denies an unknown account (deny-by-default)', async () =>
     {
         await server.Start()
         const pack = await server.Pack()
-        const result = await pack.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, 'ghost@x.io'), new PresentedSecret('whatever-123'), server.Tenant())
+        const result = await pack.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, 'ghost@x.io'), new PresentedSecret('whatever-123'), server.Realm())
         assert.ok(!(result instanceof AuthenticatedResult))
     }
     finally

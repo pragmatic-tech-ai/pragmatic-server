@@ -3,7 +3,7 @@ import type { ConnectorContext, GraphEngine, GraphReader } from '@pragmatic-tech
 import { ShareGrants, ShareSubject, SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import type { ExternalIdentity, IShareSubjects, ShareRight } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
-import type { TenantSecurityModel, Tier1Grants } from '@pragmatic-tech-ai/todl-identity-engine'
+import type { RealmSecurityModel, Tier1Grants } from '@pragmatic-tech-ai/todl-identity-engine'
 import { EngineInstanceView } from '../engine/engine-instance-view.js'
 import type { EngineSchemaCatalog } from '../engine/engine-schema-catalog.js'
 
@@ -23,7 +23,7 @@ export class RecordGrants
     }
 
     /** Who the caller is for share purposes: its principal and its active teams in the environment setting. */
-    public static Subjects(context: AccessContext, model: TenantSecurityModel): IShareSubjects
+    public static Subjects(context: AccessContext, model: RealmSecurityModel): IShareSubjects
     {
         return { PrincipalId: context.Principal.Id, Teams: model.Membership().Resolve(context.Principal).teams }
     }

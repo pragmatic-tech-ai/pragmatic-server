@@ -8,7 +8,7 @@ import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-s
 import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
-import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 
 class PagingGuardFixture
 {
@@ -46,9 +46,9 @@ class PagingGuardFixture
         const language = await server.LanguageService() as SolutionLanguageService
         const manager = await server.Manager()
         await language.WhenIdle()
-        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
-        const context = new AccessContext(principal, tenant, [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Tenant, 't1', []))], new ResourceAuthorizationPolicy())
+        const context = new AccessContext(principal, realm, [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Realm, 't1', []))], new ResourceAuthorizationPolicy())
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(serverSocket, language, manager, context, undefined, server.DevCypher(), undefined, undefined, undefined, undefined, undefined, undefined, TenantPurpose.Development)
         const client = PragmaticClient.CreateOverSocket(clientSocket)

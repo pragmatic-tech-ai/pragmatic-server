@@ -1,7 +1,7 @@
 import type { IStorage, IPromptService } from '@pragmatic-tech-ai/todl-runtime'
 import type { ISqlSession, IStorageProviderRegistry } from '@pragmatic-tech-ai/todl'
-import type { IdentityStoreSet, ISecretStore, ITenantConfigStore, IAuditSink } from '@pragmatic-tech-ai/todl-identity'
-import { SqlLocalAccountStore, SqlServiceTokenStore, SqlSessionStore, SqlRoleGrantStore, SqlAuditStore, SqlAuditCheckpointStore, SqlTenantConfigStore, SqlIdpDirectoryStore } from '@pragmatic-tech-ai/todl-platform-cloud'
+import type { IdentityStoreSet, ISecretStore, IRealmConfigStore, IAuditSink } from '@pragmatic-tech-ai/todl-identity'
+import { SqlLocalAccountStore, SqlServiceTokenStore, SqlSessionStore, SqlRoleGrantStore, SqlAuditStore, SqlAuditCheckpointStore, SqlRealmConfigStore, SqlIdpDirectoryStore } from '@pragmatic-tech-ai/todl-platform-cloud'
 import { AuditAnchor, AuditAnchoring, HmacAuditCheckpointSigner } from '@pragmatic-tech-ai/todl-identity-host'
 import { FileEncryptedSecretStore } from '@pragmatic-tech-ai/todl-identity-node'
 import { HeadlessPromptService } from '@pragmatic-tech-ai/todl-platform-node'
@@ -52,7 +52,7 @@ export class CloudPlatform implements PlatformServices
     private readonly anchorKey: string | undefined
     private readonly anchorInterval: number
     private sqlStoresPromise: Promise<SqlIdentityStores> | undefined
-    private tenantConfigPromise: Promise<ITenantConfigStore> | undefined
+    private tenantConfigPromise: Promise<IRealmConfigStore> | undefined
 
     private constructor(session: ISqlSession, storage: IStorageProviderRegistry, masterKey: Buffer, anchorKey: string | undefined, anchorInterval: number)
     {
@@ -127,9 +127,9 @@ export class CloudPlatform implements PlatformServices
         return { Secrets: secrets, Accounts: sql.Accounts, Tokens: sql.Tokens, Sessions: sql.Sessions, Grants: sql.Grants, Audit: sql.Audit, IdpDirectory: sql.IdpDirectory }
     }
 
-    public CreateTenantConfigStore(_configRoot: string): Promise<ITenantConfigStore>
+    public CreateRealmConfigStore(_configRoot: string): Promise<IRealmConfigStore>
     {
-        return this.tenantConfigStore()
+        return this.realmConfigStore()
     }
 
     private sqlStores(): Promise<SqlIdentityStores>
@@ -163,11 +163,11 @@ export class CloudPlatform implements PlatformServices
         return SqlAuditStore.Open(this.session, anchoring)
     }
 
-    private tenantConfigStore(): Promise<ITenantConfigStore>
+    private realmConfigStore(): Promise<IRealmConfigStore>
     {
         if (this.tenantConfigPromise === undefined)
         {
-            this.tenantConfigPromise = SqlTenantConfigStore.Open(this.session).catch(e => { this.tenantConfigPromise = undefined; throw e })
+            this.tenantConfigPromise = SqlRealmConfigStore.Open(this.session).catch(e => { this.tenantConfigPromise = undefined; throw e })
         }
         return this.tenantConfigPromise
     }

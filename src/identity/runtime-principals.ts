@@ -30,7 +30,7 @@ export class RuntimePrincipals
     public static async SeedReader(admin: AdminService, actor: string, email: string, principalId: string, password: PresentedSecret): Promise<void>
     {
         const account = await admin.CreateAccount(actor, email, principalId, password)
-        await admin.GrantRole(actor, principalId, RuntimePrincipals.ReaderCoarseRole, new ResourceRef(ResourceKind.Tenant, account.TenantId, []))
+        await admin.GrantRole(actor, principalId, RuntimePrincipals.ReaderCoarseRole, new ResourceRef(ResourceKind.Realm, account.RealmId, []))
     }
 
     /** Seeds the default local dev account; throws unless the deployment mode is local; a no-op when it already exists. */
@@ -47,6 +47,6 @@ export class RuntimePrincipals
             return
         }
         const account = await admin.CreateAccount(actor, RuntimePrincipals.DevEmail, RuntimePrincipals.DevPrincipalId, new PresentedSecret(RuntimePrincipals.DevPassword))
-        await admin.GrantRole(actor, RuntimePrincipals.DevPrincipalId, RuntimePrincipals.DevCoarseRole, new ResourceRef(ResourceKind.Tenant, account.TenantId, []))
+        await admin.GrantRole(actor, RuntimePrincipals.DevPrincipalId, RuntimePrincipals.DevCoarseRole, new ResourceRef(ResourceKind.Realm, account.RealmId, []))
     }
 }

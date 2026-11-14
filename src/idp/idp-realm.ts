@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { AuthMethod, AuthenticatedResult, Credential, PresentedSecret, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity';
+import { AuthMethod, AuthenticatedResult, Credential, PresentedSecret, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity';
 import type { IdentityStoreSet } from '@pragmatic-tech-ai/todl-identity';
 import { Argon2PasswordHasher, LocalPasswordAuthenticator } from '@pragmatic-tech-ai/todl-identity-local';
 import { FileIdentityStores } from '@pragmatic-tech-ai/todl-identity-node';
@@ -79,7 +79,7 @@ export class IdpRealm
     private readonly authenticator: LocalPasswordAuthenticator;
 
     private constructor(
-        private readonly tenant: Tenant,
+        private readonly realm: Realm,
         private readonly stores: IdentityStoreSet,
         private readonly profiles: PrincipalSideStore,
         private readonly credentialsChanged: PrincipalSideStore)
@@ -91,7 +91,7 @@ export class IdpRealm
     {
         const dir = join(realmRoot, tenantId);
         const stores = await FileIdentityStores.Open(new NodeFsStorage(dir), masterKey);
-        return new IdpRealm(new Tenant(tenantId, TenantKind.SelfHosted, displayName), stores,
+        return new IdpRealm(new Realm(tenantId, RealmKind.SelfHosted, displayName), stores,
             new PrincipalSideStore(dir, PrincipalSideStore.ProfilesFile), new PrincipalSideStore(dir, PrincipalSideStore.CredentialsChangedFile));
     }
 
@@ -102,12 +102,12 @@ export class IdpRealm
 
     public TenantId(): string
     {
-        return this.tenant.Id;
+        return this.realm.Id;
     }
 
     public async SeedAccount(email: string, principalId: string, password: string, displayName?: string): Promise<void>
     {
-        const existing = await this.stores.Accounts.FindByPrincipalId(this.tenant, principalId);
+        const existing = await this.stores.Accounts.FindByPrincipalId(this.realm, principalId);
         if (existing)
         {
             if (displayName !== undefined)
@@ -118,13 +118,13 @@ export class IdpRealm
         }
         const ref = IdpRealm.SecretRefFor(principalId);
         await this.stores.Secrets.Put(ref, await this.hasher.Hash(password));
-        await this.stores.Accounts.CreateAccount(this.tenant, email, principalId, ref);
+        await this.stores.Accounts.CreateAccount(this.realm, email, principalId, ref);
         await this.profiles.Put(principalId, displayName ?? '');
     }
 
     public async LookupProfile(principalId: string): Promise<{ email: string; name: string } | null>
     {
-        const account = await this.stores.Accounts.FindByPrincipalId(this.tenant, principalId);
+        const account = await this.stores.Accounts.FindByPrincipalId(this.realm, principalId);
         if (!account)
         {
             return null;
@@ -168,7 +168,7 @@ export class IdpRealm
         {
             return false;
         }
-        const existing = await this.stores.Accounts.FindByPrincipalId(this.tenant, principalId);
+        const existing = await this.stores.Accounts.FindByPrincipalId(this.realm, principalId);
         if (!existing)
         {
             return false;
@@ -208,7 +208,7 @@ export class IdpRealm
 
     public async Authenticate(email: string, password: string): Promise<AuthenticatedResult | null>
     {
-        const result = await this.authenticator.Authenticate(new Credential(AuthMethod.Local, email), new PresentedSecret(password), this.tenant);
+        const result = await this.authenticator.Authenticate(new Credential(AuthMethod.Local, email), new PresentedSecret(password), this.realm);
         return result instanceof AuthenticatedResult ? result : null;
     }
 }

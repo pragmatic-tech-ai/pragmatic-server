@@ -2,7 +2,7 @@ import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import { AccessLevel, BaseRole } from '@pragmatic-tech-ai/todl-identity'
 import type { IProfileAssignmentConfig, IProfileOverrideConfig, IRoleAssignmentConfig, IRoleOverrideConfig, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { Tier1Catalog, Tier1DiagnosticCode, Tier1ScopeCompiler } from '@pragmatic-tech-ai/todl-identity-engine'
-import type { TenantSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
+import type { RealmSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
 
 /** Why an admin save of the security setting is refused against the deployed packages (Review Focus 2). */
 export enum SecuritySettingIssueCode
@@ -84,7 +84,7 @@ export class SecuritySettingCatalogCheck
     {
     }
 
-    public static Issues(config: ISecurityModelConfig, catalog: IEnvironmentCatalog, model: TenantSecurityModel): readonly SecuritySettingIssue[]
+    public static Issues(config: ISecurityModelConfig, catalog: IEnvironmentCatalog, model: RealmSecurityModel): readonly SecuritySettingIssue[]
     {
         const described = new Set<string>(catalog.Description.Definitions.map(definition => definition.Name))
         const check = new SecuritySettingCatalogCheck(config, described, Tier1Catalog.EngineStoredConcepts(catalog))

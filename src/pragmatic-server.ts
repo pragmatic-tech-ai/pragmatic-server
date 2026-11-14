@@ -12,8 +12,8 @@ import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services
 import { SolutionServicesModule, LanguageServiceModule } from './composition/server-modules.js'
 import type { MasterKeyRef } from './identity/master-key-resolver.js'
 import type { IProvisionedSecretSource } from './config/provisioned-secret-source.js'
-import { TenantConfigStoreKey } from '@pragmatic-tech-ai/todl-identity'
-import type { Tenant, IdentityConfig, ITenantConfigStore } from '@pragmatic-tech-ai/todl-identity'
+import { RealmConfigStoreKey } from '@pragmatic-tech-ai/todl-identity'
+import type { Realm, IdentityConfig, IRealmConfigStore } from '@pragmatic-tech-ai/todl-identity'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import { UpstreamTokenVault } from '@pragmatic-tech-ai/todl-identity-cloud'
 import type { IHttpClient, IOidcFlowStateStore } from '@pragmatic-tech-ai/todl-identity-cloud'
@@ -178,7 +178,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private readonly callerCredentials: CallerCredentials
     private disposing: Promise<void> | undefined
     private pack: ServerIdentityPack | undefined
-    private tenant: Tenant | undefined
+    private realm: Realm | undefined
     private oidc: OidcFrontDoor | undefined
     private appsStorage: IStorage | undefined
     private appsRegistry: PragmaticAppsRegistry | undefined
@@ -272,9 +272,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
             {
                 const composed = await this.identity.ComposeAsync(this.root.Services())
                 this.pack = composed.pack
-                this.tenant = composed.tenant
+                this.realm = composed.realm
                 this.oidc = composed.oidc
-                this.callerCredentials.Bind(composed.pack.SourceTokens, composed.tenant, new UpstreamTokenVault(composed.pack.Secrets))
+                this.callerCredentials.Bind(composed.pack.SourceTokens, composed.realm, new UpstreamTokenVault(composed.pack.Secrets))
                 this.RegisterAdapterFactories()
             }
             catch (error)
@@ -316,7 +316,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.pack
     }
 
-    public async TenantConfigStore(): Promise<ITenantConfigStore>
+    public async RealmConfigStore(): Promise<IRealmConfigStore>
     {
         if (this.identity === undefined)
         {
@@ -326,7 +326,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         {
             throw new Error(PragmaticServer.NotStartedError)
         }
-        return this.root.Resolve(TenantConfigStoreKey)
+        return this.root.Resolve(RealmConfigStoreKey)
     }
 
     /**
@@ -371,9 +371,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
 
     private async BuildSecuritySetting(): Promise<EnvironmentSecuritySetting>
     {
-        const store = await this.TenantConfigStore()
+        const store = await this.RealmConfigStore()
         const pack = await this.Pack()
-        return new EnvironmentSecuritySetting(store, pack.IdpDirectory, this.Tenant(), new LoggerSecuritySettingDiagnostics(this.options.logger ?? StructuredLogger.ToStdout()))
+        return new EnvironmentSecuritySetting(store, pack.IdpDirectory, this.Realm(), new LoggerSecuritySettingDiagnostics(this.options.logger ?? StructuredLogger.ToStdout()))
     }
 
     /**
@@ -413,7 +413,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         const pack = await this.Pack()
         const setting = await this.SecuritySetting()
         const sync = new IdpDirectorySync(pack.DirectorySource, pack.IdpDirectory, pack.Sessions, pack.Audit)
-        const host = new IdpDirectorySyncHost(sync, setting, this.Tenant())
+        const host = new IdpDirectorySyncHost(sync, setting, this.Realm())
         // R27: a deprovisioned principal's stored upstream tokens, cached source tokens and inner connections go
         this.deprovisioned?.dispose()
         this.deprovisioned = this.callerCredentials.Follow(host.Deprovisioned)
@@ -710,15 +710,15 @@ export class PragmaticServer implements IEnvironmentGraphHost
 
     private async BuildSystemPrincipal(): Promise<SystemPrincipalScope>
     {
-        const tenant = this.Tenant()
+        const realm = this.Realm()
         const scopes = await this.EnvironmentScopes()
-        return new SystemPrincipalScope(scopes, this.environmentRules!, tenant)
+        return new SystemPrincipalScope(scopes, this.environmentRules!, realm)
     }
 
     /** The context background work's own engine reads run under: the system principal's; Anonymous without identity. */
     private BackgroundConnector(): ConnectorContext
     {
-        return this.identity === undefined ? ConnectorContext.Anonymous : CallerConnectorContext.System(this.Tenant())
+        return this.identity === undefined ? ConnectorContext.Anonymous : CallerConnectorContext.System(this.Realm())
     }
 
     private async BuildEnvironmentScopes(): Promise<AccessScopeSource>
@@ -834,17 +834,17 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.environmentAssign
     }
 
-    public Tenant(): Tenant
+    public Realm(): Realm
     {
         if (this.identity === undefined)
         {
             throw new Error(PragmaticServer.IdentityNotConfiguredError)
         }
-        if (this.tenant === undefined)
+        if (this.realm === undefined)
         {
             throw new Error(PragmaticServer.NotStartedError)
         }
-        return this.tenant
+        return this.realm
     }
 
     public Oidc(): OidcFrontDoor | undefined
@@ -856,9 +856,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
     public async SeedBootstrapForTest(): Promise<void>
     {
         const bootstrap = this.options.identity?.bootstrap
-        if (this.pack !== undefined && this.tenant !== undefined && bootstrap !== undefined)
+        if (this.pack !== undefined && this.realm !== undefined && bootstrap !== undefined)
         {
-            await ServerBootstrap.SeedAsync(this.pack, this.tenant, bootstrap)
+            await ServerBootstrap.SeedAsync(this.pack, this.realm, bootstrap)
         }
     }
 

@@ -2,8 +2,8 @@ import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import type { IStorage, IPromptService } from '@pragmatic-tech-ai/todl-runtime'
 import type { IStorageProviderRegistry } from '@pragmatic-tech-ai/todl'
 import { NodeStorageProviderRegistry, HeadlessPromptService } from '@pragmatic-tech-ai/todl-platform-node'
-import { FileIdentityStores, FileTenantConfigStore } from '@pragmatic-tech-ai/todl-identity-node'
-import type { IdentityStoreSet, ITenantConfigStore } from '@pragmatic-tech-ai/todl-identity'
+import { FileIdentityStores, FileRealmConfigStore } from '@pragmatic-tech-ai/todl-identity-node'
+import type { IdentityStoreSet, IRealmConfigStore } from '@pragmatic-tech-ai/todl-identity'
 import { MasterKeyResolver } from '../identity/master-key-resolver.js'
 import type { MasterKeyRef } from '../identity/master-key-resolver.js'
 import type { PlatformServices } from './platform-services.js'
@@ -42,8 +42,8 @@ export class NodePlatform implements PlatformServices
         return FileIdentityStores.Open(new NodeFsStorage(identityRoot), masterKey)
     }
 
-    public CreateTenantConfigStore(configRoot: string): Promise<ITenantConfigStore>
+    public CreateRealmConfigStore(configRoot: string): Promise<IRealmConfigStore>
     {
-        return FileTenantConfigStore.Open(new NodeFsStorage(configRoot))
+        return FileRealmConfigStore.Open(new NodeFsStorage(configRoot))
     }
 }

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { InMemoryMessageSocket, PragmaticClient, AppWriteOpKind, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AppWriteOpDto, AppWriteResultDto, AssignResultDto, ListSharesResultDto, ShareResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
-import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
@@ -62,17 +62,17 @@ class EndpointFixture
 
     public static Owner(): AccessContext
     {
-        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
-        const grants = [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Tenant, 't1', []))]
-        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+        const grants = [new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Realm, 't1', []))]
+        return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
     public static NoGrants(): AccessContext
     {
-        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
-        return new AccessContext(principal, tenant, [], new ResourceAuthorizationPolicy())
+        return new AccessContext(principal, realm, [], new ResourceAuthorizationPolicy())
     }
 
     public static Applied(): (name: string, ops: readonly AppWriteOpDto[]) => Promise<AppWriteResultDto>

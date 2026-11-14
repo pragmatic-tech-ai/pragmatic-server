@@ -54,7 +54,7 @@ export class ServerConnectionHandler
 {
     private static readonly GenericInternalMessage = 'internal error'
     private static readonly NoActiveSolutionError = 'no active solution after open'
-    private static readonly DefaultResourceKind = 'Tenant'
+    private static readonly DefaultResourceKind = 'Realm'
     private static readonly InvalidConfigField = 'config'
     private static readonly SubjectField = 'subject'
     private static readonly ResourcePathField = 'resourcePath'
@@ -321,8 +321,8 @@ export class ServerConnectionHandler
             return
         }
         const decision = this.rateLimit.Check(
-            { scope: RateLimitScope.Principal, tenant: this.accessContext.Tenant.Id, key: this.accessContext.Principal.Id },
-            { surface: AuditSurface.Rpc, tenant: this.accessContext.Tenant.Id, principal: this.accessContext.Principal.Id, methodOrPath: method, correlationId: trace.getActiveSpan()?.spanContext().traceId })
+            { scope: RateLimitScope.Principal, tenant: this.accessContext.Realm.Id, key: this.accessContext.Principal.Id },
+            { surface: AuditSurface.Rpc, tenant: this.accessContext.Realm.Id, principal: this.accessContext.Principal.Id, methodOrPath: method, correlationId: trace.getActiveSpan()?.spanContext().traceId })
         if (!decision.Allowed)
         {
             throw new ResponseError(ServerConnectionHandler.RateLimitedCode, RateLimitGuard.RejectedReason, { retryAfterMs: decision.RetryAfterMs })
@@ -384,7 +384,7 @@ export class ServerConnectionHandler
         {
             const result = this.instrumentation === undefined
                 ? operation()
-                : this.instrumentation.Run({ method, tenant: this.accessContext.Tenant.Id, principal: this.accessContext.Principal.Id }, operation, this.parent)
+                : this.instrumentation.Run({ method, tenant: this.accessContext.Realm.Id, principal: this.accessContext.Principal.Id }, operation, this.parent)
             return result instanceof Promise ? result.then(settle, fail) : settle(result)
         }
         catch (error)
@@ -1001,7 +1001,7 @@ export class ServerConnectionHandler
             const role = AdminEnums.RoleFromName(dto.role)
             const kind = AdminEnums.ResourceKindFromName(dto.resourceKind ?? ServerConnectionHandler.DefaultResourceKind)
             const path = dto.resourcePath === undefined ? [] : this.RequireStringArray(dto.resourcePath, ServerConnectionHandler.ResourcePathField)
-            return { subject, role, resource: new ResourceRef(kind, this.accessContext.Tenant.Id, path) }
+            return { subject, role, resource: new ResourceRef(kind, this.accessContext.Realm.Id, path) }
         }
         catch (error)
         {

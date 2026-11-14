@@ -66,13 +66,13 @@ test('a generic-oidc identityConfig yields an OIDC front door that authenticates
         await server.Start()
         const oidc = server.Oidc()
         assert.ok(oidc !== undefined)
-        const begun = await oidc.BeginAuthorization(server.Tenant())
+        const begun = await oidc.BeginAuthorization(server.Realm())
         const nonce = flowStates.Peek(begun.State)!.Nonce
         http.NextTokenResponse = {
             id_token: await idp.MintIdToken({ sub: ResolverFixture.Subject, aud: ResolverFixture.ClientId, nonce, email: ResolverFixture.Email, groups: [] }),
             token_type: ResolverFixture.BearerType,
         }
-        const result = await oidc.AuthenticatorFor(AuthMethod.Oidc)!.Authenticate(new Credential(AuthMethod.Oidc, begun.State), new PresentedSecret(ResolverFixture.AuthCode), server.Tenant())
+        const result = await oidc.AuthenticatorFor(AuthMethod.Oidc)!.Authenticate(new Credential(AuthMethod.Oidc, begun.State), new PresentedSecret(ResolverFixture.AuthCode), server.Realm())
         assert.ok(result instanceof AuthenticatedResult)
         assert.equal(result.Principal.Id, ResolverFixture.Subject)
         const pack = await server.Pack()
@@ -146,13 +146,13 @@ test('legacy flat oidc options without an identityConfig still yield a working O
         await server.Start()
         const front = server.Oidc()
         assert.ok(front !== undefined)
-        const begun = await front.BeginAuthorization(server.Tenant())
+        const begun = await front.BeginAuthorization(server.Realm())
         const nonce = flowStates.Peek(begun.State)!.Nonce
         http.NextTokenResponse = {
             id_token: await idp.MintIdToken({ sub: ResolverFixture.Subject, aud: ResolverFixture.ClientId, nonce, email: ResolverFixture.Email, groups: [] }),
             token_type: ResolverFixture.BearerType,
         }
-        const result = await front.AuthenticatorFor(AuthMethod.Oidc)!.Authenticate(new Credential(AuthMethod.Oidc, begun.State), new PresentedSecret(ResolverFixture.AuthCode), server.Tenant())
+        const result = await front.AuthenticatorFor(AuthMethod.Oidc)!.Authenticate(new Credential(AuthMethod.Oidc, begun.State), new PresentedSecret(ResolverFixture.AuthCode), server.Realm())
         assert.ok(result instanceof AuthenticatedResult)
         assert.equal(result.Principal.Id, ResolverFixture.Subject)
     }

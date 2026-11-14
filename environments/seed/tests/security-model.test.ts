@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path'
 import { StoragePackageSource } from '@pragmatic-tech-ai/todl'
 import { DeliveryChannel, EnvironmentCatalogComposer } from '@pragmatic-tech-ai/todl/engine'
 import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
-import { TenantSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
+import { RealmSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
 import { IdpDirectorySnapshot } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
@@ -41,7 +41,7 @@ class ContosoSeed
 test('Contoso security model is valid against the demo catalog (nothing a first open would prune)', async () =>
 {
     const config = ContosoSeed.Config()
-    const model = TenantSecurityModel.FromConfig(config, IdpDirectorySnapshot.NonAuthoritative(new Date()))
+    const model = RealmSecurityModel.FromConfig(config, IdpDirectorySnapshot.NonAuthoritative(new Date()))
     assert.equal(config.businessUnits.length, ContosoSeed.BusinessUnitCount)
     const issues = SecuritySettingCatalogCheck.Issues(config, await ContosoSeed.Catalog(), model)
     assert.deepEqual(issues.map(issue => issue.Code + ContosoSeed.Separator + issue.Subject), [])

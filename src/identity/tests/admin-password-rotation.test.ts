@@ -77,7 +77,7 @@ class RotationFixture
                 await pack.Secrets.Delete(RotationFixture.PasswordRef)
             }
             await server.SeedBootstrapForTest()
-            const result = await pack.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, RotationFixture.Email), new PresentedSecret(attempt), server.Tenant())
+            const result = await pack.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, RotationFixture.Email), new PresentedSecret(attempt), server.Realm())
             return result instanceof AuthenticatedResult
         }
         finally

@@ -42,7 +42,7 @@ test('bridges a policy decision to an AccessDecision AuditEvent with a secret-fr
         Surface: AuditSurface.Rpc,
         MethodOrPath: 'solution/open',
         Action: Action.Administer,
-        ResourceKind: ResourceKind.Tenant,
+        ResourceKind: ResourceKind.Realm,
         Outcome: AuditOutcome.Deny,
         Reason: 'insufficient role',
         CorrelationId: 'trace-abc',
@@ -50,7 +50,7 @@ test('bridges a policy decision to an AccessDecision AuditEvent with a secret-fr
     assert.equal(store.Events.length, 1)
     const event = store.Events[0]!
     assert.equal(event.Kind, AuditEventKind.AccessDecision)
-    assert.equal(event.TenantId, 't1')
+    assert.equal(event.RealmId, 't1')
     assert.equal(event.PrincipalId, 'p1')
     assert.equal(event.Detail.get('surface'), 'rpc')
     assert.equal(event.Detail.get('method'), 'solution/open')

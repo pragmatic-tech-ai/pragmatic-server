@@ -49,7 +49,7 @@ test('Start builds the identity pack and Pack resolves it', async () =>
         await server.Start()
         const pack = await server.Pack()
         assert.ok(pack.AuthenticatorFor(AuthMethod.Local))
-        assert.equal(server.Tenant().Id, 't1')
+        assert.equal(server.Realm().Id, 't1')
     }
     finally
     {
@@ -75,9 +75,9 @@ test('bootstrap seeds an Owner admin when its password secret is present, and is
     {
         await second.Start() // second seed is a no-op (account already exists); must not throw
         const pack = await second.Pack()
-        const result = await pack.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, 'admin@x.io'), new PresentedSecret('admin-pw-12345'), second.Tenant())
+        const result = await pack.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, 'admin@x.io'), new PresentedSecret('admin-pw-12345'), second.Realm())
         assert.ok(result instanceof AuthenticatedResult)
-        const grants = await pack.Grants.GrantsFor('admin', second.Tenant())
+        const grants = await pack.Grants.GrantsFor('admin', second.Realm())
         assert.ok(grants.some(grant => grant.Role === Role.Owner))
     }
     finally
@@ -98,7 +98,7 @@ test('bootstrap repairs a missing Owner grant on an existing account, idempotent
     const pack1 = await first.Pack()
     await pack1.Secrets.Put(withoutGrant.identity.bootstrap.adminPasswordRef, 'admin-pw-12345')
     await first.SeedBootstrapForTest()
-    assert.equal((await pack1.Grants.GrantsFor('admin', first.Tenant())).length, 0)
+    assert.equal((await pack1.Grants.GrantsFor('admin', first.Realm())).length, 0)
     await first.Dispose()
 
     const second = new PragmaticServer(withGrant)
@@ -106,13 +106,13 @@ test('bootstrap repairs a missing Owner grant on an existing account, idempotent
     {
         await second.Start() // account exists, grant missing: bootstrap repairs it
         const pack = await second.Pack()
-        const grants = await pack.Grants.GrantsFor('admin', second.Tenant())
+        const grants = await pack.Grants.GrantsFor('admin', second.Realm())
         assert.equal(grants.length, 1)
         assert.equal(grants[0].Role, Role.Owner)
-        assert.equal(grants[0].Resource.Kind, ResourceKind.Tenant)
-        assert.equal(grants[0].Resource.TenantId, 't1')
+        assert.equal(grants[0].Resource.Kind, ResourceKind.Realm)
+        assert.equal(grants[0].Resource.RealmId, 't1')
         await second.SeedBootstrapForTest()
-        assert.equal((await pack.Grants.GrantsFor('admin', second.Tenant())).length, 1)
+        assert.equal((await pack.Grants.GrantsFor('admin', second.Realm())).length, 1)
     }
     finally
     {
@@ -131,7 +131,7 @@ test('an active provisioned source seeds the admin with no manual Put', async ()
     {
         await server.Start()
         const pack = await server.Pack()
-        const result = await pack.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, 'admin@x.io'), new PresentedSecret('admin-pw-12345'), server.Tenant())
+        const result = await pack.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, 'admin@x.io'), new PresentedSecret('admin-pw-12345'), server.Realm())
         assert.ok(result instanceof AuthenticatedResult)
     }
     finally

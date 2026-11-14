@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { X509Certificate, createHash, randomBytes } from 'node:crypto'
-import { Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
+import { Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
 import { FakeStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import { MachineTls } from '../../cluster/machine-tls.js'
@@ -73,13 +73,13 @@ class DirectHttpsServer
     public static async Start(): Promise<DirectHttpsServer>
     {
         const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
-        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
         const authenticator = new MachineCertAuthenticator(new MachinePrincipalMap(new Map([[MachineFixture.Fingerprint(), { PrincipalId: 'svc-1', Groups: ['robots'] }]])))
         const server = httpsCreateServer(MachineTls.OptionalServer(MachineFixture.ServerRef), (req: IncomingMessage, res: ServerResponse) =>
         {
             const socket = req.socket as TLSSocket
             const identity = MachineCertIdentity.FromPeerCertificate(socket.authorized === true, socket.getPeerCertificate())
-            void new AuthHttpEndpoint(pack, tenant, undefined, { authenticator, identity }).Handle(req, res)
+            void new AuthHttpEndpoint(pack, realm, undefined, { authenticator, identity }).Handle(req, res)
         })
         await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()))
         return new DirectHttpsServer((server.address() as AddressInfo).port, pack, server)
@@ -126,7 +126,7 @@ test('a no-cert client still reaches other auth routes (optional mTLS keeps the 
 test('/auth/machine is 404 when no machine context is supplied', async () =>
 {
     const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
-    const endpoint = new AuthHttpEndpoint(pack, new Tenant('t1', TenantKind.SelfHosted, 'Tenant One'))
+    const endpoint = new AuthHttpEndpoint(pack, new Realm('t1', RealmKind.SelfHosted, 'Tenant One'))
     const server = httpsCreateServer(MachineTls.OptionalServer(MachineFixture.ServerRef), (req, res) => void endpoint.Handle(req, res))
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()))
     try
@@ -147,7 +147,7 @@ test('/auth/machine rejects an untrusted (unauthorized) cert even when its finge
     assert.ok(identity.Fingerprint.length > 0)
     const map = new MachinePrincipalMap(new Map([[identity.Fingerprint, { PrincipalId: 'svc-1', Groups: [] }]]))
     const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
-    const endpoint = new AuthHttpEndpoint(pack, new Tenant('t1', TenantKind.SelfHosted, 'Tenant One'), undefined, { authenticator: new MachineCertAuthenticator(map), identity })
+    const endpoint = new AuthHttpEndpoint(pack, new Realm('t1', RealmKind.SelfHosted, 'Tenant One'), undefined, { authenticator: new MachineCertAuthenticator(map), identity })
     const server = httpsCreateServer(MachineTls.OptionalServer(MachineFixture.ServerRef), (req, res) => void endpoint.Handle(req, res))
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()))
     try

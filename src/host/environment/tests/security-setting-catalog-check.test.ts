@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import { AccessLevel, BaseRole, IdpDirectorySnapshot, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
-import { TenantSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
+import { RealmSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
 import { SecuritySettingCatalogCheck, SecuritySettingIssueCode } from '../security-setting-catalog-check.js'
 import { EnvironmentFixture } from './environment-fixture.js'
 import { Tier1Fx } from './tier1-fixture.js'
@@ -37,7 +37,7 @@ class CheckFx
 
     public static Codes(catalog: IEnvironmentCatalog, config: ISecurityModelConfig): SecuritySettingIssueCode[]
     {
-        const model = TenantSecurityModel.FromConfig(config, IdpDirectorySnapshot.NonAuthoritative(new Date()))
+        const model = RealmSecurityModel.FromConfig(config, IdpDirectorySnapshot.NonAuthoritative(new Date()))
         return SecuritySettingCatalogCheck.Issues(config, catalog, model).map(issue => issue.Code)
     }
 

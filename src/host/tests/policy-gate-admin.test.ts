@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { AdminProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { PolicyGate } from '../policy-gate.js'
 
@@ -31,10 +31,10 @@ class AdminGateFixture
 
     public static Gate(role: Role | null): PolicyGate
     {
-        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
-        const grants = role === null ? [] : [new Grant('p1', role, new ResourceRef(ResourceKind.Tenant, 't1', []))]
-        return new PolicyGate(new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy()), () => [])
+        const grants = role === null ? [] : [new Grant('p1', role, new ResourceRef(ResourceKind.Realm, 't1', []))]
+        return new PolicyGate(new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy()), () => [])
     }
 }
 

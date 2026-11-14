@@ -8,7 +8,7 @@ import { Repository, toJSON } from '@pragmatic-tech-ai/todl'
 import type { PackageDocument } from '@pragmatic-tech-ai/todl'
 import { InMemoryMessageSocket, PragmaticClient, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherAppDeployParamsDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { AppIngestService } from '../app-ingest-service.js'
 import { DeliveryChannel, EnvironmentCatalogError, EnvironmentCatalogErrorCode } from '@pragmatic-tech-ai/todl/engine'
 import type { DeliveryChange, IDelivered, IDeliveryGate } from '../../environment/environment-deliveries.js'
@@ -91,16 +91,16 @@ class IngestFixture
     public readonly Gate = new RecordingGate()
     public readonly Service = new AppIngestService(this.Packages, this.Apps, this.Gate)
 
-    public static Tenant(): Tenant
+    public static Realm(): Realm
     {
-        return new Tenant(IngestFixture.TenantId, TenantKind.SelfHosted, 'Tenant One')
+        return new Realm(IngestFixture.TenantId, RealmKind.SelfHosted, 'Tenant One')
     }
 
     public static Context(role: Role): AccessContext
     {
         const principal = new Principal('p1', IngestFixture.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant('p1', role, new ResourceRef(ResourceKind.Tenant, IngestFixture.TenantId, []))]
-        return new AccessContext(principal, IngestFixture.Tenant(), grants, new ResourceAuthorizationPolicy())
+        const grants = [new Grant('p1', role, new ResourceRef(ResourceKind.Realm, IngestFixture.TenantId, []))]
+        return new AccessContext(principal, IngestFixture.Realm(), grants, new ResourceAuthorizationPolicy())
     }
 
     public static Params(): CypherAppDeployParamsDto

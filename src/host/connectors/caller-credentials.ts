@@ -1,6 +1,6 @@
 import type { ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import type { IDataSourceAdapterFactory } from '@pragmatic-tech-ai/todl'
-import { Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
+import { Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
 import type { ISourceTokenProvider } from '@pragmatic-tech-ai/todl-identity'
 import { UnsupportedSourceTokenProvider } from '@pragmatic-tech-ai/todl-identity-cloud'
 import type { UpstreamTokenVault } from '@pragmatic-tech-ai/todl-identity-cloud'
@@ -33,7 +33,7 @@ export class CallerCredentials implements ICallerCredentialWrapper, ICallerCrede
     private static readonly UnknownName = 'unknown'
 
     private tokens = new CallerSourceTokens(new UnsupportedSourceTokenProvider())
-    private tenant = new Tenant(CallerCredentials.UnboundTenantId, TenantKind.SelfHosted, CallerCredentials.UnboundTenantId)
+    private realm = new Realm(CallerCredentials.UnboundTenantId, RealmKind.SelfHosted, CallerCredentials.UnboundTenantId)
     private vault: UpstreamTokenVault | undefined
     private readonly wrapped = new Map<IDataSourceAdapterFactory, CallerCredentialAdapterFactory>()
 
@@ -42,10 +42,10 @@ export class CallerCredentials implements ICallerCredentialWrapper, ICallerCrede
     }
 
     /** Binds the tenant's identity: factories wrapped from now on acquire through `tokens` (Start). */
-    public Bind(tokens: ISourceTokenProvider, tenant: Tenant, vault: UpstreamTokenVault | undefined): void
+    public Bind(tokens: ISourceTokenProvider, realm: Realm, vault: UpstreamTokenVault | undefined): void
     {
         this.tokens = new CallerSourceTokens(tokens)
-        this.tenant = tenant
+        this.realm = realm
         this.vault = vault
         this.wrapped.clear()
     }
@@ -56,7 +56,7 @@ export class CallerCredentials implements ICallerCredentialWrapper, ICallerCrede
         let wrapper = this.wrapped.get(factory)
         if (wrapper === undefined)
         {
-            wrapper = new CallerCredentialAdapterFactory(factory, this.tokens, this.tenant)
+            wrapper = new CallerCredentialAdapterFactory(factory, this.tokens, this.realm)
             this.wrapped.set(factory, wrapper)
         }
         return wrapper
@@ -65,11 +65,11 @@ export class CallerCredentials implements ICallerCredentialWrapper, ICallerCrede
     // Revoke drops the caller's cached source tokens here and in the pack provider's own cache (R34).
     public async Revoke(principalId: string): Promise<void>
     {
-        this.tokens.Forget(this.tenant.Id, principalId)
+        this.tokens.Forget(this.realm.Id, principalId)
         try
         {
             await Promise.all([...this.wrapped.values()].map(wrapper => wrapper.Forget(principalId)))
-            await this.vault?.Delete(this.tenant.Id, principalId)
+            await this.vault?.Delete(this.realm.Id, principalId)
         }
         catch (error)
         {

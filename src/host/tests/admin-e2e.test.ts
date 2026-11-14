@@ -56,8 +56,8 @@ class AdminHostFixture
     {
         const subject = role === Role.Owner ? AdminHostFixture.OwnerSubject : AdminHostFixture.ViewerSubject
         const pack = await this.Host.IdentityPackForTest(AdminHostFixture.TenantId)
-        await pack.Grants.Save(new Grant(subject, role, new ResourceRef(ResourceKind.Tenant, AdminHostFixture.TenantId, [])))
-        const issued = await pack.Tokens.Issue(await this.Host.TenantForTest(AdminHostFixture.TenantId), subject, [], null)
+        await pack.Grants.Save(new Grant(subject, role, new ResourceRef(ResourceKind.Realm, AdminHostFixture.TenantId, [])))
+        const issued = await pack.Tokens.Issue(await this.Host.RealmForTest(AdminHostFixture.TenantId), subject, [], null)
         const address = this.Host.Address()
         const ws = new WebSocket(`ws://${address.host}:${address.port}/?environment=${AdminHostFixture.TenantId}`, { headers: { authorization: `Bearer ${issued.Token}` } })
         await new Promise<void>((resolve, reject) =>
@@ -102,7 +102,7 @@ class AdminHostFixture
     public async BobGrants(): Promise<readonly Grant[]>
     {
         const pack = await this.Host.IdentityPackForTest(AdminHostFixture.TenantId)
-        return pack.Grants.GrantsFor(AdminHostFixture.NewSubject, await this.Host.TenantForTest(AdminHostFixture.TenantId))
+        return pack.Grants.GrantsFor(AdminHostFixture.NewSubject, await this.Host.RealmForTest(AdminHostFixture.TenantId))
     }
 
     public async DisposeAsync(): Promise<void>

@@ -99,11 +99,11 @@ class CapstoneFx
             await server.EnvironmentEngine().Engine()
             cap = new CapstoneFx(fx, server)
             const pack = await server.Pack()
-            for (const id of options.Accounts) await pack.Registrar.Register(server.Tenant(), id + CapstoneFx.EmailSuffix, id, new PresentedSecret(CapstoneFx.Password))
+            for (const id of options.Accounts) await pack.Registrar.Register(server.Realm(), id + CapstoneFx.EmailSuffix, id, new PresentedSecret(CapstoneFx.Password))
             for (const [group, members] of Object.entries(options.Groups ?? {}))
             {
-                await pack.Groups.CreateGroup(server.Tenant(), group, group)
-                for (const member of members) await pack.Groups.AddMember(server.Tenant(), group, member)
+                await pack.Groups.CreateGroup(server.Realm(), group, group)
+                for (const member of members) await pack.Groups.AddMember(server.Realm(), group, member)
             }
             await body(cap)
         }
@@ -124,7 +124,7 @@ class CapstoneFx
     {
         const server = this.Server
         const pack = await server.Pack()
-        const service = new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), async () => undefined, pack.Accounts, pack.Registrar, pack.Tokens, CapstoneFx.NoPacks, await server.SecurityAdmin())
+        const service = new AdminService(pack.Grants, pack.Audit, await server.RealmConfigStore(), server.Realm(), async () => undefined, pack.Accounts, pack.Registrar, pack.Tokens, CapstoneFx.NoPacks, await server.SecurityAdmin())
         const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(serverSocket, await server.LanguageService(), await server.Manager(), this.Fx.ContextFor(CapstoneFx.Principal(principalId)),
@@ -707,7 +707,7 @@ class DevEnvFx
     public static readonly EmailDomain = '@dev-ana.test'
     public static readonly Prefix = 'ps-capstone-cp-'
     public static readonly CoarseRole = AdminEnums.NameOfRole(Role.Editor)
-    public static readonly TenantKind = AdminEnums.NameOfResourceKind(ResourceKind.Tenant)
+    public static readonly TenantKind = AdminEnums.NameOfResourceKind(ResourceKind.Realm)
     private static readonly Create = 'CREATE (e:`hr.Employee`) SET e.name = $name RETURN e.name AS name'
     private static readonly Employees = 'MATCH (e:`hr.Employee`) RETURN e.name AS name ORDER BY name'
     private static readonly Loopback = '127.0.0.1'
@@ -817,7 +817,7 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
             await HrFx.Run(async cap =>
             {
                 // dana is left with the manual row only: the read and the update rest on it alone
-                await (await cap.Server.Pack()).Groups.RemoveMember(cap.Server.Tenant(), HrFx.HrStaff, HrFx.Dana)
+                await (await cap.Server.Pack()).Groups.RemoveMember(cap.Server.Realm(), HrFx.HrStaff, HrFx.Dana)
                 await cap.Sync()
                 assert.deepEqual((await (await cap.Admin(CapstoneText.Admin)).ListTeamMembers(HrFx.HrTeam)).filter(row => row.principalId === HrFx.Dana).map(row => row.origin), [TeamMemberOrigin.Manual], HrFx.SaysDanaHoldsTheManualRowOnly)
                 assert.deepEqual(await HrFx.Salaries(cap, HrFx.Dana), [[HrFx.Hank, HrFx.HankSalary], [HrFx.Ivy, HrFx.IvySalary]], HrFx.SaysHREmployeesWithSalary)
@@ -834,7 +834,7 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
                 const admin = await cap.Admin(CapstoneText.Admin)
                 const pack = await cap.Server.Pack()
                 assert.deepEqual((await admin.ListTeamMembers(HrFx.HrTeam)).filter(row => row.principalId === HrFx.Dana).map(row => row.origin).sort(), [TeamMemberOrigin.Manual, TeamMemberOrigin.Synced], HrFx.SaysDanaIsBothASyncedAnd)
-                for (const member of [HrFx.Dana, HrFx.Henry]) await pack.Groups.RemoveMember(cap.Server.Tenant(), HrFx.HrStaff, member)
+                for (const member of [HrFx.Dana, HrFx.Henry]) await pack.Groups.RemoveMember(cap.Server.Realm(), HrFx.HrStaff, member)
                 await cap.Sync()
                 assert.deepEqual((await admin.ListTeamMembers(HrFx.HrTeam)).map(row => [row.principalId, row.origin]), [[HrFx.Dana, TeamMemberOrigin.Manual]], HrFx.SaysOnlyTheManualRowIsLeft)
                 assert.deepEqual(await HrFx.Salaries(cap, HrFx.Dana), [[HrFx.Hank, HrFx.HankSalary], [HrFx.Ivy, HrFx.IvySalary]], HrFx.SaysTheManualRowKeepsTheTeam)
@@ -847,7 +847,7 @@ describe('platform security capstone (spec §9, S4 Task 14)', () =>
             await HrFx.Run(async cap =>
             {
                 assert.notDeepEqual(await HrFx.Salaries(cap, HrFx.Dana), [])
-                await (await cap.Server.Pack()).Accounts.Disable(cap.Server.Tenant(), HrFx.Dana)
+                await (await cap.Server.Pack()).Accounts.Disable(cap.Server.Realm(), HrFx.Dana)
                 await cap.Sync()
                 assert.deepEqual(await HrFx.Salaries(cap, HrFx.Dana), [], HrFx.SaysADisabledIdentityReadsNothingManual)
             })

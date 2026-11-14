@@ -537,7 +537,7 @@ export class WorkerHost
             const languageService = await server.LanguageService()
             const manager = await server.Manager()
             const pack = await server.Pack()
-            const admin = new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), () => this.registry.DisposeTenant(environmentId), pack.Accounts, pack.Registrar, pack.Tokens, {
+            const admin = new AdminService(pack.Grants, pack.Audit, await server.RealmConfigStore(), server.Realm(), () => this.registry.DisposeTenant(environmentId), pack.Accounts, pack.Registrar, pack.Tokens, {
                 Invalidate: name => server.InvalidateAdapterPack(name),
                 AllowScripts: name => server.AllowAdapterPackScripts(name),
                 DenyScripts: name => server.DenyAdapterPackScripts(name),
@@ -577,7 +577,7 @@ export class WorkerHost
                             terminateTimer.unref?.()
                         },
                     }
-                    this.principalConnections.Add(context.Tenant.Id, context.Principal.Id, revocable)
+                    this.principalConnections.Add(context.Realm.Id, context.Principal.Id, revocable)
                     this.heartbeat.Watch(ws)
                     ws.on(WorkerHost.CloseEvent, () =>
                     {
@@ -617,11 +617,11 @@ export class WorkerHost
         if (header === undefined)
         {
             const credential = this.browserAuth.Credential(req, true)
-            if (credential === null || credential.Tenant !== server.Tenant().Id)
+            if (credential === null || credential.Tenant !== server.Realm().Id)
             {
                 return null
             }
-            return this.authenticator.ResolveAsync(credential.Token, server.Tenant(), await server.Pack())
+            return this.authenticator.ResolveAsync(credential.Token, server.Realm(), await server.Pack())
         }
         if (typeof header !== 'string' || !header.startsWith(WorkerHost.BearerPrefix))
         {
@@ -632,7 +632,7 @@ export class WorkerHost
         {
             return null
         }
-        return this.authenticator.ResolveAsync(token, server.Tenant(), await server.Pack())
+        return this.authenticator.ResolveAsync(token, server.Realm(), await server.Pack())
     }
 
     private async Request(req: IncomingMessage, res: ServerResponse): Promise<void>
@@ -654,7 +654,7 @@ export class WorkerHost
             }
             const server = await this.registry.ServerFor(environmentId)
             const pack = await server.Pack()
-            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation, this.audit, this.browserAuth, server.CallerCredentials())
+            const endpoint = new AuthHttpEndpoint(pack, server.Realm(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation, this.audit, this.browserAuth, server.CallerCredentials())
             await endpoint.Handle(req, res)
         }
         catch

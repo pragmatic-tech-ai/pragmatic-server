@@ -112,8 +112,8 @@ class Soak
     public static async TokenFor(host: PragmaticServerHost): Promise<string>
     {
         const pack = await host.IdentityPackForTest(Soak.Tenant)
-        await pack.Grants.Save(new Grant(Soak.Tenant, Role.Admin, new ResourceRef(ResourceKind.Tenant, Soak.Tenant, [])))
-        const tenant = await host.TenantForTest(Soak.Tenant)
+        await pack.Grants.Save(new Grant(Soak.Tenant, Role.Admin, new ResourceRef(ResourceKind.Realm, Soak.Tenant, [])))
+        const tenant = await host.RealmForTest(Soak.Tenant)
         return (await pack.Tokens.Issue(tenant, Soak.Tenant, [], null)).Token
     }
 

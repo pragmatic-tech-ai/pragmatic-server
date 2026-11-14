@@ -29,7 +29,7 @@ class AdminClient
     public static async Open(server: PragmaticServer, context: AccessContext, security: ISecuritySettingAdmin | undefined): Promise<AdminClient>
     {
         const pack = await server.Pack()
-        const admin = new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), async () => undefined, pack.Accounts, pack.Registrar, pack.Tokens, AdminClient.NoPacks, security)
+        const admin = new AdminService(pack.Grants, pack.Audit, await server.RealmConfigStore(), server.Realm(), async () => undefined, pack.Accounts, pack.Registrar, pack.Tokens, AdminClient.NoPacks, security)
         const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) }, BuildStateChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(serverSocket, languageService, {} as unknown as SolutionManagerService, context, undefined, undefined, undefined, undefined, undefined, undefined, admin)
@@ -66,7 +66,7 @@ class AdminClient
 
     public static async Stored(server: PragmaticServer): Promise<string>
     {
-        return JSON.stringify((await (await server.TenantConfigStore()).Get(EnvironmentFixture.TenantId))?.SecurityModel)
+        return JSON.stringify((await (await server.RealmConfigStore()).Get(EnvironmentFixture.TenantId))?.SecurityModel)
     }
 
     public static Refused(code: number, message: string): (error: unknown) => boolean

@@ -10,7 +10,7 @@ import type { CypherCellDto, CypherNodeCellDto } from '@pragmatic-tech-ai/pragma
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { SystemNames } from '@pragmatic-tech-ai/todl/engine'
-import { AccessContext, BaseRole, Principal, PrincipalKind, ResourceAuthorizationPolicy, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, BaseRole, Principal, PrincipalKind, ResourceAuthorizationPolicy, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { PpSecurityHarness } from '../../cypher/tests/pp-security-harness.js'
@@ -137,8 +137,8 @@ class InvariantFx
     /** A principal with no grant on the tenant: the PolicyGate refuses it. */
     public static Ungranted(principalId: string): AccessContext
     {
-        const tenant = new Tenant(PpSecurityHarness.TenantId, TenantKind.SelfHosted, InvariantFx.TenantName)
-        return new AccessContext(new Principal(principalId, PpSecurityHarness.TenantId, PrincipalKind.User, new Map(), []), tenant, [], new ResourceAuthorizationPolicy())
+        const realm = new Realm(PpSecurityHarness.TenantId, RealmKind.SelfHosted, InvariantFx.TenantName)
+        return new AccessContext(new Principal(principalId, PpSecurityHarness.TenantId, PrincipalKind.User, new Map(), []), realm, [], new ResourceAuthorizationPolicy())
     }
 
     /** The class node Premium as a hypothetical Widget, its property values spelled out from the fixture text. */

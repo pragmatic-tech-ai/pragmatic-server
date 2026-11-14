@@ -11,7 +11,7 @@ export interface IAppSessionCheck
 /** The slice of a per-environment server the check needs: its id and its identity pack (the session store). */
 export interface ISessionServer
 {
-    Tenant(): { Id: string }
+    Realm(): { Id: string }
     Pack(): Promise<ServerIdentityPack>
 }
 
@@ -40,6 +40,6 @@ export class CookieAppSessionCheck implements IAppSessionCheck
         }
         const server = await this.servers.ServerFor(environment)
         const session = await (await server.Pack()).Sessions.Validate(credential.Token)
-        return session !== null && session.TenantId === server.Tenant().Id
+        return session !== null && session.RealmId === server.Realm().Id
     }
 }

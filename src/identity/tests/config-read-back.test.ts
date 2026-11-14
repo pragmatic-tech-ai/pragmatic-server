@@ -55,7 +55,7 @@ test('first boot seeds the config store; a later boot does not overwrite an admi
     try
     {
         await first.Start()
-        const store = await first.TenantConfigStore()
+        const store = await first.RealmConfigStore()
         const seeded = await store.Get(ReadBackFixture.TenantId)
         assert.notEqual(seeded, null)
         assert.equal(seeded!.DelegationDepth, DelegationDepth.FullAuthz)
@@ -67,7 +67,7 @@ test('first boot seeds the config store; a later boot does not overwrite an admi
         try
         {
             await second.Start()
-            const after = await (await second.TenantConfigStore()).Get(ReadBackFixture.TenantId)
+            const after = await (await second.RealmConfigStore()).Get(ReadBackFixture.TenantId)
             assert.notEqual(after, null)
             assert.equal(after!.DelegationDepth, DelegationDepth.ExternalGrants)
             assert.equal(after!.GroupRoleMap.get(ReadBackFixture.GroupName), Role.Admin)
@@ -96,7 +96,7 @@ test('a later boot composes the identity from the stored config, not the seed', 
     {
         await first.Start()
         assert.equal(first.Oidc(), undefined)
-        await (await first.TenantConfigStore()).Save(ReadBackFixture.TenantId, ReadBackFixture.OidcConfig(ReadBackFixture.StoredSecretRef))
+        await (await first.RealmConfigStore()).Save(ReadBackFixture.TenantId, ReadBackFixture.OidcConfig(ReadBackFixture.StoredSecretRef))
         await first.Dispose()
 
         const second = new PragmaticServer(options)
@@ -139,7 +139,7 @@ test('secret-ref provisioning reads the stored ProviderSettings, not the seed', 
         const firstSecrets = (await first.Pack()).Secrets
         assert.equal(await firstSecrets.Get(ReadBackFixture.SeedSecretRef), ReadBackFixture.SeedSecretValue)
         assert.equal(await firstSecrets.Get(ReadBackFixture.StoredSecretRef), null)
-        await (await first.TenantConfigStore()).Save(ReadBackFixture.TenantId, ReadBackFixture.OidcConfig(ReadBackFixture.StoredSecretRef))
+        await (await first.RealmConfigStore()).Save(ReadBackFixture.TenantId, ReadBackFixture.OidcConfig(ReadBackFixture.StoredSecretRef))
         await first.Dispose()
 
         const second = new PragmaticServer(options)

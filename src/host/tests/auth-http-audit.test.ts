@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { PresentedSecret, Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import type { Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { Realm } from '@pragmatic-tech-ai/todl-identity'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import { AuthHttpEndpoint } from '../auth-http-endpoint.js'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
@@ -39,7 +39,7 @@ class ThrowingSink implements IAccessAuditSink
 
 class AuthAuditFixture
 {
-    public static async Run(audit: IAccessAuditSink, body: (base: string) => Promise<void>, direct?: (pack: ServerIdentityPack, tenant: Tenant) => Promise<void>): Promise<void>
+    public static async Run(audit: IAccessAuditSink, body: (base: string) => Promise<void>, direct?: (pack: ServerIdentityPack, realm: Realm) => Promise<void>): Promise<void>
     {
         const baseDir = mkdtempSync(join(tmpdir(), 'ps-base-'))
         mkdirSync(join(baseDir, 't1'), { recursive: true })
@@ -49,11 +49,11 @@ class AuthAuditFixture
         const entries = new Map<string, TenantProvisioning>([['t1', { displayName: 'Tenant One' }]])
         const host = await PragmaticServerHost.StartAsync({ host: '127.0.0.1', port: 0, baseDir, masterKey: { base64Env: keyEnv }, provisioning: new InMemoryTenantProvisioning(entries), audit })
         const pack = await host.IdentityPackForTest('t1')
-        await pack.Registrar.Register(await host.TenantForTest('t1'), 'a@x.io', 'p1', new PresentedSecret('pw-123456'))
-        await pack.Grants.Save(new Grant('p1', Role.Admin, new ResourceRef(ResourceKind.Tenant, 't1', [])))
+        await pack.Registrar.Register(await host.RealmForTest('t1'), 'a@x.io', 'p1', new PresentedSecret('pw-123456'))
+        await pack.Grants.Save(new Grant('p1', Role.Admin, new ResourceRef(ResourceKind.Realm, 't1', [])))
         try
         {
-            await direct?.(pack, await host.TenantForTest('t1'))
+            await direct?.(pack, await host.RealmForTest('t1'))
             await body(`http://${host.Address().host}:${host.Address().port}`)
         }
         finally
@@ -101,10 +101,10 @@ test('a throwing audit sink never changes the auth response', async () =>
 test('an OIDC callback with no OIDC authenticator configured audits an AuthFailure', async () =>
 {
     const sink = new CapturingSink()
-    await AuthAuditFixture.Run(sink, async () => undefined, async (pack, tenant) =>
+    await AuthAuditFixture.Run(sink, async () => undefined, async (pack, realm) =>
     {
         const oidc = { BeginAuthorization: () => Promise.reject(new Error('unused')), AuthenticatorFor: () => undefined }
-        const endpoint = new AuthHttpEndpoint(pack, tenant, oidc, undefined, undefined, sink)
+        const endpoint = new AuthHttpEndpoint(pack, realm, oidc, undefined, undefined, sink)
         const server = createServer((req, res) => void endpoint.Handle(req, res))
         await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
         try

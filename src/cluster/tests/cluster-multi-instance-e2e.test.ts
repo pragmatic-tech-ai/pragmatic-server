@@ -62,8 +62,8 @@ class Fixture
     {
         const server = await worker.RegistryForTest().ServerFor(tenant)
         const pack = await server.Pack()
-        await pack.Grants.Save(new Grant(tenant, Role.Admin, new ResourceRef(ResourceKind.Tenant, tenant, [])))
-        return (await pack.Tokens.Issue(server.Tenant(), tenant, [], null)).Token
+        await pack.Grants.Save(new Grant(tenant, Role.Admin, new ResourceRef(ResourceKind.Realm, tenant, [])))
+        return (await pack.Tokens.Issue(server.Realm(), tenant, [], null)).Token
     }
 
     public static async OpenAndCheck(addr: { host: string, port: number }, baseDir: string, token: string, tenant: string): Promise<void>

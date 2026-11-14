@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { newDb } from 'pg-mem'
 import { Pool } from 'pg'
-import { Tenant, TenantKind, IdentityConfig, DelegationDepth } from '@pragmatic-tech-ai/todl-identity'
+import { Realm, RealmKind, IdentityConfig, DelegationDepth } from '@pragmatic-tech-ai/todl-identity'
 import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/todl-platform-cloud'
 import { CloudPlatform } from '../cloud-platform.js'
 
@@ -79,7 +79,7 @@ test('CreateIdentityStores yields a working set; two calls share the SQL stores 
     const b = await platform.CreateIdentityStores('tenants/b/identity', key)
     assert.equal(a.Accounts, b.Accounts)  // shared SQL store instance (opened once -> reopen-safe on pg-mem)
     assert.notEqual(a.Secrets, b.Secrets)  // per-tenant Secrets
-    const ta = new Tenant(`cp-${randomUUID()}`, TenantKind.Saas, 'A')
+    const ta = new Realm(`cp-${randomUUID()}`, RealmKind.Saas, 'A')
     await a.Accounts.CreateAccount(ta, 'a@x.io', 'pa', 'refA')
     assert.equal((await a.Accounts.FindByEmail(ta, 'a@x.io'))!.PrincipalId, 'pa')
     await a.Secrets.Put('refA', 'secretA')
@@ -87,11 +87,11 @@ test('CreateIdentityStores yields a working set; two calls share the SQL stores 
     assert.equal(await b.Secrets.Get('refA'), null)  // Secrets isolated by namespace
 })
 
-test('CreateTenantConfigStore is cached and round-trips through SQL', async () =>
+test('CreateRealmConfigStore is cached and round-trips through SQL', async () =>
 {
     const platform = await CloudFixture.Platform()
-    const s1 = await platform.CreateTenantConfigStore('ignored')
-    const s2 = await platform.CreateTenantConfigStore('ignored')
+    const s1 = await platform.CreateRealmConfigStore('ignored')
+    const s2 = await platform.CreateRealmConfigStore('ignored')
     assert.equal(s1, s2)
     await s1.Save('tcfg-t1', new IdentityConfig('p', DelegationDepth.FullAuthz, new Map(), new Map(), new Map()))
     assert.equal((await s2.Get('tcfg-t1'))!.PackId, 'p')

@@ -6,10 +6,10 @@ import type { MessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import type { LocalAccount } from '@pragmatic-tech-ai/todl-identity'
-import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import type { IAuditSink, AuditEvent } from '@pragmatic-tech-ai/todl-identity'
 import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
-import { InMemoryTenantConfigStore } from '@pragmatic-tech-ai/todl-identity-host'
+import { InMemoryRealmConfigStore } from '@pragmatic-tech-ai/todl-identity-host'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { AdminService } from '../admin-service.js'
 import { AdapterPackError, AdapterPackErrorKind } from '@pragmatic-tech-ai/todl-connectors-host'
@@ -34,21 +34,21 @@ class FaultingAccountStore extends LocalAccountStore
     public static readonly FaultEmail = 'fault@example.com'
     public static readonly FaultMessage = 'disk exploded at /var/secret/path'
 
-    public override async CreateAccount(tenant: Tenant, email: string, principalId: string, secretRef: string): Promise<LocalAccount>
+    public override async CreateAccount(realm: Realm, email: string, principalId: string, secretRef: string): Promise<LocalAccount>
     {
         if (email === FaultingAccountStore.FaultEmail)
         {
             throw new Error(FaultingAccountStore.FaultMessage)
         }
-        return super.CreateAccount(tenant, email, principalId, secretRef)
+        return super.CreateAccount(realm, email, principalId, secretRef)
     }
 }
 
 class AdminFixture
 {
     public readonly Grants = new InMemoryRoleGrantStore()
-    public readonly Tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
-    public readonly Configs = new InMemoryTenantConfigStore()
+    public readonly Realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+    public readonly Configs = new InMemoryRealmConfigStore()
     public readonly Audit = new CapturingAuditSink()
     public readonly Accounts = new FaultingAccountStore()
     public readonly InvalidatedPacks: string[] = []
@@ -61,12 +61,12 @@ class AdminFixture
 
     public constructor(role: Role, faultPacks = false)
     {
-        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
         const principal = new Principal('p1', 't1', PrincipalKind.User, new Map(), [])
-        const context = new AccessContext(principal, tenant, [new Grant('p1', role, new ResourceRef(ResourceKind.Tenant, 't1', []))], new ResourceAuthorizationPolicy())
+        const context = new AccessContext(principal, realm, [new Grant('p1', role, new ResourceRef(ResourceKind.Realm, 't1', []))], new ResourceAuthorizationPolicy())
         const accounts = this.Accounts
         const registrar = new LocalAccountRegistrar(accounts, new EncryptedSecretStore(randomBytes(32)), new Argon2PasswordHasher(), this.Audit)
-        const admin = new AdminService(this.Grants, this.Audit, this.Configs, tenant, async () => undefined, accounts, registrar, new ServiceTokenStore(), faultPacks
+        const admin = new AdminService(this.Grants, this.Audit, this.Configs, realm, async () => undefined, accounts, registrar, new ServiceTokenStore(), faultPacks
             ? {
                 Invalidate: async () => { throw new AdapterPackError(AdapterPackErrorKind.ProviderNotConfigured, AdminFixture.NoProviderMessage) },
                 AllowScripts: async () => { throw new AdapterPackError(AdapterPackErrorKind.ProviderNotConfigured, AdminFixture.NoProviderMessage) },
@@ -94,7 +94,7 @@ class AdminFixture
     }
 }
 
-test('grant then list round-trips a GrantDto under the connection tenant', async () =>
+test('grant then list round-trips a GrantDto under the connection realm', async () =>
 {
     const fx = new AdminFixture(Role.Owner)
     try
@@ -102,9 +102,9 @@ test('grant then list round-trips a GrantDto under the connection tenant', async
         const ack = await fx.Client.sendRequest(AdminProtocol.GrantRole, { subject: 'bob', role: 'Editor' })
         assert.deepEqual(ack, { ok: true })
         const list = await fx.Client.sendRequest(AdminProtocol.ListGrants, { subject: 'bob' })
-        assert.deepEqual(list, [{ subject: 'bob', role: 'Editor', resourceKind: 'Tenant', resourcePath: [] }])
-        const stored = await fx.Grants.GrantsFor('bob', new Tenant('t1', TenantKind.SelfHosted, 'x'))
-        assert.equal(stored[0].Resource.TenantId, 't1')
+        assert.deepEqual(list, [{ subject: 'bob', role: 'Editor', resourceKind: 'Realm', resourcePath: [] }])
+        const stored = await fx.Grants.GrantsFor('bob', new Realm('t1', RealmKind.SelfHosted, 'x'))
+        assert.equal(stored[0].Resource.RealmId, 't1')
         const cfgErr = await fx.Client.sendRequest(AdminProtocol.GetConfig).then(() => undefined, (e: unknown) => e)
         assert.equal((cfgErr as ResponseError<unknown>).code, ErrorCodes.InvalidRequest)
         await fx.Client.sendRequest(AdminProtocol.SetConfig, { packId: 'local', delegationDepth: 'AuthnDirectory', providerSettings: {}, groupRoleMap: { g: 'Viewer' }, claimsMapping: {} })
@@ -135,7 +135,7 @@ test('a Viewer is rejected on every admin method', async () =>
         {
             await assert.rejects(call, (e: unknown) => e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest)
         }
-        assert.equal((await fx.Grants.GrantsFor('bob', fx.Tenant)).length, 0)
+        assert.equal((await fx.Grants.GrantsFor('bob', fx.Realm)).length, 0)
         assert.equal(await fx.Configs.Get('t1'), null)
     }
     finally
@@ -151,7 +151,7 @@ test('an unknown role is InvalidParams and mutates nothing', async () =>
     {
         await assert.rejects(fx.Client.sendRequest(AdminProtocol.GrantRole, { subject: 'bob', role: 'Wizard' }), (e: unknown) =>
             e instanceof ResponseError && e.code === ErrorCodes.InvalidParams && !e.message.includes('Wizard'))
-        const stored = await fx.Grants.GrantsFor('bob', new Tenant('t1', TenantKind.SelfHosted, 'x'))
+        const stored = await fx.Grants.GrantsFor('bob', new Realm('t1', RealmKind.SelfHosted, 'x'))
         assert.equal(stored.length, 0)
     }
     finally
@@ -166,7 +166,7 @@ class Reject
     {
         await assert.rejects(request, (e: unknown) =>
             e instanceof ResponseError && e.code === ErrorCodes.InvalidParams && e.message.includes(field))
-        assert.equal((await fx.Grants.GrantsFor('bob', fx.Tenant)).length, 0)
+        assert.equal((await fx.Grants.GrantsFor('bob', fx.Realm)).length, 0)
         assert.equal(await fx.Configs.Get('t1'), null)
     }
 }
@@ -234,10 +234,10 @@ test('revoking your own tenant-Owner grant is InvalidRequest and leaves the gran
     const fx = new AdminFixture(Role.Owner)
     try
     {
-        await fx.Grants.Save(new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Tenant, 't1', [])))
+        await fx.Grants.Save(new Grant('p1', Role.Owner, new ResourceRef(ResourceKind.Realm, 't1', [])))
         await assert.rejects(fx.Client.sendRequest(AdminProtocol.RevokeRole, { subject: 'p1', role: 'Owner' }), (e: unknown) =>
             e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest)
-        assert.equal((await fx.Grants.GrantsFor('p1', fx.Tenant)).length, 1)
+        assert.equal((await fx.Grants.GrantsFor('p1', fx.Realm)).length, 1)
     }
     finally
     {
@@ -251,9 +251,9 @@ test('a tenant or tenantId field in the DTO is ignored: the connection tenant is
     try
     {
         await fx.Client.sendRequest(AdminProtocol.GrantRole, { subject: 'bob', role: 'Editor', tenant: 'evil', tenantId: 'evil' } as never)
-        const stored = await fx.Grants.GrantsFor('bob', fx.Tenant)
+        const stored = await fx.Grants.GrantsFor('bob', fx.Realm)
         assert.equal(stored.length, 1)
-        assert.equal(stored[0].Resource.TenantId, 't1')
+        assert.equal(stored[0].Resource.RealmId, 't1')
     }
     finally
     {
@@ -274,7 +274,7 @@ class AccountTokenCases
 
     public static async AccountCount(fx: AdminFixture): Promise<number>
     {
-        return (await fx.Accounts.ListAccounts(fx.Tenant)).length
+        return (await fx.Accounts.ListAccounts(fx.Realm)).length
     }
 
     public static async Invalid(request: Promise<unknown>, field: string): Promise<void>

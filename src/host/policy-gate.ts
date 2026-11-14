@@ -40,7 +40,7 @@ export class PolicyGate
             return denied
         }
         const path = this.path()
-        const resource = new ResourceRef(policy.resourceKind, this.context.Tenant.Id, path)
+        const resource = new ResourceRef(policy.resourceKind, this.context.Realm.Id, path)
         const decision = this.context.Policy.Decide(this.context, policy.action, resource)
         this.Emit(method, policy.action, policy.resourceKind, decision, path)
         return decision
@@ -54,13 +54,13 @@ export class PolicyGate
         {
             return false
         }
-        const resource = new ResourceRef(policy.resourceKind, this.context.Tenant.Id, this.path())
+        const resource = new ResourceRef(policy.resourceKind, this.context.Realm.Id, this.path())
         return this.context.Policy.Decide(this.context, policy.action, resource).Allowed
     }
 
     public CanRead(): boolean
     {
-        const resource = new ResourceRef(ResourceKind.Model, this.context.Tenant.Id, this.path())
+        const resource = new ResourceRef(ResourceKind.Model, this.context.Realm.Id, this.path())
         return this.context.Policy.Decide(this.context, Action.Read, resource).Allowed
     }
 
@@ -71,7 +71,7 @@ export class PolicyGate
             const spanContext = trace.getActiveSpan()?.spanContext()
             const event: AccessAuditEvent = {
                 Timestamp: new Date(),
-                TenantId: this.context.Tenant.Id,
+                TenantId: this.context.Realm.Id,
                 PrincipalId: this.context.Principal.Id,
                 Surface: AuditSurface.Rpc,
                 MethodOrPath: method,
@@ -94,10 +94,10 @@ export class PolicyGate
     {
         const read: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Model }
         const write: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Model }
-        const administer: MethodPolicy = { action: Action.Administer, resourceKind: ResourceKind.Tenant }
-        const readTenant: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Tenant }
-        const writeTenant: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Tenant }
-        const contribute: MethodPolicy = { action: Action.Contribute, resourceKind: ResourceKind.Tenant }
+        const administer: MethodPolicy = { action: Action.Administer, resourceKind: ResourceKind.Realm }
+        const readTenant: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Realm }
+        const writeTenant: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Realm }
+        const contribute: MethodPolicy = { action: Action.Contribute, resourceKind: ResourceKind.Realm }
         const connect: MethodPolicy = { action: Action.Connect, resourceKind: ResourceKind.Connector }
         const readConnector: MethodPolicy = { action: Action.Read, resourceKind: ResourceKind.Connector }
         const writeConnector: MethodPolicy = { action: Action.Write, resourceKind: ResourceKind.Connector }

@@ -1,5 +1,5 @@
 import { AuthMethod, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
-import type { IAccessPolicy, IAuthenticator, IdentityConfig, IdentityStoreSet, Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { IAccessPolicy, IAuthenticator, IdentityConfig, IdentityStoreSet, Realm } from '@pragmatic-tech-ai/todl-identity'
 import { ClaimArrayGroupStrategy, FetchHttpClient, GenericOidcPack, GenericOidcProfile, GoogleIdentityPack, InMemoryOidcFlowStateStore, MicrosoftEntraPack, OidcSettingKeys } from '@pragmatic-tech-ai/todl-identity-cloud'
 import type { IHttpClient, IOidcFlowStateStore, OidcIdentityProviderPackBase, OidcPackOptions } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
@@ -35,7 +35,7 @@ export class IdentityPackResolver
         this.now = now
     }
 
-    public Resolve(tenant: Tenant, config: IdentityConfig, stores: IdentityStoreSet, machineMap?: MachinePrincipalMap): ResolvedPack
+    public Resolve(realm: Realm, config: IdentityConfig, stores: IdentityStoreSet, machineMap?: MachinePrincipalMap): ResolvedPack
     {
         const kind = IdentityPackKinds.FromPackId(config.PackId)
         const machineAuthenticators: IAuthenticator[] = machineMap !== undefined && !machineMap.IsEmpty ? [new MachineCertAuthenticator(machineMap)] : []

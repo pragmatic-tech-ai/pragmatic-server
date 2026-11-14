@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import { FileIdentityStores, ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
-import { Tenant, TenantKind, DelegationDepth, AuthMethod, Credential, PresentedSecret, AuthenticatedResult, Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
+import { Realm, RealmKind, DelegationDepth, AuthMethod, Credential, PresentedSecret, AuthenticatedResult, Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
 import { ServerBootstrap } from '../../src/identity/server-bootstrap.js'
 
 export type OperatorSession = { token: string; expiresAt: Date }
@@ -14,7 +14,7 @@ export type OperatorSession = { token: string; expiresAt: Date }
  */
 export type OwnPasswordChange = { session: OperatorSession | null; otherSessionsEnded: boolean }
 
-/** Operator authority: Full may mutate (Owner grant on the control-plane tenant); ReadOnly may only observe (Viewer grant, or no Owner grant). */
+/** Operator authority: Full may mutate (Owner grant on the control-plane realm); ReadOnly may only observe (Viewer grant, or no Owner grant). */
 export enum OperatorRole
 {
     Full,
@@ -127,8 +127,8 @@ export class MasterKeyError extends Error
 
 export class OperatorIdentity implements IOperatorIdentity
 {
-    private static readonly OperatorTenantId = 'control-plane'
-    private static readonly OperatorTenantDisplay = 'SP-ADMIN Control Plane'
+    private static readonly OperatorRealmId = 'control-plane'
+    private static readonly OperatorRealmDisplay = 'SP-ADMIN Control Plane'
     private static readonly AdminPrincipalId = 'admin'
     private static readonly AdminPasswordRef = 'control-plane-admin-pw'
     private static readonly EmailClaim = 'email'
@@ -141,7 +141,7 @@ export class OperatorIdentity implements IOperatorIdentity
 
     private constructor(
         private readonly pack: ServerIdentityPack,
-        private readonly tenant: Tenant,
+        private readonly realm: Realm,
         private readonly operatorEmail: string)
     {
     }
@@ -151,10 +151,10 @@ export class OperatorIdentity implements IOperatorIdentity
         mkdirSync(dirname(options.masterKeyFile), { recursive: true, mode: OperatorIdentity.SecretDirMode })
         mkdirSync(options.identityRoot, { recursive: true, mode: OperatorIdentity.SecretDirMode })
         const key = OperatorIdentity.LoadOrCreateKey(options.masterKeyFile)
-        const tenant = new Tenant(OperatorIdentity.OperatorTenantId, TenantKind.SelfHosted, OperatorIdentity.OperatorTenantDisplay)
+        const realm = new Realm(OperatorIdentity.OperatorRealmId, RealmKind.SelfHosted, OperatorIdentity.OperatorRealmDisplay)
         const stores = await FileIdentityStores.Open(new NodeFsStorage(options.identityRoot), key)
         const pack = ServerIdentityPack.OpenWith(stores, { DelegationDepth: DelegationDepth.FullAuthz })
-        const existing = await pack.Directory.Lookup(OperatorIdentity.AdminPrincipalId, tenant)
+        const existing = await pack.Directory.Lookup(OperatorIdentity.AdminPrincipalId, realm)
         if (existing === null)
         {
             if (options.initialPassword === undefined)
@@ -164,13 +164,13 @@ export class OperatorIdentity implements IOperatorIdentity
             await pack.Secrets.Put(OperatorIdentity.AdminPasswordRef, options.initialPassword)
         }
         // Idempotent: for an existing account this only re-ensures the Owner grant (no password change).
-        await ServerBootstrap.SeedAsync(pack, tenant, {
+        await ServerBootstrap.SeedAsync(pack, realm, {
             adminEmail: options.operatorEmail,
             adminPrincipalId: OperatorIdentity.AdminPrincipalId,
             adminPasswordRef: OperatorIdentity.AdminPasswordRef,
             ownerGrant: true
         })
-        return new OperatorIdentity(pack, tenant, options.operatorEmail)
+        return new OperatorIdentity(pack, realm, options.operatorEmail)
     }
 
     public async Authenticate(email: string, password: string): Promise<OperatorSession | null>
@@ -183,7 +183,7 @@ export class OperatorIdentity implements IOperatorIdentity
         const presented = new PresentedSecret(password)
         try
         {
-            const result = await auth.Authenticate(new Credential(AuthMethod.Local, email), presented, this.tenant)
+            const result = await auth.Authenticate(new Credential(AuthMethod.Local, email), presented, this.realm)
             if (!(result instanceof AuthenticatedResult))
             {
                 return null
@@ -204,7 +204,7 @@ export class OperatorIdentity implements IOperatorIdentity
         {
             return null
         }
-        const principal = await this.pack.Directory.Lookup(session.PrincipalId, this.tenant)
+        const principal = await this.pack.Directory.Lookup(session.PrincipalId, this.realm)
         if (principal === null)
         {
             return null
@@ -212,10 +212,10 @@ export class OperatorIdentity implements IOperatorIdentity
         return { email: await this.EmailOf(principal.Id, principal.Claim(OperatorIdentity.EmailClaim)), principalId: principal.Id, role: await this.RoleFor(principal.Id) }
     }
 
-    /** Creates an authenticatable operator account and grants it the Owner (Full) or Viewer (ReadOnly) role on the control-plane tenant. */
+    /** Creates an authenticatable operator account and grants it the Owner (Full) or Viewer (ReadOnly) role on the control-plane realm. */
     public async CreateOperator(email: string, password: string, role: OperatorRole): Promise<void>
     {
-        if ((await this.pack.Accounts.FindByEmail(this.tenant, email)) !== null)
+        if ((await this.pack.Accounts.FindByEmail(this.realm, email)) !== null)
         {
             throw new OperatorExistsError()
         }
@@ -223,20 +223,20 @@ export class OperatorIdentity implements IOperatorIdentity
         const presented = new PresentedSecret(password)
         try
         {
-            await this.pack.Registrar.Register(this.tenant, email, principalId, presented)
+            await this.pack.Registrar.Register(this.realm, email, principalId, presented)
         }
         finally
         {
             presented.Clear()
         }
         const grantRole = role === OperatorRole.Full ? Role.Owner : Role.Viewer
-        await this.pack.Grants.Save(new Grant(principalId, grantRole, new ResourceRef(ResourceKind.Tenant, this.tenant.Id, [])))
+        await this.pack.Grants.Save(new Grant(principalId, grantRole, new ResourceRef(ResourceKind.Realm, this.realm.Id, [])))
     }
 
     /** Operator roster: email, role and disabled flag; includes disabled accounts. The bootstrap admin appears exactly once, under the configured operator email. */
     public async ListOperators(): Promise<readonly OperatorSummary[]>
     {
-        const accounts = await this.pack.Accounts.ListAccounts(this.tenant)
+        const accounts = await this.pack.Accounts.ListAccounts(this.realm)
         const summaries: OperatorSummary[] = []
         let sawAdmin = false
         for (const account of accounts)
@@ -278,17 +278,17 @@ export class OperatorIdentity implements IOperatorIdentity
             }
             await this.RejectIfLastFull(principalId)
         }
-        const grants = await this.pack.Grants.GrantsFor(principalId, this.tenant)
+        const grants = await this.pack.Grants.GrantsFor(principalId, this.realm)
         for (const g of grants)
         {
-            const onRoot = g.Resource.Kind === ResourceKind.Tenant && g.Resource.TenantId === this.tenant.Id
+            const onRoot = g.Resource.Kind === ResourceKind.Realm && g.Resource.RealmId === this.realm.Id
             if (onRoot && (g.Role === Role.Owner || g.Role === Role.Viewer))
             {
                 await this.pack.Grants.Revoke(g)
             }
         }
         const grantRole = role === OperatorRole.Full ? Role.Owner : Role.Viewer
-        await this.pack.Grants.Save(new Grant(principalId, grantRole, new ResourceRef(ResourceKind.Tenant, this.tenant.Id, [])))
+        await this.pack.Grants.Save(new Grant(principalId, grantRole, new ResourceRef(ResourceKind.Realm, this.realm.Id, [])))
     }
 
     /**
@@ -302,13 +302,13 @@ export class OperatorIdentity implements IOperatorIdentity
         const presented = new PresentedSecret(password)
         try
         {
-            await this.pack.Registrar.RotatePasswordIfChanged(this.tenant, principalId, presented)
+            await this.pack.Registrar.RotatePasswordIfChanged(this.realm, principalId, presented)
         }
         finally
         {
             presented.Clear()
         }
-        await this.pack.Sessions.RevokeAllFor(this.tenant, principalId)
+        await this.pack.Sessions.RevokeAllFor(this.realm, principalId)
         return password
     }
 
@@ -323,7 +323,7 @@ export class OperatorIdentity implements IOperatorIdentity
     public async ChangeOwnPassword(principalId: string, currentPassword: string, newPassword: string): Promise<OwnPasswordChange | null>
     {
         const auth = this.pack.AuthenticatorFor(AuthMethod.Local)
-        const account = await this.pack.Accounts.FindByPrincipalId(this.tenant, principalId)
+        const account = await this.pack.Accounts.FindByPrincipalId(this.realm, principalId)
         if (auth === undefined || account === null)
         {
             return null
@@ -332,7 +332,7 @@ export class OperatorIdentity implements IOperatorIdentity
         let verified: AuthenticatedResult | null = null
         try
         {
-            const result = await auth.Authenticate(new Credential(AuthMethod.Local, account.Email), current, this.tenant)
+            const result = await auth.Authenticate(new Credential(AuthMethod.Local, account.Email), current, this.realm)
             verified = result instanceof AuthenticatedResult && result.Principal.Id === principalId ? result : null
         }
         finally
@@ -346,7 +346,7 @@ export class OperatorIdentity implements IOperatorIdentity
         const next = new PresentedSecret(newPassword)
         try
         {
-            await this.pack.Registrar.RotatePasswordIfChanged(this.tenant, principalId, next)
+            await this.pack.Registrar.RotatePasswordIfChanged(this.realm, principalId, next)
         }
         finally
         {
@@ -355,7 +355,7 @@ export class OperatorIdentity implements IOperatorIdentity
         let otherSessionsEnded = true
         try
         {
-            await this.pack.Sessions.RevokeAllFor(this.tenant, principalId)
+            await this.pack.Sessions.RevokeAllFor(this.realm, principalId)
         }
         catch
         {
@@ -386,12 +386,12 @@ export class OperatorIdentity implements IOperatorIdentity
                 throw new OperatorSelfLockoutError()
             }
             await this.RejectIfLastFull(principalId)
-            await this.pack.Accounts.Disable(this.tenant, principalId)
-            await this.pack.Sessions.RevokeAllFor(this.tenant, principalId)
+            await this.pack.Accounts.Disable(this.realm, principalId)
+            await this.pack.Sessions.RevokeAllFor(this.realm, principalId)
         }
         else
         {
-            await this.pack.Accounts.Enable(this.tenant, principalId)
+            await this.pack.Accounts.Enable(this.realm, principalId)
         }
     }
 
@@ -399,7 +399,7 @@ export class OperatorIdentity implements IOperatorIdentity
     public async RevokeOperatorSessions(email: string): Promise<void>
     {
         const principalId = await this.ResolvePrincipal(email)
-        await this.pack.Sessions.RevokeAllFor(this.tenant, principalId)
+        await this.pack.Sessions.RevokeAllFor(this.realm, principalId)
     }
 
     /**
@@ -416,12 +416,12 @@ export class OperatorIdentity implements IOperatorIdentity
         {
             return claim
         }
-        return (await this.pack.Accounts.FindByPrincipalId(this.tenant, principalId))?.Email ?? principalId
+        return (await this.pack.Accounts.FindByPrincipalId(this.realm, principalId))?.Email ?? principalId
     }
 
     private async ResolvePrincipal(email: string): Promise<string>
     {
-        const account = await this.pack.Accounts.FindByEmail(this.tenant, email)
+        const account = await this.pack.Accounts.FindByEmail(this.realm, email)
         if (account === null)
         {
             throw new OperatorNotFoundError()
@@ -444,7 +444,7 @@ export class OperatorIdentity implements IOperatorIdentity
         {
             return
         }
-        const accounts = await this.pack.Accounts.ListAccounts(this.tenant)
+        const accounts = await this.pack.Accounts.ListAccounts(this.realm)
         let otherFull = 0
         for (const account of accounts)
         {
@@ -459,11 +459,11 @@ export class OperatorIdentity implements IOperatorIdentity
         }
     }
 
-    /** Deny-by-default: Full only when an Owner grant on this tenant exists; anything else is ReadOnly. */
+    /** Deny-by-default: Full only when an Owner grant on this realm exists; anything else is ReadOnly. */
     private async RoleFor(principalId: string): Promise<OperatorRole>
     {
-        const grants = await this.pack.Grants.GrantsFor(principalId, this.tenant)
-        const isOwner = grants.some(g => g.Role === Role.Owner && g.Resource.Kind === ResourceKind.Tenant && g.Resource.TenantId === this.tenant.Id)
+        const grants = await this.pack.Grants.GrantsFor(principalId, this.realm)
+        const isOwner = grants.some(g => g.Role === Role.Owner && g.Resource.Kind === ResourceKind.Realm && g.Resource.RealmId === this.realm.Id)
         return isOwner ? OperatorRole.Full : OperatorRole.ReadOnly
     }
 

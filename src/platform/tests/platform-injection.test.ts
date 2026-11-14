@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { IStorage, IPromptService } from '@pragmatic-tech-ai/todl-runtime'
 import type { IStorageProviderRegistry } from '@pragmatic-tech-ai/todl'
-import type { IdentityStoreSet, ITenantConfigStore } from '@pragmatic-tech-ai/todl-identity'
+import type { IdentityStoreSet, IRealmConfigStore } from '@pragmatic-tech-ai/todl-identity'
 import { NodePlatform } from '../node-platform.js'
 import type { PlatformServices } from '../platform-services.js'
 import type { MasterKeyRef } from '../../identity/master-key-resolver.js'
@@ -58,10 +58,10 @@ class RecordingPlatform implements PlatformServices
         return this.inner.CreateIdentityStores(identityRoot, masterKey)
     }
 
-    public CreateTenantConfigStore(configRoot: string): Promise<ITenantConfigStore>
+    public CreateRealmConfigStore(configRoot: string): Promise<IRealmConfigStore>
     {
         this.calls.push(RecordingPlatform.TenantConfigCall)
-        return this.inner.CreateTenantConfigStore(configRoot)
+        return this.inner.CreateRealmConfigStore(configRoot)
     }
 }
 

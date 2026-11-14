@@ -1,4 +1,4 @@
-import { IdentityConfig, DelegationDepth, Tenant, TenantKind, IdentityProviderRegistryKey, SecretStoreKey, PasswordHasherKey, TenantConfigStoreKey } from '@pragmatic-tech-ai/todl-identity'
+import { IdentityConfig, DelegationDepth, Realm, RealmKind, IdentityProviderRegistryKey, SecretStoreKey, PasswordHasherKey, RealmConfigStoreKey } from '@pragmatic-tech-ai/todl-identity'
 import { Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
 import { ConfigurableIdentityProviderRegistry } from '@pragmatic-tech-ai/todl-identity-host'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
@@ -27,24 +27,24 @@ export class IdentityModule
         this.platform = platform
     }
 
-    public Tenant(): Tenant
+    public Realm(): Realm
     {
-        return new Tenant(this.options.tenant.id, TenantKind.SelfHosted, this.options.tenant.displayName)
+        return new Realm(this.options.tenant.id, RealmKind.SelfHosted, this.options.tenant.displayName)
     }
 
-    public async ComposeAsync(services: ServiceProvider): Promise<{ pack: ServerIdentityPack; tenant: Tenant; oidc: OidcIdentityProviderPackBase | undefined }>
+    public async ComposeAsync(services: ServiceProvider): Promise<{ pack: ServerIdentityPack; realm: Realm; oidc: OidcIdentityProviderPackBase | undefined }>
     {
-        const tenant = this.Tenant()
+        const realm = this.Realm()
         const masterKey = this.platform.ResolveMasterKey(this.options.masterKey)
         const hasher = new Argon2PasswordHasher()
         const stores = await this.platform.CreateIdentityStores(this.options.identityRoot, masterKey)
-        const tenantConfig = await this.platform.CreateTenantConfigStore(this.options.identityRoot)
+        const tenantConfig = await this.platform.CreateRealmConfigStore(this.options.identityRoot)
         const seed = this.options.identityConfig ?? IdentityModule.LegacyOrLocal(this.options.oidc)
-        const stored = await tenantConfig.Get(tenant.Id)
+        const stored = await tenantConfig.Get(realm.Id)
         const config = stored ?? seed
         if (stored === null)
         {
-            await tenantConfig.Save(tenant.Id, seed)
+            await tenantConfig.Save(realm.Id, seed)
         }
         if (this.options.provisionedSecrets !== undefined)
         {
@@ -66,18 +66,18 @@ export class IdentityModule
             await new TenantSecretProvisioner(this.options.provisionedSecrets).EnsureAsync(stores.Secrets, unique)
         }
         const resolver = new IdentityPackResolver(this.options.httpClient ?? new FetchHttpClient(), this.options.flowStateStore ?? new InMemoryOidcFlowStateStore())
-        const resolved = resolver.Resolve(tenant, config, stores, this.options.machine)
+        const resolved = resolver.Resolve(realm, config, stores, this.options.machine)
         const pack = resolved.Pack
-        services.registerInstance(TenantConfigStoreKey, tenantConfig)
-        const registry = await ConfigurableIdentityProviderRegistry.SingleTenant(tenant, config, pack)
+        services.registerInstance(RealmConfigStoreKey, tenantConfig)
+        const registry = await ConfigurableIdentityProviderRegistry.SingleRealm(realm, config, pack)
         services.registerInstance(IdentityProviderRegistryKey, registry)
         services.registerInstance(SecretStoreKey, pack.Secrets)
         services.registerInstance(PasswordHasherKey, hasher)
         if (this.options.bootstrap !== undefined)
         {
-            await ServerBootstrap.SeedAsync(pack, tenant, this.options.bootstrap)
+            await ServerBootstrap.SeedAsync(pack, realm, this.options.bootstrap)
         }
-        return { pack, tenant, oidc: resolved.Oidc }
+        return { pack, realm, oidc: resolved.Oidc }
     }
 
     /** A tenant given only the legacy flat oidc options gets the equivalent generic-oidc config; none means local-only. */

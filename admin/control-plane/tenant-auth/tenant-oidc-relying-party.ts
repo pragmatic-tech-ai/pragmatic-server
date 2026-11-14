@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import * as https from 'node:https'
-import { AuthMethod, AuthenticatedResult, Credential, DelegationDepth, IdentityConfig, PresentedSecret, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
+import { AuthMethod, AuthenticatedResult, Credential, DelegationDepth, IdentityConfig, PresentedSecret, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
 import type { IdentityStoreSet } from '@pragmatic-tech-ai/todl-identity'
 import { InMemoryOidcFlowStateStore, OidcSettingKeys } from '@pragmatic-tech-ai/todl-identity-cloud'
 import type { IHttpClient, IOidcFlowStateStore } from '@pragmatic-tech-ai/todl-identity-cloud'
@@ -257,13 +257,13 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
                 : await this.SecretForLogin(tenantId, client)
             await this.adminClientFactory(conn).RegisterClient(tenantId, { clientId: client.ClientId, redirectUris: [client.RegisteredRedirect], secret })
             const stores = await this.stores()
-            const tenant = this.tenantFor(tenantId)
-            const resolved = this.resolverFor(conn).Resolve(tenant, this.configFor(conn, tenantId, client, callbackUrl), stores)
+            const realm = this.realmFor(tenantId)
+            const resolved = this.resolverFor(conn).Resolve(realm, this.configFor(conn, tenantId, client, callbackUrl), stores)
             if (resolved.Oidc === undefined)
             {
                 throw new TenantLoginError()
             }
-            return await resolved.Oidc.BeginAuthorization(tenant)
+            return await resolved.Oidc.BeginAuthorization(realm)
         }
         catch (err)
         {
@@ -329,14 +329,14 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
             const client = TenantOidcClient.For(kind, tenantId, callbackUrl)
             const conn = await this.idp.EnsureForTenant(tenantId, this.displayNameFor(tenantId))
             const stores = await this.stores()
-            const tenant = this.tenantFor(tenantId)
-            const resolved = this.resolverFor(conn).Resolve(tenant, this.configFor(conn, tenantId, client, callbackUrl), stores)
+            const realm = this.realmFor(tenantId)
+            const resolved = this.resolverFor(conn).Resolve(realm, this.configFor(conn, tenantId, client, callbackUrl), stores)
             const authenticator = resolved.Oidc?.AuthenticatorFor(AuthMethod.Oidc)
             if (authenticator === undefined)
             {
                 throw new TenantLoginError()
             }
-            const result = await authenticator.Authenticate(new Credential(AuthMethod.Oidc, state), presented, tenant)
+            const result = await authenticator.Authenticate(new Credential(AuthMethod.Oidc, state), presented, realm)
             if (!(result instanceof AuthenticatedResult))
             {
                 throw new TenantLoginError()
@@ -359,9 +359,10 @@ export class TenantOidcRelyingParty implements ITenantOidcRelyingParty
         return this.directory.GetTenant(tenantId)?.displayName ?? tenantId
     }
 
-    private tenantFor(tenantId: string): Tenant
+    /** The tenant's identity realm (one IdP realm per customer tenant, so the realm id is the tenant id). */
+    private realmFor(tenantId: string): Realm
     {
-        return new Tenant(tenantId, TenantKind.Saas, this.displayNameFor(tenantId))
+        return new Realm(tenantId, RealmKind.Saas, this.displayNameFor(tenantId))
     }
 
     private resolverFor(conn: IdpConnection): IdentityPackResolver

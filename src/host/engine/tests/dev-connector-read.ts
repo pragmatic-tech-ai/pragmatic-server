@@ -1,4 +1,4 @@
-import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
 import type { EntityDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { PagingLimits } from '../../../config/paging-limits.js'
 import type { PragmaticServer } from '../../../pragmatic-server.js'
@@ -37,10 +37,10 @@ export class DevConnectorRead
 
     public static Context(tenantId: string): AccessContext
     {
-        const tenant = new Tenant(tenantId, TenantKind.SelfHosted, tenantId)
+        const realm = new Realm(tenantId, RealmKind.SelfHosted, tenantId)
         const principal = new Principal(DevConnectorRead.PrincipalId, tenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant(DevConnectorRead.PrincipalId, Role.Owner, new ResourceRef(ResourceKind.Tenant, tenantId, []))]
-        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+        const grants = [new Grant(DevConnectorRead.PrincipalId, Role.Owner, new ResourceRef(ResourceKind.Realm, tenantId, []))]
+        return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
     private static Chain(error: unknown): string

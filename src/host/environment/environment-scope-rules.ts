@@ -4,7 +4,7 @@ import { EnvironmentNodePlacement, SystemFieldGuard, SystemNames, TodlNames } fr
 import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { Tier1ScopeCompiler } from '@pragmatic-tech-ai/todl-identity-engine'
-import type { TenantSecurityModel, Tier1Grants } from '@pragmatic-tech-ai/todl-identity-engine'
+import type { RealmSecurityModel, Tier1Grants } from '@pragmatic-tech-ai/todl-identity-engine'
 import { AccessScopeError, AccessScopeErrorCode, VoidSignal } from '../engine/access-scope-source.js'
 import type { IPreparedRules, IScopeRecords, IScopeRules, ScopeSchema } from '../engine/access-scope-source.js'
 import { WriteRule } from '../engine/access-scope-conjunction.js'
@@ -28,7 +28,7 @@ export interface IEnvironmentSnapshotSource
 export interface IEnvironmentTier1
 {
     /** The environment setting's model (fail closed, EnvironmentSecuritySetting). */
-    Model(): Promise<TenantSecurityModel>
+    Model(): Promise<RealmSecurityModel>
     /** The caller's tier-1 grants over `snapshot`'s packages. */
     Grants(context: AccessContext, snapshot: EnvironmentSnapshot): Promise<Tier1Grants>
     /**
@@ -138,7 +138,7 @@ export class EnvironmentScopeRules implements IScopeRules, IEnvironmentTier1
         return new EnvironmentPreparedRules(schema.Catalog, catalog, this.setting, JSON.stringify([this.setting?.Generation ?? 0, catalog.Packages]))
     }
 
-    public Model(): Promise<TenantSecurityModel>
+    public Model(): Promise<RealmSecurityModel>
     {
         return this.Setting().Model()
     }

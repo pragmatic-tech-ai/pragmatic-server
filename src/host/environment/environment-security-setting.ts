@@ -1,7 +1,7 @@
 import type { ISignal } from '@pragmatic-tech-ai/graph'
 import { IdentityConfig, IdpDirectorySnapshot, InvalidSecurityModelError, UnreadableIdpDirectoryRecordError } from '@pragmatic-tech-ai/todl-identity'
-import type { IIdpDirectoryStore, ISecurityModelConfig, ITenantConfigStore, Tenant } from '@pragmatic-tech-ai/todl-identity'
-import { TenantSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
+import type { IIdpDirectoryStore, ISecurityModelConfig, IRealmConfigStore, Realm } from '@pragmatic-tech-ai/todl-identity'
+import { RealmSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import { AsyncMutex } from '../cypher/async-mutex.js'
@@ -33,9 +33,9 @@ export class LoggerSecuritySettingDiagnostics implements ISecuritySettingDiagnos
 
 /**
  * The environment's security setting (contract C5) as the runtime reads it: the stored `ISecurityModelConfig` and the
- * `TenantSecurityModel` built from it over the stored IdP directory snapshot (none stored: a non-authoritative one).
+ * `RealmSecurityModel` built from it over the stored IdP directory snapshot (none stored: a non-authoritative one).
  *
- * Fail closed: no setting stored is `TenantSecurityModel.Empty()` (nobody holds a role, so tier 1 grants nothing on an
+ * Fail closed: no setting stored is `RealmSecurityModel.Empty()` (nobody holds a role, so tier 1 grants nothing on an
  * engine-stored concept); so is a stored setting the store refuses (`InvalidSecurityModelError`) or a directory record
  * it cannot trust (`UnreadableIdpDirectoryRecordError`), each reported once per generation. Any other error propagates
  * (a later call retries). The model is built once per generation; `Invalidate` drops it, bumps `Generation` and raises
@@ -53,14 +53,14 @@ export class EnvironmentSecuritySetting implements IDisposable
     private readonly changed = new VoidSignal()
     private readonly mutex = new AsyncMutex()
     private reconciled: IEnvironmentCatalog | undefined
-    private model: Promise<TenantSecurityModel> | undefined
+    private model: Promise<RealmSecurityModel> | undefined
     private generation = 0
     private disposed = false
 
     public constructor(
-        private readonly store: ITenantConfigStore,
+        private readonly store: IRealmConfigStore,
         private readonly directory: IIdpDirectoryStore,
-        private readonly tenant: Tenant,
+        private readonly realm: Realm,
         private readonly diagnostics: ISecuritySettingDiagnostics = new LoggerSecuritySettingDiagnostics())
     {
         this.Changed = this.changed
@@ -74,7 +74,7 @@ export class EnvironmentSecuritySetting implements IDisposable
     /** The stored setting, undefined when none is stored; throws what the store throws. */
     public async Config(): Promise<ISecurityModelConfig | undefined>
     {
-        return (await this.store.Get(this.tenant.Id))?.SecurityModel ?? undefined
+        return (await this.store.Get(this.realm.Id))?.SecurityModel ?? undefined
     }
 
     /** The catalog the stored setting was last reconciled against (undefined until a commit or an open reconciled it). */
@@ -102,9 +102,9 @@ export class EnvironmentSecuritySetting implements IDisposable
      */
     public async Replace(config: ISecurityModelConfig): Promise<void>
     {
-        const stored = await this.store.Get(this.tenant.Id)
+        const stored = await this.store.Get(this.realm.Id)
         if (stored === null) return
-        await this.store.Save(this.tenant.Id, new IdentityConfig(stored.PackId, stored.DelegationDepth, stored.ProviderSettings, stored.GroupRoleMap, stored.ClaimsMapping, config))
+        await this.store.Save(this.realm.Id, new IdentityConfig(stored.PackId, stored.DelegationDepth, stored.ProviderSettings, stored.GroupRoleMap, stored.ClaimsMapping, config))
         this.Invalidate()
     }
 
@@ -114,7 +114,7 @@ export class EnvironmentSecuritySetting implements IDisposable
         return this.Directory()
     }
 
-    public Model(): Promise<TenantSecurityModel>
+    public Model(): Promise<RealmSecurityModel>
     {
         if (this.model === undefined)
         {
@@ -129,9 +129,9 @@ export class EnvironmentSecuritySetting implements IDisposable
     }
 
     /** `config` as a model over the current directory snapshot; throws InvalidSecurityModelError when it is not valid. */
-    public async ModelOf(config: ISecurityModelConfig): Promise<TenantSecurityModel>
+    public async ModelOf(config: ISecurityModelConfig): Promise<RealmSecurityModel>
     {
-        return TenantSecurityModel.FromConfig(config, await this.Directory())
+        return RealmSecurityModel.FromConfig(config, await this.Directory())
     }
 
     public Invalidate(): void
@@ -148,19 +148,19 @@ export class EnvironmentSecuritySetting implements IDisposable
         this.model = undefined
     }
 
-    private async Build(): Promise<TenantSecurityModel>
+    private async Build(): Promise<RealmSecurityModel>
     {
         try
         {
             const config = await this.Config()
-            return config === undefined ? TenantSecurityModel.Empty() : TenantSecurityModel.FromConfig(config, await this.Directory())
+            return config === undefined ? RealmSecurityModel.Empty() : RealmSecurityModel.FromConfig(config, await this.Directory())
         }
         catch (error)
         {
             if (error instanceof InvalidSecurityModelError || error instanceof UnreadableIdpDirectoryRecordError)
             {
-                this.diagnostics.Unreadable(this.tenant.Id, error)
-                return TenantSecurityModel.Empty()
+                this.diagnostics.Unreadable(this.realm.Id, error)
+                return RealmSecurityModel.Empty()
             }
             throw error
         }
@@ -168,6 +168,6 @@ export class EnvironmentSecuritySetting implements IDisposable
 
     private async Directory(): Promise<IdpDirectorySnapshot>
     {
-        return (await this.directory.Get(this.tenant.Id)) ?? IdpDirectorySnapshot.NonAuthoritative(new Date())
+        return (await this.directory.Get(this.realm.Id)) ?? IdpDirectorySnapshot.NonAuthoritative(new Date())
     }
 }

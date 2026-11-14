@@ -1,7 +1,7 @@
 import { AccessError, Cypher } from '@pragmatic-tech-ai/graph'
 import type { AccessErrorCode, AccessScope, CellValue, GraphEngine } from '@pragmatic-tech-ai/graph'
 import { SystemNames } from '@pragmatic-tech-ai/todl/engine'
-import { AccessContext, AccessLevel, BaseRole, Grant, Principal, PrincipalKind, PrivilegeAction, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, AccessLevel, BaseRole, Grant, Principal, PrincipalKind, PrivilegeAction, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
 import type { IRoleAssignmentConfig, IRoleOverrideConfig, ISecurityModelConfig, ITeamConfig } from '@pragmatic-tech-ai/todl-identity'
 import type { PragmaticServer } from '../../../pragmatic-server.js'
 import type { IGraphScope } from '../../engine/access-scope-source.js'
@@ -143,10 +143,10 @@ export class Tier1Fx
 
     public static Context(principalId: string): AccessContext
     {
-        const tenant = new Tenant(EnvironmentFixture.TenantId, TenantKind.SelfHosted, Tier1Fx.TenantName)
+        const realm = new Realm(EnvironmentFixture.TenantId, RealmKind.SelfHosted, Tier1Fx.TenantName)
         const principal = new Principal(principalId, EnvironmentFixture.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Tenant, EnvironmentFixture.TenantId, []))]
-        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Realm, EnvironmentFixture.TenantId, []))]
+        return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
     /** The four packages live in one app, the Customer source holding one row, the server started with `options`. */

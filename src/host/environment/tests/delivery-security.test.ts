@@ -149,7 +149,7 @@ class DeliveryFx
     {
         const pack = await server.Pack()
         const security = new EnvironmentSecurityAdmin(await server.SecuritySetting(), server.EnvironmentEngine(), { RunNow: async () => undefined }, server.SecurityChangeLog())
-        return new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), async () => undefined, pack.Accounts, pack.Registrar, pack.Tokens, DeliveryFx.NoPacks, security)
+        return new AdminService(pack.Grants, pack.Audit, await server.RealmConfigStore(), server.Realm(), async () => undefined, pack.Accounts, pack.Registrar, pack.Tokens, DeliveryFx.NoPacks, security)
     }
 
     public static async Stored(server: PragmaticServer): Promise<ISecurityModelConfig | undefined>

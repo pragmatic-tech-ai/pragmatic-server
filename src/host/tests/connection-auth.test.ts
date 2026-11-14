@@ -47,8 +47,8 @@ test('a client presenting a valid service token opens the solution', async () =>
     const host = await PragmaticServerHost.StartAsync(AuthFixture.Options(baseDir, keyEnv))
     const address = host.Address()
     const pack = await host.IdentityPackForTest('t1')
-    await pack.Grants.Save(new Grant('svc1', Role.Admin, new ResourceRef(ResourceKind.Tenant, 't1', [])))
-    const { Token } = await pack.Tokens.Issue(await host.TenantForTest('t1'), 'svc1', [], null)
+    await pack.Grants.Save(new Grant('svc1', Role.Admin, new ResourceRef(ResourceKind.Realm, 't1', [])))
+    const { Token } = await pack.Tokens.Issue(await host.RealmForTest('t1'), 'svc1', [], null)
     let client: PragmaticClient | undefined
     try
     {

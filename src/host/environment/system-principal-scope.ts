@@ -1,6 +1,6 @@
 import type { AccessScope, ISubscription } from '@pragmatic-tech-ai/graph'
 import { AccessContext, ResourceAuthorizationPolicy, SystemPrincipal } from '@pragmatic-tech-ai/todl-identity'
-import type { Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { Realm } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IGraphScope, IGraphScopeSource } from '../engine/access-scope-source.js'
 import type { EnvironmentScopeRules } from './environment-scope-rules.js'
@@ -29,9 +29,9 @@ export class SystemPrincipalScope implements IDisposable
     private readonly dropped: ISubscription
     private scope: Promise<IGraphScope> | undefined
 
-    public constructor(private readonly scopes: IGraphScopeSource, private readonly rules: EnvironmentScopeRules, tenant: Tenant)
+    public constructor(private readonly scopes: IGraphScopeSource, private readonly rules: EnvironmentScopeRules, realm: Realm)
     {
-        this.context = new AccessContext(SystemPrincipal.For(tenant.Id), tenant, [], new ResourceAuthorizationPolicy())
+        this.context = new AccessContext(SystemPrincipal.For(realm.Id), realm, [], new ResourceAuthorizationPolicy())
         this.dropped = scopes.Dropped.Subscribe(() => this.Forget())
     }
 

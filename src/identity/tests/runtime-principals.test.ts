@@ -43,8 +43,8 @@ test('SeedReader creates the account with a coarse non-administer grant only', a
     assert.equal(fake.Accounts[0]!.Email, 'r@x.io')
     assert.equal(fake.Grants.length, 1)
     assert.equal(fake.Grants[0]!.role, Role.Editor)
-    assert.equal(fake.Grants[0]!.resource.Kind, ResourceKind.Tenant)
-    assert.equal(fake.Grants[0]!.resource.TenantId, 't1')
+    assert.equal(fake.Grants[0]!.resource.Kind, ResourceKind.Realm)
+    assert.equal(fake.Grants[0]!.resource.RealmId, 't1')
 })
 
 test('SeedDevAccount creates the dev account and is idempotent', async () =>

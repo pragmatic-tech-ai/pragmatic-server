@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DelegationDepth, IdentityConfig, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
+import { DelegationDepth, IdentityConfig, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
 import type { IdentityStoreSet, Role } from '@pragmatic-tech-ai/todl-identity'
 import { FakeOidcHttpClient, FakeOidcIdp, InMemoryOidcFlowStateStore, OidcSettingKeys } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { NodePlatform } from '../../platform/node-platform.js'
@@ -78,10 +78,10 @@ export class ResolverFixture
         const flowStates = new InMemoryOidcFlowStateStore()
         const stores = await this.Stores()
         const config = new IdentityConfig(packId, depth, settings, groupRoleMap, new Map())
-        const tenant = new Tenant(ResolverFixture.TenantIdPrefix + packId, TenantKind.Saas, packId)
+        const realm = new Realm(ResolverFixture.TenantIdPrefix + packId, RealmKind.Saas, packId)
         const resolver = new IdentityPackResolver(http, flowStates)
-        const resolved = resolver.Resolve(tenant, config, stores)
-        const begun = await resolved.Oidc!.BeginAuthorization(tenant)
+        const resolved = resolver.Resolve(realm, config, stores)
+        const begun = await resolved.Oidc!.BeginAuthorization(realm)
         const nonce = flowStates.Peek(begun.State)!.Nonce
         const idToken = await idp.MintIdToken({
             sub: ResolverFixture.Subject,
@@ -91,6 +91,6 @@ export class ResolverFixture
             [groupsClaim]: [ResolverFixture.Group],
         })
         http.NextTokenResponse = { id_token: idToken, token_type: ResolverFixture.BearerType }
-        return { resolved, tenant, State: begun.State, idToken, http, flowStates }
+        return { resolved, realm, State: begun.State, idToken, http, flowStates }
     }
 }

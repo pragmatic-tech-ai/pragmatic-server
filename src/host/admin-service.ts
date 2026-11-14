@@ -1,6 +1,6 @@
 import { Action, AuditEvent, AuditEventKind, Grant, ResourceRef, Role, RoleCapabilities, ResourceKind, IdentityConfig, SecurityModelValidator } from '@pragmatic-tech-ai/todl-identity'
 import type { SecurityChangesDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { LocalAccount, ServiceTokenSummary, PresentedSecret, IRoleGrantStore, IAuditSink, ITenantConfigStore, ILocalAccountStore, IServiceTokenStore, ServiceTokenGrant, Tenant, ISecurityModelConfig, ISessionManager, TeamMembershipRow } from '@pragmatic-tech-ai/todl-identity'
+import type { LocalAccount, ServiceTokenSummary, PresentedSecret, IRoleGrantStore, IAuditSink, IRealmConfigStore, ILocalAccountStore, IServiceTokenStore, ServiceTokenGrant, Realm, ISecurityModelConfig, ISessionManager, TeamMembershipRow } from '@pragmatic-tech-ai/todl-identity'
 import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import type { LocalAccountRegistrar } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminEnums } from './admin-enums.js'
@@ -150,8 +150,8 @@ export class AdminService
 
     private readonly grants: IRoleGrantStore
     private readonly audit: IAuditSink
-    private readonly configStore: ITenantConfigStore
-    private readonly tenant: Tenant
+    private readonly configStore: IRealmConfigStore
+    private readonly realm: Realm
     private readonly evict: () => Promise<void>
     private readonly accounts: ILocalAccountStore
     private readonly registrar: LocalAccountRegistrar
@@ -161,13 +161,13 @@ export class AdminService
     private readonly invalidator?: IPrincipalInvalidator
     private readonly sessions?: ISessionManager
 
-    public constructor(grants: IRoleGrantStore, audit: IAuditSink, configStore: ITenantConfigStore, tenant: Tenant, evict: () => Promise<void>, accounts: ILocalAccountStore, registrar: LocalAccountRegistrar, tokens: IServiceTokenStore, packs: IAdapterPackAdmin, security: ISecuritySettingAdmin | undefined, invalidator?: IPrincipalInvalidator, sessions?: ISessionManager)
+    public constructor(grants: IRoleGrantStore, audit: IAuditSink, configStore: IRealmConfigStore, realm: Realm, evict: () => Promise<void>, accounts: ILocalAccountStore, registrar: LocalAccountRegistrar, tokens: IServiceTokenStore, packs: IAdapterPackAdmin, security: ISecuritySettingAdmin | undefined, invalidator?: IPrincipalInvalidator, sessions?: ISessionManager)
     {
         this.packs = packs
         this.grants = grants
         this.audit = audit
         this.configStore = configStore
-        this.tenant = tenant
+        this.realm = realm
         this.evict = evict
         this.accounts = accounts
         this.registrar = registrar
@@ -179,14 +179,14 @@ export class AdminService
 
     public async ListGrants(subject: string): Promise<readonly Grant[]>
     {
-        const grants = await this.grants.GrantsFor(subject, this.tenant)
-        return grants.filter(grant => grant.Resource.TenantId === this.tenant.Id)
+        const grants = await this.grants.GrantsFor(subject, this.realm)
+        return grants.filter(grant => grant.Resource.RealmId === this.realm.Id)
     }
 
     public async GrantRole(actor: string, subject: string, role: Role, resource: ResourceRef): Promise<void>
     {
         this.AssertOwnTenant(resource)
-        await this.Serialized(this.tenant.Id, async () =>
+        await this.Serialized(this.realm.Id, async () =>
         {
             await this.grants.Save(new Grant(subject, role, resource))
             await this.Audit(subject, AdminService.GrantDetail(actor, AdminService.GrantRoleAction, role, resource))
@@ -196,15 +196,15 @@ export class AdminService
     public async RevokeRole(actor: string, subject: string, role: Role, resource: ResourceRef): Promise<void>
     {
         this.AssertOwnTenant(resource)
-        await this.Serialized(this.tenant.Id, async () =>
+        await this.Serialized(this.realm.Id, async () =>
         {
-            if (subject === actor && role === Role.Owner && resource.Kind === ResourceKind.Tenant && resource.Path.length === 0)
+            if (subject === actor && role === Role.Owner && resource.Kind === ResourceKind.Realm && resource.Path.length === 0)
             {
                 throw new AdminSelfLockoutError()
             }
-            if (resource.Kind === ResourceKind.Tenant && resource.Path.length === 0 && RoleCapabilities.Covers(role, Action.Administer))
+            if (resource.Kind === ResourceKind.Realm && resource.Path.length === 0 && RoleCapabilities.Covers(role, Action.Administer))
             {
-                const onRoot = await this.grants.GrantsOn(new ResourceRef(ResourceKind.Tenant, resource.TenantId, []))
+                const onRoot = await this.grants.GrantsOn(new ResourceRef(ResourceKind.Realm, resource.RealmId, []))
                 const remaining = onRoot.filter(grant => RoleCapabilities.Covers(grant.Role, Action.Administer) && !(grant.Subject === subject && grant.Role === role))
                 if (remaining.length === 0)
                 {
@@ -214,12 +214,12 @@ export class AdminService
             await this.grants.Revoke(new Grant(subject, role, resource))
             await this.Audit(subject, AdminService.GrantDetail(actor, AdminService.RevokeRoleAction, role, resource))
         })
-        this.invalidator?.InvalidatePrincipal(this.tenant.Id, subject)
+        this.invalidator?.InvalidatePrincipal(this.realm.Id, subject)
     }
 
     public async GetConfig(): Promise<IdentityConfig>
     {
-        const config = await this.configStore.Get(this.tenant.Id)
+        const config = await this.configStore.Get(this.realm.Id)
         if (config === null)
         {
             throw new AdminConfigMissingError()
@@ -243,10 +243,10 @@ export class AdminService
             let saved = config
             if (config.SecurityModel === undefined && this.security !== undefined)
             {
-                const kept = (await this.configStore.Get(this.tenant.Id))?.SecurityModel
+                const kept = (await this.configStore.Get(this.realm.Id))?.SecurityModel
                 saved = new IdentityConfig(config.PackId, config.DelegationDepth, config.ProviderSettings, config.GroupRoleMap, config.ClaimsMapping, kept)
             }
-            await this.configStore.Save(this.tenant.Id, saved)
+            await this.configStore.Save(this.realm.Id, saved)
         })
         if (config.SecurityModel !== undefined)
         {
@@ -266,7 +266,7 @@ export class AdminService
     /** The tenant's current access SecurityModel, or undefined when no config or no model is stored. */
     public async GetSecurityModel(): Promise<ISecurityModelConfig | undefined>
     {
-        const config = await this.configStore.Get(this.tenant.Id)
+        const config = await this.configStore.Get(this.realm.Id)
         return config?.SecurityModel
     }
 
@@ -313,13 +313,13 @@ export class AdminService
         let stored: IdentityConfig | undefined
         await this.Locked(model, async () =>
         {
-            const config = await this.configStore.Get(this.tenant.Id)
+            const config = await this.configStore.Get(this.realm.Id)
             if (config === null)
             {
                 throw new AdminConfigMissingError()
             }
             stored = config
-            await this.configStore.Save(this.tenant.Id, new IdentityConfig(config.PackId, config.DelegationDepth, config.ProviderSettings, config.GroupRoleMap, config.ClaimsMapping, model))
+            await this.configStore.Save(this.realm.Id, new IdentityConfig(config.PackId, config.DelegationDepth, config.ProviderSettings, config.GroupRoleMap, config.ClaimsMapping, model))
         })
         const detail = new Map<string, string>([
             [AdminService.ActorKey, actor],
@@ -367,12 +367,12 @@ export class AdminService
 
     public async ListAccounts(): Promise<readonly LocalAccount[]>
     {
-        return this.accounts.ListAccounts(this.tenant)
+        return this.accounts.ListAccounts(this.realm)
     }
 
     public async CreateAccount(actor: string, email: string, principalId: string, password: PresentedSecret): Promise<LocalAccount>
     {
-        const account = await this.registrar.Register(this.tenant, email, principalId, password)
+        const account = await this.registrar.Register(this.realm, email, principalId, password)
         const detail = new Map<string, string>([
             [AdminService.ActorKey, actor],
             [AdminService.ActionKey, AdminService.CreateAccountAction],
@@ -385,25 +385,25 @@ export class AdminService
 
     public async DisableAccount(actor: string, principalId: string): Promise<void>
     {
-        await this.accounts.Disable(this.tenant, principalId)
-        await this.sessions?.RevokeAllFor(this.tenant, principalId)
+        await this.accounts.Disable(this.realm, principalId)
+        await this.sessions?.RevokeAllFor(this.realm, principalId)
         const detail = new Map<string, string>([
             [AdminService.ActorKey, actor],
             [AdminService.ActionKey, AdminService.DisableAccountAction],
             [AdminService.PrincipalIdKey, principalId],
         ])
         await this.Audit(principalId, detail)
-        this.invalidator?.InvalidatePrincipal(this.tenant.Id, principalId)
+        this.invalidator?.InvalidatePrincipal(this.realm.Id, principalId)
     }
 
     public async ListTokens(): Promise<readonly ServiceTokenSummary[]>
     {
-        return this.tokens.List(this.tenant)
+        return this.tokens.List(this.realm)
     }
 
     public async IssueToken(actor: string, principalId: string, scopes: readonly string[], expiresAt: Date | null): Promise<{ Grant: ServiceTokenGrant, Token: string }>
     {
-        const issued = await this.tokens.Issue(this.tenant, principalId, scopes, expiresAt)
+        const issued = await this.tokens.Issue(this.realm, principalId, scopes, expiresAt)
         const detail = new Map<string, string>([
             [AdminService.ActorKey, actor],
             [AdminService.ActionKey, AdminService.IssueTokenAction],
@@ -417,20 +417,20 @@ export class AdminService
 
     public async RevokeToken(actor: string, tokenRef: string): Promise<void>
     {
-        const existing = await this.tokens.List(this.tenant)
+        const existing = await this.tokens.List(this.realm)
         const summary = existing.find(s => s.TokenRef === tokenRef)
         if (summary === undefined)
         {
             throw new AdminTokenNotFoundError(tokenRef)
         }
-        await this.tokens.Revoke(this.tenant, tokenRef)
+        await this.tokens.Revoke(this.realm, tokenRef)
         const detail = new Map<string, string>([
             [AdminService.ActorKey, actor],
             [AdminService.ActionKey, AdminService.RevokeTokenAction],
             [AdminService.TokenRefKey, tokenRef],
         ])
         await this.Audit(null, detail)
-        this.invalidator?.InvalidatePrincipal(this.tenant.Id, summary.PrincipalId)
+        this.invalidator?.InvalidatePrincipal(this.realm.Id, summary.PrincipalId)
     }
 
     public async InvalidatePack(actor: string, name: string): Promise<void>
@@ -473,7 +473,7 @@ export class AdminService
 
     private AssertOwnTenant(resource: ResourceRef): void
     {
-        if (resource.TenantId !== this.tenant.Id)
+        if (resource.RealmId !== this.realm.Id)
         {
             throw new ForeignTenantResourceError()
         }
@@ -499,7 +499,7 @@ export class AdminService
 
     private async Audit(subject: string | null, detail: ReadonlyMap<string, string>): Promise<void>
     {
-        await this.audit.Record(new AuditEvent(AuditEventKind.AdminAction, this.tenant.Id, subject, new Date(), detail))
+        await this.audit.Record(new AuditEvent(AuditEventKind.AdminAction, this.realm.Id, subject, new Date(), detail))
     }
 
     private static GrantDetail(actor: string, action: string, role: Role, resource: ResourceRef): ReadonlyMap<string, string>

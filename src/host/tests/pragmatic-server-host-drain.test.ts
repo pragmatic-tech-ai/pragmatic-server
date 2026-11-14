@@ -93,8 +93,8 @@ class WsFixture
     public static async Connect(host: PragmaticServerHost, tenantId: string): Promise<WebSocket>
     {
         const pack = await host.IdentityPackForTest(tenantId)
-        await pack.Grants.Save(new Grant(tenantId, Role.Admin, new ResourceRef(ResourceKind.Tenant, tenantId, [])))
-        const tenant = await host.TenantForTest(tenantId)
+        await pack.Grants.Save(new Grant(tenantId, Role.Admin, new ResourceRef(ResourceKind.Realm, tenantId, [])))
+        const tenant = await host.RealmForTest(tenantId)
         const token = (await pack.Tokens.Issue(tenant, tenantId, [], null)).Token
         const address = host.Address()
         const ws = new WebSocket(`ws://${address.host}:${address.port}/?environment=${tenantId}`, { headers: { authorization: `Bearer ${token}` } })

@@ -75,8 +75,8 @@ class WorkerFixture
     {
         const server = await worker.RegistryForTest().ServerFor(environmentId)
         const pack = await server.Pack()
-        await pack.Grants.Save(new Grant(environmentId, Role.Admin, new ResourceRef(ResourceKind.Tenant, environmentId, [])))
-        return (await pack.Tokens.Issue(server.Tenant(), environmentId, [], null)).Token
+        await pack.Grants.Save(new Grant(environmentId, Role.Admin, new ResourceRef(ResourceKind.Realm, environmentId, [])))
+        return (await pack.Tokens.Issue(server.Realm(), environmentId, [], null)).Token
     }
 
     public static Dial(address: { host: string; port: number }, environmentId: string, bearer: string | null, withClientCert: boolean): WebSocket

@@ -1,6 +1,6 @@
 import { ConnectorContext } from '@pragmatic-tech-ai/graph'
 import { SystemPrincipal } from '@pragmatic-tech-ai/todl-identity'
-import type { Principal, Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { Principal, Realm } from '@pragmatic-tech-ai/todl-identity'
 
 /**
  * The engine ConnectorContext a server call runs its connector work under (spec section 6, PR12). The key is the acting
@@ -17,8 +17,8 @@ export class CallerConnectorContext
     }
 
     /** The environment's system principal's context: Key = `SystemPrincipal.IdFor(tenant.Id)`. */
-    public static System(tenant: Tenant): ConnectorContext
+    public static System(realm: Realm): ConnectorContext
     {
-        return ConnectorContext.For(SystemPrincipal.IdFor(tenant.Id))
+        return ConnectorContext.For(SystemPrincipal.IdFor(realm.Id))
     }
 }

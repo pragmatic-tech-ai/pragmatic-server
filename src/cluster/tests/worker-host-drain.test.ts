@@ -83,8 +83,8 @@ class Fixture
     {
         const server = await worker.RegistryForTest().ServerFor('t1')
         const pack = await server.Pack()
-        await pack.Grants.Save(new Grant('t1', Role.Admin, new ResourceRef(ResourceKind.Tenant, 't1', [])))
-        return (await pack.Tokens.Issue(server.Tenant(), 't1', [], null)).Token
+        await pack.Grants.Save(new Grant('t1', Role.Admin, new ResourceRef(ResourceKind.Realm, 't1', [])))
+        return (await pack.Tokens.Issue(server.Realm(), 't1', [], null)).Token
     }
 
     public static Dial(worker: WorkerHost, token: string): WebSocket

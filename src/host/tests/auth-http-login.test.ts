@@ -47,8 +47,8 @@ test('login mints a session token usable as a WebSocket bearer', async () =>
     const host = await PragmaticServerHost.StartAsync(LoginFixture.Options(baseDir, keyEnv))
     const base = `http://${host.Address().host}:${host.Address().port}`
     const pack = await host.IdentityPackForTest('t1')
-    await pack.Registrar.Register(await host.TenantForTest('t1'), 'a@x.io', 'p1', new PresentedSecret('pw-123456'))
-    await pack.Grants.Save(new Grant('p1', Role.Admin, new ResourceRef(ResourceKind.Tenant, 't1', [])))
+    await pack.Registrar.Register(await host.RealmForTest('t1'), 'a@x.io', 'p1', new PresentedSecret('pw-123456'))
+    await pack.Grants.Save(new Grant('p1', Role.Admin, new ResourceRef(ResourceKind.Realm, 't1', [])))
     try
     {
         const response = await fetch(`${base}/auth/login?environment=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'a@x.io', password: 'pw-123456' }) })
@@ -76,7 +76,7 @@ test('bad credentials return a generic 401', async () =>
     const host = await PragmaticServerHost.StartAsync(LoginFixture.Options(baseDir, keyEnv))
     const base = `http://${host.Address().host}:${host.Address().port}`
     const pack = await host.IdentityPackForTest('t1')
-    await pack.Registrar.Register(await host.TenantForTest('t1'), 'a@x.io', 'p1', new PresentedSecret('pw-123456'))
+    await pack.Registrar.Register(await host.RealmForTest('t1'), 'a@x.io', 'p1', new PresentedSecret('pw-123456'))
     try
     {
         const wrong = await fetch(`${base}/auth/login?environment=t1`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'a@x.io', password: 'WRONG' }) })

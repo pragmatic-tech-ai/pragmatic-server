@@ -75,8 +75,8 @@ class DevWorkerFx
     {
         const server = await worker.RegistryForTest().ServerFor(DevWorkerFx.Tenant)
         const pack = await server.Pack()
-        await pack.Grants.Save(new Grant(DevWorkerFx.Tenant, Role.Owner, new ResourceRef(ResourceKind.Tenant, DevWorkerFx.Tenant, [])))
-        return (await pack.Tokens.Issue(server.Tenant(), DevWorkerFx.Tenant, [], null)).Token
+        await pack.Grants.Save(new Grant(DevWorkerFx.Tenant, Role.Owner, new ResourceRef(ResourceKind.Realm, DevWorkerFx.Tenant, [])))
+        return (await pack.Tokens.Issue(server.Realm(), DevWorkerFx.Tenant, [], null)).Token
     }
 
     /**
@@ -101,7 +101,7 @@ class DevWorkerFx
     public static async SeedReader(worker: WorkerHost): Promise<void>
     {
         const server = await worker.RegistryForTest().ServerFor(DevWorkerFx.Tenant)
-        const store = await server.TenantConfigStore()
+        const store = await server.RealmConfigStore()
         const current = await store.Get(DevWorkerFx.Tenant)
         const config = current === null
             ? new IdentityConfig(DevWorkerFx.PackId, DelegationDepth.AuthnDirectory, new Map(), new Map(), new Map(), DevWorkerFx.ReadingModel())

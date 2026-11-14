@@ -1,6 +1,6 @@
 import { AccessDefault, And, ConceptIs, FalsePredicate, MemberKind, NodeEvaluator, Not, Or, TruePredicate, ValueType } from '@pragmatic-tech-ai/graph'
 import type { AccessScope, CellValue, IDefinitionDescription, ISchemaDescription, MemberInput, Predicate } from '@pragmatic-tech-ai/graph'
-import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
 import { EngineSchemaCatalog } from '../engine-schema-catalog.js'
 
 /** Which rule of a scope a check reads. */
@@ -50,10 +50,10 @@ export class DevScopeFx
 
     public static Context(principalId: string, claims: ReadonlyMap<string, string> = new Map(), groups: readonly string[] = []): AccessContext
     {
-        const tenant = new Tenant(DevScopeFx.TenantId, TenantKind.SelfHosted, 'Tenant One')
+        const realm = new Realm(DevScopeFx.TenantId, RealmKind.SelfHosted, 'Tenant One')
         const principal = new Principal(principalId, DevScopeFx.TenantId, PrincipalKind.User, claims, groups)
-        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Tenant, DevScopeFx.TenantId, []))]
-        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Realm, DevScopeFx.TenantId, []))]
+        return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
     /** The engine schema the describer would emit for the fixture concepts (hand-written, unit tests only). */

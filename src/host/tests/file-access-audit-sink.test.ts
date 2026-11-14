@@ -28,7 +28,7 @@ const AllowEvent: AccessAuditEvent = {
     Surface: AuditSurface.Rpc,
     MethodOrPath: 'solution/open',
     Action: Action.Administer,
-    ResourceKind: ResourceKind.Tenant,
+    ResourceKind: ResourceKind.Realm,
     ResourcePath: 'my-solution',
     Outcome: AuditOutcome.Allow,
     Reason: 'ok',
@@ -47,7 +47,7 @@ test('the file line contains the expected fields and no secret substring', async
         const record = JSON.parse(lines[0]!) as Record<string, unknown>
         assert.equal(record.tenant, 't1')
         assert.equal(record.action, 'Administer')
-        assert.equal(record.resourceKind, 'Tenant')
+        assert.equal(record.resourceKind, 'Realm')
         assert.equal(record.outcome, 'allow')
         assert.equal(lines[0]!.includes('sk-super-secret-bearer'), false)
     }

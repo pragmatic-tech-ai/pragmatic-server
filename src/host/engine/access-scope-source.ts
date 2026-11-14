@@ -259,7 +259,7 @@ export class AccessScopeSource implements IGraphScopeSource, IDisposable
     {
         const claims = [...context.Principal.Claims].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
         const claimsHash = createHash(AccessScopeSource.HashAlgorithm).update(JSON.stringify(claims)).digest(AccessScopeSource.HexEncoding)
-        return JSON.stringify([ConnectorPrincipalDigest.Of(context), context.Tenant.Id, claimsHash, version, rulesDigest])
+        return JSON.stringify([ConnectorPrincipalDigest.Of(context), context.Realm.Id, claimsHash, version, rulesDigest])
     }
 
     private Drop(schema: boolean): void

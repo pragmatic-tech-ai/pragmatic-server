@@ -8,7 +8,7 @@ import type { CellValue } from '@pragmatic-tech-ai/graph'
 import { BlobPackageStore, compilePackage, DataSourceAdapterCatalog, PackageKind, StoragePackageSink } from '@pragmatic-tech-ai/todl'
 import type { CompiledPackage } from '@pragmatic-tech-ai/todl'
 import { InMemoryMessageSocket, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AccessContext, Grant, IdentityConfig, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Grant, IdentityConfig, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig, Principal } from '@pragmatic-tech-ai/todl-identity'
 import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
@@ -214,9 +214,9 @@ export class EnvironmentFixture
     /** `principal` with an Owner grant on the tenant (the gate admits it; the scope decides). */
     public ContextFor(principal: Principal): AccessContext
     {
-        const tenant = new Tenant(EnvironmentFixture.TenantId, TenantKind.SelfHosted, EnvironmentFixture.DisplayName)
-        const grants = [new Grant(principal.Id, Role.Owner, new ResourceRef(ResourceKind.Tenant, EnvironmentFixture.TenantId, []))]
-        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+        const realm = new Realm(EnvironmentFixture.TenantId, RealmKind.SelfHosted, EnvironmentFixture.DisplayName)
+        const grants = [new Grant(principal.Id, Role.Owner, new ResourceRef(ResourceKind.Realm, EnvironmentFixture.TenantId, []))]
+        return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
     /** A client attached to the started server as `principal` (`ContextFor`). */
@@ -269,7 +269,7 @@ export class EnvironmentFixture
     /** Saves `model` as the environment security setting and invalidates the server's cached one. */
     public async SaveSecurityModel(model: ISecurityModelConfig): Promise<void>
     {
-        const store = await this.Server.TenantConfigStore()
+        const store = await this.Server.RealmConfigStore()
         const seeded = await store.Get(EnvironmentFixture.TenantId)
         assert.ok(seeded !== null, EnvironmentFixture.NotSeededMessage)
         await store.Save(EnvironmentFixture.TenantId, new IdentityConfig(seeded.PackId, seeded.DelegationDepth, seeded.ProviderSettings, seeded.GroupRoleMap, seeded.ClaimsMapping, model))

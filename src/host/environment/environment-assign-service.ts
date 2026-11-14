@@ -65,7 +65,7 @@ export class EnvironmentAssignService
         if (concept === undefined) return { status: AssignStatus.NotFound, reason: EnvironmentAssignService.RecordNotFound }
         const security = snapshot.Catalog.Security
         const evaluator = AccessDepthEvaluator.For(security, model, Tier1Catalog.EngineStoredConcepts(snapshot.Catalog))
-        const computed = evaluator.AssignWrites(context.Tenant.Id, concept, params.owner.id, params.owner.kind === ShareSubjectKind.Team, params.owningBu)
+        const computed = evaluator.AssignWrites(context.Realm.Id, concept, params.owner.id, params.owner.kind === ShareSubjectKind.Team, params.owningBu)
         if (computed.outcome === AssignOutcome.Unsupported) return { status: AssignStatus.Invalid, reason: EnvironmentAssignService.OrganizationOwnedReason }
         const grants = await tier1.Grants(context, snapshot)
         const base = await tier1.AssignRecords(context, snapshot)

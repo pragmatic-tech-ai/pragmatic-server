@@ -3,7 +3,7 @@ import { OwnershipAssignment, SystemNames } from '@pragmatic-tech-ai/todl/engine
 import type { IEnvironmentCatalog, IOwnerAssignment } from '@pragmatic-tech-ai/todl/engine'
 import { InvalidSecurityModelError, UnreadableIdpDirectoryRecordError } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
-import { TenantSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
+import { RealmSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { SecurityChangesDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { IGraphScope } from '../engine/access-scope-source.js'
 import { AsyncMutex } from '../cypher/async-mutex.js'
@@ -19,7 +19,7 @@ import type { SystemPrincipalScope } from './system-principal-scope.js'
 interface IStoredSetting
 {
     readonly Config: ISecurityModelConfig
-    readonly Model: TenantSecurityModel
+    readonly Model: RealmSecurityModel
 }
 
 /**
@@ -60,7 +60,7 @@ export class DeliverySecurity
     public async Diff(current: IEnvironmentCatalog, prospective: IEnvironmentCatalog): Promise<SecurityDeployDiff>
     {
         const stored = await this.Readable()
-        return SecurityDeployDiff.Compute(current, prospective, stored?.Config, stored?.Model ?? TenantSecurityModel.Empty())
+        return SecurityDeployDiff.Compute(current, prospective, stored?.Config, stored?.Model ?? RealmSecurityModel.Empty())
     }
 
     /** Records the diff's newly owned concepts as owed a backfill (durably, before the delivery persists). */
@@ -75,7 +75,7 @@ export class DeliverySecurity
         const applied = await this.setting.Exclusive(async () =>
         {
             const stored = await this.Readable()
-            const rebased = diff.Rebased(stored?.Config, stored?.Model ?? TenantSecurityModel.Empty())
+            const rebased = diff.Rebased(stored?.Config, stored?.Model ?? RealmSecurityModel.Empty())
             if (stored !== undefined && rebased.Prunes) await this.setting.Replace(rebased.Pruned(stored.Config))
             this.setting.Reconcile(rebased.Prospective)
             return rebased
@@ -92,7 +92,7 @@ export class DeliverySecurity
      */
     public async Reconcile(catalog: IEnvironmentCatalog, version: string): Promise<void>
     {
-        await this.Commit(SecurityDeployDiff.Compute(catalog, catalog, undefined, TenantSecurityModel.Empty()), DeliverySecurity.ReconcileDelivery, version)
+        await this.Commit(SecurityDeployDiff.Compute(catalog, catalog, undefined, RealmSecurityModel.Empty()), DeliverySecurity.ReconcileDelivery, version)
         await this.pending.Retain(catalog.Security.OwnedConcepts())
     }
 

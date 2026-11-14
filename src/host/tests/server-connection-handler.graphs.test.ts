@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, GraphProtocol, AdminProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { GraphContributeParamsDto, GraphCreateParamsDto, GraphDetailDto, GraphExportDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
@@ -133,10 +133,10 @@ class GraphFixture
 
     public static Context(role: Role | null): AccessContext
     {
-        const tenant = new Tenant(GraphFixture.TenantId, TenantKind.SelfHosted, GraphFixture.TenantName)
+        const realm = new Realm(GraphFixture.TenantId, RealmKind.SelfHosted, GraphFixture.TenantName)
         const principal = new Principal(GraphFixture.PrincipalId, GraphFixture.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = role === null ? [] : [new Grant(GraphFixture.PrincipalId, role, new ResourceRef(ResourceKind.Tenant, GraphFixture.TenantId, []))]
-        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+        const grants = role === null ? [] : [new Grant(GraphFixture.PrincipalId, role, new ResourceRef(ResourceKind.Realm, GraphFixture.TenantId, []))]
+        return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
     public static Language(): ILanguageService

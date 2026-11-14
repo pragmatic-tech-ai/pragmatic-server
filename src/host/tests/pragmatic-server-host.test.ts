@@ -48,8 +48,8 @@ class HostFixture
     public static async Token(host: PragmaticServerHost): Promise<string>
     {
         const pack = await host.IdentityPackForTest('t1')
-        await pack.Grants.Save(new Grant('svc1', Role.Admin, new ResourceRef(ResourceKind.Tenant, 't1', [])))
-        const issued = await pack.Tokens.Issue(await host.TenantForTest('t1'), 'svc1', [], null)
+        await pack.Grants.Save(new Grant('svc1', Role.Admin, new ResourceRef(ResourceKind.Realm, 't1', [])))
+        const issued = await pack.Tokens.Issue(await host.RealmForTest('t1'), 'svc1', [], null)
         return issued.Token
     }
 }

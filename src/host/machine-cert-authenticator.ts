@@ -1,5 +1,5 @@
 import { AuthMethod, AuthenticatedResult, Principal, PrincipalKind, RejectedResult } from '@pragmatic-tech-ai/todl-identity'
-import type { AuthenticationResult, Credential, IAuthenticator, PresentedSecret, Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { AuthenticationResult, Credential, IAuthenticator, PresentedSecret, Realm } from '@pragmatic-tech-ai/todl-identity'
 import type { MachinePrincipalMap } from './machine-principal-map.js'
 
 /** Authenticates a machine by its (already TLS-verified) client-cert fingerprint, carried in Credential.Reference. */
@@ -16,7 +16,7 @@ export class MachineCertAuthenticator implements IAuthenticator
         this.map = map
     }
 
-    public async Authenticate(credential: Credential, _presented: PresentedSecret, tenant: Tenant): Promise<AuthenticationResult>
+    public async Authenticate(credential: Credential, _presented: PresentedSecret, realm: Realm): Promise<AuthenticationResult>
     {
         if (credential.Reference.length === 0)
         {
@@ -27,6 +27,6 @@ export class MachineCertAuthenticator implements IAuthenticator
         {
             return new RejectedResult(MachineCertAuthenticator.RejectReason)
         }
-        return new AuthenticatedResult(new Principal(entry.PrincipalId, tenant.Id, PrincipalKind.Machine, new Map(), [...entry.Groups]))
+        return new AuthenticatedResult(new Principal(entry.PrincipalId, realm.Id, PrincipalKind.Machine, new Map(), [...entry.Groups]))
     }
 }

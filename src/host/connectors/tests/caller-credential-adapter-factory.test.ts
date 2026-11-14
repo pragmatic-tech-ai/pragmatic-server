@@ -5,7 +5,7 @@ import type { DataSourceAdapterCatalog, ExternalRecord, IDataSourceAdapter, IDat
 import { SqlAdapterFactory } from '@pragmatic-tech-ai/todl-connectors-host'
 import type { PgPoolOptions } from '@pragmatic-tech-ai/todl-connectors-host'
 import type { Pool } from 'pg'
-import { PresentedSecret, SourceToken, SourceTokenError, SourceTokenFailure, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
+import { PresentedSecret, SourceToken, SourceTokenError, SourceTokenFailure, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecretStore, ISourceTokenProvider, SourceTokenRequest } from '@pragmatic-tech-ai/todl-identity'
 import { UpstreamTokens, UpstreamTokenVault } from '@pragmatic-tech-ai/todl-identity-cloud'
 import { ServiceProvider, Signal } from '@pragmatic-tech-ai/todl-runtime'
@@ -196,7 +196,7 @@ class CallerFx
     public static readonly Resource = 'api://crm'
     public static readonly AppSecret = 'app-secret'
     public static readonly Source = 'Account'
-    public static readonly Tenant = new Tenant('env-1', TenantKind.SelfHosted, 'Environment One')
+    public static readonly Realm = new Realm('env-1', RealmKind.SelfHosted, 'Environment One')
     public static readonly Request: QueryRequest = { Source: CallerFx.Source, Fields: [TokenEchoAdapter.TokenField] }
     public static readonly UpstreamAccess = 'upstream-access'
     public static readonly UpstreamRefresh = 'upstream-refresh'
@@ -249,13 +249,13 @@ describe('caller credential adapter factory', () =>
     {
         const inner = new EchoFactory()
         const tokens = new FakeTokens()
-        const adapter = await new CallerCredentialAdapterFactory(inner, tokens, CallerFx.Tenant).Open(CallerFx.Connection(ConnectionCredentialMode.Caller))
+        const adapter = await new CallerCredentialAdapterFactory(inner, tokens, CallerFx.Realm).Open(CallerFx.Connection(ConnectionCredentialMode.Caller))
         assert.equal(adapter.CanPage, false, 'before any caller: the weakest guarantee')
         const [alice, bob] = await Promise.all([CallerFx.Read(adapter, CallerFx.Alice), CallerFx.Read(adapter, CallerFx.Bob)])
         assert.equal(alice, FakeTokens.TokenOf(CallerFx.Alice))
         assert.equal(bob, FakeTokens.TokenOf(CallerFx.Bob))
-        assert.deepEqual(tokens.Requests.map(request => [request.TenantId, request.PrincipalId, request.Resource]).sort(),
-            [[CallerFx.Tenant.Id, CallerFx.Alice, CallerFx.Resource], [CallerFx.Tenant.Id, CallerFx.Bob, CallerFx.Resource]])
+        assert.deepEqual(tokens.Requests.map(request => [request.RealmId, request.PrincipalId, request.Resource]).sort(),
+            [[CallerFx.Realm.Id, CallerFx.Alice, CallerFx.Resource], [CallerFx.Realm.Id, CallerFx.Bob, CallerFx.Resource]])
         assert.equal(inner.Connected.length, 2, 'one inner adapter per principal')
         for (const opened of inner.Connected) assert.deepEqual(opened.Contexts, [opened.Secret === FakeTokens.TokenOf(CallerFx.Alice) ? CallerFx.Alice : CallerFx.Bob], 'each inner adapter serves only its own principal')
         assert.ok(inner.Opened.every(opened => opened.Secret !== CallerFx.AppSecret && opened.Secret !== undefined), 'never opened with the app credentials, nor without a caller\'s token')
@@ -265,7 +265,7 @@ describe('caller credential adapter factory', () =>
     test('a built-in factory reports its capabilities before any call, without connecting (R36)', async () =>
     {
         RecordingPool.Built.length = 0
-        const adapter = await new CallerCredentialAdapterFactory(new SqlAdapterFactory(RecordingPool.Builder()), new FakeTokens(), CallerFx.Tenant).Open(CallerFx.SqlConnection())
+        const adapter = await new CallerCredentialAdapterFactory(new SqlAdapterFactory(RecordingPool.Builder()), new FakeTokens(), CallerFx.Realm).Open(CallerFx.SqlConnection())
         // what TODL's DataSourceTransaction.Apply reads before a transactional write's first adapter call
         assert.equal(adapter.CanTransact, true, 'a transactional write as the very first call is not refused')
         assert.equal(adapter.CanPage, true)
@@ -284,7 +284,7 @@ describe('caller credential adapter factory', () =>
     {
         const inner = new EchoFactory()
         inner.ManagesVersions = true
-        const adapter = await new CallerCredentialAdapterFactory(inner, new FakeTokens(), CallerFx.Tenant).Open(CallerFx.Connection(ConnectionCredentialMode.Caller))
+        const adapter = await new CallerCredentialAdapterFactory(inner, new FakeTokens(), CallerFx.Realm).Open(CallerFx.Connection(ConnectionCredentialMode.Caller))
         assert.equal(adapter.CanTransact, false, 'an unknown factory: TODL refuses a transactional write explicitly until a caller opened it')
         await assert.rejects(adapter.Apply(CallerFx.Batch, CallerFx.Context(CallerFx.Alice)), (error: unknown) => error instanceof CallerCredentialError && error.Code === CallerCredentialErrorCode.CapabilitiesUnsettled)
         assert.equal(inner.Connected[0]!.Applied, 0, 'nothing reached the source')
@@ -296,7 +296,7 @@ describe('caller credential adapter factory', () =>
     test('an unknown credential mode is refused, never read as dedicated', async () =>
     {
         const inner = new EchoFactory()
-        const factory = new CallerCredentialAdapterFactory(inner, new FakeTokens(), CallerFx.Tenant)
+        const factory = new CallerCredentialAdapterFactory(inner, new FakeTokens(), CallerFx.Realm)
         for (const mode of CallerFx.UnknownModes)
         {
             await assert.rejects(factory.Open(CallerFx.Connection(mode)), (error: unknown) => error instanceof CallerCredentialError && error.Code === CallerCredentialErrorCode.UnknownCredentialMode)
@@ -308,7 +308,7 @@ describe('caller credential adapter factory', () =>
     {
         const inner = new EchoFactory()
         const tokens = new FakeTokens()
-        const adapter = await new CallerCredentialAdapterFactory(inner, tokens, CallerFx.Tenant).Open(CallerFx.Connection(ConnectionCredentialMode.Caller))
+        const adapter = await new CallerCredentialAdapterFactory(inner, tokens, CallerFx.Realm).Open(CallerFx.Connection(ConnectionCredentialMode.Caller))
         await CallerFx.Read(adapter, CallerFx.Alice)
         const first = inner.Connected[0]!
         let release: () => void = () => undefined
@@ -327,7 +327,7 @@ describe('caller credential adapter factory', () =>
     {
         const inner = new EchoFactory()
         const tokens = new FakeTokens()
-        const adapter = await new CallerCredentialAdapterFactory(inner, tokens, CallerFx.Tenant).Open(CallerFx.Connection(ConnectionCredentialMode.Caller))
+        const adapter = await new CallerCredentialAdapterFactory(inner, tokens, CallerFx.Realm).Open(CallerFx.Connection(ConnectionCredentialMode.Caller))
         await assert.rejects(adapter.Query(CallerFx.Request), CallerCredentialError)
         await assert.rejects(adapter.Query(CallerFx.Request, CallerFx.Context('')), CallerCredentialError)
         assert.equal(tokens.Requests.length, 0)
@@ -339,7 +339,7 @@ describe('caller credential adapter factory', () =>
         const inner = new EchoFactory()
         const tokens = new FakeTokens()
         tokens.Failing.add(CallerFx.Alice)
-        const adapter = await new CallerCredentialAdapterFactory(inner, tokens, CallerFx.Tenant).Open(CallerFx.Connection(ConnectionCredentialMode.Caller))
+        const adapter = await new CallerCredentialAdapterFactory(inner, tokens, CallerFx.Realm).Open(CallerFx.Connection(ConnectionCredentialMode.Caller))
         await assert.rejects(adapter.Query(CallerFx.Request, CallerFx.Context(CallerFx.Alice)), (error: unknown) =>
             error instanceof SourceTokenError && !error.message.includes(FakeTokens.TokenOf(CallerFx.Alice)))
         assert.equal(inner.Connected.length, 0, 'no adapter opened: neither with the app credentials nor without a token')
@@ -349,7 +349,7 @@ describe('caller credential adapter factory', () =>
     {
         const inner = new EchoFactory()
         const tokens = new FakeTokens()
-        const factory = new CallerCredentialAdapterFactory(inner, tokens, CallerFx.Tenant)
+        const factory = new CallerCredentialAdapterFactory(inner, tokens, CallerFx.Realm)
         const connection = CallerFx.Connection(ConnectionCredentialMode.Caller)
         let reopened = 0
         const caller = await factory.Open(connection)
@@ -382,7 +382,7 @@ describe('caller credential adapter factory', () =>
     {
         const inner = new EchoFactory()
         const tokens = new FakeTokens()
-        const factory = new CallerCredentialAdapterFactory(inner, tokens, CallerFx.Tenant)
+        const factory = new CallerCredentialAdapterFactory(inner, tokens, CallerFx.Realm)
         for (const mode of [undefined, ConnectionCredentialMode.Dedicated])
         {
             const adapter = await factory.Open(CallerFx.Connection(mode))
@@ -397,9 +397,9 @@ describe('caller credential adapter factory', () =>
         const inner = new EchoFactory()
         const tokens = new FakeTokens()
         const vault = new UpstreamTokenVault(new MemorySecrets())
-        await vault.Put(CallerFx.Tenant.Id, CallerFx.Alice, new UpstreamTokens(CallerFx.UpstreamAccess, CallerFx.UpstreamRefresh))
+        await vault.Put(CallerFx.Realm.Id, CallerFx.Alice, new UpstreamTokens(CallerFx.UpstreamAccess, CallerFx.UpstreamRefresh))
         const credentials = new CallerCredentials()
-        credentials.Bind(tokens, CallerFx.Tenant, vault)
+        credentials.Bind(tokens, CallerFx.Realm, vault)
         const adapter = await credentials.Wrap(inner).Open(CallerFx.Connection(ConnectionCredentialMode.Caller))
         await CallerFx.Read(adapter, CallerFx.Alice)
         await CallerFx.Read(adapter, CallerFx.Alice)
@@ -409,8 +409,8 @@ describe('caller credential adapter factory', () =>
         try
         {
             deprovisioned.Raise([CallerFx.Alice])
-            await CallerFx.Until(async () => (await vault.Get(CallerFx.Tenant.Id, CallerFx.Alice)) === null)
-            assert.equal(await vault.Get(CallerFx.Tenant.Id, CallerFx.Alice), null, 'the stored upstream tokens are deleted')
+            await CallerFx.Until(async () => (await vault.Get(CallerFx.Realm.Id, CallerFx.Alice)) === null)
+            assert.equal(await vault.Get(CallerFx.Realm.Id, CallerFx.Alice), null, 'the stored upstream tokens are deleted')
             assert.equal(inner.Connected[0]!.Disposed, true, 'the principal\'s inner connection is closed')
             assert.equal(await CallerFx.Read(adapter, CallerFx.Alice), FakeTokens.TokenOf(CallerFx.Alice))
             assert.equal(tokens.Requests.length, 2, 'the next call re-acquires')

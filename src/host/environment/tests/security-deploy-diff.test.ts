@@ -5,7 +5,7 @@ import { DeliveryChannel, EnvironmentCatalogComposer } from '@pragmatic-tech-ai/
 import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import { AccessLevel, BaseRole, IdpDirectorySnapshot, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
-import { TenantSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
+import { RealmSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import { SecurityDeployDiff } from '../security-deploy-diff.js'
 import { EnvironmentFixture } from './environment-fixture.js'
@@ -72,7 +72,7 @@ class DiffFx
 
     public static Diff(current: IEnvironmentCatalog, prospective: IEnvironmentCatalog, setting: ISecurityModelConfig): SecurityDeployDiff
     {
-        const model = TenantSecurityModel.FromConfig(setting, IdpDirectorySnapshot.NonAuthoritative(new Date()))
+        const model = RealmSecurityModel.FromConfig(setting, IdpDirectorySnapshot.NonAuthoritative(new Date()))
         return SecurityDeployDiff.Compute(current, prospective, setting, model)
     }
 

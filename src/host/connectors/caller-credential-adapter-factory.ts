@@ -3,7 +3,7 @@ import { ConnectionFailureKind } from '@pragmatic-tech-ai/todl'
 import type { AdapterResolutionRequest, DataSourceKind, ExternalRecord, IDataSourceAdapter, IDataSourceAdapterFactory, IDataSourceAdapterProvider, IDataSourceContext, PageQuery, PageSlice, QueryRequest, ResolvedConnection, WriteBatch, WriteResult } from '@pragmatic-tech-ai/todl'
 import { CypherAdapterFactory, DocumentAdapterFactory, RestAdapterFactory, SqlAdapterFactory } from '@pragmatic-tech-ai/todl-connectors-host'
 import { SourceTokenRequest } from '@pragmatic-tech-ai/todl-identity'
-import type { ISourceTokenProvider, Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { ISourceTokenProvider, Realm } from '@pragmatic-tech-ai/todl-identity'
 
 /** How a connector connection authenticates to its source (spec section 6): its connector config's `credentials`. */
 export enum ConnectionCredentialMode
@@ -148,7 +148,7 @@ export class CallerCredentialAdapter implements IDataSourceAdapter
     public constructor(
         private readonly inner: IDataSourceAdapterFactory,
         private readonly tokens: ISourceTokenProvider,
-        private readonly tenant: Tenant,
+        private readonly realm: Realm,
         private readonly connection: ResolvedConnection,
         private readonly resource: string,
         private readonly registry: Set<CallerCredentialAdapter>,
@@ -242,7 +242,7 @@ export class CallerCredentialAdapter implements IDataSourceAdapter
     {
         const key = context?.Key ?? ''
         if (key.length === 0) throw new CallerCredentialError(CallerCredentialErrorCode.AnonymousContext)
-        const token = await this.tokens.Acquire(new SourceTokenRequest(this.tenant.Id, key, this.resource))
+        const token = await this.tokens.Acquire(new SourceTokenRequest(this.realm.Id, key, this.resource))
         const secret = token.Value.Reveal()
         // entered by ConnectionFor: a renewal racing this call cannot dispose the adapter under it
         const connection = await this.ConnectionFor(key, secret)
@@ -368,7 +368,7 @@ export class CallerCredentialAdapterFactory implements IDataSourceAdapterFactory
 
     private readonly open = new Set<CallerCredentialAdapter>()
 
-    public constructor(private readonly inner: IDataSourceAdapterFactory, private readonly tokens: ISourceTokenProvider, private readonly tenant: Tenant)
+    public constructor(private readonly inner: IDataSourceAdapterFactory, private readonly tokens: ISourceTokenProvider, private readonly realm: Realm)
     {
         this.Kind = inner.Kind
     }
@@ -387,7 +387,7 @@ export class CallerCredentialAdapterFactory implements IDataSourceAdapterFactory
         if (CallerCredentialAdapterFactory.ModeOf(connection) === ConnectionCredentialMode.Dedicated) return this.inner.Open(connection)
         const resource = connection.Config[CallerCredentialAdapterFactory.TokenResourceKey]
         if (resource === undefined || resource.length === 0) throw new CallerCredentialError(CallerCredentialErrorCode.NoTokenResource)
-        const adapter = new CallerCredentialAdapter(this.inner, this.tokens, this.tenant, connection, resource, this.open, await this.KnownCapabilities(connection))
+        const adapter = new CallerCredentialAdapter(this.inner, this.tokens, this.realm, connection, resource, this.open, await this.KnownCapabilities(connection))
         this.open.add(adapter)
         return adapter
     }

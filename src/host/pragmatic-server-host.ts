@@ -12,7 +12,7 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { WsMessageSocket, HeartbeatMonitor, BackpressurePolicy, TransportCloseCode } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AuthMethod } from '@pragmatic-tech-ai/todl-identity'
-import type { AccessContext, Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { AccessContext, Realm } from '@pragmatic-tech-ai/todl-identity'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import { MachineTls } from '../cluster/machine-tls.js'
 import type { MachineTlsRef } from '../cluster/machine-tls.js'
@@ -289,9 +289,9 @@ export class PragmaticServerHost
         return (await this.registry.ServerFor(environmentId)).Pack()
     }
 
-    public async TenantForTest(environmentId: string): Promise<Tenant>
+    public async RealmForTest(environmentId: string): Promise<Realm>
     {
-        return (await this.registry.ServerFor(environmentId)).Tenant()
+        return (await this.registry.ServerFor(environmentId)).Realm()
     }
 
     public async LanguageServiceForTest(environmentId: string): Promise<ILanguageService>
@@ -470,7 +470,7 @@ export class PragmaticServerHost
             const languageService = await server.LanguageService()
             const manager = await server.Manager()
             const pack = await server.Pack()
-            const admin = new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), () => this.registry.DisposeTenant(environmentId), pack.Accounts, pack.Registrar, pack.Tokens, {
+            const admin = new AdminService(pack.Grants, pack.Audit, await server.RealmConfigStore(), server.Realm(), () => this.registry.DisposeTenant(environmentId), pack.Accounts, pack.Registrar, pack.Tokens, {
                 Invalidate: name => server.InvalidateAdapterPack(name),
                 AllowScripts: name => server.AllowAdapterPackScripts(name),
                 DenyScripts: name => server.DenyAdapterPackScripts(name),
@@ -510,7 +510,7 @@ export class PragmaticServerHost
                             terminateTimer.unref?.()
                         },
                     }
-                    this.principalConnections.Add(context.Tenant.Id, context.Principal.Id, revocable)
+                    this.principalConnections.Add(context.Realm.Id, context.Principal.Id, revocable)
                     this.heartbeat.Watch(ws)
                     ws.on(PragmaticServerHost.CloseEvent, () =>
                     {
@@ -550,11 +550,11 @@ export class PragmaticServerHost
         if (header === undefined)
         {
             const credential = this.browserAuth.Credential(req, true)
-            if (credential === null || credential.Tenant !== server.Tenant().Id)
+            if (credential === null || credential.Tenant !== server.Realm().Id)
             {
                 return null
             }
-            return this.authenticator.ResolveAsync(credential.Token, server.Tenant(), await server.Pack())
+            return this.authenticator.ResolveAsync(credential.Token, server.Realm(), await server.Pack())
         }
         if (typeof header !== 'string' || !header.startsWith(PragmaticServerHost.BearerPrefix))
         {
@@ -565,7 +565,7 @@ export class PragmaticServerHost
         {
             return null
         }
-        return this.authenticator.ResolveAsync(token, server.Tenant(), await server.Pack())
+        return this.authenticator.ResolveAsync(token, server.Realm(), await server.Pack())
     }
 
     private async Request(req: IncomingMessage, res: ServerResponse): Promise<void>
@@ -600,7 +600,7 @@ export class PragmaticServerHost
             }
             const server = await this.registry.ServerFor(environmentId)
             const pack = await server.Pack()
-            const endpoint = new AuthHttpEndpoint(pack, server.Tenant(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation, this.audit, this.browserAuth, server.CallerCredentials())
+            const endpoint = new AuthHttpEndpoint(pack, server.Realm(), server.Oidc(), this.MachineContext(req, pack), this.instrumentation, this.audit, this.browserAuth, server.CallerCredentials())
             await endpoint.Handle(req, res)
         }
         catch (error)

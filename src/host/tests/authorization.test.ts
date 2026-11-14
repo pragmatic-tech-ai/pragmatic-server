@@ -17,7 +17,7 @@ class AuthzFixture
 
     public static TenantRoot(): ResourceRef
     {
-        return new ResourceRef(ResourceKind.Tenant, 't1', [])
+        return new ResourceRef(ResourceKind.Realm, 't1', [])
     }
 
     public static Start(): { baseDir: string; solution: string; keyEnv: string }
@@ -52,7 +52,7 @@ test('the dispatch gate enforces the role ladder for open vs read', async () =>
     const host = await PragmaticServerHost.StartAsync(AuthzFixture.Options(baseDir, keyEnv))
     const url = `ws://${host.Address().host}:${host.Address().port}/?environment=t1`
     const pack = await host.IdentityPackForTest('t1')
-    const tenant = await host.TenantForTest('t1')
+    const tenant = await host.RealmForTest('t1')
     await pack.Grants.Save(new Grant('admin', Role.Admin, AuthzFixture.TenantRoot()))
     await pack.Grants.Save(new Grant('viewer', Role.Viewer, AuthzFixture.TenantRoot()))
     const adminToken = (await pack.Tokens.Issue(tenant, 'admin', [], null)).Token
@@ -90,7 +90,7 @@ test('graph-change pushes reach a readable connection but not a no-grant one', a
     const host = await PragmaticServerHost.StartAsync(AuthzFixture.Options(baseDir, keyEnv))
     const url = `ws://${host.Address().host}:${host.Address().port}/?environment=t1`
     const pack = await host.IdentityPackForTest('t1')
-    const tenant = await host.TenantForTest('t1')
+    const tenant = await host.RealmForTest('t1')
     await pack.Grants.Save(new Grant('admin', Role.Admin, AuthzFixture.TenantRoot()))
     const adminToken = (await pack.Tokens.Issue(tenant, 'admin', [], null)).Token
     const nograntToken = (await pack.Tokens.Issue(tenant, 'nobody', [], null)).Token

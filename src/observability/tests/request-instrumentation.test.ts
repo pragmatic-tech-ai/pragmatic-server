@@ -8,7 +8,7 @@ import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-s
 import { mkdtempSync, cpSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../../host/server-connection-handler.js'
 import { Observability, ObservabilityRole } from '../observability.js'
@@ -57,18 +57,18 @@ class Fixture
 
     public static Context(): AccessContext
     {
-        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
         const principal = new Principal('principal-xyz', 't1', PrincipalKind.User, new Map(), [])
-        const grants = [new Grant('principal-xyz', Role.Owner, new ResourceRef(ResourceKind.Tenant, 't1', []))]
-        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+        const grants = [new Grant('principal-xyz', Role.Owner, new ResourceRef(ResourceKind.Realm, 't1', []))]
+        return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
     public static ViewerContext(): AccessContext
     {
-        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
         const principal = new Principal('viewer-1', 't1', PrincipalKind.User, new Map(), [])
-        const grants = [new Grant('viewer-1', Role.Viewer, new ResourceRef(ResourceKind.Tenant, 't1', []))]
-        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+        const grants = [new Grant('viewer-1', Role.Viewer, new ResourceRef(ResourceKind.Realm, 't1', []))]
+        return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
     public static SolutionDir(): string

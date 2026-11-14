@@ -28,8 +28,11 @@ export class AdminEnums
         ['Maker', Role.Maker],
     ])
 
+    /** NameOf returns the FIRST name for a value, so 'Realm' (the name written) precedes the legacy 'Tenant' alias,
+     *  which is still read for one release (wire DTOs and stored grants written before the rename). */
     private static readonly ResourceKinds: ReadonlyMap<string, ResourceKind> = new Map<string, ResourceKind>([
-        ['Tenant', ResourceKind.Tenant],
+        ['Realm', ResourceKind.Realm],
+        ['Tenant', ResourceKind.Realm],
         ['Project', ResourceKind.Project],
         ['Model', ResourceKind.Model],
         ['Connector', ResourceKind.Connector],

@@ -1,5 +1,5 @@
 import { AuthMethod, Credential, PresentedSecret, AuthenticatedResult, SystemPrincipal } from '@pragmatic-tech-ai/todl-identity'
-import type { AccessContext, Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { AccessContext, Realm } from '@pragmatic-tech-ai/todl-identity'
 import { AccessContextAssembler } from '@pragmatic-tech-ai/todl-identity-node'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import { trace, isSpanContextValid } from '@opentelemetry/api'
@@ -26,22 +26,22 @@ export class ConnectionAuthenticator
         this.audit = audit
     }
 
-    public async ResolveAsync(token: string, tenant: Tenant, pack: ServerIdentityPack): Promise<AccessContext | null>
+    public async ResolveAsync(token: string, realm: Realm, pack: ServerIdentityPack): Promise<AccessContext | null>
     {
-        const resolved = await this.Resolve(token, tenant, pack)
+        const resolved = await this.Resolve(token, realm, pack)
         const context = resolved !== null && SystemPrincipal.IsReserved(resolved.Principal.Id) ? null : resolved
-        this.Emit(tenant, context)
+        this.Emit(realm, context)
         return context
     }
 
-    private Emit(tenant: Tenant, context: AccessContext | null): void
+    private Emit(realm: Realm, context: AccessContext | null): void
     {
         try
         {
             const spanContext = trace.getActiveSpan()?.spanContext()
             const event: AccessAuditEvent = {
                 Timestamp: new Date(),
-                TenantId: tenant.Id,
+                TenantId: realm.Id,
                 PrincipalId: context?.Principal.Id,
                 Surface: AuditSurface.Upgrade,
                 MethodOrPath: ConnectionAuthenticator.UpgradeMethod,
@@ -56,7 +56,7 @@ export class ConnectionAuthenticator
         }
     }
 
-    private async Resolve(token: string, tenant: Tenant, pack: ServerIdentityPack): Promise<AccessContext | null>
+    private async Resolve(token: string, realm: Realm, pack: ServerIdentityPack): Promise<AccessContext | null>
     {
         if (token.length === 0)
         {
@@ -65,10 +65,10 @@ export class ConnectionAuthenticator
         const session = await pack.Sessions.Validate(token)
         if (session !== null)
         {
-            const principal = await pack.Directory.Lookup(session.PrincipalId, tenant)
+            const principal = await pack.Directory.Lookup(session.PrincipalId, realm)
             if (principal !== null)
             {
-                return this.assembler.AssembleAsync(pack, tenant, principal)
+                return this.assembler.AssembleAsync(pack, realm, principal)
             }
         }
         const serviceAuthenticator = pack.AuthenticatorFor(AuthMethod.ServiceToken)
@@ -77,11 +77,11 @@ export class ConnectionAuthenticator
             const presented = new PresentedSecret(token)
             try
             {
-                const result = await serviceAuthenticator.Authenticate(new Credential(AuthMethod.ServiceToken, ConnectionAuthenticator.EmptyReference), presented, tenant)
+                const result = await serviceAuthenticator.Authenticate(new Credential(AuthMethod.ServiceToken, ConnectionAuthenticator.EmptyReference), presented, realm)
                 if (result instanceof AuthenticatedResult)
                 {
                     // a service token's scopes ride in Principal.Groups; carry them explicitly so only this path is ever scope-restricted
-                    const context = await this.assembler.AssembleAsync(pack, tenant, result.Principal)
+                    const context = await this.assembler.AssembleAsync(pack, realm, result.Principal)
                     return new ScopedAccessContext(context, result.Principal.Groups)
                 }
             }

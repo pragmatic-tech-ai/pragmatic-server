@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DelegationDepth, IdentityConfig, IdpDirectoryRequest, IdpDirectorySnapshot, IdpDirectorySync, IdpUserState, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
-import type { IIdpDirectorySource, IIdpDirectoryStore, ISecurityModelConfig, ITenantConfigStore } from '@pragmatic-tech-ai/todl-identity'
+import { DelegationDepth, IdentityConfig, IdpDirectoryRequest, IdpDirectorySnapshot, IdpDirectorySync, IdpUserState, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
+import type { IIdpDirectorySource, IIdpDirectoryStore, ISecurityModelConfig, IRealmConfigStore } from '@pragmatic-tech-ai/todl-identity'
 import { FakeAuditSink, FakeSessionManager } from '@pragmatic-tech-ai/todl-identity/testing'
 import { Disposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
@@ -13,7 +13,7 @@ import { TenantPurpose } from '../../../tenancy/tenant-purpose.js'
 import { EnvironmentFixture } from './environment-fixture.js'
 
 /** A config store whose stored security model can be swapped between runs. */
-class MutableConfigStore implements ITenantConfigStore
+class MutableConfigStore implements IRealmConfigStore
 {
     public Fail: Error | undefined
 
@@ -78,7 +78,7 @@ class RecordingSource implements IIdpDirectorySource
         this.next = next
     }
 
-    public async Snapshot(_tenant: Tenant, request: IdpDirectoryRequest): Promise<IdpDirectorySnapshot>
+    public async Snapshot(_realm: Realm, request: IdpDirectoryRequest): Promise<IdpDirectorySnapshot>
     {
         this.Requests.push(request)
         if (this.HoldFirst !== undefined && !this.held)
@@ -123,7 +123,7 @@ class RecordingDiagnostics implements ISyncDiagnostics
 
 class SyncFx
 {
-    public static readonly Tenant = new Tenant('env1', TenantKind.SelfHosted, 'Environment One')
+    public static readonly Realm = new Realm('env1', RealmKind.SelfHosted, 'Environment One')
 
     public static Model(groups: readonly string[]): ISecurityModelConfig
     {
@@ -146,11 +146,11 @@ class SyncFx
         const config = new MutableConfigStore(options.model ?? SyncFx.Model(['g1']))
         const store = new MemoryDirectoryStore(options.seed ?? null)
         const source = new RecordingSource(options.next ?? SyncFx.Snapshot())
-        const setting = new EnvironmentSecuritySetting(config, store, SyncFx.Tenant)
+        const setting = new EnvironmentSecuritySetting(config, store, SyncFx.Realm)
         const sync = new IdpDirectorySync(source, store, new FakeSessionManager(), new FakeAuditSink())
         const timer = new ManualTimer()
         const diagnostics = new RecordingDiagnostics()
-        const host = new IdpDirectorySyncHost(sync, setting, SyncFx.Tenant, timer, diagnostics)
+        const host = new IdpDirectorySyncHost(sync, setting, SyncFx.Realm, timer, diagnostics)
         return { host, source, store, setting, config, timer, diagnostics }
     }
 

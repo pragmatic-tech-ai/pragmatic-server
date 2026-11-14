@@ -27,7 +27,7 @@ import { createLocalJWKSet, errors, jwtVerify } from 'jose'
 import type { JSONWebKeySet } from 'jose'
 import {
     AuthMethod, AuthenticatedResult, Credential, DelegationDepth,
-    IdentityConfig, PresentedSecret, Tenant, TenantKind,
+    IdentityConfig, PresentedSecret, Realm, RealmKind,
 } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecretStore } from '@pragmatic-tech-ai/todl-identity'
 import {
@@ -391,7 +391,7 @@ export class IdpSsoSmoke
     private host: IdpHost | undefined
     private baseUrl = ''
     private readonly jar = new CookieJar()
-    private readonly tenant = new Tenant(IdpSsoSmoke.TenantId, TenantKind.SelfHosted, IdpSsoSmoke.TenantDisplayName)
+    private readonly realm = new Realm(IdpSsoSmoke.TenantId, RealmKind.SelfHosted, IdpSsoSmoke.TenantDisplayName)
     private ca!: Buffer
     private browser!: BrowserClient
     private tls!: { key: Buffer; cert: Buffer }
@@ -470,7 +470,7 @@ export class IdpSsoSmoke
     {
         const S = IdpSsoSmoke
         const authenticator = await this.AuthenticatorFor(S.ClientIdA, S.RedirectUriA, S.SecretRefA, S.ClientSecretA)
-        const begin = await authenticator.BeginAuthorization(this.tenant)
+        const begin = await authenticator.BeginAuthorization(this.realm)
 
         const loginPage = await this.browser.Get(begin.Url, undefined)
         this.Check(S.Labels.EnvALoginPage, loginPage.Status === S.StatusOk && loginPage.Body.includes(S.LoginPageMarker), S.StatusDetailPrefix + loginPage.Status)
@@ -483,7 +483,7 @@ export class IdpSsoSmoke
         this.jar.Capture(redirect.SsoCookie)
 
         const code = target?.searchParams.get(S.CodeField) ?? ''
-        const result = await authenticator.Authenticate(new Credential(AuthMethod.Oidc, begin.State), new PresentedSecret(code), this.tenant)
+        const result = await authenticator.Authenticate(new Credential(AuthMethod.Oidc, begin.State), new PresentedSecret(code), this.realm)
         this.Check(S.Labels.EnvAAuthenticated, result instanceof AuthenticatedResult && result.Principal.Id === S.AccountPrincipalId, this.ResultDetail(result))
         await this.CheckClaims(S.Labels.EnvAClaims, S.ClientIdA)
     }
@@ -493,7 +493,7 @@ export class IdpSsoSmoke
     {
         const S = IdpSsoSmoke
         const authenticator = await this.AuthenticatorFor(S.ClientIdB, S.RedirectUriB, S.SecretRefB, S.ClientSecretB)
-        const begin = await authenticator.BeginAuthorization(this.tenant)
+        const begin = await authenticator.BeginAuthorization(this.realm)
 
         const redirect = await this.browser.Get(begin.Url, this.jar.Value())
         const target = this.ParseRedirect(redirect.Location)
@@ -503,7 +503,7 @@ export class IdpSsoSmoke
         console.log(S.InfoTag + S.SsoInfo)
 
         const code = target?.searchParams.get(S.CodeField) ?? ''
-        const result = await authenticator.Authenticate(new Credential(AuthMethod.Oidc, begin.State), new PresentedSecret(code), this.tenant)
+        const result = await authenticator.Authenticate(new Credential(AuthMethod.Oidc, begin.State), new PresentedSecret(code), this.realm)
         this.Check(S.Labels.EnvBAuthenticated, result instanceof AuthenticatedResult && result.Principal.Id === S.AccountPrincipalId, this.ResultDetail(result))
         await this.CheckClaims(S.Labels.EnvBClaims, S.ClientIdB)
     }

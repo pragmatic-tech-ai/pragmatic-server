@@ -64,8 +64,8 @@ class MtFixture
     public static async TokenFor(host: PragmaticServerHost, tenantId: string): Promise<string>
     {
         const pack = await host.IdentityPackForTest(tenantId)
-        await pack.Grants.Save(new Grant(tenantId, Role.Admin, new ResourceRef(ResourceKind.Tenant, tenantId, [])))
-        const tenant = await host.TenantForTest(tenantId)
+        await pack.Grants.Save(new Grant(tenantId, Role.Admin, new ResourceRef(ResourceKind.Realm, tenantId, [])))
+        const tenant = await host.RealmForTest(tenantId)
         return (await pack.Tokens.Issue(tenant, tenantId, [], null)).Token
     }
 

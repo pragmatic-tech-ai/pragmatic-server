@@ -18,7 +18,7 @@ export interface TenantProvisioning
 }
 
 /** Source of per-tenant provisioning (display name + optional bootstrap/OIDC). 5B/5C back this with a
- *  TenantConfigStore; 5A uses an in-memory map. OptionsFor returns null for an unprovisioned tenant. */
+ *  RealmConfigStore; 5A uses an in-memory map. OptionsFor returns null for an unprovisioned tenant. */
 export interface ITenantProvisioning
 {
     OptionsFor(environmentId: string): TenantProvisioning | null

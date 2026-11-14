@@ -76,7 +76,7 @@ class ServeFixture
     public static async SignIn(host: PragmaticServerHost): Promise<string>
     {
         const pack = await host.IdentityPackForTest(ServeFixture.Tenant)
-        await pack.Registrar.Register(await host.TenantForTest(ServeFixture.Tenant), ServeFixture.Email, 'p1', new PresentedSecret(ServeFixture.Password))
+        await pack.Registrar.Register(await host.RealmForTest(ServeFixture.Tenant), ServeFixture.Email, 'p1', new PresentedSecret(ServeFixture.Password))
         const response = await fetch(`http://127.0.0.1:${host.Address().port}/auth/browser-login?environment=${ServeFixture.Tenant}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

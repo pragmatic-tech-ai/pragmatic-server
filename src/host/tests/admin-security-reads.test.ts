@@ -5,7 +5,7 @@ import type { MessageConnection, SecurityCatalogDto, TeamMemberDto } from '@prag
 import { TeamMemberOrigin } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
-import { AccessContext, BaseRole, Grant, IdpDirectorySnapshot, IdpUserState, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, BaseRole, Grant, IdpDirectorySnapshot, IdpUserState, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
 import type { AccessContext as AccessContextType, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import type { PragmaticServer } from '../../pragmatic-server.js'
 import { AdminService } from '../admin-service.js'
@@ -45,7 +45,7 @@ class ReadsClient
     public static async Open(server: PragmaticServer, context: AccessContextType, security: ISecuritySettingAdmin | undefined): Promise<ReadsClient>
     {
         const pack = await server.Pack()
-        const admin = new AdminService(pack.Grants, pack.Audit, await server.TenantConfigStore(), server.Tenant(), async () => undefined, pack.Accounts, pack.Registrar, pack.Tokens, ReadsClient.NoPacks, security)
+        const admin = new AdminService(pack.Grants, pack.Audit, await server.RealmConfigStore(), server.Realm(), async () => undefined, pack.Accounts, pack.Registrar, pack.Tokens, ReadsClient.NoPacks, security)
         const languageService = { GraphChanged: { subscribe: () => ({ dispose: () => undefined }) }, BuildStateChanged: { subscribe: () => ({ dispose: () => undefined }) } } as unknown as ILanguageService
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(serverSocket, languageService, {} as unknown as SolutionManagerService, context, undefined, undefined, undefined, undefined, undefined, undefined, admin)
@@ -82,10 +82,10 @@ class ReadsClient
 
     public static ViewerContext(): AccessContext
     {
-        const tenant = new Tenant(EnvironmentFixture.TenantId, TenantKind.SelfHosted, 'Environment One')
+        const realm = new Realm(EnvironmentFixture.TenantId, RealmKind.SelfHosted, 'Environment One')
         const principal = new Principal('viewer', EnvironmentFixture.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant('viewer', Role.Viewer, new ResourceRef(ResourceKind.Tenant, EnvironmentFixture.TenantId, []))]
-        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+        const grants = [new Grant('viewer', Role.Viewer, new ResourceRef(ResourceKind.Realm, EnvironmentFixture.TenantId, []))]
+        return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 }
 

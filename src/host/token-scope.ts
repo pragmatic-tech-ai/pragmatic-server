@@ -18,7 +18,7 @@ export class ScopedAccessContext extends AccessContext
 
     public constructor(base: AccessContext, scopes: readonly string[])
     {
-        super(base.Principal, base.Tenant, base.Grants, base.Policy)
+        super(base.Principal, base.Realm, base.Grants, base.Policy)
         this.Scopes = scopes
     }
 }

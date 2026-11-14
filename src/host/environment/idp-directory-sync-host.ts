@@ -2,7 +2,7 @@ import type { ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { Disposable, Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { UnreadableIdpDirectoryRecordError } from '@pragmatic-tech-ai/todl-identity'
-import type { IdpDirectorySnapshot, IdpDirectorySync, Tenant } from '@pragmatic-tech-ai/todl-identity'
+import type { IdpDirectorySnapshot, IdpDirectorySync, Realm } from '@pragmatic-tech-ai/todl-identity'
 import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
 import type { EnvironmentSecuritySetting } from './environment-security-setting.js'
@@ -89,7 +89,7 @@ export class IdpDirectorySyncHost implements IDisposable
     public constructor(
         private readonly sync: IdpDirectorySync,
         private readonly setting: EnvironmentSecuritySetting,
-        private readonly tenant: Tenant,
+        private readonly realm: Realm,
         timer: ISyncTimer = new IntervalSyncTimer(),
         private readonly diagnostics: ISyncDiagnostics = new LoggerSyncDiagnostics())
     {
@@ -154,7 +154,7 @@ export class IdpDirectorySyncHost implements IDisposable
                 return
             }
             const before = await this.StoredSnapshot()
-            const result = await this.sync.Run(this.tenant, config)
+            const result = await this.sync.Run(this.realm, config)
             if (result.Deprovisioned.length > 0 || before === undefined || !IdpDirectorySyncHost.SameSecurity(before, result.Snapshot))
             {
                 this.setting.Invalidate()
@@ -163,7 +163,7 @@ export class IdpDirectorySyncHost implements IDisposable
         }
         catch (error)
         {
-            this.diagnostics.Failed(this.tenant.Id, error instanceof Error ? error : new Error(String(error)))
+            this.diagnostics.Failed(this.realm.Id, error instanceof Error ? error : new Error(String(error)))
         }
     }
 

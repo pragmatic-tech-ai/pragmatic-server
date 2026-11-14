@@ -1,7 +1,7 @@
 import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import { AccessLevel } from '@pragmatic-tech-ai/todl-identity'
 import type { IProfileAssignmentConfig, IProfileOverrideConfig, IRoleAssignmentConfig, IRoleOverrideConfig, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
-import type { TenantSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
+import type { RealmSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
 import type { FieldAccessDto, ProfileAssignmentDto, ProfileDefaultChangeDto, ProfileOverrideDto, RoleAssignmentDto, RoleDefaultChangeDto, RoleOverrideDto, SecuredFieldDto, SecurityCatalogDto, SecurityChangesDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { SecurityCatalogReader } from './security-catalog-reader.js'
 import { SecuritySettingCatalogCheck } from './security-setting-catalog-check.js'
@@ -34,7 +34,7 @@ class DroppedEntries
     public readonly ProfileAssignments = new Set<IProfileAssignmentConfig>()
 
     /** Exactly the entries the catalog check reports with a prunable code (SecuritySettingCatalogCheck.EntriesOf). */
-    public static Of(setting: ISecurityModelConfig, prospective: IEnvironmentCatalog, model: TenantSecurityModel): DroppedEntries
+    public static Of(setting: ISecurityModelConfig, prospective: IEnvironmentCatalog, model: RealmSecurityModel): DroppedEntries
     {
         const dropped = new DroppedEntries()
         for (const issue of SecuritySettingCatalogCheck.Issues(setting, prospective, model))
@@ -82,7 +82,7 @@ export class SecurityDeployDiff
     {
     }
 
-    public static Compute(current: IEnvironmentCatalog, prospective: IEnvironmentCatalog, setting: ISecurityModelConfig | undefined, model: TenantSecurityModel): SecurityDeployDiff
+    public static Compute(current: IEnvironmentCatalog, prospective: IEnvironmentCatalog, setting: ISecurityModelConfig | undefined, model: RealmSecurityModel): SecurityDeployDiff
     {
         const before = SecurityCatalogReader.Read(current)
         const after = SecurityCatalogReader.Read(prospective)
@@ -117,7 +117,7 @@ export class SecurityDeployDiff
     }
 
     /** The same delivery's diff over `setting` as stored now (the commit re-reads it: an admin save may have landed). */
-    public Rebased(setting: ISecurityModelConfig | undefined, model: TenantSecurityModel): SecurityDeployDiff
+    public Rebased(setting: ISecurityModelConfig | undefined, model: RealmSecurityModel): SecurityDeployDiff
     {
         return SecurityDeployDiff.Compute(this.Current, this.Prospective, setting, model)
     }

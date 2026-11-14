@@ -175,11 +175,11 @@ describe('OperatorIdentity', () =>
             const identity = await OperatorIdentityFixture.Compose(root, OperatorIdentityFixture.Password)
             await identity.CreateOperator(OperatorIdentityFixture.ReadEmail, OperatorIdentityFixture.NewPassword, OperatorRole.ReadOnly)
             await identity.CreateOperator(OperatorIdentityFixture.FullEmail, OperatorIdentityFixture.NewPassword, OperatorRole.Full)
-            // Private pack/tenant are reached via bracket access: the real account store's Disable is the only disable path.
+            // Private pack/realm are reached via bracket access: the real account store's Disable is the only disable path.
             const pack = identity['pack']
-            const tenant = identity['tenant']
-            const account = await pack.Accounts.FindByEmail(tenant, OperatorIdentityFixture.ReadEmail)
-            await pack.Accounts.Disable(tenant, account!.PrincipalId)
+            const realm = identity['realm']
+            const account = await pack.Accounts.FindByEmail(realm, OperatorIdentityFixture.ReadEmail)
+            await pack.Accounts.Disable(realm, account!.PrincipalId)
             const roster = await identity.ListOperators()
             assert.deepEqual(roster.map(o => o.email).sort(), [OperatorIdentityFixture.ReadEmail, OperatorIdentityFixture.FullEmail, OperatorIdentityFixture.Email].sort())
             assert.deepEqual(roster.filter(o => o.disabled).map(o => o.email), [OperatorIdentityFixture.ReadEmail])

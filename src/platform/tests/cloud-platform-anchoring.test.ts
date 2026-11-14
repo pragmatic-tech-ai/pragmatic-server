@@ -73,7 +73,7 @@ test('anchoring on: audit records are checkpointed into identity_audit_anchor', 
     const audit = await platform.AuditSink()
     await audit.Record(AnchoringFixture.Event('t1', 'a'))
     await audit.Record(AnchoringFixture.Event('t2', 'x'))
-    const rows = await session.Query('SELECT tenant_id, seq FROM identity_audit_anchor ORDER BY tenant_id, seq', [])
+    const rows = await session.Query('SELECT realm_id, seq FROM identity_audit_anchor ORDER BY realm_id, seq', [])
     assert.equal(rows.length, 2)
 })
 
@@ -86,7 +86,7 @@ test('anchoring on: a tail DELETE is detected fail-closed when a fresh platform 
     await audit.Record(AnchoringFixture.Event('t1', 'a'))
     await audit.Record(AnchoringFixture.Event('t1', 'b'))
     await audit.Record(AnchoringFixture.Event('t1', 'c'))
-    await session.Execute('DELETE FROM identity_audit WHERE tenant_id = $1 AND seq >= $2', ['t1', 2])
+    await session.Execute('DELETE FROM identity_audit WHERE realm_id = $1 AND seq >= $2', ['t1', 2])
     const second = await CloudPlatform.Create({ session: new ReopenSession(session), storage: new ObjectStoreProviderRegistry(), secretManager, masterKeyRef: AnchoringFixture.MasterRef, auditAnchorKeyRef: AnchoringFixture.AnchorRef })
     await assert.rejects(() => second.AuditSink(), AuditTamperDetected)
 })

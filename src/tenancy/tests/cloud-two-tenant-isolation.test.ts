@@ -53,7 +53,7 @@ class TwoTenantFixture
         const pack = await server.Pack()
         await pack.Secrets.Put(ref, pw)
         await server.SeedBootstrapForTest()
-        return pack.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, email), new PresentedSecret(pw), server.Tenant())
+        return pack.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, email), new PresentedSecret(pw), server.Realm())
     }
 
     public static async Run(): Promise<void>
@@ -68,13 +68,13 @@ class TwoTenantFixture
             assert.ok((await TwoTenantFixture.SeedAndAuth(s1, TwoTenantFixture.Admin1Email, TwoTenantFixture.Admin1Ref, TwoTenantFixture.Admin1Pw)) instanceof AuthenticatedResult)
             assert.ok((await TwoTenantFixture.SeedAndAuth(s2, TwoTenantFixture.Admin2Email, TwoTenantFixture.Admin2Ref, TwoTenantFixture.Admin2Pw)) instanceof AuthenticatedResult)
             const pack1 = await s1.Pack()
-            const cross = await pack1.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, TwoTenantFixture.Admin2Email), new PresentedSecret(TwoTenantFixture.Admin2Pw), s1.Tenant())
+            const cross = await pack1.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, TwoTenantFixture.Admin2Email), new PresentedSecret(TwoTenantFixture.Admin2Pw), s1.Realm())
             assert.ok(!(cross instanceof AuthenticatedResult))
             const pack2 = await s2.Pack()
-            assert.equal(await pack1.Directory.Lookup(TwoTenantFixture.Admin2Id, s1.Tenant()), null)
-            assert.notEqual(await pack2.Directory.Lookup(TwoTenantFixture.Admin2Id, s2.Tenant()), null)
-            assert.equal(await pack2.Directory.Lookup(TwoTenantFixture.Admin1Id, s2.Tenant()), null)
-            assert.notEqual(await pack1.Directory.Lookup(TwoTenantFixture.Admin1Id, s1.Tenant()), null)
+            assert.equal(await pack1.Directory.Lookup(TwoTenantFixture.Admin2Id, s1.Realm()), null)
+            assert.notEqual(await pack2.Directory.Lookup(TwoTenantFixture.Admin2Id, s2.Realm()), null)
+            assert.equal(await pack2.Directory.Lookup(TwoTenantFixture.Admin1Id, s2.Realm()), null)
+            assert.notEqual(await pack1.Directory.Lookup(TwoTenantFixture.Admin1Id, s1.Realm()), null)
             assert.equal(await pack1.Secrets.Get(TwoTenantFixture.Admin2Ref), null)
             assert.equal(await pack1.Secrets.Get(TwoTenantFixture.Admin1Ref), TwoTenantFixture.Admin1Pw)
             assert.equal(await pack2.Secrets.Get(TwoTenantFixture.Admin1Ref), null)

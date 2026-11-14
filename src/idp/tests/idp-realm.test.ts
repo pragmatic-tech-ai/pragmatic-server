@@ -45,7 +45,7 @@ test('a seeded account authenticates with its password', async () =>
         const result = await realm.Authenticate(RealmTestFixture.Email, RealmTestFixture.Password);
         assert.ok(result instanceof AuthenticatedResult);
         assert.equal(result.Principal.Id, RealmTestFixture.PrincipalId);
-        assert.equal(result.Principal.TenantId, RealmTestFixture.TenantId);
+        assert.equal(result.Principal.RealmId, RealmTestFixture.TenantId);
         assert.equal(realm.TenantId(), RealmTestFixture.TenantId);
     });
 });

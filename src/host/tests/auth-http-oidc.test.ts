@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { randomBytes } from 'node:crypto'
-import { Tenant, TenantKind, IdentityConfig, DelegationDepth } from '@pragmatic-tech-ai/todl-identity'
+import { Realm, RealmKind, IdentityConfig, DelegationDepth } from '@pragmatic-tech-ai/todl-identity'
 import { FakeStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
 import { OidcAuthenticator, OidcResolvedConfig, OidcDiscovery, JwksCache, ClaimsMapper, ClaimArrayGroupStrategy, OidcProviderProfile, InMemoryOidcFlowStateStore, FakeOidcIdp, FakeOidcHttpClient } from '@pragmatic-tech-ai/todl-identity-cloud'
@@ -22,9 +22,9 @@ class AuthenticatorFrontDoor implements OidcFrontDoor
         this.authenticator = authenticator
     }
 
-    public BeginAuthorization(tenant: Tenant): Promise<{ Url: string; State: string }>
+    public BeginAuthorization(realm: Realm): Promise<{ Url: string; State: string }>
     {
-        return this.authenticator.BeginAuthorization(tenant)
+        return this.authenticator.BeginAuthorization(realm)
     }
 
     public AuthenticatorFor(method: AuthMethod): IAuthenticator | undefined
@@ -63,8 +63,8 @@ class OidcFixture
             Config: new IdentityConfig('server-pack', DelegationDepth.AuthnDirectory, new Map(), new Map(), new Map()),
             Resolved: resolved,
         })
-        const tenant = new Tenant('t1', TenantKind.SelfHosted, 'Tenant One')
-        return new OidcFixture(idp, http, store, new AuthHttpEndpoint(pack, tenant, new AuthenticatorFrontDoor(authenticator)))
+        const realm = new Realm('t1', RealmKind.SelfHosted, 'Tenant One')
+        return new OidcFixture(idp, http, store, new AuthHttpEndpoint(pack, realm, new AuthenticatorFrontDoor(authenticator)))
     }
 
     public Serve(): Promise<{ base: string; close: () => Promise<void> }>
@@ -112,7 +112,7 @@ test('OIDC begin issues a 302 with a state and callback mints a session', async 
 test('OIDC routes are 404 when the endpoint has no authenticator', async () =>
 {
     const pack = await ServerIdentityPack.Open(new FakeStorage(), randomBytes(32))
-    const endpoint = new AuthHttpEndpoint(pack, new Tenant('t1', TenantKind.SelfHosted, 'Tenant One'))
+    const endpoint = new AuthHttpEndpoint(pack, new Realm('t1', RealmKind.SelfHosted, 'Tenant One'))
     const server = createServer((req, res) => void endpoint.Handle(req, res))
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()))
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`

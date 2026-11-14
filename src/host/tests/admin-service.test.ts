@@ -1,10 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
-import { Tenant, TenantKind, Role, ResourceKind, ResourceRef, IdentityConfig, DelegationDepth, AuditEventKind, PresentedSecret, LocalAccountNotFoundError } from '@pragmatic-tech-ai/todl-identity'
+import { Realm, RealmKind, Role, ResourceKind, ResourceRef, IdentityConfig, DelegationDepth, AuditEventKind, PresentedSecret, LocalAccountNotFoundError } from '@pragmatic-tech-ai/todl-identity'
 import { Grant } from '@pragmatic-tech-ai/todl-identity'
 import type { ISessionManager } from '@pragmatic-tech-ai/todl-identity'
-import type { IAuditSink, AuditEvent, ITenantConfigStore, IRoleGrantStore, ISecurityModelConfig, TeamMembershipRow } from '@pragmatic-tech-ai/todl-identity'
+import type { IAuditSink, AuditEvent, IRealmConfigStore, IRoleGrantStore, ISecurityModelConfig, TeamMembershipRow } from '@pragmatic-tech-ai/todl-identity'
 import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
 import { AdminService, AdminTokenNotFoundError, AdminSelfLockoutError, LastAdministratorError, AdminConfigMissingError, ForeignTenantResourceError } from '../admin-service.js'
@@ -76,7 +76,7 @@ class RecordingReload implements ISecuritySettingAdmin
     }
 }
 
-class FakeConfigStore implements ITenantConfigStore
+class FakeConfigStore implements IRealmConfigStore
 {
     public Stored: IdentityConfig | null = null
     public readonly Calls: string[] = []
@@ -103,9 +103,9 @@ class SpyGrantStore implements IRoleGrantStore
     public Touched = 0
     public readonly Inner = new InMemoryRoleGrantStore()
 
-    public GrantsFor(subject: string, tenant: Tenant): Promise<readonly Grant[]>
+    public GrantsFor(subject: string, realm: Realm): Promise<readonly Grant[]>
     {
-        return this.Inner.GrantsFor(subject, tenant)
+        return this.Inner.GrantsFor(subject, realm)
     }
 
     public GrantsOn(resource: ResourceRef): Promise<readonly Grant[]>
@@ -138,7 +138,7 @@ class RecordingInvalidator implements IPrincipalInvalidator
 
 class RecordingSessions implements ISessionManager
 {
-    public readonly Revoked: Array<[Tenant, string]> = []
+    public readonly Revoked: Array<[Realm, string]> = []
 
     public Issue(): never
     {
@@ -155,16 +155,16 @@ class RecordingSessions implements ISessionManager
         throw new Error('unused')
     }
 
-    public async RevokeAllFor(tenant: Tenant, principalId: string): Promise<void>
+    public async RevokeAllFor(realm: Realm, principalId: string): Promise<void>
     {
-        this.Revoked.push([tenant, principalId])
+        this.Revoked.push([realm, principalId])
     }
 }
 
 class AdminFixture
 {
     public static readonly Secret = 'super-secret-value'
-    public readonly Tenant = new Tenant('t1', TenantKind.SelfHosted, 'T1')
+    public readonly Realm = new Realm('t1', RealmKind.SelfHosted, 'T1')
     public readonly Grants = new SpyGrantStore()
     public readonly Audit = new RecordingAuditSink()
     public readonly Config = new FakeConfigStore()
@@ -186,22 +186,22 @@ class AdminFixture
 
     public constructor()
     {
-        this.Service = this.ServiceFor(this.Tenant, this.Audit, async () => { this.Config.Calls.push('evict') })
+        this.Service = this.ServiceFor(this.Realm, this.Audit, async () => { this.Config.Calls.push('evict') })
     }
 
     public WiredService(invalidator: IPrincipalInvalidator, sessions: ISessionManager): AdminService
     {
-        return new AdminService(this.Grants, this.Audit, this.Config, this.Tenant, async () => undefined, this.Accounts, this.Registrar, this.Tokens, this.Packs, this.Reload, invalidator, sessions)
+        return new AdminService(this.Grants, this.Audit, this.Config, this.Realm, async () => undefined, this.Accounts, this.Registrar, this.Tokens, this.Packs, this.Reload, invalidator, sessions)
     }
 
-    public ServiceFor(tenant: Tenant, audit: IAuditSink, evict: () => Promise<void>): AdminService
+    public ServiceFor(realm: Realm, audit: IAuditSink, evict: () => Promise<void>): AdminService
     {
-        return new AdminService(this.Grants, audit, this.Config, tenant, evict, this.Accounts, this.Registrar, this.Tokens, this.Packs, this.Reload)
+        return new AdminService(this.Grants, audit, this.Config, realm, evict, this.Accounts, this.Registrar, this.Tokens, this.Packs, this.Reload)
     }
 
     public TenantRoot(): ResourceRef
     {
-        return new ResourceRef(ResourceKind.Tenant, this.Tenant.Id, [])
+        return new ResourceRef(ResourceKind.Realm, this.Realm.Id, [])
     }
 
     public async Seed(subject: string, role: Role, resource: ResourceRef = this.TenantRoot()): Promise<void>
@@ -325,7 +325,7 @@ test('tenant-root Viewer revoke is allowed (guard skipped) when an Owner exists'
 test('Project-scoped Owner revoke is allowed as the only such grant (guard skipped)', async () =>
 {
     const f = new AdminFixture()
-    const project = new ResourceRef(ResourceKind.Project, f.Tenant.Id, ['p1'])
+    const project = new ResourceRef(ResourceKind.Project, f.Realm.Id, ['p1'])
     await f.Seed('u2', Role.Owner)
     await f.Seed('u3', Role.Owner, project)
     await f.Service.RevokeRole('u1', 'u3', Role.Owner, project)
@@ -337,7 +337,7 @@ test('two tenants each with one Owner: revoking A sole Owner is rejected regardl
 {
     const f = new AdminFixture()
     await f.Seed('u2', Role.Owner)
-    await f.Seed('ub', Role.Owner, new ResourceRef(ResourceKind.Tenant, 't2', []))
+    await f.Seed('ub', Role.Owner, new ResourceRef(ResourceKind.Realm, 't2', []))
     await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Owner, f.TenantRoot()), LastAdministratorError)
     assert.equal(await f.RootGrantCount(), 1)
 })
@@ -363,10 +363,10 @@ test('ListGrants never returns the same subject grants from another tenant', asy
 {
     const f = new AdminFixture()
     await f.Grants.Save(new Grant('u2', Role.Viewer, f.TenantRoot()))
-    await f.Grants.Save(new Grant('u2', Role.Owner, new ResourceRef(ResourceKind.Tenant, 'other-tenant', [])))
+    await f.Grants.Save(new Grant('u2', Role.Owner, new ResourceRef(ResourceKind.Realm, 'other-tenant', [])))
     const grants = await f.Service.ListGrants('u2')
     assert.equal(grants.length, 1)
-    assert.equal(grants[0]!.Resource.TenantId, 't1')
+    assert.equal(grants[0]!.Resource.RealmId, 't1')
     assert.equal(grants[0]!.Role, Role.Viewer)
 })
 
@@ -382,7 +382,7 @@ test('SetConfig then GetConfig round-trips and evicts', async () =>
 test('SetConfig audit failure throws before the tenant is evicted', async () =>
 {
     const f = new AdminFixture()
-    const failing = f.ServiceFor(f.Tenant, new FailingAuditSink(), async () => { f.Config.Calls.push('evict') })
+    const failing = f.ServiceFor(f.Realm, new FailingAuditSink(), async () => { f.Config.Calls.push('evict') })
     const config = new IdentityConfig('local', DelegationDepth.AuthnDirectory, new Map(), new Map(), new Map())
     await assert.rejects(failing.SetConfig('u1', config), /audit down/)
     assert.deepEqual(f.Config.Calls, ['save'])
@@ -413,7 +413,7 @@ test('GetConfig throws when the store returns null, returns config otherwise', a
 test('a failing audit fails the mutation closed', async () =>
 {
     const f = new AdminFixture()
-    const failing = f.ServiceFor(f.Tenant, new FailingAuditSink(), async () => {})
+    const failing = f.ServiceFor(f.Realm, new FailingAuditSink(), async () => {})
     await assert.rejects(failing.GrantRole('u1', 'u2', Role.Viewer, f.TenantRoot()), /audit down/)
 })
 
@@ -436,7 +436,7 @@ test('self-lockout guard is narrow: other combinations proceed', async () =>
     const cases: ReadonlyArray<readonly [string, Role, ResourceRef]> = [
         ['u1', Role.Admin, tenantRoot],
         ['u1', Role.Owner, new ResourceRef(ResourceKind.Project, 't1', [])],
-        ['u1', Role.Owner, new ResourceRef(ResourceKind.Tenant, 't1', ['p'])],
+        ['u1', Role.Owner, new ResourceRef(ResourceKind.Realm, 't1', ['p'])],
         ['u2', Role.Owner, tenantRoot],
     ]
     for (const [subject, role, resource] of cases)
@@ -457,7 +457,7 @@ test('grant audit detail carries the joined resource path', async () =>
 test('failing audit fails RevokeRole and SetConfig closed', async () =>
 {
     const f = new AdminFixture()
-    const failing = f.ServiceFor(f.Tenant, new FailingAuditSink(), async () => {})
+    const failing = f.ServiceFor(f.Realm, new FailingAuditSink(), async () => {})
     await assert.rejects(failing.RevokeRole('u1', 'u2', Role.Viewer, f.TenantRoot()), /audit down/)
     const config = new IdentityConfig('local', DelegationDepth.AuthnDirectory, new Map(), new Map(), new Map())
     await assert.rejects(failing.SetConfig('u1', config), /audit down/)
@@ -495,7 +495,7 @@ test('DisableAccount disables and audits; unknown principal throws LocalAccountN
 test('ListAccounts returns only this tenant accounts', async () =>
 {
     const f = new AdminFixture()
-    const other = new Tenant('t2', TenantKind.SelfHosted, 'T2')
+    const other = new Realm('t2', RealmKind.SelfHosted, 'T2')
     const otherService = f.ServiceFor(other, f.Audit, async () => {})
     await f.Service.CreateAccount('u1', 'a@x.io', 'p1', new PresentedSecret('pw'))
     await otherService.CreateAccount('u1', 'b@x.io', 'p2', new PresentedSecret('pw'))
@@ -540,7 +540,7 @@ test('RevokeToken on an unknown tokenRef rejects and records no audit event', as
 test('RevokeToken on another tenant tokenRef rejects and leaves that token unrevoked', async () =>
 {
     const f = new AdminFixture()
-    const other = f.ServiceFor(new Tenant('t2', TenantKind.SelfHosted, 'T2'), f.Audit, async () => {})
+    const other = f.ServiceFor(new Realm('t2', RealmKind.SelfHosted, 'T2'), f.Audit, async () => {})
     const issued = await other.IssueToken('u1', 'p1', ['read'], null)
     const before = f.Audit.Events.length
     await assert.rejects(f.Service.RevokeToken('u1', issued.Grant.TokenRef), AdminTokenNotFoundError)
@@ -552,7 +552,7 @@ test('a failing audit fails DisableAccount closed', async () =>
 {
     const f = new AdminFixture()
     await f.Service.CreateAccount('u1', 'a@x.io', 'p9', new PresentedSecret('pw'))
-    const failing = f.ServiceFor(f.Tenant, new FailingAuditSink(), async () => {})
+    const failing = f.ServiceFor(f.Realm, new FailingAuditSink(), async () => {})
     await assert.rejects(failing.DisableAccount('u1', 'p9'), /audit down/)
 })
 
@@ -572,7 +572,7 @@ test('InvalidatePack invokes the callback then audits the pack name only', async
 test('a failing audit fails InvalidatePack closed after the invalidate ran', async () =>
 {
     const f = new AdminFixture()
-    const failing = f.ServiceFor(f.Tenant, new FailingAuditSink(), async () => {})
+    const failing = f.ServiceFor(f.Realm, new FailingAuditSink(), async () => {})
     await assert.rejects(failing.InvalidatePack('u1', 'acme-pack'), /audit down/)
 })
 
@@ -601,7 +601,7 @@ test('DenyPackScripts records the deny then audits actor, action and pack only',
 test('a failing audit fails AllowPackScripts and DenyPackScripts closed after the mutation ran', async () =>
 {
     const f = new AdminFixture()
-    const failing = f.ServiceFor(f.Tenant, new FailingAuditSink(), async () => {})
+    const failing = f.ServiceFor(f.Realm, new FailingAuditSink(), async () => {})
     await assert.rejects(failing.AllowPackScripts('u1', 'acme-pack'), /audit down/)
     await assert.rejects(failing.DenyPackScripts('u1', 'acme-pack'), /audit down/)
     assert.deepEqual(f.Allowed, ['acme-pack'])
@@ -643,7 +643,7 @@ test('SetSecurityModel persists a valid model, preserves other fields and fires 
 test('GrantRole with a foreign-tenant resource is rejected before any store or audit call', async () =>
 {
     const f = new AdminFixture()
-    const foreign = new ResourceRef(ResourceKind.Tenant, 'other-tenant', [])
+    const foreign = new ResourceRef(ResourceKind.Realm, 'other-tenant', [])
     await assert.rejects(f.Service.GrantRole('u1', 'u2', Role.Editor, foreign), ForeignTenantResourceError)
     assert.equal(f.Grants.Touched, 0)
     assert.equal(f.Audit.Events.length, 0)
@@ -652,7 +652,7 @@ test('GrantRole with a foreign-tenant resource is rejected before any store or a
 test('RevokeRole with a foreign-tenant resource is rejected before any store or audit call', async () =>
 {
     const f = new AdminFixture()
-    const foreign = new ResourceRef(ResourceKind.Tenant, 'other-tenant', [])
+    const foreign = new ResourceRef(ResourceKind.Realm, 'other-tenant', [])
     await f.Seed('u2', Role.Editor, foreign)
     await assert.rejects(f.Service.RevokeRole('u1', 'u2', Role.Editor, foreign), ForeignTenantResourceError)
     assert.equal(f.Grants.Touched, 0)
@@ -664,10 +664,10 @@ class RacyGrantStore implements IRoleGrantStore
 {
     public readonly Inner = new InMemoryRoleGrantStore()
 
-    public async GrantsFor(subject: string, tenant: Tenant): Promise<readonly Grant[]>
+    public async GrantsFor(subject: string, realm: Realm): Promise<readonly Grant[]>
     {
         await Promise.resolve()
-        return this.Inner.GrantsFor(subject, tenant)
+        return this.Inner.GrantsFor(subject, realm)
     }
 
     public async GrantsOn(resource: ResourceRef): Promise<readonly Grant[]>
@@ -696,7 +696,7 @@ test('concurrent revokes of the last two administrators: exactly one succeeds, o
     const root = f.TenantRoot()
     await racy.Inner.Save(new Grant('u2', Role.Owner, root))
     await racy.Inner.Save(new Grant('u3', Role.Owner, root))
-    const racing = new AdminService(racy, f.Audit, f.Config, f.Tenant, async () => undefined, f.Accounts, f.Registrar, f.Tokens, f.Packs, f.Reload)
+    const racing = new AdminService(racy, f.Audit, f.Config, f.Realm, async () => undefined, f.Accounts, f.Registrar, f.Tokens, f.Packs, f.Reload)
     const results = await Promise.allSettled([
         racing.RevokeRole('u1', 'u2', Role.Owner, root),
         racing.RevokeRole('u1', 'u3', Role.Owner, root),
@@ -715,8 +715,8 @@ test('concurrent revokes via two AdminService instances on one tenant serialize:
     const root = f.TenantRoot()
     await racy.Inner.Save(new Grant('u2', Role.Owner, root))
     await racy.Inner.Save(new Grant('u3', Role.Owner, root))
-    const first = new AdminService(racy, f.Audit, f.Config, f.Tenant, async () => undefined, f.Accounts, f.Registrar, f.Tokens, f.Packs, f.Reload)
-    const second = new AdminService(racy, f.Audit, f.Config, f.Tenant, async () => undefined, f.Accounts, f.Registrar, f.Tokens, f.Packs, f.Reload)
+    const first = new AdminService(racy, f.Audit, f.Config, f.Realm, async () => undefined, f.Accounts, f.Registrar, f.Tokens, f.Packs, f.Reload)
+    const second = new AdminService(racy, f.Audit, f.Config, f.Realm, async () => undefined, f.Accounts, f.Registrar, f.Tokens, f.Packs, f.Reload)
     const results = await Promise.allSettled([
         first.RevokeRole('u1', 'u2', Role.Owner, root),
         second.RevokeRole('u1', 'u3', Role.Owner, root),
@@ -736,7 +736,7 @@ test('RevokeRole invalidates the subject live connections once', async () =>
     await f.Seed('u1', Role.Owner)
     await f.Seed('u2', Role.Editor)
     await svc.RevokeRole('u1', 'u2', Role.Editor, f.TenantRoot())
-    assert.deepEqual(inv.Calls, [[f.Tenant.Id, 'u2']])
+    assert.deepEqual(inv.Calls, [[f.Realm.Id, 'u2']])
 })
 
 test('RevokeToken invalidates the token principal live connections', async () =>
@@ -747,7 +747,7 @@ test('RevokeToken invalidates the token principal live connections', async () =>
     const issued = await svc.IssueToken('u1', 'bob', ['read'], null)
     assert.equal(inv.Calls.length, 0)
     await svc.RevokeToken('u1', issued.Grant.TokenRef)
-    assert.deepEqual(inv.Calls, [[f.Tenant.Id, 'bob']])
+    assert.deepEqual(inv.Calls, [[f.Realm.Id, 'bob']])
 })
 
 test('DisableAccount revokes sessions and invalidates live connections', async () =>
@@ -759,9 +759,9 @@ test('DisableAccount revokes sessions and invalidates live connections', async (
     await svc.CreateAccount('u1', 'a@x.io', 'p9', new PresentedSecret('pw'))
     await svc.DisableAccount('u1', 'p9')
     assert.equal(sessions.Revoked.length, 1)
-    assert.equal(sessions.Revoked[0][0].Id, f.Tenant.Id)
+    assert.equal(sessions.Revoked[0][0].Id, f.Realm.Id)
     assert.equal(sessions.Revoked[0][1], 'p9')
-    assert.deepEqual(inv.Calls, [[f.Tenant.Id, 'p9']])
+    assert.deepEqual(inv.Calls, [[f.Realm.Id, 'p9']])
 })
 
 test('revokes without invalidator or sessions still complete', async () =>

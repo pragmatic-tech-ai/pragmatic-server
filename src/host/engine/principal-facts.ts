@@ -1,10 +1,10 @@
 import type { IPrincipalFacts } from '@pragmatic-tech-ai/todl/engine'
 import type { Principal } from '@pragmatic-tech-ai/todl-identity'
-import type { TenantSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
+import type { RealmSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
 
 /**
  * The acting principal as placement stamps it (contract C3): its id and its home business unit, taken from the
- * environment setting's placement (`TenantSecurityModel.PlacementOf`; an unplaced principal sits at the root).
+ * environment setting's placement (`RealmSecurityModel.PlacementOf`; an unplaced principal sits at the root).
  */
 export class PrincipalFacts implements IPrincipalFacts
 {
@@ -17,7 +17,7 @@ export class PrincipalFacts implements IPrincipalFacts
     {
     }
 
-    public static For(principal: Principal, model: TenantSecurityModel): PrincipalFacts
+    public static For(principal: Principal, model: RealmSecurityModel): PrincipalFacts
     {
         return new PrincipalFacts(principal.Id, model.PlacementOf(principal).HomeBusinessUnitId)
     }

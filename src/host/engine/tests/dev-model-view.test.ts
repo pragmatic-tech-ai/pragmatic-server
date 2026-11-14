@@ -10,7 +10,7 @@ import type { ModelMemberDto, ModelViewPageDto } from '@pragmatic-tech-ai/pragma
 import { EdgeKind, Repository } from '@pragmatic-tech-ai/todl'
 import type { Edge, SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
-import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import { PagingLimits } from '../../../config/paging-limits.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
@@ -203,18 +203,18 @@ class DevWorld
 
     public static Owner(principalId: string = ViewFx.OwnerId): AccessContext
     {
-        const tenant = new Tenant(PpSecurityHarness.TenantId, TenantKind.SelfHosted, ViewFx.TenantName)
+        const realm = new Realm(PpSecurityHarness.TenantId, RealmKind.SelfHosted, ViewFx.TenantName)
         const principal = new Principal(principalId, PpSecurityHarness.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Tenant, PpSecurityHarness.TenantId, []))]
-        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Realm, PpSecurityHarness.TenantId, []))]
+        return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
     /** A reader with no grants (the unit ports' principal; the view itself checks no grant). */
     public static Reader(principalId: string = ViewFx.ReaderId): AccessContext
     {
-        const tenant = new Tenant(PpSecurityHarness.TenantId, TenantKind.SelfHosted, ViewFx.TenantName)
+        const realm = new Realm(PpSecurityHarness.TenantId, RealmKind.SelfHosted, ViewFx.TenantName)
         const principal = new Principal(principalId, PpSecurityHarness.TenantId, PrincipalKind.User, new Map(), [])
-        return new AccessContext(principal, tenant, [], new ResourceAuthorizationPolicy())
+        return new AccessContext(principal, realm, [], new ResourceAuthorizationPolicy())
     }
 
     public static Page(view: IGraphModelView, context: AccessContext, memberId: string, pageSize: number, cursor?: string): Promise<ModelViewPageDto>

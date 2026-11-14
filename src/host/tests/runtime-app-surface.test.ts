@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { InMemoryMessageSocket, PragmaticClient, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
-import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { TenantPurpose } from '../../tenancy/tenant-purpose.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
@@ -41,10 +41,10 @@ class RuntimeSurfaceFixture
 
     public static Permissive(): AccessContext
     {
-        const tenant = new Tenant(RuntimeSurfaceFixture.TenantId, TenantKind.SelfHosted, RuntimeSurfaceFixture.TenantName)
+        const realm = new Realm(RuntimeSurfaceFixture.TenantId, RealmKind.SelfHosted, RuntimeSurfaceFixture.TenantName)
         const principal = new Principal(RuntimeSurfaceFixture.PrincipalId, RuntimeSurfaceFixture.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant(RuntimeSurfaceFixture.PrincipalId, Role.Owner, new ResourceRef(ResourceKind.Tenant, RuntimeSurfaceFixture.TenantId, []))]
-        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+        const grants = [new Grant(RuntimeSurfaceFixture.PrincipalId, Role.Owner, new ResourceRef(ResourceKind.Realm, RuntimeSurfaceFixture.TenantId, []))]
+        return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
     public static async Run(body: (fx: RuntimeSurfaceFixture) => Promise<void>): Promise<void>

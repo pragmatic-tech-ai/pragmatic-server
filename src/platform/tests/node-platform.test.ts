@@ -52,13 +52,13 @@ test('ResolveMasterKey rejects a wrong-length key', () =>
     assert.throws(() => new NodePlatform().ResolveMasterKey({ keyFilePath: bad }))
 })
 
-test('NodePlatform CreateTenantConfigStore round-trips a tenant config', async () =>
+test('NodePlatform CreateRealmConfigStore round-trips a realm config', async () =>
 {
     const root = mkdtempSync(join(tmpdir(), 'ps-tcfg-'))
     try
     {
         const platform = new NodePlatform()
-        const store = await platform.CreateTenantConfigStore(root)
+        const store = await platform.CreateRealmConfigStore(root)
         assert.equal(await store.Get('t1'), null)
         await store.Save('t1', new IdentityConfig('pack-1', DelegationDepth.FullAuthz, new Map([['s', 'v']]), new Map([['g', Role.Editor]]), new Map()))
         const got = (await store.Get('t1'))!

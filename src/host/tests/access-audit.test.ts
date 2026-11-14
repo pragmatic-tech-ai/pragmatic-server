@@ -31,7 +31,7 @@ test('a fully-populated event has exactly the expected field set, none secret-sh
         Surface: AuditSurface.Rpc,
         MethodOrPath: 'solution/open',
         Action: Action.Administer,
-        ResourceKind: ResourceKind.Tenant,
+        ResourceKind: ResourceKind.Realm,
         ResourcePath: 'my-solution',
         Outcome: AuditOutcome.Deny,
         Reason: 'insufficient-role',

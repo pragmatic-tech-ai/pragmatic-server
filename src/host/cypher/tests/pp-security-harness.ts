@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { AccessContext, Principal, PrincipalKind, Tenant, TenantKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
 import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
 import type { PragmaticServer } from '../../../pragmatic-server.js'
 
@@ -35,15 +35,15 @@ export class PpSecurityHarness
 
     public static Context(principalId: string): AccessContext
     {
-        const tenant = new Tenant(PpSecurityHarness.TenantId, TenantKind.SelfHosted, PpSecurityHarness.TenantName)
+        const realm = new Realm(PpSecurityHarness.TenantId, RealmKind.SelfHosted, PpSecurityHarness.TenantName)
         const principal = new Principal(principalId, PpSecurityHarness.TenantId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Tenant, PpSecurityHarness.TenantId, []))]
-        return new AccessContext(principal, tenant, grants, new ResourceAuthorizationPolicy())
+        const grants = [new Grant(principalId, Role.Owner, new ResourceRef(ResourceKind.Realm, PpSecurityHarness.TenantId, []))]
+        return new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy())
     }
 
     public static async Seed(server: PragmaticServer, model: ISecurityModelConfig): Promise<void>
     {
-        const store = await server.TenantConfigStore()
+        const store = await server.RealmConfigStore()
         const seeded = await store.Get(PpSecurityHarness.TenantId)
         if (seeded === null)
         {

@@ -194,7 +194,7 @@ class AzureCloudBootFixture
         const pack = await server.Pack()
         await pack.Secrets.Put(ref, pw)
         await server.SeedBootstrapForTest()
-        return pack.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, email), new PresentedSecret(pw), server.Tenant())
+        return pack.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, email), new PresentedSecret(pw), server.Realm())
     }
 
     private async AssertIsolation(host: PragmaticServerHost): Promise<void>
@@ -205,13 +205,13 @@ class AzureCloudBootFixture
         assert.ok((await AzureCloudBootFixture.SeedAndAuth(s1, AzureCloudBootFixture.Admin1Email, this.Admin1Ref, AzureCloudBootFixture.Admin1Pw)) instanceof AuthenticatedResult)
         assert.ok((await AzureCloudBootFixture.SeedAndAuth(s2, AzureCloudBootFixture.Admin2Email, this.Admin2Ref, AzureCloudBootFixture.Admin2Pw)) instanceof AuthenticatedResult)
         const pack1 = await s1.Pack()
-        const cross = await pack1.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, AzureCloudBootFixture.Admin2Email), new PresentedSecret(AzureCloudBootFixture.Admin2Pw), s1.Tenant())
+        const cross = await pack1.AuthenticatorFor(AuthMethod.Local)!.Authenticate(new Credential(AuthMethod.Local, AzureCloudBootFixture.Admin2Email), new PresentedSecret(AzureCloudBootFixture.Admin2Pw), s1.Realm())
         assert.ok(!(cross instanceof AuthenticatedResult))
         const pack2 = await s2.Pack()
-        assert.equal(await pack1.Directory.Lookup(AzureCloudBootFixture.Admin2Id, s1.Tenant()), null)
-        assert.notEqual(await pack2.Directory.Lookup(AzureCloudBootFixture.Admin2Id, s2.Tenant()), null)
-        assert.equal(await pack2.Directory.Lookup(AzureCloudBootFixture.Admin1Id, s2.Tenant()), null)
-        assert.notEqual(await pack1.Directory.Lookup(AzureCloudBootFixture.Admin1Id, s1.Tenant()), null)
+        assert.equal(await pack1.Directory.Lookup(AzureCloudBootFixture.Admin2Id, s1.Realm()), null)
+        assert.notEqual(await pack2.Directory.Lookup(AzureCloudBootFixture.Admin2Id, s2.Realm()), null)
+        assert.equal(await pack2.Directory.Lookup(AzureCloudBootFixture.Admin1Id, s2.Realm()), null)
+        assert.notEqual(await pack1.Directory.Lookup(AzureCloudBootFixture.Admin1Id, s1.Realm()), null)
         assert.equal(await pack1.Secrets.Get(this.Admin2Ref), null)
         assert.equal(await pack1.Secrets.Get(this.Admin1Ref), AzureCloudBootFixture.Admin1Pw)
         assert.equal(await pack2.Secrets.Get(this.Admin1Ref), null)

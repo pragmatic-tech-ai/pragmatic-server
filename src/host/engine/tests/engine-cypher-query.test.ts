@@ -11,7 +11,7 @@ import { Disposable } from '@pragmatic-tech-ai/todl-runtime'
 import { CursorStaleError, CypherCells, ErrorCodes, PageCursorCodec, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherCellDto, CypherParamValue, CypherQueryPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
-import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Tenant, TenantKind } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
 import { CypherLimits } from '../../../config/cypher-limits.js'
 import { PagingLimits } from '../../../config/paging-limits.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
@@ -206,9 +206,9 @@ class DevCypherFx
 
     private static ContextOf(principalId: string, role: Role): AccessContext
     {
-        const tenant = new Tenant(PpSecurityHarness.TenantId, TenantKind.SelfHosted, DevCypherFx.TenantName)
+        const realm = new Realm(PpSecurityHarness.TenantId, RealmKind.SelfHosted, DevCypherFx.TenantName)
         const principal = new Principal(principalId, PpSecurityHarness.TenantId, PrincipalKind.User, new Map(), [])
-        return new AccessContext(principal, tenant, [new Grant(principalId, role, new ResourceRef(ResourceKind.Tenant, PpSecurityHarness.TenantId, []))], new ResourceAuthorizationPolicy())
+        return new AccessContext(principal, realm, [new Grant(principalId, role, new ResourceRef(ResourceKind.Realm, PpSecurityHarness.TenantId, []))], new ResourceAuthorizationPolicy())
     }
 
     /** Two models: ShopA (a1 sales "alpha", a2 root "beta", a1 peer -> b1) and ShopB (b1 sales "gamma"). */
