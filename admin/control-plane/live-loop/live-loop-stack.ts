@@ -4,6 +4,7 @@
  *
  *   - a kind cluster `pragmatic-e2e` (host ports 443 and the in-cluster registry's node port mapped, ingress-nginx with SSL
  *     passthrough, the server, registry and Postgres images loaded);
+ *   - both admin portals (platform admin, tenant admin) rebuilt, since the control plane serves their `dist` folders;
  *   - a control plane on :7000 (operator), :7100 (tenant plane) and :7001 (agent channel) whose state lives in
  *     ~/.pragmatic/e2e-stack/data, never in admin/control-plane/data;
  *   - client `e2e-client`, tenant `e2e` (owner `o@t.io`, its IdP container) and hive `e2e-hive` attached to the kind cluster,
@@ -203,6 +204,65 @@ export class LiveLoopStackAgent
     }
 }
 
+/** Runs one command in a directory and answers its exit code. */
+export interface IPortalBuildRunner
+{
+    Run(command: string, args: readonly string[], cwd: string): Promise<number>
+}
+
+/** Runs npm through the shell (npm is a .cmd on Windows); the build output goes to this console. */
+export class ShellPortalBuildRunner implements IPortalBuildRunner
+{
+    private static readonly ExitEvent = 'exit'
+    private static readonly ErrorEvent = 'error'
+    private static readonly InheritStdio = 'inherit'
+    private static readonly FailedExit = 1
+
+    public Run(command: string, args: readonly string[], cwd: string): Promise<number>
+    {
+        const R = ShellPortalBuildRunner
+        return new Promise(done =>
+        {
+            const child = spawn(command, [...args], { cwd, shell: true, stdio: R.InheritStdio, windowsHide: true })
+            child.on(R.ErrorEvent, () => done(R.FailedExit))
+            child.on(R.ExitEvent, code => done(code ?? R.FailedExit))
+        })
+    }
+}
+
+/**
+ * Rebuilds the two admin portals before the control plane starts. The control plane serves them from their `dist`
+ * folders, so without this a stack serves whatever was last built (on 2026-11-14 a three-day-old tenant admin without
+ * the catalog-backed roles editor).
+ */
+export class LiveLoopPortalBuild
+{
+    /** The portal folders under `admin/`, platform admin first. */
+    public static readonly Portals: readonly string[] = ['portal', 'tenant-portal']
+    private static readonly Npm = 'npm'
+    private static readonly BuildArgs: readonly string[] = ['run', 'build']
+    private static readonly FailedPrefix = 'admin portal build failed: '
+    private static readonly ExitWord = ' exited '
+
+    public constructor(private readonly runner: IPortalBuildRunner = new ShellPortalBuildRunner())
+    {
+    }
+
+    /** Builds every portal under `adminDir` in order; the first failure stops it, naming the portal and the exit code. */
+    public async Build(adminDir: string): Promise<void>
+    {
+        const P = LiveLoopPortalBuild
+        for (const portal of P.Portals)
+        {
+            const code = await this.runner.Run(P.Npm, P.BuildArgs, join(adminDir, portal))
+            if (code !== 0)
+            {
+                throw new Error(P.FailedPrefix + portal + P.ExitWord + String(code))
+            }
+        }
+    }
+}
+
 export class LiveLoopStack
 {
     private static readonly UpVerb = 'up'
@@ -256,6 +316,8 @@ export class LiveLoopStack
     private static readonly IdpCertFileName = 'server.crt'
     private static readonly BrowserLogin = 'browser'
     private static readonly ServerScript = 'server.ts'
+    /** `admin/`, from this file's folder (admin/control-plane/live-loop). */
+    private static readonly AdminDirRelative = join('..', '..')
     private static readonly TsxCliRelative = ['..', '..', '..', 'node_modules', 'tsx', 'dist', 'cli.mjs']
     private static readonly PingPath = '/api/ping'
     private static readonly PingDeadlineMs = 180_000
@@ -275,6 +337,7 @@ export class LiveLoopStack
     private static readonly Steps = {
         Cluster: '[stack] kind cluster pragmatic-e2e (443 + registry node port) and images',
         Ingress: '[stack] ingress-nginx with SSL passthrough',
+        Portals: '[stack] admin portals rebuilt (platform admin, tenant admin)',
         ControlPlane: '[stack] control plane on :7000 / :7100, agent channel :7001 (state in the stack folder)',
         Seed: '[stack] operator seed: client, tenant e2e (IdP), hive e2e-hive',
         Agent: '[stack] hive agent install; the hive checks in over the agent channel on :7001',
@@ -370,6 +433,9 @@ export class LiveLoopStack
         }
         await this.Kubectl([L.RolloutVerb, L.StatusVerb, L.DeploymentPrefix + L.IngressDeployment, L.NamespaceFlag, L.IngressNamespace, L.WaitTimeout])
         await this.Kubectl([L.WaitVerb, L.NamespaceFlag, L.IngressNamespace, L.ReadyCondition, L.PodKind, L.SelectorFlag + L.ControllerSelector, L.WaitTimeout])
+
+        console.log(L.Steps.Portals)
+        await new LiveLoopPortalBuild().Build(resolve(dirname(fileURLToPath(import.meta.url)), L.AdminDirRelative))
 
         console.log(L.Steps.ControlPlane)
         const operatorPasswordFile = join(N.StackDir, L.OperatorPasswordFileName)

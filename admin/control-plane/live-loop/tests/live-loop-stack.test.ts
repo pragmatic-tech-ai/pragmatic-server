@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { LiveLoopStack, LiveLoopStackAgent, LiveLoopStackNames, LiveLoopStackSeed } from '../live-loop-stack.js'
+import { join } from 'node:path'
+import { LiveLoopPortalBuild, LiveLoopStack, LiveLoopStackAgent, LiveLoopStackNames, LiveLoopStackSeed, type IPortalBuildRunner } from '../live-loop-stack.js'
 import type { ApiAnswer, IOperatorApi } from '../operator-api-client.js'
 
 class FakeOperatorApi implements IOperatorApi
@@ -129,6 +130,43 @@ describe('LiveLoopStackAgent', () =>
     {
         const api = new ScriptedOperatorApi({ ['POST ' + AgentFx.Path]: [AgentFx.Started], ['GET ' + AgentFx.Path]: [AgentFx.Waiting] })
         await assert.rejects(AgentFx.Agent(api, 20).Install(), /hive agent did not check in in time; last step waiting-for-check-in/)
+    })
+})
+
+class RecordingBuildRunner implements IPortalBuildRunner
+{
+    public readonly Runs: { command: string; args: readonly string[]; cwd: string }[] = []
+
+    public constructor(private readonly codes: number[] = [])
+    {
+    }
+
+    public async Run(command: string, args: readonly string[], cwd: string): Promise<number>
+    {
+        this.Runs.push({ command, args, cwd })
+        return this.codes.shift() ?? 0
+    }
+}
+
+describe('LiveLoopPortalBuild', () =>
+{
+    const AdminDir = join('D:', 'repo', 'admin')
+
+    it('runs npm run build in platform admin, then tenant admin', async () =>
+    {
+        const runner = new RecordingBuildRunner()
+        await new LiveLoopPortalBuild(runner).Build(AdminDir)
+        assert.deepEqual(runner.Runs, [
+            { command: 'npm', args: ['run', 'build'], cwd: join(AdminDir, 'portal') },
+            { command: 'npm', args: ['run', 'build'], cwd: join(AdminDir, 'tenant-portal') },
+        ])
+    })
+
+    it('stops at the first failed build, naming the portal and its exit code', async () =>
+    {
+        const runner = new RecordingBuildRunner([2])
+        await assert.rejects(new LiveLoopPortalBuild(runner).Build(AdminDir), /admin portal build failed: portal exited 2/)
+        assert.equal(runner.Runs.length, 1)
     })
 })
 

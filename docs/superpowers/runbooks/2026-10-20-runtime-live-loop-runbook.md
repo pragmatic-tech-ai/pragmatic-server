@@ -20,6 +20,7 @@ The test runs against a dedicated stack. It never touches the developer's own co
   - host ports 443 and the in-cluster registry port 30500 mapped;
   - ingress-nginx with SSL passthrough;
   - the `pragmatic-server:dev`, `registry:2` and `postgres:16` images loaded.
+- Both admin portals, platform admin (`admin/portal`) and tenant admin (`admin/tenant-portal`), rebuilt with `npm run build`. The control plane serves their `dist` folders, so without the rebuild the stack would serve whatever was built last.
 - A control plane:
   - The operator API is on `http://localhost:7000`. The tenant plane, which serves as the tenant's console, is on `http://e2e.lvh.me:7100`.
   - The agent channel is on port 7001. The hive agent's pods dial home to it at `http://host.docker.internal:7001`.
