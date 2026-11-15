@@ -58,9 +58,7 @@ interface FileShape
 
 export class FileEnvironmentProvisioning implements IEnvironmentProvisioning
 {
-    /** The root key; files written before the rename use `tenants`, still read for one release (the new key wins). */
     private static readonly EnvironmentsKey = 'environments'
-    private static readonly LegacyEnvironmentsKey = 'tenants'
     private static readonly BadPurpose = 'environments file has an invalid purpose (expected an EnvironmentPurpose value)'
     private static readonly BadJson = 'environments file is not valid JSON'
     private static readonly BadShape = 'environments file has an invalid shape'
@@ -135,7 +133,7 @@ export class FileEnvironmentProvisioning implements IEnvironmentProvisioning
         {
             throw new Error(FileEnvironmentProvisioning.BadShape)
         }
-        const environments = parsed[FileEnvironmentProvisioning.EnvironmentsKey] ?? parsed[FileEnvironmentProvisioning.LegacyEnvironmentsKey]
+        const environments = parsed[FileEnvironmentProvisioning.EnvironmentsKey]
         if (!FileEnvironmentProvisioning.IsRecord(environments))
         {
             throw new Error(FileEnvironmentProvisioning.BadShape)

@@ -37,7 +37,7 @@ Source: `src/environments/`.
 - **`EnvironmentRegistry`** (`src/environments/environment-registry.ts:31`) — owns one `PragmaticServer` per environment, `servers: Map<string, PragmaticServer>` (:50), lazy-built on first use. Validates the environment id as a path segment (`SeparatorPattern`, `InvalidEnvironmentError`, :38/:183).
 - **`OptionsFor(environmentId)`** (:223) is the composition seam. **Per-environment storage root = `packages/`, `applications/`, `graphs/`, `identity/`** (`PackagesDir`, `ApplicationsDir`, `GraphsDir`, `IdentityDir` constants; `graphs/` holds the promote record and, on a runtime environment, the environment engine store `graphs/environment-engine`, see the storage requirement under "Runtime environment engine").
 - `Realm` = `{ id, displayName }` (from `@pragmatic-tech-ai/todl-identity`; the identity boundary, whose id equals the environment id here); built at :234.
-- **Provisioning:** `IEnvironmentProvisioning.OptionsFor` → `EnvironmentProvisioning` (`src/environments/environment-provisioning.ts:6`: `{ displayName, bootstrap?, oidc?, connectorsPolicy?, connectors?, connectorSecretRefs?, identity?, machine? }`). Impls: `InMemoryEnvironmentProvisioning` (environment-registry.ts:14), `FileEnvironmentProvisioning` (`src/config/file-environment-provisioning.ts:57`, on-disk `{ environments: Record<id, EnvironmentShape> }`; the old root key `tenants` and the env var `PRAGMATIC_TENANTS_FILE` are still read for one release). The environment type is `EnvironmentProvisioning.purpose` (`EnvironmentPurpose`, handed to `PragmaticServerOptions.purpose` by `OptionsFor`); `DeploymentMode` (Local/cloud, `src/platform/deployment-mode.ts`) is a separate axis applied uniformly.
+- **Provisioning:** `IEnvironmentProvisioning.OptionsFor` → `EnvironmentProvisioning` (`src/environments/environment-provisioning.ts:6`: `{ displayName, bootstrap?, oidc?, connectorsPolicy?, connectors?, connectorSecretRefs?, identity?, machine? }`). Impls: `InMemoryEnvironmentProvisioning` (environment-registry.ts:14), `FileEnvironmentProvisioning` (`src/config/file-environment-provisioning.ts:57`, on-disk `{ environments: Record<id, EnvironmentShape> }`). The environment type is `EnvironmentProvisioning.purpose` (`EnvironmentPurpose`, handed to `PragmaticServerOptions.purpose` by `OptionsFor`); `DeploymentMode` (Local/cloud, `src/platform/deployment-mode.ts`) is a separate axis applied uniformly.
 
 ## Domain binding: solution to graph
 
@@ -245,7 +245,7 @@ The server half of the platform security design (`docs/superpowers/specs/2026-11
 
 Source: `src/config/`.
 
-- `ServerConfigLoader` (env+file, fail-closed), `FileEnvironmentProvisioning`, `environment-provisioning-factory.ts` (source selection; reads `PRAGMATIC_ENVIRONMENTS_FILE`, and the old `PRAGMATIC_TENANTS_FILE` with a deprecation log line for one release), `CypherLimits` (`cypherRowCap`/`cypherTimeoutMs`/`cypherMaxVarLength`) → `ServerBootstrap.CypherLimitsOf` → `cypherLimits` option → both host variants → `Attach`.
+- `ServerConfigLoader` (env+file, fail-closed), `FileEnvironmentProvisioning`, `environment-provisioning-factory.ts` (source selection; reads `PRAGMATIC_ENVIRONMENTS_FILE`), `CypherLimits` (`cypherRowCap`/`cypherTimeoutMs`/`cypherMaxVarLength`) → `ServerBootstrap.CypherLimitsOf` → `cypherLimits` option → both host variants → `Attach`.
 
 ## Package storage layout
 

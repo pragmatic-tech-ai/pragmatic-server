@@ -74,8 +74,8 @@ class Fixture
                 { principalId: 'p2', email: 'jane@example.test', disabled: false },
             ],
             grants: [
-                { subject: 'principal-1', role: 'Owner', resourceKind: 'tenant', resourcePath: [] },
-                { subject: 'p2', role: 'Viewer', resourceKind: 'tenant', resourcePath: [] },
+                { subject: 'principal-1', role: 'Owner', resourceKind: 'Realm', resourcePath: [] },
+                { subject: 'p2', role: 'Viewer', resourceKind: 'Realm', resourcePath: [] },
                 { subject: 'p2', role: 'Editor', resourceKind: 'model', resourcePath: ['sales', 'eu'] },
             ],
         })
@@ -382,11 +382,11 @@ describe('Users tab', () =>
 
 describe('GrantRowViewModel', () =>
 {
-    it('shows a whole-environment grant the same way whether the server calls its kind Realm or Tenant', () =>
+    it('shows a whole-environment (Realm) grant as "environment" and any other kind as the server names it', () =>
     {
         const revoke = new RelayCommand(() => undefined)
-        const texts = ['Realm', 'Tenant', 'tenant'].map(kind => new GrantRowViewModel({ subject: 'p', role: 'Viewer', resourceKind: kind, resourcePath: [] }, revoke).ResourceText)
-        assert.deepEqual(texts, ['environment', 'environment', 'environment'])
+        assert.equal(new GrantRowViewModel({ subject: 'p', role: 'Viewer', resourceKind: 'Realm', resourcePath: [] }, revoke).ResourceText, 'environment')
+        assert.equal(new GrantRowViewModel({ subject: 'p', role: 'Viewer', resourceKind: 'Tenant', resourcePath: [] }, revoke).ResourceText, 'Tenant')
         assert.equal(new GrantRowViewModel({ subject: 'p', role: 'Editor', resourceKind: 'Model', resourcePath: ['sales'] }, revoke).ResourceText, 'Model / sales')
     })
 })

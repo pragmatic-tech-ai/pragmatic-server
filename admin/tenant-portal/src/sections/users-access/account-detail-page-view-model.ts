@@ -13,8 +13,8 @@ import type { UsersAccessSectionService } from './users-access-section-service.j
 export class GrantRowViewModel extends Observable
 {
     private static readonly PathSeparator = ' / '
-    // The whole-environment scope: environment servers call its kind Realm, those from before the rename Tenant.
-    private static readonly WholeEnvironmentKinds: ReadonlySet<string> = new Set(['realm', 'tenant'])
+    // The whole-environment scope, which the environment server calls Realm.
+    private static readonly WholeEnvironmentKind = 'Realm'
     private static readonly WholeEnvironmentText = 'environment'
 
     public constructor(private readonly grant: GrantDto, private readonly revokeCommand: RelayCommand)
@@ -35,7 +35,7 @@ export class GrantRowViewModel extends Observable
 
     private static KindText(kind: string): string
     {
-        return GrantRowViewModel.WholeEnvironmentKinds.has(kind.toLowerCase()) ? GrantRowViewModel.WholeEnvironmentText : kind
+        return kind === GrantRowViewModel.WholeEnvironmentKind ? GrantRowViewModel.WholeEnvironmentText : kind
     }
 
     public get RevokeCommand(): RelayCommand

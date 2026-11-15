@@ -58,7 +58,7 @@ export interface DevDescriptor
 export interface RuntimeDescriptor
 {
     runtimeEnv: string
-    /** The runtime environment's id (was `tenant` before the rename; the Plexus e2e reads both for one release). */
+    /** The runtime environment's id. */
     environment: string
     runtimeWsUrl: string
     appOriginBase: string
@@ -177,8 +177,7 @@ export class LoopOrchestrator
     private static readonly AuthoritySep = '//'
     private static readonly WsEnvironmentQuery = '/?environment='
     private static readonly ViewerRole = 'Viewer'
-    /** 'Tenant' on the admin wire for one release (older environment servers know only that name). */
-    private static readonly RealmKind = 'Tenant'
+    private static readonly RealmKind = 'Realm'
     private static readonly ReaderPrincipal = 'loop-reader'
     private static readonly ReaderEmail = 'r@t.io'
     private static readonly UngrantedPrincipal = 'loop-ungranted'

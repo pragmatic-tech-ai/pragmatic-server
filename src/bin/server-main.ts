@@ -40,7 +40,6 @@ class ServerMain
         const logger = StructuredLogger.ToStdout()
         const read = (path: string): string => readFileSync(path, ServerMain.Utf8)
         const config = ServerConfigLoader.Load(process.env, read)
-        ServerBootstrap.LogDeprecations(config, logger)
         const { provisioning, environmentCount } = EnvironmentProvisioningFactory.Build(config, read)
         const provisionedSecrets = ProvisionedSecretsFactory.Build(config, read)
         const observabilityOptions = ServerBootstrap.ObservabilityOptions(config, ObservabilityRole.Host)

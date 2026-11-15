@@ -30,12 +30,12 @@ test('values default replicaCount is 1 (single-replica-safe for local mode)', ()
     assert.match(text, /replicaCount:\s*1/)
 })
 
-test('configmap writes environments.json under the environments key, falling back to a legacy tenants value', () =>
+test('configmap writes environments.json under the environments key and no longer reads a tenants value', () =>
 {
     const text = readFileSync(join(Chart.Dir(), 'templates', 'configmap.yaml'), 'utf8')
     assert.match(text, /environments\.json:/)
     assert.ok(text.includes('dict "environments"'))
-    assert.ok(text.includes('.Values.environments | default .Values.tenants'))
+    assert.doesNotMatch(text, /\.Values\.tenants/)
     assert.doesNotMatch(text, /tenants\.json:/)
 })
 

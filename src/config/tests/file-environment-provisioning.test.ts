@@ -49,18 +49,10 @@ test('reads an environments.json with root key "environments"', () =>
     assert.equal(FileEnvironmentProvisioning.FromText(text).OptionsFor('acme')?.displayName, 'Acme')
 })
 
-test('reads a legacy tenants.json with root key "tenants"', () =>
+test('fails closed on a pre-rename file whose root key is "tenants"', () =>
 {
     const text = JSON.stringify({ tenants: { acme: { displayName: 'Acme' } } })
-    assert.equal(FileEnvironmentProvisioning.FromText(text).OptionsFor('acme')?.displayName, 'Acme')
-})
-
-test('the "environments" root key wins over a legacy "tenants" key in the same file', () =>
-{
-    const text = JSON.stringify({ environments: { acme: { displayName: 'New' } }, tenants: { acme: { displayName: 'Old' }, legacy: { displayName: 'L' } } })
-    const provisioning = FileEnvironmentProvisioning.FromText(text)
-    assert.equal(provisioning.OptionsFor('acme')?.displayName, 'New')
-    assert.equal(provisioning.OptionsFor('legacy'), null)
+    assert.throws(() => FileEnvironmentProvisioning.FromText(text), /environments file has an invalid shape/)
 })
 
 test('fails closed on malformed JSON', () =>

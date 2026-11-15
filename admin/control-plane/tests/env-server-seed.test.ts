@@ -102,18 +102,6 @@ describe('EnvServerSeedSource', () =>
         assert.ok(deployment.spec.template.spec.volumes.some((v: any) => v.configMap?.name === 'acme-environment'))
     })
 
-    it('re-applying an environment removes the legacy <env>-tenants ConfigMap', async () =>
-    {
-        const kubectl = new CapturingKubectl()
-        await EnvServerSeedSource.ApplyBundle(kubectl as never, dir, Fixture.Env, 'env-1', Fixture.DbRef)
-        assert.equal(kubectl.Applied.length, 1)
-        assert.equal(kubectl.Deleted.length, 1)
-        const legacy = JSON.parse(kubectl.Deleted[0]!)
-        assert.equal(legacy.kind, 'ConfigMap')
-        assert.equal(legacy.metadata.name, 'acme-tenants')
-        assert.equal(legacy.metadata.namespace, K8sManifestBuilder.NamespaceOf(Fixture.Env))
-    })
-
     it('two sources over the same bundle render identical Secrets', () =>
     {
         const a = JSON.stringify(new EnvServerSeedSource(dir, Fixture.Env, Fixture.DbRef).SecretSet().RenderManifest())
@@ -142,7 +130,7 @@ class SeedFixture
     public static readonly Id = 'contoso-id'
     public static readonly Name = 'acme'
     public static readonly Files: Record<string, string> = {
-        'identity/tenant-config.json': '{"SENTINEL-SEED-A":1}',
+        'identity/realm-config.json': '{"SENTINEL-SEED-A":1}',
         'packages/northwind/0.1.0/model.json': '{"SENTINEL-SEED-B":2}',
         'applications/northwind/application.json': '{"SENTINEL-SEED-C":3}',
     }
@@ -282,7 +270,7 @@ describe('EnvServerSeedSource seed-tree projection', () =>
         {
             SeedFixture.WriteTree(bundle, SeedFixture.Id, SeedFixture.Files)
             let applied = ''
-            const kubectl = { Apply: async (json: string) => { applied = json }, DeleteManifest: async () => undefined } as unknown as IKubectl
+            const kubectl = { Apply: async (json: string) => { applied = json } } as unknown as IKubectl
             await EnvServerSeedSource.ApplyBundle(kubectl, bundle, SeedFixture.Name, SeedFixture.Id)
             const items = (JSON.parse(applied) as { items: { kind: string, metadata: { name: string } }[] }).items
             assert.ok(items.some(i => i.kind === 'Secret' && i.metadata.name === EnvServerSeedSource.SeedSecretNameOf(SeedFixture.Name)))
@@ -297,83 +285,12 @@ describe('EnvServerSeedSource seed-tree projection', () =>
 class CapturingKubectl
 {
     public Applied: string[] = []
-    public Deleted: string[] = []
 
     public async Apply(manifestJson: string): Promise<void>
     {
         this.Applied.push(manifestJson)
     }
-
-    public async DeleteManifest(manifestJson: string): Promise<void>
-    {
-        this.Deleted.push(manifestJson)
-    }
 }
-
-class ConfigMapKubectl
-{
-    public Applied: string[] = []
-    public Deleted: string[] = []
-
-    public constructor(private readonly existing: Map<string, string>)
-    {
-    }
-
-    public async Find(namespace: string, resource: string): Promise<string | undefined>
-    {
-        return this.existing.get(namespace + '/' + resource)
-    }
-
-    public async Apply(manifestJson: string): Promise<void>
-    {
-        this.Applied.push(manifestJson)
-    }
-
-    public async DeleteManifest(manifestJson: string): Promise<void>
-    {
-        this.Deleted.push(manifestJson)
-    }
-}
-
-class LegacyMapFx
-{
-    public static readonly Env = 'old'
-    public static readonly Text = '{"tenants":{"old-1":{"displayName":"Old"}}}'
-
-    public static Namespace(): string
-    {
-        return K8sManifestBuilder.NamespaceOf(LegacyMapFx.Env)
-    }
-
-    public static Legacy(): Map<string, string>
-    {
-        return new Map([[LegacyMapFx.Namespace() + '/configmap/old-tenants', JSON.stringify({ kind: 'ConfigMap', metadata: { name: 'old-tenants' }, data: { 'tenants.json': LegacyMapFx.Text } })]])
-    }
-}
-
-it('an environment created before the rename gets <env>-environment from its <env>-tenants ConfigMap before a re-apply', async () =>
-{
-    const kubectl = new ConfigMapKubectl(LegacyMapFx.Legacy())
-    await EnvServerSeedSource.MigrateLegacyConfigMap(kubectl as never, LegacyMapFx.Env)
-    assert.equal(kubectl.Applied.length, 1)
-    const cm = JSON.parse(kubectl.Applied[0]!)
-    assert.equal(cm.metadata.name, 'old-environment')
-    assert.equal(cm.metadata.namespace, LegacyMapFx.Namespace())
-    assert.deepEqual(cm.data, { 'environments.json': LegacyMapFx.Text })
-    assert.equal(JSON.parse(kubectl.Deleted[0]!).metadata.name, 'old-tenants')
-})
-
-it('the legacy ConfigMap migration does nothing when <env>-environment exists or there is no legacy ConfigMap', async () =>
-{
-    const both = LegacyMapFx.Legacy()
-    both.set(LegacyMapFx.Namespace() + '/configmap/old-environment', '{}')
-    for (const existing of [both, new Map<string, string>()])
-    {
-        const kubectl = new ConfigMapKubectl(existing)
-        await EnvServerSeedSource.MigrateLegacyConfigMap(kubectl as never, LegacyMapFx.Env)
-        assert.deepEqual([kubectl.Applied.length, kubectl.Deleted.length], [0, 0])
-    }
-})
 
 it('ApplyIdpCa applies a Secret carrying ca.crt ONLY in the env namespace (never a server key)', async () =>
 {

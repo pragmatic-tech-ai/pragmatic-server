@@ -105,15 +105,6 @@ export class ServerBootstrap
         return new PagingLimits(config.pagingPageSize, config.pagingMaxPageSize)
     }
 
-    /** Logs each legacy configuration name the loader accepted (one warning line each). */
-    public static LogDeprecations(config: ServerConfig, logger: ILogger): void
-    {
-        for (const line of config.deprecations ?? [])
-        {
-            logger.Warn(line)
-        }
-    }
-
     public static StartupLine(config: ServerConfig, environmentCount: number): string
     {
         const ownership = ServerBootstrap.HasRedis(config) ? ServerBootstrap.RedisOwnership : ServerBootstrap.InMemoryOwnership

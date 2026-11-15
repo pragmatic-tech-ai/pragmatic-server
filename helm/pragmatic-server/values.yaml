@@ -44,8 +44,6 @@ persistence:
 # The environment MAP (the body under the top-level "environments" key). The chart wraps it as
 # {"environments": {...}} into the ConfigMap's environments.json (mounted at /cfg/environments.json).
 # e.g. environments: { acme: { displayName: Acme } }
-# A values file written before the rename may still say `tenants:`; it is read when `environments` is empty
-# (for one release).
 # Holds secret REFERENCES only, never secret values.
 # An environment entry may also carry a `connections` map (id -> { settings, secretRef }); each
 # secretRef resolves from `secrets.provisioned` (or provisionedExistingSecret).

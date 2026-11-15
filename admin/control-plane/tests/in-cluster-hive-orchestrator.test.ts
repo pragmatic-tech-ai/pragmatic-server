@@ -170,21 +170,6 @@ test('Apply over an existing own namespace and binding (409) carries on without 
     assert.ok(!t.Paths(KubeMethod.Patch).includes(OrchestratorFixture.NsPath))
 })
 
-test('Apply over an environment created before the rename writes <env>-environment from <env>-tenants and deletes the legacy one', async () =>
-{
-    const { t, o } = OrchestratorFixture.Make()
-    const configMaps = OrchestratorFixture.NsPath + '/configmaps/'
-    t.On(KubeMethod.Post, OrchestratorFixture.NamespacesPath, OrchestratorFixture.Json(409, {}), 1)
-    t.On(KubeMethod.Get, OrchestratorFixture.NsPath + '/configmaps/a-environment', OrchestratorFixture.Json(404, {}), 1)
-    t.On(KubeMethod.Get, OrchestratorFixture.NsPath + '/configmaps/a-tenants', OrchestratorFixture.Json(200, { data: { 'tenants.json': '{"tenants":{}}' } }))
-    t.On(KubeMethod.Get, OrchestratorFixture.NsPath, OrchestratorFixture.Namespace(OrchestratorFixture.OwnLabels))
-    t.On(KubeMethod.Post, OrchestratorFixture.BindingsPath, OrchestratorFixture.Json(409, {}))
-    await o.Apply(OrchestratorFixture.Workload())
-    const written = t.Calls.find(c => c.method === KubeMethod.Patch && c.path.split('?')[0] === configMaps + 'a-environment')
-    assert.deepEqual(OrchestratorFixture.Body(written).data, { 'environments.json': '{"tenants":{}}' })
-    assert.ok(t.Paths(KubeMethod.Delete).includes(configMaps + 'a-tenants'))
-})
-
 test('Apply retries a 403 right after binding', async () =>
 {
     const once = OrchestratorFixture.Make()

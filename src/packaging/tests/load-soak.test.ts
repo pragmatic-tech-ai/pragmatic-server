@@ -71,7 +71,7 @@ class Soak
     private static readonly EnvHost = 'PRAGMATIC_HOST'
     private static readonly EnvPort = 'PRAGMATIC_PORT'
     private static readonly EnvBaseDir = 'PRAGMATIC_BASE_DIR'
-    private static readonly EnvEnvironmentsFile = 'PRAGMATIC_TENANTS_FILE'
+    private static readonly EnvEnvironmentsFile = 'PRAGMATIC_ENVIRONMENTS_FILE'
     private static readonly EnvMasterKeyEnv = 'PRAGMATIC_MASTER_KEY_B64_ENV'
     private static readonly EnvMetricsPort = 'PRAGMATIC_METRICS_PORT'
     private static readonly EnvDrainTimeout = 'PRAGMATIC_DRAIN_TIMEOUT_MS'

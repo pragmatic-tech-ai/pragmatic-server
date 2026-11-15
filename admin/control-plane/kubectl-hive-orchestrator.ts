@@ -5,7 +5,6 @@ import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import type { EffectiveRegistry } from './effective-registry.js'
 import type { IImageVerifier } from './image-verifier.js'
 import { EnvNamespaceGuard } from './env-namespace-guard.js'
-import { EnvServerSeedSource } from './env-server-seed.js'
 
 export type OrchestratorPolling = { attempts: number; intervalMs: number }
 
@@ -57,11 +56,6 @@ export class KubectlHiveOrchestrator implements IHiveOrchestrator
         const ns = K8sManifestBuilder.NamespaceOf(w.environmentName)
         const existing = await this.kubectl.Find(ns, KubectlHiveOrchestrator.NamespacePrefix + ns)
         EnvNamespaceGuard.AssertHiveOwns(existing === undefined ? undefined : JSON.parse(existing), ns, w.hiveId)
-        if (existing !== undefined)
-        {
-            // An environment created before the rename mounts <env>-tenants; the rendered Deployment mounts <env>-environment.
-            await EnvServerSeedSource.MigrateLegacyConfigMap(this.kubectl, w.environmentName)
-        }
         await this.kubectl.Apply(this.manifests.Render({ ...w, image }))
     }
 

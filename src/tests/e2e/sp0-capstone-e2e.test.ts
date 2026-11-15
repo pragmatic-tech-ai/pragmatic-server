@@ -93,7 +93,7 @@ class RuntimeEnvironment
     private static readonly NamePrefix = 'sp0-e2e-'
     private static readonly SecretsFile = 'provisioned-secrets.json'
     private static readonly MasterKeyFile = 'master.key'
-    private static readonly EnvironmentsFile = 'tenants.json'
+    private static readonly EnvironmentsFile = 'environments.json'
     private static readonly SecurityModelFile = 'security-model.json'
     private static readonly Utf8 = 'utf8'
     private static readonly Docker = 'docker'
@@ -108,10 +108,10 @@ class RuntimeEnvironment
     private static readonly RemoveVerb = 'rm'
     private static readonly ForceFlag = '-f'
     private static readonly ContainerPort = '8080'
-    private static readonly EnvironmentsMount = ':/cfg/tenants.json:ro'
+    private static readonly EnvironmentsMount = ':/cfg/environments.json:ro'
     private static readonly SecretsMount = ':/cfg/provisioned-secrets.json:ro'
     private static readonly MasterKeyMount = ':/run/secrets/master_key:ro'
-    // The generated bundle's data dir holds identity/tenant-config.json (with the security model) and is also
+    // The generated bundle's data dir holds identity/realm-config.json (with the security model) and is also
     // where the runtime writes deployed apps + the durable store; mounted read-write at the base dir.
     private static readonly DataDir = 'data'
     private static readonly DataMount = ':/home/pragmatic/data'
@@ -131,7 +131,7 @@ class RuntimeEnvironment
     private static readonly HealthNeverReady = 'the runtime environment container never reported /healthz=200'
     private static readonly PortEnv = 'PRAGMATIC_PORT=8080'
     private static readonly BaseDirEnv = 'PRAGMATIC_BASE_DIR=/home/pragmatic/data'
-    private static readonly EnvironmentsFileEnv = 'PRAGMATIC_TENANTS_FILE=/cfg/tenants.json'
+    private static readonly EnvironmentsFileEnv = 'PRAGMATIC_ENVIRONMENTS_FILE=/cfg/environments.json'
     private static readonly MasterKeyEnv = 'PRAGMATIC_MASTER_KEY_FILE=/run/secrets/master_key'
     private static readonly SecretsEnv = 'PRAGMATIC_PROVISIONED_SECRETS_FILE=/cfg/provisioned-secrets.json'
     private static readonly DeploymentModeEnv = 'PRAGMATIC_DEPLOYMENT_MODE=local'

@@ -23,8 +23,7 @@ State lives in the named volume `pragmatic-data` (mounted at `/data`). Use `dock
 
 ## 3. Environments
 
-`docker/environments.example.json` is mounted read-only at `/cfg/environments.json`. It declares one environment, `acme`. Copy and edit it for your own environments, then point the bind mount at your copy. The old `PRAGMATIC_TENANTS_FILE` and root key `tenants` are still read for one release.
-
+`docker/environments.example.json` is mounted read-only at `/cfg/environments.json`. It declares one environment, `acme`. Copy and edit it for your own environments, then point the bind mount at your copy.
 ## 4. Connect a client
 
     ws://localhost:8080/?environment=acme

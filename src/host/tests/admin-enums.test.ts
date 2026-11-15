@@ -6,12 +6,16 @@ import { AdminEnums } from '../admin-enums.js'
 class AdminEnumsFx
 {
     public static readonly RealmName = 'Realm'
-    public static readonly LegacyRealmName = 'Tenant'
+    public static readonly PreRenameName = 'Tenant'
 }
 
-test('admin kind name "Tenant" is accepted as Realm and named Realm', () =>
+test('admin kind name "Realm" round-trips to ResourceKind.Realm', () =>
 {
-    assert.equal(AdminEnums.ResourceKindFromName(AdminEnumsFx.LegacyRealmName), ResourceKind.Realm)
     assert.equal(AdminEnums.ResourceKindFromName(AdminEnumsFx.RealmName), ResourceKind.Realm)
     assert.equal(AdminEnums.NameOfResourceKind(ResourceKind.Realm), AdminEnumsFx.RealmName)
+})
+
+test('the pre-rename kind name "Tenant" is no longer accepted', () =>
+{
+    assert.throws(() => AdminEnums.ResourceKindFromName(AdminEnumsFx.PreRenameName))
 })

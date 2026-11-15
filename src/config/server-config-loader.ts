@@ -29,9 +29,6 @@ export class ServerConfigLoader
     private static readonly MissingMasterKey = 'master key is required: set PRAGMATIC_MASTER_KEY_FILE or PRAGMATIC_MASTER_KEY_B64_ENV'
     private static readonly MissingEnvironment = 'an environment source is required: set PRAGMATIC_ENVIRONMENTS_FILE or PRAGMATIC_ENVIRONMENT_ID'
     private static readonly EnvironmentsFileVar = 'PRAGMATIC_ENVIRONMENTS_FILE'
-    /** Read for one release when the new variable is unset; the new variable wins when both are set. */
-    private static readonly LegacyEnvironmentsFileVar = 'PRAGMATIC_TENANTS_FILE'
-    private static readonly LegacyEnvironmentsFileLine = 'PRAGMATIC_TENANTS_FILE is deprecated: set PRAGMATIC_ENVIRONMENTS_FILE instead'
     private static readonly BadMode = 'PRAGMATIC_DEPLOYMENT_MODE must be local or cloud'
 
     private static readonly TlsCertMissing = 'PRAGMATIC_TLS_CERT_FILE is required when TLS is configured'
@@ -569,9 +566,7 @@ export class ServerConfigLoader
             throw new Error(ServerConfigLoader.MissingBaseDir)
         }
         const masterKey = ServerConfigLoader.MasterKey(env)
-        const legacyEnvironmentsFile = env[ServerConfigLoader.EnvironmentsFileVar] === undefined ? env[ServerConfigLoader.LegacyEnvironmentsFileVar] : undefined
-        const environmentsFile = env[ServerConfigLoader.EnvironmentsFileVar] ?? legacyEnvironmentsFile
-        const deprecations = legacyEnvironmentsFile === undefined ? [] : [ServerConfigLoader.LegacyEnvironmentsFileLine]
+        const environmentsFile = env[ServerConfigLoader.EnvironmentsFileVar]
         const singleEnvironment = ServerConfigLoader.SingleEnvironment(env)
         if (environmentsFile === undefined && singleEnvironment === undefined)
         {
@@ -591,7 +586,6 @@ export class ServerConfigLoader
             deploymentMode,
             allowedOrigins: ServerConfigLoader.CsvNames(env[ServerConfigLoader.EnvAllowedOrigins]),
             environmentsFile,
-            deprecations,
             singleEnvironment,
             idleTtlMs: ServerConfigLoader.Int(env.PRAGMATIC_IDLE_TTL_MS) ?? file.idleTtlMs,
             idleSweepMs: ServerConfigLoader.Int(env.PRAGMATIC_IDLE_SWEEP_MS) ?? file.idleSweepMs,

@@ -41,15 +41,6 @@ test('the startup line counts environments, not tenants', () =>
     assert.doesNotMatch(line, /tenants=/)
 })
 
-test('each config deprecation is logged once as a warning', () =>
-{
-    const capture = new Capture()
-    ServerBootstrap.LogDeprecations({ ...Fixtures.Config(), deprecations: ['old name is deprecated'] }, capture.Logger())
-    assert.equal(capture.Records.length, 1)
-    assert.equal(capture.Records[0]!.message, 'old name is deprecated')
-    assert.equal(capture.Records[0]!.level, LogLevel.Warn)
-})
-
 test('the startup line is logged verbatim as the message through the logger', () =>
 {
     const capture = new Capture()

@@ -119,8 +119,7 @@ export class ControlPlaneSmoke
     private static readonly StatusCreated = 201
     private static readonly StatusUnauthorized = 401
     private static readonly ViewerRole = 'Viewer'
-    /** 'Tenant' on the admin wire for one release (older environment servers know only that name). */
-    private static readonly RealmKind = 'Tenant'
+    private static readonly RealmKind = 'Realm'
     private static readonly PollTimeoutMs = 90000
     private static readonly PollIntervalMs = 1000
     private static readonly PassTag = 'PASS '

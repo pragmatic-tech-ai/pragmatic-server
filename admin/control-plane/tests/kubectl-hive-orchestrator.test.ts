@@ -118,23 +118,7 @@ describe('KubectlHiveOrchestrator', () =>
         const { k, o } = Fixture.Make()
         k.found = JSON.stringify({ metadata: { name: Fixture.Ns, labels: { 'pragmatic/hive': 'h' } } })
         await o.Apply(Fixture.Workload(false))
-        assert.deepEqual(k.calls.map(c => c[0]), ['Find', 'Find', 'Apply'])
-    })
-
-    it('Apply over an environment created before the rename writes <env>-environment from <env>-tenants first', async () =>
-    {
-        const { k, o } = Fixture.Make()
-        const byResource = new Map<string, string>([
-            ['namespace/pragmatic-env-dev1', JSON.stringify({ metadata: { name: Fixture.Ns, labels: { 'pragmatic/hive': 'h' } } })],
-            ['configmap/dev1-tenants', JSON.stringify({ data: { 'tenants.json': '{"tenants":{}}' } })],
-        ])
-        k.Find = async (n: string, r: string) => { k.calls.push(['Find', n, r]); return byResource.get(r) }
-        await o.Apply(Fixture.Workload(false))
-        const applied = k.calls.filter(c => c[0] === 'Apply').map(c => JSON.parse(c[1]!))
-        assert.equal(applied[0].metadata.name, 'dev1-environment')
-        assert.deepEqual(applied[0].data, { 'environments.json': '{"tenants":{}}' })
-        assert.equal(applied[1].kind, 'List')
-        assert.equal(k.calls.filter(c => c[0] === 'DeleteManifest').length, 1)
+        assert.deepEqual(k.calls.map(c => c[0]), ['Find', 'Apply'])
     })
 
     it('Apply refuses an existing namespace labelled for another hive or unlabelled', async () =>

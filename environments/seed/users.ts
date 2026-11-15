@@ -19,8 +19,7 @@ export class UserSeeder
     private static readonly EndEvent = 'end'
     private static readonly ErrorEvent = 'error'
     private static readonly OpenEvent = 'open'
-    /** 'Tenant' on the admin wire for one release (older environment servers know only that name). */
-    private static readonly RealmResourceKind = 'Tenant'
+    private static readonly RealmResourceKind = 'Realm'
     private static readonly AlreadyExistsText = 'already exists'
     private static readonly LoginFailedPrefix = 'login failed with HTTP '
     private static readonly MissingPasswordPrefix = 'no password resolved for user '

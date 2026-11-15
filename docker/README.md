@@ -25,7 +25,7 @@ Required environment:
 
 - `PRAGMATIC_BASE_DIR`: base directory for environment data (mount a volume here).
 - A master-key reference: either a key file path or the name of a base64 environment variable (by reference, never the key value itself).
-- `PRAGMATIC_ENVIRONMENT_ID` for single-environment mode, or `PRAGMATIC_ENVIRONMENTS_FILE` pointing at a mounted environments file (the old `PRAGMATIC_TENANTS_FILE` and root key `tenants` are still read for one release).
+- `PRAGMATIC_ENVIRONMENT_ID` for single-environment mode, or `PRAGMATIC_ENVIRONMENTS_FILE` pointing at a mounted environments file.
 
 Startup aborts with a sanitized message if required configuration is missing. `/readyz` stays false until startup completes; `/healthz` backs the image HEALTHCHECK.
 

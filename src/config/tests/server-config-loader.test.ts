@@ -35,24 +35,13 @@ test('prefers an environments file over single-environment env when both present
     const env = { ...Env.Minimal(), PRAGMATIC_ENVIRONMENTS_FILE: '/cfg/environments.json' }
     const config = ServerConfigLoader.Load(env, Env.NoRead)
     assert.equal(config.environmentsFile, '/cfg/environments.json')
-    assert.deepEqual(config.deprecations ?? [], [])
 })
 
-test('reads the legacy PRAGMATIC_TENANTS_FILE when the new variable is unset', () =>
+test('ignores the pre-rename PRAGMATIC_TENANTS_FILE', () =>
 {
     const env = { ...Env.Minimal(), PRAGMATIC_TENANTS_FILE: '/cfg/tenants.json' }
     const config = ServerConfigLoader.Load(env, Env.NoRead)
-    assert.equal(config.environmentsFile, '/cfg/tenants.json')
-    assert.equal(config.deprecations?.length, 1)
-    assert.match(config.deprecations![0], /PRAGMATIC_TENANTS_FILE.*PRAGMATIC_ENVIRONMENTS_FILE/)
-})
-
-test('prefers PRAGMATIC_ENVIRONMENTS_FILE when both are set', () =>
-{
-    const env = { ...Env.Minimal(), PRAGMATIC_ENVIRONMENTS_FILE: '/cfg/environments.json', PRAGMATIC_TENANTS_FILE: '/cfg/tenants.json' }
-    const config = ServerConfigLoader.Load(env, Env.NoRead)
-    assert.equal(config.environmentsFile, '/cfg/environments.json')
-    assert.deepEqual(config.deprecations ?? [], [])
+    assert.equal(config.environmentsFile, undefined)
 })
 
 test('reads base64 env master key ref', () =>

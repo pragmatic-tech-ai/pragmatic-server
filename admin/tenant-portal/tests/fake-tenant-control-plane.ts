@@ -134,8 +134,8 @@ export class FakeTenantControlPlane
     ]
     public readonly Grants: GrantDto[] =
     [
-        { subject: 'owner-1', role: 'Owner', resourceKind: 'Tenant', resourcePath: [] },
-        { subject: 'editor-1', role: 'Editor', resourceKind: 'Tenant', resourcePath: [] },
+        { subject: 'owner-1', role: 'Owner', resourceKind: 'Realm', resourcePath: [] },
+        { subject: 'editor-1', role: 'Editor', resourceKind: 'Realm', resourcePath: [] },
     ]
     public readonly Tokens: ServiceTokenSummaryDto[] =
     [
