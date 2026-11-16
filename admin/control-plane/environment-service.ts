@@ -182,6 +182,12 @@ export class EnvironmentService implements IAdminAccess
     private static readonly AppReaderPrincipalId = 'app-reader'
     /** A read-only coarse role: Role.Viewer covers Action.Read, which the CypherProtocol.Query readTenant gate requires. */
     private static readonly AppReaderRoleName = 'Viewer'
+    /** The well-known read-only principal the desktop relay's inspect action authenticates as. */
+    private static readonly InspectorPrincipalId = 'inspector'
+    private static readonly InspectorRoleName = 'Viewer'
+    private static readonly InspectScope = 'environment-inspect'
+    /** Fifteen minutes: an inspect token is read-only and short-lived; callers re-mint per inspection. */
+    private static readonly InspectTtlSeconds = 900
     /** One hour: a maker token is short-lived, so a leaked one expires quickly; callers re-mint on demand. */
     private static readonly MakerTokenTtlSeconds = 3600
     /** Placeholder host port fed to TemplateCatalog.Resolve for a DNS-reached (in-cluster) env, which never publishes one. */
@@ -618,6 +624,17 @@ export class EnvironmentService implements IAdminAccess
         {
             await this.proxy.GrantRole(info, { subject: EnvironmentService.DeployerPrincipalId, role: EnvironmentService.DeployerRoleName, resourceKind: EnvironmentService.RealmKindName, resourcePath: [] })
             return this.proxy.IssueToken(info, { principalId: EnvironmentService.DeployerPrincipalId, scopes: [EnvironmentService.DeployScope], expiresInSeconds: EnvironmentService.DeployTtlSeconds })
+        })
+    }
+
+    /** Mints a short-lived read-only credential for either environment type: Viewer for the inspector principal, as Owner via the proxy. Existence-checked only; no EnvType guard. */
+    public async AdminIssueReaderToken(name: string): Promise<TokenIssuedDto>
+    {
+        this.Require(name)
+        return this.WithAdmin(name, async info =>
+        {
+            await this.proxy.GrantRole(info, { subject: EnvironmentService.InspectorPrincipalId, role: EnvironmentService.InspectorRoleName, resourceKind: EnvironmentService.RealmKindName, resourcePath: [] })
+            return this.proxy.IssueToken(info, { principalId: EnvironmentService.InspectorPrincipalId, scopes: [EnvironmentService.InspectScope], expiresInSeconds: EnvironmentService.InspectTtlSeconds })
         })
     }
 
