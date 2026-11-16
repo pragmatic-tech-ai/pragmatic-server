@@ -1,7 +1,7 @@
 import { STATUS_CODES, type IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer, type RawData } from 'ws'
-import { ApplicationDeployProtocol, AppWriteStatus, GraphProtocol, type TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ApplicationDeployProtocol, AppWriteStatus, GraphProtocol, PragmaticAppProtocol, type TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AuditRegistry } from '../audit-record.js'
 import { AuditThrottle } from '../audit-throttle.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
@@ -97,6 +97,7 @@ export class DesktopRelayAllowlist
 {
     private static readonly Contribute: ReadonlySet<string> = new Set([GraphProtocol.List.method, GraphProtocol.Contribute.method])
     private static readonly Publish: ReadonlySet<string> = new Set([ApplicationDeployProtocol.Deploy.method])
+    private static readonly Inspect: ReadonlySet<string> = new Set([PragmaticAppProtocol.List.method, GraphProtocol.List.method, GraphProtocol.Loaded.method])
     /** Audited methods and the params field naming what they act on (the audit note). */
     private static readonly AuditedNoteField: ReadonlyMap<string, string> = new Map([
         [GraphProtocol.Contribute.method, 'graphName'],
@@ -105,7 +106,15 @@ export class DesktopRelayAllowlist
 
     public static For(action: DesktopAction): ReadonlySet<string>
     {
-        return action === DesktopAction.Contribute ? DesktopRelayAllowlist.Contribute : DesktopRelayAllowlist.Publish
+        switch (action)
+        {
+            case DesktopAction.Contribute:
+                return DesktopRelayAllowlist.Contribute
+            case DesktopAction.Inspect:
+                return DesktopRelayAllowlist.Inspect
+            default:
+                return DesktopRelayAllowlist.Publish
+        }
     }
 
     /** The params field to note for an audited method; undefined when the method is not audited. */
@@ -504,9 +513,15 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
 
     private async Mint(action: DesktopAction, envName: string): Promise<TokenIssuedDto>
     {
-        return action === DesktopAction.Contribute
-            ? await this.service.AdminIssueMakerToken(envName)
-            : await this.service.AdminIssueDeployToken(envName)
+        switch (action)
+        {
+            case DesktopAction.Contribute:
+                return await this.service.AdminIssueMakerToken(envName)
+            case DesktopAction.Inspect:
+                return await this.service.AdminIssueReaderToken(envName)
+            default:
+                return await this.service.AdminIssueDeployToken(envName)
+        }
     }
 
     /**

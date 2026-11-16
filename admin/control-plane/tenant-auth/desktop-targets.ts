@@ -5,11 +5,12 @@ import { TenantAdminCapabilities, type AdminRoleCapabilities } from '../tenant-a
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import type { TenantSession } from './tenant-session.js'
 
-/** What the desktop app does to an environment: contribute graphs to a Development one, or publish to a Runtime one. */
+/** What the desktop app does to an environment: contribute graphs to a Development one, publish to a Runtime one, or (relay-only, either type) read-only inspect. */
 export enum DesktopAction
 {
     Contribute = 'contribute',
     Publish = 'publish',
+    Inspect = 'inspect',
 }
 
 /** The outcome of `DesktopTargets.Check`: allowed now, not allowed at all, or allowed but the env is not running. */
@@ -95,7 +96,7 @@ export class DesktopTargets
 
     private static IsEligible(session: TenantSession, mayActOnEnvs: boolean, record: EnvironmentRecord, action: DesktopAction): boolean
     {
-        return mayActOnEnvs && record.tenantId === session.tenantId && record.type === DesktopTargets.TypeFor(action)
+        return mayActOnEnvs && record.tenantId === session.tenantId && (action === DesktopAction.Inspect || record.type === DesktopTargets.TypeFor(action))
     }
 
     private static TypeFor(action: DesktopAction): EnvType

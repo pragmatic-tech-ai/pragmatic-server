@@ -126,4 +126,16 @@ describe('DesktopTargets', () =>
         assert.equal(await targets.Allows(TargetKit.Session(), TargetKit.Dev, DesktopAction.Contribute), undefined)
         assert.equal(await targets.Allows(TargetKit.Session(), TargetKit.Run, DesktopAction.Publish), undefined)
     })
+
+    it('Check allows inspect on a running env of either type, NotRunning when stopped, Forbidden when foreign or without the capability', async () =>
+    {
+        const targets = TargetKit.Targets()
+        const session = TargetKit.Session()
+        assert.equal((await targets.Check(session, TargetKit.Dev, DesktopAction.Inspect)).verdict, DesktopTargetVerdict.Allowed)
+        assert.equal((await targets.Check(session, TargetKit.Run, DesktopAction.Inspect)).verdict, DesktopTargetVerdict.Allowed)
+        assert.deepEqual(await targets.Check(session, TargetKit.DevStopped, DesktopAction.Inspect), { verdict: DesktopTargetVerdict.NotRunning })
+        assert.deepEqual(await targets.Check(session, TargetKit.ForeignRun, DesktopAction.Inspect), { verdict: DesktopTargetVerdict.Forbidden })
+        const noEnvs: DesktopCapabilitiesSource = () => ({ roleLabel: 'Viewer', capabilities: { envs: false, adopt: false, access: false, settings: false } })
+        assert.deepEqual(await TargetKit.Targets(noEnvs).Check(session, TargetKit.Dev, DesktopAction.Inspect), { verdict: DesktopTargetVerdict.Forbidden })
+    })
 })
