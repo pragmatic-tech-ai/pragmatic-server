@@ -62,9 +62,16 @@ jobs:
       # TODL's lock resolves the graph engine from GitHub Packages (its own CI has no sibling checkout), which
       # would give TODL a second engine copy beside the server's file:../pragmatic-graph. Re-point TODL at the
       # sibling before the server builds so the workspace holds ONE engine, exactly as in local development.
+      # Git Bash's `ln -s` (used by docker/link-graph-engine.sh) copies the folder on Windows instead of linking it,
+      # which loads two copies of @pragmatic-tech-ai/graph and breaks instanceof checks. Use a real junction here.
       - name: Point TODL at the sibling graph engine
+        shell: cmd
         working-directory: ${{ github.workspace }}
-        run: sh pragmatic-server/docker/link-graph-engine.sh .
+        run: |
+          if not exist pragmatic-graph (echo pragmatic-graph is missing & exit /b 1)
+          if not exist TODL\node_modules\@pragmatic-tech-ai mkdir TODL\node_modules\@pragmatic-tech-ai
+          if exist TODL\node_modules\@pragmatic-tech-ai\graph rd /s /q TODL\node_modules\@pragmatic-tech-ai\graph
+          mklink /J TODL\node_modules\@pragmatic-tech-ai\graph pragmatic-graph
       - name: Build pragmatic-server
         working-directory: ${{ github.workspace }}/pragmatic-server
         run: npm install --no-audit --no-fund && npm run build
