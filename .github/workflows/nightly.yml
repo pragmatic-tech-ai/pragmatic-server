@@ -45,9 +45,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      # The laptop runners share one account, so ~/.npmrc would leak this login into the other repos' jobs
+      # (TODL's registry-config tests read it). Keep it in a job-local file instead.
       - name: Configure GitHub Packages auth
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
         run: |
-          printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.PACKAGES_TOKEN }}\n' > ~/.npmrc
+          (umask 077 && printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$PACKAGES_TOKEN" > "$RUNNER_TEMP/npmrc")
+          echo "NPM_CONFIG_USERCONFIG=$RUNNER_TEMP/npmrc" >> "$GITHUB_ENV"
       - name: Build siblings in dependency order
         working-directory: ${{ github.workspace }}
         run: |
