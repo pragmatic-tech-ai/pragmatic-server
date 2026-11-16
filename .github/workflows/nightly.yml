@@ -1,0 +1,131 @@
+# Report-only nightly build (dev-kit/docs/superpowers/specs/2026-11-16-hive-ci-design.md).
+# Tests run on the hive laptop's self-hosted runner; the image build and Helm checks run on
+# GitHub-hosted ubuntu-latest so nothing on the laptop gets Docker access. Nothing is published.
+# Steps mirror ci.yml; keep them in step when ci.yml changes.
+name: nightly
+on:
+  schedule:
+    - cron: '0 2 * * *'   # 03:00 Central European time (laptop's zone)
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: read
+concurrency:
+  group: nightly-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  tests:
+    runs-on: [self-hosted, hive-windows]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The laptop runner keeps its workspace between runs. cmd's rd removes junctions as links
+      # (never following them), so npm's file: links into the siblings are safe to clear this way.
+      - name: Start from an empty workspace
+        shell: cmd
+        working-directory: ${{ github.workspace }}
+        run: |
+          for /d %%d in (*) do rd /s /q "%%d"
+          del /q /f *.* 2>nul
+          exit /b 0
+      - uses: actions/checkout@v4
+        with:
+          path: pragmatic-server
+      - name: Clone siblings
+        working-directory: ${{ github.workspace }}
+        run: |
+          for pair in pragmatic-graph:pragmatic-graph todl-runtime:todl-runtime todl:TODL mural:Mural pragmatic-protocol:pragmatic-protocol todl-identity:todl-identity todl-identity-local:todl-identity-local todl-identity-host:todl-identity-host todl-identity-cloud:todl-identity-cloud todl-identity-engine:todl-identity-engine todl-connectors-host:todl-connectors-host todl-platform-node:todl-platform-node todl-platform-cloud:todl-platform-cloud todl-platform-aws:todl-platform-aws todl-platform-azure:todl-platform-azure todl-platform-gcp:todl-platform-gcp todl-identity-node:todl-identity-node; do
+            git clone --depth 1 "https://github.com/pragmatic-tech-ai/${pair%%:*}.git" "${pair#*:}"
+          done
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Configure GitHub Packages auth
+        run: |
+          printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.PACKAGES_TOKEN }}\n' > ~/.npmrc
+      - name: Build siblings in dependency order
+        working-directory: ${{ github.workspace }}
+        run: |
+          for pkg in pragmatic-graph todl-runtime TODL Mural pragmatic-protocol todl-identity todl-identity-local todl-identity-host todl-identity-cloud todl-identity-engine todl-connectors-host todl-platform-node todl-platform-cloud todl-platform-aws todl-platform-azure todl-platform-gcp todl-identity-node; do
+            (cd "$pkg" && npm install --no-audit --no-fund && npm run build)
+          done
+      # TODL's lock resolves the graph engine from GitHub Packages (its own CI has no sibling checkout), which
+      # would give TODL a second engine copy beside the server's file:../pragmatic-graph. Re-point TODL at the
+      # sibling before the server builds so the workspace holds ONE engine, exactly as in local development.
+      - name: Point TODL at the sibling graph engine
+        working-directory: ${{ github.workspace }}
+        run: sh pragmatic-server/docker/link-graph-engine.sh .
+      - name: Build pragmatic-server
+        working-directory: ${{ github.workspace }}/pragmatic-server
+        run: npm install --no-audit --no-fund && npm run build
+      # Each app image copies only the siblings its entry reaches: closure.json, the Dockerfile and the code must agree.
+      # Run with the server's locked tsx; the check resolves the workspace root from its own location.
+      - name: Image closure check
+        working-directory: ${{ github.workspace }}/pragmatic-server
+        run: npx tsx docker/images/closure-check.ts
+      - name: Test
+        working-directory: ${{ github.workspace }}/pragmatic-server
+        run: npx tsx --test "src/**/*.test.ts"
+      # The control-plane suite (release toolkit, catalogue, tenant-admin closure guard) and the image tooling. Every test
+      # that needs a local-only resource is gated (the dev-ca-trust.ps1 suite runs on Windows only; the POSIX-mode checks
+      # skip where modes are unsupported); docker, kubectl and kind are faked throughout, and openssl is on the runner.
+      - name: Test the control plane
+        working-directory: ${{ github.workspace }}/pragmatic-server
+        run: npx tsx --test "admin/control-plane/**/*.test.ts"
+      - name: Test the image tooling
+        working-directory: ${{ github.workspace }}/pragmatic-server
+        run: npx tsx --test "docker/images/tests/*.test.ts"
+      - name: IdP sign-in app (unit tests + typecheck)
+        working-directory: ${{ github.workspace }}/pragmatic-server/idp-login
+        run: |
+          npm install --no-audit --no-fund && npm test && npm run typecheck
+      # One image per app (docker/docker-bake.hcl), built but not pushed; release.yml publishes them.
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: pragmatic-server
+      - name: Clone siblings
+        working-directory: ${{ github.workspace }}
+        run: |
+          for pair in pragmatic-graph:pragmatic-graph todl-runtime:todl-runtime todl:TODL mural:Mural pragmatic-protocol:pragmatic-protocol todl-identity:todl-identity todl-identity-local:todl-identity-local todl-identity-host:todl-identity-host todl-identity-cloud:todl-identity-cloud todl-identity-engine:todl-identity-engine todl-connectors-host:todl-connectors-host todl-platform-node:todl-platform-node todl-platform-cloud:todl-platform-cloud todl-platform-aws:todl-platform-aws todl-platform-azure:todl-platform-azure todl-platform-gcp:todl-platform-gcp todl-identity-node:todl-identity-node; do
+            git clone --depth 1 "https://github.com/pragmatic-tech-ai/${pair%%:*}.git" "${pair#*:}"
+          done
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Configure GitHub Packages auth
+        run: |
+          printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=${{ secrets.PACKAGES_TOKEN }}\n' > ~/.npmrc
+      - name: Build siblings in dependency order
+        working-directory: ${{ github.workspace }}
+        run: |
+          for pkg in pragmatic-graph todl-runtime TODL Mural pragmatic-protocol todl-identity todl-identity-local todl-identity-host todl-identity-cloud todl-identity-engine todl-connectors-host todl-platform-node todl-platform-cloud todl-platform-aws todl-platform-azure todl-platform-gcp todl-identity-node; do
+            (cd "$pkg" && npm install --no-audit --no-fund && npm run build)
+          done
+      # TODL's lock resolves the graph engine from GitHub Packages (its own CI has no sibling checkout), which
+      # would give TODL a second engine copy beside the server's file:../pragmatic-graph. Re-point TODL at the
+      # sibling before the server builds so the workspace holds ONE engine, exactly as in local development.
+      - name: Point TODL at the sibling graph engine
+        working-directory: ${{ github.workspace }}
+        run: sh pragmatic-server/docker/link-graph-engine.sh .
+      - name: Build pragmatic-server
+        working-directory: ${{ github.workspace }}/pragmatic-server
+        run: npm install --no-audit --no-fund && npm run build
+      # Each app image copies only the siblings its entry reaches: closure.json, the Dockerfile and the code must agree.
+      # Run with the server's locked tsx; the check resolves the workspace root from its own location.
+      - name: Docker build
+        working-directory: ${{ github.workspace }}
+        env:
+          PACKAGES_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        run: |
+          trap 'rm -f "$RUNNER_TEMP/npmrc"' EXIT
+          (umask 077 && printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$PACKAGES_TOKEN" > "$RUNNER_TEMP/npmrc")
+          NPMRC_FILE="$RUNNER_TEMP/npmrc" VERSION=ci SERVER_SHA="$GITHUB_SHA" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --allow=fs.read="$RUNNER_TEMP/npmrc"
+      - name: Helm lint + template
+        working-directory: ${{ github.workspace }}
+        run: |
+          helm lint pragmatic-server/helm/pragmatic-server
+          helm template pragmatic-server/helm/pragmatic-server
