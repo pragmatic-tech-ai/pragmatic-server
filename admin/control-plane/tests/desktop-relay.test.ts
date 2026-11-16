@@ -1337,3 +1337,18 @@ describe('DesktopRelay over an in-cluster reach', () =>
         assert.deepEqual(kubectl.calls, [], 'no port-forward and no Secret read')
     })
 })
+
+describe('DesktopRelayAllowlist.For', () =>
+{
+    it('maps each known action to its own allowlist', () =>
+    {
+        assert.ok(DesktopRelayAllowlist.For(DesktopAction.Contribute).has(GraphProtocol.Contribute.method))
+        assert.ok(DesktopRelayAllowlist.For(DesktopAction.Publish).has(ApplicationDeployProtocol.Deploy.method))
+        assert.ok(!DesktopRelayAllowlist.For(DesktopAction.Inspect).has(ApplicationDeployProtocol.Deploy.method))
+    })
+
+    it('fails closed for an unknown action', () =>
+    {
+        assert.throws(() => DesktopRelayAllowlist.For('bogus' as DesktopAction), new RegExp(DesktopRelayAllowlist.UnsupportedActionMessage))
+    })
+})

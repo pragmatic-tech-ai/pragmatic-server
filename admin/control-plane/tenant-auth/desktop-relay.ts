@@ -99,6 +99,8 @@ export class DesktopRelayAllowlist
     private static readonly Contribute: ReadonlySet<string> = new Set([GraphProtocol.List.method, GraphProtocol.Contribute.method])
     private static readonly Publish: ReadonlySet<string> = new Set([ApplicationDeployProtocol.Deploy.method])
     private static readonly Inspect: ReadonlySet<string> = new Set([PragmaticAppProtocol.List.method, GraphProtocol.List.method, GraphProtocol.Loaded.method])
+    /** Thrown for an action with no explicit case: fail closed rather than inherit another action's privileges. */
+    public static readonly UnsupportedActionMessage = 'Unsupported desktop relay action.'
     /** Audited methods and the params field naming what they act on (the audit note). */
     private static readonly AuditedNoteField: ReadonlyMap<string, string> = new Map([
         [GraphProtocol.Contribute.method, 'graphName'],
@@ -113,8 +115,10 @@ export class DesktopRelayAllowlist
                 return DesktopRelayAllowlist.Contribute
             case DesktopAction.Inspect:
                 return DesktopRelayAllowlist.Inspect
-            default:
+            case DesktopAction.Publish:
                 return DesktopRelayAllowlist.Publish
+            default:
+                throw new Error(DesktopRelayAllowlist.UnsupportedActionMessage)
         }
     }
 
@@ -520,8 +524,10 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
                 return await this.service.AdminIssueMakerToken(envName)
             case DesktopAction.Inspect:
                 return await this.service.AdminIssueReaderToken(envName)
-            default:
+            case DesktopAction.Publish:
                 return await this.service.AdminIssueDeployToken(envName)
+            default:
+                throw new Error(DesktopRelayAllowlist.UnsupportedActionMessage)
         }
     }
 
