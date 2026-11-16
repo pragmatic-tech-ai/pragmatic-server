@@ -66,6 +66,22 @@ class DenyingScope implements IGraphScope
     }
 }
 
+/** A scope factory that counts how often it is asked for a scope (the factory a refused subscriber must never reach). */
+class CountingScope
+{
+    public Calls = 0
+
+    public constructor(private readonly inner: () => Promise<IGraphScope>)
+    {
+    }
+
+    public Factory(): Promise<IGraphScope>
+    {
+        this.Calls += 1
+        return this.inner()
+    }
+}
+
 /** A host whose running snapshot can be hidden, as during a reopen. */
 class GatedHost extends EnvironmentEngineHost
 {
@@ -263,6 +279,25 @@ describe('data/changed push', () =>
             assert.deepEqual(denied.Payloads, [], 'a scope denying crm.Account gets nothing')
             await fx.Seed([{ Concept: PushFx.Contact, Id: PushFx.R2 }])
             assert.deepEqual((await denied.Await()).map(payload => payload.concepts), [[PushFx.Contact]], 'a readable concept still arrives')
+        })
+    })
+
+    test('a refused subscriber is skipped without its scope being compiled', async () =>
+    {
+        await PushFx.Run({}, async fx =>
+        {
+            const context = fx.ContextFor(PushFx.Principal(PushFx.P1))
+            const real = async () => (await fx.Server.EnvironmentScopes()).ScopeFor(context)
+            const refusedScope = new CountingScope(real)
+            const refused = new Inbox()
+            const permitted = new Inbox()
+            fx.Server.DataChanges().Subscribe(() => refusedScope.Factory(), payload => refused.Receive(payload), () => false)
+            fx.Server.DataChanges().Subscribe(real, payload => permitted.Receive(payload), () => true)
+            await fx.Seed([{ Concept: PushFx.Account, Id: PushFx.R1 }])
+            assert.deepEqual((await permitted.Await()).map(payload => payload.concepts), [[PushFx.Account]], 'the flush ran')
+            await Inbox.Quiet()
+            assert.deepEqual(refused.Payloads, [], 'a refused subscriber gets nothing')
+            assert.equal(refusedScope.Calls, 0, 'a refused subscriber never has its scope compiled')
         })
     })
 

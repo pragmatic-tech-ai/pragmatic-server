@@ -4,7 +4,8 @@ import { mkdtempSync, cpSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
-import type { ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
+import { AccessDefault, AccessScope, In } from '@pragmatic-tech-ai/graph'
+import type { ConnectorContext, Cypher, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { CursorStaleError, ErrorCodes, InMemoryMessageSocket, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ModelMemberDto, ModelViewPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { EdgeKind, Repository } from '@pragmatic-tech-ai/todl'
@@ -82,6 +83,64 @@ class CountingScopeSource implements IGraphScopeSource
     public async ScopeFor(context: AccessContext): Promise<IGraphScope>
     {
         return (await this.inner()).ScopeFor(context)
+    }
+}
+
+/** One depth-restricted scope: the real dev scope's connector and placement, its read rule narrowed to the owning BUs the depth reaches. */
+class DepthScope implements IGraphScope
+{
+    public readonly Scope: AccessScope
+    public readonly Connector: ConnectorContext
+    public readonly Digest: string
+
+    public constructor(private readonly inner: IGraphScope, reach: readonly string[])
+    {
+        this.Scope = AccessScope.Build({ Default: AccessDefault.Allow, Rows: new Map([[DepthFx.Widget, new In(PpSecurityHarness.OwningBuField, reach)]]) })
+        this.Connector = inner.Connector
+        this.Digest = inner.Digest + DepthFx.DigestSeparator + reach.join(DepthFx.DigestSeparator)
+    }
+
+    public Placement(modelId?: string): Cypher.INodePlacement
+    {
+        return this.inner.Placement(modelId)
+    }
+}
+
+/** A scope source whose caller reads only the Widgets owned in the business units its depth reaches (the BU depth model, narrowed by hand over the dev engine). */
+class DepthScopes implements IGraphScopeSource
+{
+    public readonly Dropped: ISignal<void> = new CountingDropped()
+
+    public constructor(private readonly inner: () => Promise<IGraphScopeSource>, private readonly reach: readonly string[])
+    {
+    }
+
+    public async ScopeFor(context: AccessContext): Promise<IGraphScope>
+    {
+        return new DepthScope(await (await this.inner()).ScopeFor(context), this.reach)
+    }
+}
+
+/** The language service's model structure with one fixed resource for a node (the service resolves none for the fixture). */
+class ResourceStructure implements IDevModelStructure
+{
+    public constructor(private readonly language: IDevModelStructure, private readonly resource: IDevModelResource)
+    {
+    }
+
+    public get GraphRevision(): number
+    {
+        return this.language.GraphRevision
+    }
+
+    public ModelView(storage: Parameters<IDevModelStructure['ModelView']>[0]): ReturnType<IDevModelStructure['ModelView']>
+    {
+        return this.language.ModelView(storage)
+    }
+
+    public async Resources(): Promise<readonly IDevModelResource[]>
+    {
+        return [this.resource]
     }
 }
 
@@ -452,6 +511,12 @@ class DepthFx
         + `Widget w2 { ${PpSecurityHarness.OwningBuField} = "${PpSecurityHarness.RootBu}"; label = "beta"; } `
         + `Widget w3 { ${PpSecurityHarness.OwningBuField} = "${PpSecurityHarness.SalesBu}"; label = "gamma"; } } }`
     public static readonly W3 = 'acme.w3'
+    public static readonly W1 = 'acme.w1'
+    public static readonly Widget = 'acme.Widget'
+    public static readonly DigestSeparator = '|'
+    public static readonly ResourceAnnotation = 'icon'
+    public static readonly ResourcePath = 'resources/w1.svg'
+    public static readonly ResourceRoot = 'mem://depth'
 
 }
 
@@ -655,6 +720,21 @@ test('a saved edit is seen once the engine upgrades, and a cursor minted before 
         const ids = (await client.ModelView(world.MemberId)).items.map(m => m.id)
         assert.ok(ids.includes(DepthFx.W3))
         await assert.rejects(() => client.ModelView(world.MemberId, { cursor: before.nextCursor, pageSize: 1 }), DevWorld.IsStale)
+    })
+})
+
+test('Resources of an instance hidden by BU depth is [] for a caller whose depth misses it, and returned for one whose depth reaches it', async () =>
+{
+    await DevWorld.With(DepthFx.Todl, async world =>
+    {
+        const resource: IDevModelResource = { annotation: DepthFx.ResourceAnnotation, path: DepthFx.ResourcePath, storage: { Root: DepthFx.ResourceRoot } }
+        const structure = new ResourceStructure(world.Language as unknown as IDevModelStructure, resource)
+        // w1 is owned in the sales BU: a depth reaching only the root BU misses it, one reaching sales reaches it
+        const missing = world.View(structure, undefined, async () => new DepthScopes(() => world.Server.DevScopes(), [PpSecurityHarness.RootBu]))
+        const reaching = world.View(structure, undefined, async () => new DepthScopes(() => world.Server.DevScopes(), [PpSecurityHarness.SalesBu]))
+        assert.deepEqual(await missing.Resources(DevWorld.Owner(), DepthFx.W1), [])
+        const found = await reaching.Resources(DevWorld.Owner(), DepthFx.W1)
+        assert.deepEqual(found, [{ annotation: DepthFx.ResourceAnnotation, path: DepthFx.ResourcePath, storageRoot: DepthFx.ResourceRoot }])
     })
 })
 
