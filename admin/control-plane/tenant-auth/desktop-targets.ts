@@ -36,7 +36,7 @@ export type DesktopCapabilitiesSource = (session: TenantSession, tenant: TenantR
  * The environments a desktop session may act on. Offered == allowed: `For` (the pickers) and `Allows` / `Check` (the action, used
  * by the relay) apply one rule, `IsEligible`: the session holds the environments capability (from the same source the
  * profile reports, computed once per call), the env belongs to the session's tenant, and its type is the action's
- * (Development for contribute, Runtime for publish). `Allows` / `Check` additionally require the env to be running.
+ * (Development for contribute, Runtime for publish; inspect is allowed on either type, so only the type check is relaxed for it). `Allows` / `Check` additionally require the env to be running.
  */
 export class DesktopTargets
 {

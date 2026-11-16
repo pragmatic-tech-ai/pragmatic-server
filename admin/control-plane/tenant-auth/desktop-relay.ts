@@ -91,7 +91,8 @@ export class SystemRelayClock implements IRelayClock
  * The JSON-RPC methods a desktop relay forwards per action. `PragmaticClient` (pragmatic-protocol) sends no handshake of
  * its own: no initialize, no ping, and since it never passes a cancellation token to vscode-jsonrpc, no `$/cancelRequest`
  * either. So each action's set is exactly the methods its desktop flow calls: contribute lists graphs to pick one and
- * contributes to it; publish deploys an application.
+ * contributes to it; publish deploys an application; inspect (read-only) lists an environment's applications and graphs
+ * (application/list, graph/list, graph/loaded).
  */
 export class DesktopRelayAllowlist
 {
