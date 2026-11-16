@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { PrincipalKind, Realm, RealmKind, Principal, PresentedSecret } from '@pragmatic-tech-ai/todl-identity'
 import { FakeStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
-import { ApplicationDeployProtocol, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ApplicationDeployProtocol, GraphProtocol, PragmaticAppProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { TokenScope, TokenScopeGate, ScopedAccessContext } from '../token-scope.js'
 import { ConnectionAuthenticator } from '../connection-authenticator.js'
 
@@ -38,6 +38,17 @@ test('the contribute scope allows graph/contribute and graph/list only', () =>
     assert.equal(gate.Allows(GraphProtocol.List.method), true)
     assert.equal(gate.Allows(ApplicationDeployProtocol.Deploy.method), false)
     assert.equal(gate.Allows(GraphProtocol.Delete.method), false)
+})
+
+test('the inspect scope allows only the three read methods', () =>
+{
+    const gate = TokenScopeGate.For([TokenScope.Inspect])
+    assert.equal(TokenScope.Inspect, 'environment-inspect')
+    assert.equal(gate.Allows(PragmaticAppProtocol.List.method), true)
+    assert.equal(gate.Allows(GraphProtocol.List.method), true)
+    assert.equal(gate.Allows(GraphProtocol.Loaded.method), true)
+    assert.equal(gate.Allows(ApplicationDeployProtocol.Deploy.method), false)
+    assert.equal(gate.Allows(GraphProtocol.Contribute.method), false)
 })
 
 test('known scopes combine as a union', () =>

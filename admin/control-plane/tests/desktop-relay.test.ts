@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { WebSocket, WebSocketServer } from 'ws'
-import { AppWriteStatus, PragmaticClient, type TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ApplicationDeployProtocol, AppWriteStatus, GraphProtocol, PragmaticAppProtocol, PragmaticClient, type TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AuditRegistry, type AuditRecord } from '../audit-record.js'
 import { AuditThrottle } from '../audit-throttle.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
@@ -17,8 +17,8 @@ import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environ
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import { DesktopAuthGate } from '../tenant-auth/desktop-auth-gate.js'
-import { DesktopRelay, WsUpstreamDialer, type IRelayClock, type IRelayTimer, type IUpstreamDialer } from '../tenant-auth/desktop-relay.js'
-import { DesktopTargets, type DesktopCapabilitiesSource } from '../tenant-auth/desktop-targets.js'
+import { DesktopRelay, DesktopRelayAllowlist, WsUpstreamDialer, type IRelayClock, type IRelayTimer, type IUpstreamDialer } from '../tenant-auth/desktop-relay.js'
+import { DesktopAction, DesktopTargets, type DesktopCapabilitiesSource } from '../tenant-auth/desktop-targets.js'
 import { TenantSessionKind, TenantSessionStore, type TenantSession } from '../tenant-auth/tenant-session.js'
 import { TenantPrincipalSessions } from '../tenant-auth/tenant-principal-sessions.js'
 import type { IIdpService } from '../idp-service.js'
@@ -193,6 +193,11 @@ class RelayService
         return this.Mint(name, RelayKit.DeployToken)
     }
 
+    public async AdminIssueReaderToken(name: string): Promise<TokenIssuedDto>
+    {
+        return this.Mint(name, RelayKit.ReaderToken)
+    }
+
     public async AdminRevokeToken(name: string, tokenRef: string): Promise<void>
     {
         this.revokes.push(name + '/' + tokenRef)
@@ -356,6 +361,7 @@ class RelayKit
     public static readonly ForeignDev = 'globex-dev'
     public static readonly MakerToken = 'minted-maker-credential'
     public static readonly DeployToken = 'minted-deploy-credential'
+    public static readonly ReaderToken = 'minted-reader-credential'
     public static readonly Graph = 'payments'
     public static readonly NotAvailable = 'This method is not available through the desktop relay.'
     /** The Dev env's recorded in-cluster endpoint (its Service DNS); only an in-cluster reach reads it. */
@@ -1258,6 +1264,48 @@ describe('DesktopRelay publish', () =>
     })
 })
 
+describe('DesktopRelay inspect', () =>
+{
+    let kit: RelayKit
+
+    beforeEach(async () =>
+    {
+        kit = new RelayKit()
+        await kit.Start()
+    })
+
+    afterEach(async () =>
+    {
+        await kit.Stop()
+    })
+
+    it('the inspect allowlist is exactly the three read methods', () =>
+    {
+        const allowed = DesktopRelayAllowlist.For(DesktopAction.Inspect)
+        assert.deepEqual(new Set(allowed), new Set([PragmaticAppProtocol.List.method, GraphProtocol.List.method, GraphProtocol.Loaded.method]))
+        assert.ok(!allowed.has(ApplicationDeployProtocol.Deploy.method))
+        assert.ok(!allowed.has(GraphProtocol.Contribute.method))
+    })
+
+    it('mints the reader credential on a Development env and refuses a write method', async () =>
+    {
+        const client = await kit.Client(RelayKit.Dev, 'inspect')
+        assert.deepEqual(await client.ListGraphs(), [])
+        await assert.rejects(client.ContributeGraph(RelayKit.Contribute(RelayKit.Graph) as never), (err: { code?: number }) => err.code === -32601)
+        await client.DisposeAsync()
+        assert.deepEqual(kit.upstream.methods, ['graph/list'])
+        assert.deepEqual(kit.upstream.bearers, ['Bearer ' + RelayKit.ReaderToken])
+    })
+
+    it('mints the reader credential on a Runtime env too', async () =>
+    {
+        const client = await kit.Client(RelayKit.Run, 'inspect')
+        assert.deepEqual(await client.ListGraphs(), [])
+        await client.DisposeAsync()
+        assert.deepEqual(kit.upstream.bearers, ['Bearer ' + RelayKit.ReaderToken])
+    })
+})
+
 describe('DesktopRelay over an in-cluster reach', () =>
 {
     let kit: RelayKit
@@ -1287,5 +1335,20 @@ describe('DesktopRelay over an in-cluster reach', () =>
         assert.equal(reach.leases, 1, 'UrlsFor ran once')
         assert.equal(reach.releases, 1, 'the pipe released its (no-op) lease when it closed')
         assert.deepEqual(kubectl.calls, [], 'no port-forward and no Secret read')
+    })
+})
+
+describe('DesktopRelayAllowlist.For', () =>
+{
+    it('maps each known action to its own allowlist', () =>
+    {
+        assert.ok(DesktopRelayAllowlist.For(DesktopAction.Contribute).has(GraphProtocol.Contribute.method))
+        assert.ok(DesktopRelayAllowlist.For(DesktopAction.Publish).has(ApplicationDeployProtocol.Deploy.method))
+        assert.ok(!DesktopRelayAllowlist.For(DesktopAction.Inspect).has(ApplicationDeployProtocol.Deploy.method))
+    })
+
+    it('fails closed for an unknown action', () =>
+    {
+        assert.throws(() => DesktopRelayAllowlist.For('bogus' as DesktopAction), new RegExp(DesktopRelayAllowlist.UnsupportedActionMessage))
     })
 })

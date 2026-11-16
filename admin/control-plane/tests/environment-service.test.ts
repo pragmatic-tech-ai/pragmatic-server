@@ -1091,6 +1091,34 @@ test('AdminIssueDeployToken on a Development env throws EnvironmentNotRuntimeErr
     assert.equal(h.Proxy.Calls.length, 0)
 })
 
+test('AdminIssueReaderToken grants Viewer to inspector then issues a 15-minute inspect token for a Development env', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h)
+    const dto = await h.Service.AdminIssueReaderToken(AdminFixture.Name)
+    assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['GrantRole', 'IssueToken'])
+    assert.deepEqual(h.Proxy.Calls[0].args, [{ subject: 'inspector', role: 'Viewer', resourceKind: 'Realm', resourcePath: [] }])
+    assert.deepEqual(h.Proxy.Calls[1].args, [{ principalId: 'inspector', scopes: ['environment-inspect'], expiresInSeconds: 900 }])
+    assert.equal(dto.token, 'secret-token')
+})
+
+test('AdminIssueReaderToken also works for a Runtime env (no type guard)', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h)
+    await h.Registry.Put({ ...h.Registry.Get(AdminFixture.Name)!, type: EnvType.Runtime })
+    const dto = await h.Service.AdminIssueReaderToken(AdminFixture.Name)
+    assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['GrantRole', 'IssueToken'])
+    assert.equal(dto.token, 'secret-token')
+})
+
+test('AdminIssueReaderToken on an unknown env throws EnvironmentNotFoundError before any proxy call', async () =>
+{
+    const h = await Harness.Make()
+    await assert.rejects(() => h.Service.AdminIssueReaderToken('nope'), EnvironmentNotFoundError)
+    assert.equal(h.Proxy.Calls.length, 0)
+})
+
 test('AdminListTokens forwards to proxy.ListTokens with the env admin info, with no env-type guard', async () =>
 {
     const h = await Harness.Make()

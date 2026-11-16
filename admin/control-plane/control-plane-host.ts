@@ -99,6 +99,7 @@ export interface IEnvironmentService
     AdminListSecurityChanges(name: string): Promise<SecurityChangesDto[]>
     AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
     AdminIssueDeployToken(name: string): Promise<TokenIssuedDto>
+    AdminIssueReaderToken(name: string): Promise<TokenIssuedDto>
     AdminListTokens(name: string): Promise<ServiceTokenSummaryDto[]>
     AdminIssueToken(name: string, params: IssueTokenParams): Promise<TokenIssuedDto>
     AdminRevokeToken(name: string, tokenRef: string): Promise<void>
