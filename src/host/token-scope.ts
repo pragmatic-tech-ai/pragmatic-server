@@ -1,11 +1,12 @@
 import { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { ApplicationDeployProtocol, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ApplicationDeployProtocol, GraphProtocol, PragmaticAppProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /** Scopes a service token may carry that restrict which methods it can call. */
 export enum TokenScope
 {
     GraphContribute = 'graph-contribute',
     ApplicationDeploy = 'application-deploy',
+    Inspect = 'environment-inspect',
 }
 
 /** An AccessContext built from a service-token authentication, carrying that token's scopes explicitly.
@@ -29,6 +30,7 @@ export class TokenScopeGate
     private static readonly MethodsByScope: ReadonlyMap<string, readonly string[]> = new Map<string, readonly string[]>([
         [TokenScope.GraphContribute, [GraphProtocol.Contribute.method, GraphProtocol.List.method]],
         [TokenScope.ApplicationDeploy, [ApplicationDeployProtocol.Deploy.method]],
+        [TokenScope.Inspect, [PragmaticAppProtocol.List.method, GraphProtocol.List.method, GraphProtocol.Loaded.method]],
     ])
 
     private readonly allowed: ReadonlySet<string> | null
