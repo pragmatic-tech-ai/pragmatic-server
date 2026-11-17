@@ -209,7 +209,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private securityChangeLog: SecurityChangeLog | undefined
     private environmentRules: EnvironmentScopeRules | undefined
     private devExecute: DevCypherExecute | undefined
-    private devSourceChangeBridge: SourceChangeBridge | undefined
+    private devSourceChangeBridge: Promise<SourceChangeBridge> | undefined
 
     public constructor(options: PragmaticServerOptions)
     {
@@ -877,8 +877,14 @@ export class PragmaticServer implements IEnvironmentGraphHost
     /** This environment's single source-change bridge, bound to its shared language service (memoized). */
     public async DevSourceChangeBridge(): Promise<SourceChangeBridge>
     {
-        this.devSourceChangeBridge ??= new SourceChangeBridge(await this.LanguageService())
+        // memoize the PROMISE: concurrent first callers share one in-flight construction, hence one bridge
+        this.devSourceChangeBridge ??= this.BuildSourceChangeBridge()
         return this.devSourceChangeBridge
+    }
+
+    private async BuildSourceChangeBridge(): Promise<SourceChangeBridge>
+    {
+        return new SourceChangeBridge(await this.LanguageService())
     }
 
     /**
