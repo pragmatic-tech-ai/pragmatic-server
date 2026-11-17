@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, createMessageConnection, NullLogger, StorageProtocol, SolutionProtocol, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, createMessageConnection, NullLogger, StorageProtocol, SolutionProtocol, GraphProtocol, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection, GraphContributeParamsDto, GraphCreateParamsDto, GraphDetailDto, GraphExportDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { FakeStorage, Signal } from '@pragmatic-tech-ai/todl-runtime'
@@ -70,6 +70,8 @@ class DevelopFixture
     public static readonly GraphName = 'g1'
     public static readonly SolutionId = 'sol-1'
     public static readonly AddedKind = 'added'
+    public static readonly OutsideScopeMessage = "method is outside this credential's scope"
+    public static readonly CreateParams = { graphName: 'g1', description: '' }
     private static readonly EnvironmentId = 't1'
     private static readonly PrincipalId = 'p1'
     private static readonly EnvironmentName = 'Environment One'
@@ -152,6 +154,10 @@ test('a source save on connection A pushes storage/changed and solution/graphCha
         assert.deepEqual(b.StoragePushes, [{ Kind: DevelopFixture.AddedKind, Path: DevelopFixture.SourcePath, IsDirectory: false }])
         assert.equal(fx.DidChangeUris.length, 1)
         assert.equal(b.GraphPushes.length, 1)
+        const payload = b.GraphPushes[0] as { memberIds: string[]; fileIds: string[] }
+        assert.deepEqual(payload.memberIds, [])
+        assert.deepEqual(payload.fileIds, fx.DidChangeUris)
+        assert.ok(payload.fileIds[0]!.endsWith(DevelopFixture.SourcePath))
         assert.equal(a.GraphPushes.length, 1)
     }
     finally
@@ -181,7 +187,7 @@ test('selectAuthoring on A leaves connection B and the global ActiveSolution unt
     }
 })
 
-test('graph/contribute succeeds under the develop scope, which allowlists it, while graph/create stays outside it', async () =>
+test('graph/contribute succeeds under the develop scope, which allowlists it, while graph/create is denied by scope (and allowed without it)', async () =>
 {
     const fx = new DevelopFixture()
     const a = fx.Attach([TokenScope.Develop])
@@ -192,7 +198,17 @@ test('graph/contribute succeeds under the develop scope, which allowlists it, wh
         const detail = await a.Client.sendRequest(GraphProtocol.Contribute, { graphName: DevelopFixture.GraphName, solutionId: DevelopFixture.SolutionId, packages: [] })
         assert.equal(detail.name, DevelopFixture.GraphName)
         assert.deepEqual(fx.Graphs.Contributed, [DevelopFixture.GraphName])
-        await assert.rejects(() => a.Client.sendRequest(GraphProtocol.Create, { graphName: DevelopFixture.GraphName, description: '' }))
+        await assert.rejects(() => a.Client.sendRequest(GraphProtocol.Create, DevelopFixture.CreateParams), (e: { code?: number; message?: string }) => e.code === ErrorCodes.InvalidRequest && e.message === DevelopFixture.OutsideScopeMessage)
+        const control = fx.Attach([])
+        try
+        {
+            const created = await control.Client.sendRequest(GraphProtocol.Create, DevelopFixture.CreateParams)
+            assert.equal(created.name, DevelopFixture.GraphName)
+        }
+        finally
+        {
+            control.Dispose()
+        }
     }
     finally
     {
