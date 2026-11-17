@@ -14,9 +14,16 @@ class BridgeFx
     public readonly Changes: StorageChangedPayload[] = []
     public readonly Handlers: RemoteStorageHandlers
 
-    public constructor()
+    public constructor(throwOnDidChange: boolean = false)
     {
-        const language = { DidChange: (uri: string, text: string) => { this.DidChangeCalls.push({ uri, text }) } } as unknown as ILanguageService
+        const language = { DidChange: (uri: string, text: string) =>
+        {
+            if (throwOnDidChange)
+            {
+                throw new Error('language service failure')
+            }
+            this.DidChangeCalls.push({ uri, text })
+        } } as unknown as ILanguageService
         const bridge = new SourceChangeBridge(language)
         bridge.Changed.subscribe(change => this.Changes.push(change))
         this.Handlers = new RemoteStorageHandlers(() => this.Storage, bridge)
@@ -36,6 +43,7 @@ test('WriteText drives exactly one DidChange and one changed/added emission', as
     assert.deepEqual(fx.DidChangeCalls, [{ uri: fx.Uri('a/x.todl'), text: 'hi' }])
     assert.deepEqual(fx.Changes, [{ Kind: 'added', Path: 'a/x.todl', IsDirectory: false }])
     await fx.Handlers.WriteText({ Path: 'a/x.todl', Content: 'ho' })
+    assert.deepEqual(fx.DidChangeCalls[1], { uri: fx.Uri('a/x.todl'), text: 'ho' })
     assert.equal(fx.DidChangeCalls.length, 2)
     assert.deepEqual(fx.Changes[1], { Kind: 'changed', Path: 'a/x.todl', IsDirectory: false })
 })
@@ -80,9 +88,34 @@ test('a rejected mutation emits nothing', async () =>
     assert.equal(fx.DidChangeCalls.length, 0)
 })
 
-test('For returns one shared bridge per language service', () =>
+test('a throwing DidChange still emits the change and does not fail the committed write', async () =>
 {
-    const language = {} as unknown as ILanguageService
-    assert.equal(SourceChangeBridge.For(language), SourceChangeBridge.For(language))
-    assert.notEqual(SourceChangeBridge.For(language), SourceChangeBridge.For({} as unknown as ILanguageService))
+    const fx = new BridgeFx(true)
+    await fx.Handlers.WriteText({ Path: 'a/x.todl', Content: 'hi' })
+    assert.deepEqual(fx.Changes, [{ Kind: 'added', Path: 'a/x.todl', IsDirectory: false }])
+    assert.equal(await fx.Storage.ReadText('a/x.todl'), 'hi')
+})
+
+test('a text write to a path that is not a tracked .todl source emits but does not call DidChange', async () =>
+{
+    const fx = new BridgeFx()
+    await fx.Handlers.WriteText({ Path: 'README.md', Content: 'hi' })
+    await fx.Handlers.WriteText({ Path: 'node_modules/p/x.todl', Content: 'hi' })
+    assert.equal(fx.DidChangeCalls.length, 0)
+    assert.equal(fx.Changes.length, 2)
+})
+
+test('deleting and renaming a directory report IsDirectory true', async () =>
+{
+    const fx = new BridgeFx()
+    await fx.Handlers.CreateDirectory({ Path: 'd' })
+    await fx.Handlers.CreateDirectory({ Path: 'e' })
+    fx.Changes.length = 0
+    await fx.Handlers.Rename({ From: 'd', To: 'd2' })
+    await fx.Handlers.Delete({ Path: 'e' })
+    assert.deepEqual(fx.Changes, [
+        { Kind: 'removed', Path: 'd', IsDirectory: true },
+        { Kind: 'added', Path: 'd2', IsDirectory: true },
+        { Kind: 'removed', Path: 'e', IsDirectory: true },
+    ])
 })

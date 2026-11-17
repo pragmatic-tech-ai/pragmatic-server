@@ -45,6 +45,14 @@ export class TodlSourceCollector
         return hash.digest(TodlSourceCollector.HashEncoding)
     }
 
+    /** Whether a storage-relative path is a `.todl` source the collector tracks (right extension, outside the skipped build/vendor folders). */
+    public static IsSourcePath(path: string): boolean
+    {
+        const segments = path.split(TodlSourceCollector.PathSeparator)
+        return path.toLowerCase().endsWith(TodlSourceCollector.TodlExtension)
+            && !segments.slice(0, -1).some(segment => TodlSourceCollector.SkippedDirs.includes(segment))
+    }
+
     private async Walk(storage: IStorage, dir: string, out: SourceFile[]): Promise<void>
     {
         for (const entry of await storage.List(dir))

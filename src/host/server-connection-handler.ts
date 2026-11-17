@@ -12,7 +12,7 @@ import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { Cypher } from '@pragmatic-tech-ai/graph'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import { AuthoringTarget } from './solutions/authoring-target.js'
-import { SourceChangeBridge } from './solutions/source-change-bridge.js'
+import type { SourceChangeBridge } from './solutions/source-change-bridge.js'
 import { RemoteStorageHandlers } from './storage/remote-storage-handlers.js'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { InvalidParamsPrefix } from './invalid-params-prefix.js'
@@ -107,7 +107,8 @@ export class ServerConnectionHandler
     private readonly connectors: IGraphConnectorService | undefined
     private readonly graphSubscription: IDisposable
     private readonly buildStateSubscription: IDisposable
-    private readonly storageChangedSubscription: IDisposable
+    private readonly sourceChanges: SourceChangeBridge | undefined
+    private readonly storageChangedSubscription: IDisposable | undefined
     private readonly instrumentation: RequestInstrumentation | undefined
     private readonly parent: Context | undefined
     private readonly rateLimit: RateLimitGuard | undefined
@@ -139,9 +140,10 @@ export class ServerConnectionHandler
     private revoked = false
     private disposed = false
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectors: IGraphConnectorService | undefined, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: EnvironmentPurpose = EnvironmentPurpose.Development, applications?: PragmaticAppsRegistry, data?: IEnvironmentDataService, paging?: PagingLimits, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, modelView?: IGraphModelView, dataChanges?: IEnvironmentDataChanges, diagnostics?: IDispatchDiagnostics)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectors: IGraphConnectorService | undefined, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: EnvironmentPurpose = EnvironmentPurpose.Development, applications?: PragmaticAppsRegistry, data?: IEnvironmentDataService, paging?: PagingLimits, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, modelView?: IGraphModelView, dataChanges?: IEnvironmentDataChanges, diagnostics?: IDispatchDiagnostics, sourceChanges?: SourceChangeBridge)
     {
         this.diagnostics = diagnostics ?? new LoggerDispatchDiagnostics()
+        this.sourceChanges = sourceChanges
         this.cypherLimits = cypherLimits ?? new CypherLimits()
         this.paging = paging ?? new PagingLimits()
         this.purpose = purpose
@@ -221,7 +223,7 @@ export class ServerConnectionHandler
                 // fail-closed: a push to a closing connection must not crash the process
             }
         })
-        this.storageChangedSubscription = SourceChangeBridge.For(languageService).Changed.subscribe(async change =>
+        this.storageChangedSubscription = this.IsDevelopment() ? sourceChanges?.Changed.subscribe(async change =>
         {
             if (!this.gate.CanRead())
             {
@@ -235,7 +237,7 @@ export class ServerConnectionHandler
             {
                 // fail-closed: a push to a closing connection must not crash the process
             }
-        })
+        }) : undefined
     }
 
     /**
@@ -273,10 +275,10 @@ export class ServerConnectionHandler
         return { devGraphService: server.GraphService(), cypherQuery: server.DevCypher(), cypherExecute: server.DevExecute(), modelView: server.DevModelView(), connectors: server.DevConnectors() }
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectors: IGraphConnectorService | undefined, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: EnvironmentPurpose = EnvironmentPurpose.Development, applications?: PragmaticAppsRegistry, data?: IEnvironmentDataService, paging?: PagingLimits, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, modelView?: IGraphModelView, dataChanges?: IEnvironmentDataChanges, diagnostics?: IDispatchDiagnostics): ServerConnectionHandler
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectors: IGraphConnectorService | undefined, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: EnvironmentPurpose = EnvironmentPurpose.Development, applications?: PragmaticAppsRegistry, data?: IEnvironmentDataService, paging?: PagingLimits, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, modelView?: IGraphModelView, dataChanges?: IEnvironmentDataChanges, diagnostics?: IDispatchDiagnostics, sourceChanges?: SourceChangeBridge): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
-        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectors, cypherQuery, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, data, paging, cypherExecute, deployProvider, devGraphService, environmentGraphHost, modelView, dataChanges, diagnostics)
+        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectors, cypherQuery, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, data, paging, cypherExecute, deployProvider, devGraphService, environmentGraphHost, modelView, dataChanges, diagnostics, sourceChanges)
         connection.listen()
         return handler
     }
@@ -321,7 +323,7 @@ export class ServerConnectionHandler
         this.disposed = true
         this.graphSubscription.dispose()
         this.buildStateSubscription.dispose()
-        this.storageChangedSubscription.dispose()
+        this.storageChangedSubscription?.dispose()
         this.dataSubscription?.dispose()
         this.connection.dispose()
     }
@@ -1293,7 +1295,7 @@ export class ServerConnectionHandler
     /** Dev-only `storage/*`: the active solution's source store, driven remotely; paths are confined to its root by {@link RemoteStorageHandlers}. */
     private RegisterStorageHandlers(): void
     {
-        const handlers = new RemoteStorageHandlers(() => this.manager.ActiveSolution?.Storage, SourceChangeBridge.For(this.languageService))
+        const handlers = new RemoteStorageHandlers(() => this.manager.ActiveSolution?.Storage, this.sourceChanges)
         this.guarded(StorageProtocol.ReadText, p => handlers.ReadText(p))
         this.guarded(StorageProtocol.ReadBytes, p => handlers.ReadBytes(p))
         this.guarded(StorageProtocol.WriteText, p => handlers.WriteText(p))
