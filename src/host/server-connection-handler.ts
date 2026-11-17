@@ -1,7 +1,7 @@
 import {
     createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol, GraphProtocol,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, ModelViewPageDto, ModelViewParams, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, TeamMemberDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, CypherModelListDto, ConnectorReadParams, Page, EntityDto, PragmaticAppSummaryDto, GraphSummaryDto, GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, SolutionSummaryDto, ModelViewPageDto, ModelViewParams, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, TeamMemberDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, CypherModelListDto, ConnectorReadParams, Page, EntityDto, PragmaticAppSummaryDto, GraphSummaryDto, GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { TeamMemberOrigin } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResponseError, ErrorCodes, DrainingError, ApplicationDeployProtocol, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherAppDeployParamsDto, AppDeployResultDto, AppWriteParams, AppWriteResultDto, AppWriteOpDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto, DataChangedPayload } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -11,6 +11,7 @@ import type { AccessContext, ISecurityModelConfig, Grant, Role, LocalAccount, Se
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { Cypher } from '@pragmatic-tech-ai/graph'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
+import { AuthoringTarget } from './solutions/authoring-target.js'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { InvalidParamsPrefix } from './invalid-params-prefix.js'
 import { PolicyGate } from './policy-gate.js'
@@ -127,6 +128,8 @@ export class ServerConnectionHandler
     private readonly dataSubscription: IDisposable | undefined
     /** Where the dispatch reports the failures the client sees scrubbed (an unexpected error, a failed data source). */
     private readonly diagnostics: IDispatchDiagnostics
+    /** The solution this connection's writes are attributed to; independent of the global ActiveSolution. */
+    private readonly authoringTarget: AuthoringTarget
     private boundApp: PragmaticAppSummaryDto | undefined
     private inFlight = 0
     private draining = false
@@ -157,6 +160,7 @@ export class ServerConnectionHandler
         this.connection = connection
         this.languageService = languageService
         this.manager = manager
+        this.authoringTarget = new AuthoringTarget(() => manager.ActiveSolution?.Name)
         this.gate = new PolicyGate(accessContext, () =>
         {
             const solution = manager.ActiveSolution
@@ -404,11 +408,12 @@ export class ServerConnectionHandler
     }
 
     private guardedNoParams(type: typeof SolutionProtocol.ActiveSolution, handler: () => ActiveSolutionSummary | null): void
+    private guardedNoParams(type: typeof SolutionProtocol.ListSolutions, handler: () => Promise<SolutionSummaryDto[]>): void
     private guardedNoParams(type: typeof PragmaticAppProtocol.List, handler: () => PragmaticAppSummaryDto[] | Promise<PragmaticAppSummaryDto[]>): void
     private guardedNoParams(type: typeof GraphProtocol.List, handler: () => GraphSummaryDto[] | Promise<GraphSummaryDto[]>): void
     private guardedNoParams(type: typeof GraphProtocol.Loaded, handler: () => (GraphLoadedDto | null) | Promise<GraphLoadedDto | null>): void
     private guardedNoParams(type: typeof CypherProtocol.Models, handler: () => Promise<CypherModelListDto>): void
-    private guardedNoParams(type: typeof SolutionProtocol.ActiveSolution | typeof PragmaticAppProtocol.List | typeof GraphProtocol.List | typeof GraphProtocol.Loaded | typeof CypherProtocol.Models, handler: () => unknown): void
+    private guardedNoParams(type: typeof SolutionProtocol.ActiveSolution | typeof SolutionProtocol.ListSolutions | typeof PragmaticAppProtocol.List | typeof GraphProtocol.List | typeof GraphProtocol.Loaded | typeof CypherProtocol.Models, handler: () => unknown): void
     {
         this.connection.onRequest(type as typeof SolutionProtocol.ActiveSolution, () => this.Dispatch(type.method, () =>
         {
@@ -1251,6 +1256,45 @@ export class ServerConnectionHandler
             return this.SummariseActiveSolution()
         })
         this.guardedNoParams(SolutionProtocol.ActiveSolution, () => this.ActiveSolutionOrNull())
+        this.guardedNoParams(SolutionProtocol.ListSolutions, () => this.ListSolutions())
+        this.guarded(SolutionProtocol.SelectAuthoring, p =>
+        {
+            this.authoringTarget.Select(p.SolutionId)
+            return this.AuthoringSummary(p.SolutionId)
+        })
+    }
+
+    /** This connection's authoring target (which solution its writes are attributed to). */
+    public get AuthoringTarget(): AuthoringTarget
+    {
+        return this.authoringTarget
+    }
+
+    /** The current solution plus every solution that has contributed a graph slice. */
+    private async ListSolutions(): Promise<SolutionSummaryDto[]>
+    {
+        const ids = new Set<string>()
+        const current = this.manager.ActiveSolution
+        if (current !== undefined)
+        {
+            ids.add(current.Name)
+        }
+        for (const id of await (this.devGraphService?.ListSolutionIds() ?? Promise.resolve([] as string[])))
+        {
+            ids.add(id)
+        }
+        return [...ids].map(id => ({ Name: id, Id: id }))
+    }
+
+    /** The current solution's full summary when it is the selected one; otherwise a member-less summary (its source composes in a later phase). */
+    private AuthoringSummary(solutionId: string): ActiveSolutionSummary
+    {
+        const active = this.ActiveSolutionOrNull()
+        if (active !== null && active.name === solutionId)
+        {
+            return active
+        }
+        return { name: solutionId, members: [], buildState: BuildStateMapper.ToWire(this.languageService.BuildState) }
     }
 
     private async PublishDiagnostics(uri: string, text: string): Promise<void>

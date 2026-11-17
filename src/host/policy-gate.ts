@@ -119,6 +119,8 @@ export class PolicyGate
             [LanguageProtocol.DidChange.method, write],
             [SolutionProtocol.OpenSolution.method, administer],
             [SolutionProtocol.ActiveSolution.method, readRealm],
+            [SolutionProtocol.ListSolutions.method, readRealm],
+            [SolutionProtocol.SelectAuthoring.method, writeRealm],
             [ModelProtocol.ModelView.method, read],
             [ModelProtocol.Resources.method, read],
             [ConnectorProtocol.List.method, readConnector],
