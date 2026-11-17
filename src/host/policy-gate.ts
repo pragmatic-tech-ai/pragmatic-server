@@ -3,7 +3,7 @@ import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import { trace, isSpanContextValid } from '@opentelemetry/api'
 import { NullAccessAuditSink, AuditSurface, AuditOutcome } from './access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
-import { LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol, ApplicationDeployProtocol, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol, ApplicationDeployProtocol, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol, GraphProtocol, StorageProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 interface MethodPolicy
 {
@@ -121,6 +121,15 @@ export class PolicyGate
             [SolutionProtocol.ActiveSolution.method, readRealm],
             [SolutionProtocol.ListSolutions.method, readRealm],
             [SolutionProtocol.SelectAuthoring.method, writeRealm],
+            [StorageProtocol.ReadText.method, readRealm],
+            [StorageProtocol.ReadBytes.method, readRealm],
+            [StorageProtocol.Exists.method, readRealm],
+            [StorageProtocol.List.method, readRealm],
+            [StorageProtocol.WriteText.method, writeRealm],
+            [StorageProtocol.WriteBytes.method, writeRealm],
+            [StorageProtocol.Delete.method, writeRealm],
+            [StorageProtocol.CreateDirectory.method, writeRealm],
+            [StorageProtocol.Rename.method, writeRealm],
             [ModelProtocol.ModelView.method, read],
             [ModelProtocol.Resources.method, read],
             [ConnectorProtocol.List.method, readConnector],

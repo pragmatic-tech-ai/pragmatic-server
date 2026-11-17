@@ -1,5 +1,5 @@
 import {
-    createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol, GraphProtocol, BuildState,
+    createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol, GraphProtocol, StorageProtocol, BuildState,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, SolutionSummaryDto, ModelViewPageDto, ModelViewParams, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, TeamMemberDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, CypherModelListDto, ConnectorReadParams, Page, EntityDto, PragmaticAppSummaryDto, GraphSummaryDto, GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { TeamMemberOrigin } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -12,6 +12,7 @@ import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { Cypher } from '@pragmatic-tech-ai/graph'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import { AuthoringTarget } from './solutions/authoring-target.js'
+import { RemoteStorageHandlers } from './storage/remote-storage-handlers.js'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { InvalidParamsPrefix } from './invalid-params-prefix.js'
 import { PolicyGate } from './policy-gate.js'
@@ -170,6 +171,7 @@ export class ServerConnectionHandler
         {
             this.RegisterLanguageHandlers()
             this.RegisterSolutionHandlers()
+            this.RegisterStorageHandlers()
         }
         this.RegisterModelHandlers()
         this.RegisterConnectorHandlers()
@@ -1268,6 +1270,21 @@ export class ServerConnectionHandler
             this.authoringTarget.Select(p.SolutionId)
             return this.AuthoringSummary(p.SolutionId)
         })
+    }
+
+    /** Dev-only `storage/*`: the active solution's source store, driven remotely; paths are confined to its root by {@link RemoteStorageHandlers}. */
+    private RegisterStorageHandlers(): void
+    {
+        const handlers = new RemoteStorageHandlers(() => this.manager.ActiveSolution?.Storage)
+        this.guarded(StorageProtocol.ReadText, p => handlers.ReadText(p))
+        this.guarded(StorageProtocol.ReadBytes, p => handlers.ReadBytes(p))
+        this.guarded(StorageProtocol.WriteText, p => handlers.WriteText(p))
+        this.guarded(StorageProtocol.WriteBytes, p => handlers.WriteBytes(p))
+        this.guarded(StorageProtocol.Exists, p => handlers.Exists(p))
+        this.guarded(StorageProtocol.Delete, p => handlers.Delete(p))
+        this.guarded(StorageProtocol.CreateDirectory, p => handlers.CreateDirectory(p))
+        this.guarded(StorageProtocol.Rename, p => handlers.Rename(p))
+        this.guarded(StorageProtocol.List, p => handlers.List(p))
     }
 
     /** The current solution plus every solution that has contributed a graph slice. */
