@@ -18,6 +18,23 @@ class DevelopFixture
         GraphProtocol.List.method, GraphProtocol.Contribute.method,
     ]
 
+    /** The authoritative, hand-written wire strings: verifies the protocol constants produce exactly the intended surface (not circular). */
+    public static readonly ExpectedWire: readonly string[] = [
+        'solution/list', 'solution/selectAuthoring', 'solution/active',
+        'storage/readText', 'storage/readBytes', 'storage/writeText', 'storage/writeBytes', 'storage/exists', 'storage/delete',
+        'storage/createDirectory', 'storage/rename', 'storage/list',
+        'language/completions', 'language/hover', 'language/definition', 'language/references', 'language/prepareRename', 'language/rename',
+        'language/documentSymbols', 'language/foldingRanges', 'language/workspaceSymbols', 'language/semanticTokens', 'language/signatureHelp',
+        'language/codeActions', 'language/format', 'language/diagnostics', 'language/didChange',
+        'graph/list', 'graph/contribute',
+    ]
+
+    /** Escalation paths that must never be reachable with a develop credential, as literal wire strings. */
+    public static readonly EscalationWire: readonly string[] = [
+        'graph/create', 'graph/delete', 'graph/load', 'graph/loaded', 'application/list', 'application/open', 'application/deploy',
+        'data/write', 'cypher/execute', 'solution/open', 'admin/grantRole', 'admin/issueToken',
+    ]
+
     public static readonly Denied: readonly string[] = [
         GraphProtocol.Create.method, GraphProtocol.Delete.method, GraphProtocol.Load.method, GraphProtocol.Loaded.method, GraphProtocol.Get.method,
         GraphProtocol.Export.method, ApplicationDeployProtocol.Deploy.method, SolutionProtocol.OpenSolution.method,
@@ -68,5 +85,33 @@ test('the develop token scope gate admits the develop set and denies the rest', 
     for (const method of DevelopFixture.Denied)
     {
         assert.equal(gate.Allows(method), false, method)
+    }
+})
+
+test('the develop relay allowlist equals the hand-written wire list (29 strings)', () =>
+{
+    assert.equal(DevelopFixture.ExpectedWire.length, 29)
+    assert.deepEqual([...DesktopRelayAllowlist.For(DesktopAction.Develop)].sort(), [...DevelopFixture.ExpectedWire].sort())
+})
+
+test('the develop token scope gate allows exactly the hand-written wire list', () =>
+{
+    const gate = TokenScopeGate.For([TokenScope.Develop])
+    for (const method of DevelopFixture.ExpectedWire)
+    {
+        assert.equal(gate.Allows(method), true, method)
+    }
+    for (const method of DevelopFixture.EscalationWire)
+    {
+        assert.equal(gate.Allows(method), false, method)
+    }
+})
+
+test('every escalation method is denied by the develop relay allowlist', () =>
+{
+    const allowed = DesktopRelayAllowlist.For(DesktopAction.Develop)
+    for (const method of DevelopFixture.EscalationWire)
+    {
+        assert.equal(allowed.has(method), false, method)
     }
 })
