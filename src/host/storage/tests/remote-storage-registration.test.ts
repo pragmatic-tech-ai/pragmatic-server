@@ -27,7 +27,7 @@ class RegistrationFixture
     public static Language(): ILanguageService
     {
         const signal = { subscribe: () => ({ dispose: () => undefined }) }
-        return { GraphChanged: signal, BuildStateChanged: signal, BuildState: GraphBuildState.Ready } as unknown as ILanguageService
+        return { GraphChanged: signal, BuildStateChanged: signal, BuildState: GraphBuildState.Ready, DidChange: () => undefined } as unknown as ILanguageService
     }
 
     public static Manager(): SolutionManagerService
@@ -73,5 +73,37 @@ test('a Runtime environment does not register storage/*', async () =>
     {
         a.client.dispose()
         a.handler.Dispose()
+    }
+})
+
+test('a save on one connection pushes storage/changed to a second connection and drives one DidChange', async () =>
+{
+    const calls: string[] = []
+    const signal = { subscribe: () => ({ dispose: () => undefined }) }
+    const language = { GraphChanged: signal, BuildStateChanged: signal, BuildState: GraphBuildState.Ready, DidChange: (uri: string) => { calls.push(uri) } } as unknown as ILanguageService
+    const manager = RegistrationFixture.Manager()
+    const attach = (): { handler: ServerConnectionHandler; client: MessageConnection } =>
+    {
+        const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
+        const handler = ServerConnectionHandler.Attach(serverSocket, language, manager, RegistrationFixture.Context(Role.Owner), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, EnvironmentPurpose.Development)
+        const client = createMessageConnection(new WebSocketMessageReader(clientSocket), new WebSocketMessageWriter(clientSocket), NullLogger)
+        client.listen()
+        return { handler, client }
+    }
+    const a = attach()
+    const b = attach()
+    try
+    {
+        const received = new Promise<unknown>(resolve => b.client.onNotification(StorageProtocol.Changed, resolve))
+        await a.client.sendRequest(StorageProtocol.WriteText, { Path: 'a/x.todl', Content: 'hi' })
+        assert.deepEqual(await received, { Kind: 'added', Path: 'a/x.todl', IsDirectory: false })
+        assert.equal(calls.length, 1)
+    }
+    finally
+    {
+        a.client.dispose()
+        b.client.dispose()
+        a.handler.Dispose()
+        b.handler.Dispose()
     }
 })

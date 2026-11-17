@@ -2,6 +2,7 @@ import { ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol
 import type { StoragePathParams, StorageTextDto, StorageBytesDto, StorageWriteTextParams, StorageWriteBytesParams, StorageRenameParams, StorageEntryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
+import type { SourceChangeBridge } from '../solutions/source-change-bridge.js'
 
 /**
  * Maps each `StorageProtocol` request onto the environment's source `IStorage`. Every path is resolved relative to
@@ -23,7 +24,7 @@ export class RemoteStorageHandlers
     private static readonly CurrentSegment = '.'
     private static readonly ParentSegment = '..'
 
-    public constructor(private readonly storage: () => IStorage | undefined)
+    public constructor(private readonly storage: () => IStorage | undefined, private readonly changes?: SourceChangeBridge)
     {
     }
 
@@ -40,7 +41,11 @@ export class RemoteStorageHandlers
 
     public async WriteText(params: StorageWriteTextParams): Promise<void>
     {
-        return this.Store().WriteText(RemoteStorageHandlers.ResolveBelowRoot(params.Path), params.Content)
+        const path = RemoteStorageHandlers.ResolveBelowRoot(params.Path)
+        const store = this.Store()
+        const existed = await store.Exists(path)
+        await store.WriteText(path, params.Content)
+        this.changes?.TextWritten(store, path, params.Content, existed)
     }
 
     public async WriteBytes(params: StorageWriteBytesParams): Promise<void>
@@ -51,7 +56,10 @@ export class RemoteStorageHandlers
             throw new ResponseError(ErrorCodes.InvalidParams, RemoteStorageHandlers.BadBase64Message)
         }
         const bytes = new Uint8Array(Buffer.from(params.BytesBase64, RemoteStorageHandlers.Base64))
-        return this.Store().WriteBytes(path, bytes)
+        const store = this.Store()
+        const existed = await store.Exists(path)
+        await store.WriteBytes(path, bytes)
+        this.changes?.BytesWritten(path, existed)
     }
 
     public async Exists(params: StoragePathParams): Promise<boolean>
@@ -61,23 +69,50 @@ export class RemoteStorageHandlers
 
     public async Delete(params: StoragePathParams): Promise<void>
     {
-        return this.Store().Delete(RemoteStorageHandlers.ResolveBelowRoot(params.Path))
+        const path = RemoteStorageHandlers.ResolveBelowRoot(params.Path)
+        const store = this.Store()
+        const isDirectory = await this.IsDirectory(store, path)
+        await store.Delete(path)
+        this.changes?.Deleted(path, isDirectory)
     }
 
     public async CreateDirectory(params: StoragePathParams): Promise<void>
     {
-        return this.Store().CreateDirectory(RemoteStorageHandlers.Resolve(params.Path))
+        const path = RemoteStorageHandlers.Resolve(params.Path)
+        await this.Store().CreateDirectory(path)
+        this.changes?.DirectoryCreated(path)
     }
 
     public async Rename(params: StorageRenameParams): Promise<void>
     {
-        return this.Store().Rename(RemoteStorageHandlers.ResolveBelowRoot(params.From), RemoteStorageHandlers.ResolveBelowRoot(params.To))
+        const from = RemoteStorageHandlers.ResolveBelowRoot(params.From)
+        const to = RemoteStorageHandlers.ResolveBelowRoot(params.To)
+        const store = this.Store()
+        const isDirectory = await this.IsDirectory(store, from)
+        await store.Rename(from, to)
+        this.changes?.Renamed(from, to, isDirectory)
     }
 
     public async List(params: StoragePathParams): Promise<StorageEntryDto[]>
     {
         const entries = await this.Store().List(RemoteStorageHandlers.Resolve(params.Path))
         return entries.map(entry => ({ Name: entry.Name, IsDirectory: entry.IsDirectory }))
+    }
+
+    /** Whether `path` names a directory, found through its parent's listing (IStorage has no stat); false when absent. */
+    private async IsDirectory(store: IStorage, path: string): Promise<boolean>
+    {
+        const slash = path.lastIndexOf(RemoteStorageHandlers.Separator)
+        const parent = slash < 0 ? '' : path.slice(0, slash)
+        const name = path.slice(slash + 1)
+        try
+        {
+            return (await store.List(parent)).some(entry => entry.Name === name && entry.IsDirectory)
+        }
+        catch
+        {
+            return false
+        }
     }
 
     private Store(): IStorage

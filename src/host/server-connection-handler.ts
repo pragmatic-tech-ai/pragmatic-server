@@ -12,6 +12,7 @@ import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { Cypher } from '@pragmatic-tech-ai/graph'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import { AuthoringTarget } from './solutions/authoring-target.js'
+import { SourceChangeBridge } from './solutions/source-change-bridge.js'
 import { RemoteStorageHandlers } from './storage/remote-storage-handlers.js'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { InvalidParamsPrefix } from './invalid-params-prefix.js'
@@ -106,6 +107,7 @@ export class ServerConnectionHandler
     private readonly connectors: IGraphConnectorService | undefined
     private readonly graphSubscription: IDisposable
     private readonly buildStateSubscription: IDisposable
+    private readonly storageChangedSubscription: IDisposable
     private readonly instrumentation: RequestInstrumentation | undefined
     private readonly parent: Context | undefined
     private readonly rateLimit: RateLimitGuard | undefined
@@ -219,6 +221,21 @@ export class ServerConnectionHandler
                 // fail-closed: a push to a closing connection must not crash the process
             }
         })
+        this.storageChangedSubscription = SourceChangeBridge.For(languageService).Changed.subscribe(async change =>
+        {
+            if (!this.gate.CanRead())
+            {
+                return
+            }
+            try
+            {
+                await connection.sendNotification(StorageProtocol.Changed, { Kind: change.Kind, Path: change.Path, IsDirectory: change.IsDirectory })
+            }
+            catch
+            {
+                // fail-closed: a push to a closing connection must not crash the process
+            }
+        })
     }
 
     /**
@@ -304,6 +321,7 @@ export class ServerConnectionHandler
         this.disposed = true
         this.graphSubscription.dispose()
         this.buildStateSubscription.dispose()
+        this.storageChangedSubscription.dispose()
         this.dataSubscription?.dispose()
         this.connection.dispose()
     }
@@ -1275,7 +1293,7 @@ export class ServerConnectionHandler
     /** Dev-only `storage/*`: the active solution's source store, driven remotely; paths are confined to its root by {@link RemoteStorageHandlers}. */
     private RegisterStorageHandlers(): void
     {
-        const handlers = new RemoteStorageHandlers(() => this.manager.ActiveSolution?.Storage)
+        const handlers = new RemoteStorageHandlers(() => this.manager.ActiveSolution?.Storage, SourceChangeBridge.For(this.languageService))
         this.guarded(StorageProtocol.ReadText, p => handlers.ReadText(p))
         this.guarded(StorageProtocol.ReadBytes, p => handlers.ReadBytes(p))
         this.guarded(StorageProtocol.WriteText, p => handlers.WriteText(p))
