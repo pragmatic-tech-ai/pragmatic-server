@@ -1071,6 +1071,28 @@ test('AdminIssueMakerToken grants Maker then issues a maker token; repeat call s
     assert.equal(h.Proxy.Calls.length, 6)
 })
 
+test('AdminIssueDeveloperToken grants Developer then issues a develop-scoped token', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h)
+    const dto = await h.Service.AdminIssueDeveloperToken(AdminFixture.Name)
+    assert.deepEqual(h.Proxy.Calls.map(c => c.method), ['GrantRole', 'IssueToken'])
+    assert.deepEqual(h.Proxy.Calls[0].args, [{ subject: 'developer', role: 'Developer', resourceKind: 'Realm', resourcePath: [] }])
+    const params = h.Proxy.Calls[1].args[0] as IssueTokenParams
+    assert.equal(params.principalId, 'developer')
+    assert.deepEqual(params.scopes, ['environment-develop'])
+    assert.equal(dto.token, 'secret-token')
+})
+
+test('AdminIssueDeveloperToken on a non-Development env throws before any proxy call', async () =>
+{
+    const h = await Harness.Make()
+    await AdminFixture.Seed(h)
+    await h.Registry.Put({ ...h.Registry.Get(AdminFixture.Name)!, type: EnvType.Runtime })
+    await assert.rejects(() => h.Service.AdminIssueDeveloperToken(AdminFixture.Name), EnvironmentNotDevelopmentError)
+    assert.equal(h.Proxy.Calls.length, 0)
+})
+
 test('AdminIssueDeployToken on a Runtime env grants Admin to deployer then issues a 15-minute deploy-only token', async () =>
 {
     const h = await Harness.Make()

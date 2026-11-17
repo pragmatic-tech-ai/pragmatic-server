@@ -198,6 +198,11 @@ class RelayService
         return this.Mint(name, RelayKit.ReaderToken)
     }
 
+    public async AdminIssueDeveloperToken(name: string): Promise<TokenIssuedDto>
+    {
+        return this.Mint(name, RelayKit.DeveloperToken)
+    }
+
     public async AdminRevokeToken(name: string, tokenRef: string): Promise<void>
     {
         this.revokes.push(name + '/' + tokenRef)
@@ -362,6 +367,7 @@ class RelayKit
     public static readonly MakerToken = 'minted-maker-credential'
     public static readonly DeployToken = 'minted-deploy-credential'
     public static readonly ReaderToken = 'minted-reader-credential'
+    public static readonly DeveloperToken = 'minted-developer-credential'
     public static readonly Graph = 'payments'
     public static readonly NotAvailable = 'This method is not available through the desktop relay.'
     /** The Dev env's recorded in-cluster endpoint (its Service DNS); only an in-cluster reach reads it. */
@@ -1303,6 +1309,37 @@ describe('DesktopRelay inspect', () =>
         assert.deepEqual(await client.ListGraphs(), [])
         await client.DisposeAsync()
         assert.deepEqual(kit.upstream.bearers, ['Bearer ' + RelayKit.ReaderToken])
+    })
+})
+
+describe('DesktopRelay develop action', () =>
+{
+    let kit: RelayKit
+
+    beforeEach(async () =>
+    {
+        kit = new RelayKit()
+        await kit.Start()
+    })
+
+    afterEach(async () =>
+    {
+        await kit.Stop()
+    })
+
+    it('mints the developer credential on a Development env and forwards graph/list', async () =>
+    {
+        const client = await kit.Client(RelayKit.Dev, 'develop')
+        assert.deepEqual(await client.ListGraphs(), [])
+        await client.DisposeAsync()
+        assert.deepEqual(kit.upstream.methods, ['graph/list'])
+        assert.deepEqual(kit.upstream.bearers, ['Bearer ' + RelayKit.DeveloperToken])
+    })
+
+    it('refuses a Runtime env (develop targets Development only)', async () =>
+    {
+        await assert.rejects(kit.Client(RelayKit.Run, 'develop'))
+        assert.deepEqual(kit.upstream.bearers, [])
     })
 })
 
