@@ -1,5 +1,5 @@
 import {
-    createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol, GraphProtocol,
+    createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol, GraphProtocol, BuildState,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, SolutionSummaryDto, ModelViewPageDto, ModelViewParams, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, TeamMemberDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, CypherModelListDto, ConnectorReadParams, Page, EntityDto, PragmaticAppSummaryDto, GraphSummaryDto, GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { TeamMemberOrigin } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -265,6 +265,12 @@ export class ServerConnectionHandler
     private IsDevelopment(): boolean
     {
         return this.purpose === EnvironmentPurpose.Development
+    }
+
+    /** This connection's authoring target (which solution its writes are attributed to). */
+    public get Authoring(): AuthoringTarget
+    {
+        return this.authoringTarget
     }
 
     /** Count of JSON-RPC requests currently executing on this connection (for drain). */
@@ -1264,12 +1270,6 @@ export class ServerConnectionHandler
         })
     }
 
-    /** This connection's authoring target (which solution its writes are attributed to). */
-    public get AuthoringTarget(): AuthoringTarget
-    {
-        return this.authoringTarget
-    }
-
     /** The current solution plus every solution that has contributed a graph slice. */
     private async ListSolutions(): Promise<SolutionSummaryDto[]>
     {
@@ -1286,7 +1286,8 @@ export class ServerConnectionHandler
         return [...ids].map(id => ({ Name: id, Id: id }))
     }
 
-    /** The current solution's full summary when it is the selected one; otherwise a member-less summary (its source composes in a later phase). */
+    /** The current solution's full summary when it is the selected one. Any other id has no loaded source here (it composes in a later phase),
+     *  so it reports no members and a neutral Building state rather than the current solution's build state. */
     private AuthoringSummary(solutionId: string): ActiveSolutionSummary
     {
         const active = this.ActiveSolutionOrNull()
@@ -1294,7 +1295,7 @@ export class ServerConnectionHandler
         {
             return active
         }
-        return { name: solutionId, members: [], buildState: BuildStateMapper.ToWire(this.languageService.BuildState) }
+        return { name: solutionId, members: [], buildState: BuildState.Building }
     }
 
     private async PublishDiagnostics(uri: string, text: string): Promise<void>
