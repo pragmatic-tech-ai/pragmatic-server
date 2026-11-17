@@ -10,7 +10,7 @@ class DevelopFixture
     public static readonly Admitted: readonly string[] = [
         SolutionProtocol.ListSolutions.method, SolutionProtocol.SelectAuthoring.method, SolutionProtocol.ActiveSolution.method,
         StorageProtocol.ReadText.method, StorageProtocol.ReadBytes.method, StorageProtocol.WriteText.method, StorageProtocol.WriteBytes.method,
-        StorageProtocol.Exists.method, StorageProtocol.Delete.method, StorageProtocol.CreateDirectory.method, StorageProtocol.Rename.method,
+        StorageProtocol.Exists.method, StorageProtocol.Delete.method, StorageProtocol.CreateDirectory.method, StorageProtocol.Rename.method, StorageProtocol.List.method,
         LanguageProtocol.CompletionsAt.method, LanguageProtocol.HoverAt.method, LanguageProtocol.DefinitionAt.method, LanguageProtocol.ReferencesAt.method,
         LanguageProtocol.PrepareRename.method, LanguageProtocol.RenameEdits.method, LanguageProtocol.DocumentSymbols.method, LanguageProtocol.FoldingRanges.method,
         LanguageProtocol.WorkspaceSymbols.method, LanguageProtocol.SemanticTokens.method, LanguageProtocol.SignatureHelpAt.method, LanguageProtocol.CodeActions.method,
@@ -21,7 +21,7 @@ class DevelopFixture
     public static readonly Denied: readonly string[] = [
         GraphProtocol.Create.method, GraphProtocol.Delete.method, GraphProtocol.Load.method, GraphProtocol.Loaded.method, GraphProtocol.Get.method,
         GraphProtocol.Export.method, ApplicationDeployProtocol.Deploy.method, SolutionProtocol.OpenSolution.method,
-        SolutionProtocol.GraphChanged.method, StorageProtocol.List.method,
+        SolutionProtocol.GraphChanged.method,
     ]
 }
 

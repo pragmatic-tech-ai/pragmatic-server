@@ -44,6 +44,7 @@ export class DevelopMethods
         StorageProtocol.Delete.method,
         StorageProtocol.CreateDirectory.method,
         StorageProtocol.Rename.method,
+        StorageProtocol.List.method,
         LanguageProtocol.CompletionsAt.method,
         LanguageProtocol.HoverAt.method,
         LanguageProtocol.DefinitionAt.method,
