@@ -59,7 +59,6 @@ export class DevelopMethods
         LanguageProtocol.CodeActions.method,
         LanguageProtocol.FormatDocument.method,
         LanguageProtocol.DiagnosticsFor.method,
-        LanguageProtocol.DidChange.method,
         GraphProtocol.List.method,
         GraphProtocol.Contribute.method,
     ]

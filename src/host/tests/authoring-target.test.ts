@@ -170,3 +170,19 @@ test('a Runtime environment does not register solution/list or solution/selectAu
         a.handler.Dispose()
     }
 })
+
+test('selectAuthoring rejects a non-string SolutionId with InvalidParams', async () =>
+{
+    const a = AuthoringFixture.Attach(AuthoringFixture.Manager())
+    try
+    {
+        await assert.rejects(() => a.client.sendRequest(SolutionProtocol.SelectAuthoring, { SolutionId: 42 } as never), (e: { code?: number }) => e.code === ErrorCodes.InvalidParams)
+        await assert.rejects(() => a.client.sendRequest(SolutionProtocol.SelectAuthoring, {} as never), (e: { code?: number }) => e.code === ErrorCodes.InvalidParams)
+        assert.equal(a.handler.Authoring.SolutionId, AuthoringFixture.ActiveName)
+    }
+    finally
+    {
+        a.client.dispose()
+        a.handler.Dispose()
+    }
+})

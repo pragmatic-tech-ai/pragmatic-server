@@ -137,3 +137,10 @@ test('WriteBytes rejects a non-string and malformed base64', async () =>
     await StorageFx.Rejects(() => handlers.WriteBytes({ Path: 'a.bin', BytesBase64: 'abc' }))
     await handlers.WriteBytes({ Path: 'a.bin', BytesBase64: 'AAEC' })
 })
+
+test('WriteText rejects a non-string Content with InvalidParams', async () =>
+{
+    const handlers = StorageFx.Handlers()
+    await StorageFx.Rejects(() => handlers.WriteText({ Path: 'a.txt', Content: 42 as unknown as string }))
+    await StorageFx.Rejects(() => handlers.WriteText({ Path: 'a.txt', Content: undefined as unknown as string }))
+})

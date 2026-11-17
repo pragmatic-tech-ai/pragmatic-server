@@ -14,7 +14,7 @@ class DevelopFixture
         LanguageProtocol.CompletionsAt.method, LanguageProtocol.HoverAt.method, LanguageProtocol.DefinitionAt.method, LanguageProtocol.ReferencesAt.method,
         LanguageProtocol.PrepareRename.method, LanguageProtocol.RenameEdits.method, LanguageProtocol.DocumentSymbols.method, LanguageProtocol.FoldingRanges.method,
         LanguageProtocol.WorkspaceSymbols.method, LanguageProtocol.SemanticTokens.method, LanguageProtocol.SignatureHelpAt.method, LanguageProtocol.CodeActions.method,
-        LanguageProtocol.FormatDocument.method, LanguageProtocol.DiagnosticsFor.method, LanguageProtocol.DidChange.method,
+        LanguageProtocol.FormatDocument.method, LanguageProtocol.DiagnosticsFor.method,
         GraphProtocol.List.method, GraphProtocol.Contribute.method,
     ]
 
@@ -25,20 +25,20 @@ class DevelopFixture
         'storage/createDirectory', 'storage/rename', 'storage/list',
         'language/completions', 'language/hover', 'language/definition', 'language/references', 'language/prepareRename', 'language/rename',
         'language/documentSymbols', 'language/foldingRanges', 'language/workspaceSymbols', 'language/semanticTokens', 'language/signatureHelp',
-        'language/codeActions', 'language/format', 'language/diagnostics', 'language/didChange',
+        'language/codeActions', 'language/format', 'language/diagnostics',
         'graph/list', 'graph/contribute',
     ]
 
     /** Escalation paths that must never be reachable with a develop credential, as literal wire strings. */
     public static readonly EscalationWire: readonly string[] = [
         'graph/create', 'graph/delete', 'graph/load', 'graph/loaded', 'application/list', 'application/open', 'application/deploy',
-        'data/write', 'cypher/execute', 'solution/open', 'admin/grantRole', 'admin/issueToken',
+        'data/write', 'cypher/execute', 'solution/open', 'admin/grantRole', 'admin/issueToken', 'language/didChange',
     ]
 
     public static readonly Denied: readonly string[] = [
         GraphProtocol.Create.method, GraphProtocol.Delete.method, GraphProtocol.Load.method, GraphProtocol.Loaded.method, GraphProtocol.Get.method,
         GraphProtocol.Export.method, ApplicationDeployProtocol.Deploy.method, SolutionProtocol.OpenSolution.method,
-        SolutionProtocol.GraphChanged.method,
+        SolutionProtocol.GraphChanged.method, LanguageProtocol.DidChange.method,
     ]
 }
 
@@ -88,9 +88,9 @@ test('the develop token scope gate admits the develop set and denies the rest', 
     }
 })
 
-test('the develop relay allowlist equals the hand-written wire list (29 strings)', () =>
+test('the develop relay allowlist equals the hand-written wire list (28 strings)', () =>
 {
-    assert.equal(DevelopFixture.ExpectedWire.length, 29)
+    assert.equal(DevelopFixture.ExpectedWire.length, 28)
     assert.deepEqual([...DesktopRelayAllowlist.For(DesktopAction.Develop)].sort(), [...DevelopFixture.ExpectedWire].sort())
 })
 

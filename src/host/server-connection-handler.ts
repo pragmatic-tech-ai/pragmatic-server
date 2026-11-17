@@ -81,6 +81,7 @@ export class ServerConnectionHandler
     private static readonly PagedExplicitBoundsMessage = `${InvalidParamsPrefix.Text}paging cannot be combined with an explicit SKIP or LIMIT`
     private static readonly ModelIdField = 'modelId'
     private static readonly CypherUnavailableMessage = `${InvalidParamsPrefix.Text}cypher not available`
+    private static readonly BadSolutionIdMessage = `${InvalidParamsPrefix.Text}SolutionId must be a string`
     private static readonly ModelViewUnavailableMessage = `${InvalidParamsPrefix.Text}model view not available`
     private static readonly NotRuntimeMessage = 'operation requires a runtime environment'
     private static readonly ConnectorsUnavailableMessage = 'connectors are not available on this connection'
@@ -1287,6 +1288,10 @@ export class ServerConnectionHandler
         this.guardedNoParams(SolutionProtocol.ListSolutions, () => this.ListSolutions())
         this.guarded(SolutionProtocol.SelectAuthoring, p =>
         {
+            if (typeof p?.SolutionId !== 'string')
+            {
+                throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.BadSolutionIdMessage)
+            }
             this.authoringTarget.Select(p.SolutionId)
             return this.AuthoringSummary(p.SolutionId)
         })

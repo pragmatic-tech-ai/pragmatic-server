@@ -15,6 +15,7 @@ export class RemoteStorageHandlers
     private static readonly RootMessage = `${InvalidParamsPrefix.Text}operation not permitted on the source root: `
     private static readonly UnsafeSegmentMessage = `${InvalidParamsPrefix.Text}path segment contains a forbidden character: `
     private static readonly BadBase64Message = `${InvalidParamsPrefix.Text}BytesBase64 must be a base64 string`
+    private static readonly BadContentMessage = `${InvalidParamsPrefix.Text}Content must be a string`
     private static readonly Base64 = 'base64'
     private static readonly Base64Pattern = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
     private static readonly UnsafeSegmentPattern = /[\0:]/
@@ -42,6 +43,10 @@ export class RemoteStorageHandlers
     public async WriteText(params: StorageWriteTextParams): Promise<void>
     {
         const path = RemoteStorageHandlers.ResolveBelowRoot(params.Path)
+        if (typeof params.Content !== 'string')
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, RemoteStorageHandlers.BadContentMessage)
+        }
         const store = this.Store()
         const existed = await store.Exists(path)
         await store.WriteText(path, params.Content)
