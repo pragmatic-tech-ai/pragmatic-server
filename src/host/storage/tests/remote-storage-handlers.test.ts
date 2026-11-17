@@ -88,3 +88,52 @@ test('no active source storage is rejected', async () =>
     const handlers = new RemoteStorageHandlers(() => undefined)
     await assert.rejects(() => handlers.Exists({ Path: 'a' }), (error: unknown) => error instanceof ResponseError && error.code === ErrorCodes.InvalidRequest)
 })
+
+test('backslash separators normalize to the same path as forward slashes', async () =>
+{
+    const storage = new FakeStorage()
+    const handlers = StorageFx.Handlers(storage)
+    await handlers.WriteText({ Path: 'a\\b/c.txt', Content: 'n' })
+    assert.equal(await storage.Exists('a/b/c.txt'), true)
+})
+
+test('drive letter without a slash and unsafe segments are rejected', async () =>
+{
+    const handlers = StorageFx.Handlers()
+    await StorageFx.Rejects(() => handlers.ReadText({ Path: 'C:foo' }))
+    await StorageFx.Rejects(() => handlers.ReadText({ Path: 'a/C:x' }))
+    await StorageFx.Rejects(() => handlers.ReadText({ Path: 'a/b:stream' }))
+    await StorageFx.Rejects(() => handlers.ReadText({ Path: 'a/b\0c' }))
+})
+
+test('destructive operations on the root are rejected (empty, dot, a/..)', async () =>
+{
+    const storage = new FakeStorage()
+    await storage.WriteText('keep.txt', 'k')
+    const handlers = StorageFx.Handlers(storage)
+    for (const path of ['', '.', 'a/..'])
+    {
+        await StorageFx.Rejects(() => handlers.Delete({ Path: path }))
+        await StorageFx.Rejects(() => handlers.WriteText({ Path: path, Content: 'x' }))
+        await StorageFx.Rejects(() => handlers.WriteBytes({ Path: path, BytesBase64: '' }))
+        await StorageFx.Rejects(() => handlers.Rename({ From: path, To: 'b' }))
+        await StorageFx.Rejects(() => handlers.Rename({ From: 'b', To: path }))
+    }
+    assert.equal(await storage.Exists('keep.txt'), true)
+})
+
+test('read-only and harmless operations on the root are allowed', async () =>
+{
+    const handlers = StorageFx.Handlers()
+    await handlers.CreateDirectory({ Path: '.' })
+    assert.deepEqual(await handlers.List({ Path: '.' }), [])
+})
+
+test('WriteBytes rejects a non-string and malformed base64', async () =>
+{
+    const handlers = StorageFx.Handlers()
+    await StorageFx.Rejects(() => handlers.WriteBytes({ Path: 'a.bin', BytesBase64: 42 as unknown as string }))
+    await StorageFx.Rejects(() => handlers.WriteBytes({ Path: 'a.bin', BytesBase64: 'not base64!' }))
+    await StorageFx.Rejects(() => handlers.WriteBytes({ Path: 'a.bin', BytesBase64: 'abc' }))
+    await handlers.WriteBytes({ Path: 'a.bin', BytesBase64: 'AAEC' })
+})

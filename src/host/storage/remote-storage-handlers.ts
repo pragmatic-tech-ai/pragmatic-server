@@ -11,7 +11,12 @@ export class RemoteStorageHandlers
 {
     private static readonly NoStorageMessage = 'no active solution source storage'
     private static readonly EscapeMessage = `${InvalidParamsPrefix.Text}path must be relative and stay inside the source root: `
+    private static readonly RootMessage = `${InvalidParamsPrefix.Text}operation not permitted on the source root: `
+    private static readonly UnsafeSegmentMessage = `${InvalidParamsPrefix.Text}path segment contains a forbidden character: `
+    private static readonly BadBase64Message = `${InvalidParamsPrefix.Text}BytesBase64 must be a base64 string`
     private static readonly Base64 = 'base64'
+    private static readonly Base64Pattern = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
+    private static readonly UnsafeSegmentPattern = /[\0:]/
     private static readonly SeparatorPattern = /[\\/]/
     private static readonly DriveLetterPattern = /^[A-Za-z]:/
     private static readonly Separator = '/'
@@ -35,13 +40,18 @@ export class RemoteStorageHandlers
 
     public async WriteText(params: StorageWriteTextParams): Promise<void>
     {
-        return this.Store().WriteText(RemoteStorageHandlers.Resolve(params.Path), params.Content)
+        return this.Store().WriteText(RemoteStorageHandlers.ResolveBelowRoot(params.Path), params.Content)
     }
 
     public async WriteBytes(params: StorageWriteBytesParams): Promise<void>
     {
+        const path = RemoteStorageHandlers.ResolveBelowRoot(params.Path)
+        if (typeof params.BytesBase64 !== 'string' || !RemoteStorageHandlers.Base64Pattern.test(params.BytesBase64))
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, RemoteStorageHandlers.BadBase64Message)
+        }
         const bytes = new Uint8Array(Buffer.from(params.BytesBase64, RemoteStorageHandlers.Base64))
-        return this.Store().WriteBytes(RemoteStorageHandlers.Resolve(params.Path), bytes)
+        return this.Store().WriteBytes(path, bytes)
     }
 
     public async Exists(params: StoragePathParams): Promise<boolean>
@@ -51,7 +61,7 @@ export class RemoteStorageHandlers
 
     public async Delete(params: StoragePathParams): Promise<void>
     {
-        return this.Store().Delete(RemoteStorageHandlers.Resolve(params.Path))
+        return this.Store().Delete(RemoteStorageHandlers.ResolveBelowRoot(params.Path))
     }
 
     public async CreateDirectory(params: StoragePathParams): Promise<void>
@@ -61,7 +71,7 @@ export class RemoteStorageHandlers
 
     public async Rename(params: StorageRenameParams): Promise<void>
     {
-        return this.Store().Rename(RemoteStorageHandlers.Resolve(params.From), RemoteStorageHandlers.Resolve(params.To))
+        return this.Store().Rename(RemoteStorageHandlers.ResolveBelowRoot(params.From), RemoteStorageHandlers.ResolveBelowRoot(params.To))
     }
 
     public async List(params: StoragePathParams): Promise<StorageEntryDto[]>
@@ -78,6 +88,17 @@ export class RemoteStorageHandlers
             throw new ResponseError(ErrorCodes.InvalidRequest, RemoteStorageHandlers.NoStorageMessage)
         }
         return storage
+    }
+
+    /** As {@link Resolve}, but also rejects a path that resolves to the root itself (destructive operations must not target it). */
+    private static ResolveBelowRoot(path: string): string
+    {
+        const resolved = RemoteStorageHandlers.Resolve(path)
+        if (resolved === '')
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, RemoteStorageHandlers.RootMessage + String(path))
+        }
+        return resolved
     }
 
     /** The normalized root-relative path ('' is the root); throws InvalidParams for an absolute path or one that climbs out of the root. */
@@ -101,6 +122,10 @@ export class RemoteStorageHandlers
                     throw new ResponseError(ErrorCodes.InvalidParams, RemoteStorageHandlers.EscapeMessage + path)
                 }
                 continue
+            }
+            if (RemoteStorageHandlers.UnsafeSegmentPattern.test(segment))
+            {
+                throw new ResponseError(ErrorCodes.InvalidParams, RemoteStorageHandlers.UnsafeSegmentMessage + path)
             }
             kept.push(segment)
         }
