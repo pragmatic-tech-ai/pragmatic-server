@@ -258,7 +258,7 @@ class DeployWire
         const languageService = await server.LanguageService()
         const manager = await server.Manager()
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
+        const runtime = ServerConnectionHandler.RuntimeAttachArgs(server, server.Purpose())
         const handler = ServerConnectionHandler.Attach(
             serverSocket, languageService, manager, IngestFixture.Context(role),
             undefined, undefined,

@@ -319,7 +319,7 @@ class InvariantWorld
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const server = this.Server
-        const development = ServerConnectionHandler.DevelopmentAttachArgs(server)
+        const development = ServerConnectionHandler.DevelopmentAttachArgs(server, server.Purpose())
         const handler = ServerConnectionHandler.Attach(serverSocket, this.language, this.manager, context, undefined, development.cypherQuery,
             undefined, undefined, undefined, undefined, undefined, undefined, server.Purpose(), undefined, undefined, undefined,
             development.cypherExecute,

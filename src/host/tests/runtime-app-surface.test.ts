@@ -120,8 +120,8 @@ class RuntimeSurfaceFixture
     private async Connect(server: PragmaticServer): Promise<PragmaticClient>
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
-        const development = ServerConnectionHandler.DevelopmentAttachArgs(server)
+        const runtime = ServerConnectionHandler.RuntimeAttachArgs(server, server.Purpose())
+        const development = ServerConnectionHandler.DevelopmentAttachArgs(server, server.Purpose())
         const handler = ServerConnectionHandler.Attach(
             serverSocket, await server.LanguageService(), await server.Manager(), RuntimeSurfaceFixture.Permissive(),
             undefined, runtime.cypherQuery ?? development.cypherQuery,

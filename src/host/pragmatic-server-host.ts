@@ -56,6 +56,7 @@ import { WsInFlightSource } from '../observability/ws-in-flight-source.js'
 import type { IInFlightSource } from '../observability/drain-controller.js'
 import { RequestCorrelation } from '../observability/request-correlation.js'
 import { EnvironmentPurpose } from '../environments/environment-purpose.js'
+import { EffectivePurposeResolver } from './effective-purpose-resolver.js'
 
 export interface PragmaticServerHostOptions
 {
@@ -461,16 +462,18 @@ export class PragmaticServerHost
         let attached = false
         try
         {
-            const context = await this.AuthenticateAgainst(req, server)
-            if (context === null)
+            const authenticated = await this.AuthenticateAgainst(req, server)
+            if (authenticated === null)
             {
                 this.Reject(socket)
                 return
             }
+            const context = authenticated.context
+            const effectivePurpose = authenticated.effectivePurpose
             const parent = this.instrumentation !== undefined ? RequestCorrelation.Extract(req.headers) : undefined
             const languageService = await server.LanguageService()
             const sourceChanges = await server.DevSourceChangeBridge()
-            const solutionRoots = server.Purpose() === EnvironmentPurpose.Development ? await server.DevSolutionRoots() : undefined
+            const solutionRoots = effectivePurpose === EnvironmentPurpose.Development && server.ServesDevelopment() ? await server.DevSolutionRoots() : undefined
             const manager = await server.Manager()
             const pack = await server.Pack()
             const admin = new AdminService(pack.Grants, pack.Audit, await server.RealmConfigStore(), server.Realm(), () => this.registry.DisposeEnvironment(environmentId), pack.Accounts, pack.Registrar, pack.Tokens, {
@@ -488,14 +491,14 @@ export class PragmaticServerHost
             {
                 try
                 {
-                    const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
-                    const development = ServerConnectionHandler.DevelopmentAttachArgs(server)
+                    const runtime = ServerConnectionHandler.RuntimeAttachArgs(server, effectivePurpose)
+                    const development = ServerConnectionHandler.DevelopmentAttachArgs(server, effectivePurpose)
                     const resilience = this.wsResilience
                     const socket = new WsMessageSocket(ws, {
                         policy: new BackpressurePolicy(resilience.backpressureSoftBytes, resilience.backpressureHardBytes, resilience.backpressureGraceMs),
                         onShed: () => this.logger.Info(PragmaticServerHost.ShedLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.ShedEvent }),
                     })
-                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, runtime.connectors ?? development.connectors, runtime.cypherQuery ?? development.cypherQuery, this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.data, this.paging, runtime.cypherExecute ?? development.cypherExecute, runtime.deployProvider, development.devGraphService, runtime.environmentGraphHost, runtime.modelView ?? development.modelView, runtime.dataChanges, undefined, sourceChanges, solutionRoots)
+                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, runtime.connectors ?? development.connectors, runtime.cypherQuery ?? development.cypherQuery, this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, effectivePurpose, runtime.applications, runtime.data, this.paging, runtime.cypherExecute ?? development.cypherExecute, runtime.deployProvider, development.devGraphService, runtime.environmentGraphHost, runtime.modelView ?? development.modelView, runtime.dataChanges, undefined, sourceChanges, solutionRoots)
                     this.handlers.add(handler)
                     const revocable: IRevocableConnection =
                     {
@@ -547,7 +550,7 @@ export class PragmaticServerHost
         }
     }
 
-    private async AuthenticateAgainst(req: IncomingMessage, server: PragmaticServer): Promise<AccessContext | null>
+    private async AuthenticateAgainst(req: IncomingMessage, server: PragmaticServer): Promise<{ context: AccessContext; effectivePurpose: EnvironmentPurpose } | null>
     {
         const header = req.headers[PragmaticServerHost.AuthorizationHeader]
         if (header === undefined)
@@ -557,7 +560,7 @@ export class PragmaticServerHost
             {
                 return null
             }
-            return this.authenticator.ResolveAsync(credential.Token, server.Realm(), await server.Pack())
+            return this.Authenticated(await this.authenticator.ResolveAsync(credential.Token, server.Realm(), await server.Pack()), true, server)
         }
         if (typeof header !== 'string' || !header.startsWith(PragmaticServerHost.BearerPrefix))
         {
@@ -568,7 +571,12 @@ export class PragmaticServerHost
         {
             return null
         }
-        return this.authenticator.ResolveAsync(token, server.Realm(), await server.Pack())
+        return this.Authenticated(await this.authenticator.ResolveAsync(token, server.Realm(), await server.Pack()), false, server)
+    }
+
+    private Authenticated(context: AccessContext | null, viaCookie: boolean, server: PragmaticServer): { context: AccessContext; effectivePurpose: EnvironmentPurpose } | null
+    {
+        return context === null ? null : { context, effectivePurpose: EffectivePurposeResolver.Resolve(context, viaCookie, server) }
     }
 
     private async Request(req: IncomingMessage, res: ServerResponse): Promise<void>

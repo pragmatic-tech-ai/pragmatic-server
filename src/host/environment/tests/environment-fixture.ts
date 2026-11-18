@@ -229,8 +229,8 @@ export class EnvironmentFixture
     public async ConnectWith(context: AccessContext): Promise<{ Client: PragmaticClient; Handler: ServerConnectionHandler }>
     {
         const server = this.Server
-        const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
-        const development = ServerConnectionHandler.DevelopmentAttachArgs(server)
+        const runtime = ServerConnectionHandler.RuntimeAttachArgs(server, server.Purpose())
+        const development = ServerConnectionHandler.DevelopmentAttachArgs(server, server.Purpose())
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(serverSocket, await server.LanguageService(), await server.Manager(), context,
             runtime.connectors ?? development.connectors, runtime.cypherQuery ?? development.cypherQuery, undefined, undefined, undefined, undefined, undefined, undefined,
