@@ -1352,7 +1352,7 @@ export class ServerConnectionHandler
         this.guarded(StorageProtocol.List, p => handlers.List(p))
     }
 
-    /** The current solution plus every solution that has contributed a graph slice. */
+    /** Every named solution: the current one, each graph-slice contributor and each named solution in the env source area (deduplicated). */
     private async ListSolutions(): Promise<SolutionSummaryDto[]>
     {
         const ids = new Set<string>()
@@ -1365,17 +1365,30 @@ export class ServerConnectionHandler
         {
             ids.add(id)
         }
+        for (const name of this.solutionRoots?.Names() ?? [])
+        {
+            ids.add(name)
+        }
         return [...ids].map(id => ({ Name: id, Id: id }))
     }
 
-    /** The current solution's full summary when it is the selected one. Any other id has no loaded source here (it composes in a later phase),
-     *  so it reports no members and a neutral Building state rather than the current solution's build state. */
+    /** The current solution's full summary when it is the selected one. A non-current solution known to the env source area reports its real
+     *  manifest members and the composed graph's build state (it is compiled into that graph); an unknown id has no source here and reports
+     *  no members and a neutral Building state. */
     private AuthoringSummary(solutionId: string): ActiveSolutionSummary
     {
         const active = this.ActiveSolutionOrNull()
         if (active !== null && active.name === solutionId)
         {
             return active
+        }
+        if (this.solutionRoots !== undefined && this.solutionRoots.Names().includes(solutionId))
+        {
+            return {
+                name: solutionId,
+                members: this.solutionRoots.MembersOf(solutionId).map(m => ({ id: m.Ref.path, type: m.Ref.type })),
+                buildState: BuildStateMapper.ToWire(this.languageService.BuildState),
+            }
         }
         return { name: solutionId, members: [], buildState: BuildState.Building }
     }
