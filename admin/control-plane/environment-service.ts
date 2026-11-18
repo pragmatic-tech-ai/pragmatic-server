@@ -178,12 +178,15 @@ export class EnvironmentService implements IAdminAccess
     private static readonly DevelopScope = 'environment-develop'
     /** One hour, like the maker token: a develop credential is short-lived and the relay re-mints on demand. */
     private static readonly DeveloperTtlSeconds = 3600
+    private static readonly RunTestScope = 'environment-run-test'
     private static readonly DeployerPrincipalId = 'deployer'
     /** Administer on the Tenant, required by application/deploy; the application-deploy scope limits the token to that one method. */
     private static readonly DeployerRoleName = 'Admin'
     private static readonly DeployScope = 'application-deploy'
     /** Fifteen minutes: a deploy token is single-purpose and short-lived; callers re-mint per publish. */
     private static readonly DeployTtlSeconds = 900
+    /** A run/test credential is short-lived like the deploy token: it carries the same fifteen minutes. */
+    private static readonly RunTestTtlSeconds = EnvironmentService.DeployTtlSeconds
     /** The well-known runtime principal a served environment-bound app authenticates as; holds the general read grant. */
     private static readonly AppReaderPrincipalId = 'app-reader'
     /** A read-only coarse role: Role.Viewer covers Action.Read, which the CypherProtocol.Query readTenant gate requires. */
@@ -630,6 +633,21 @@ export class EnvironmentService implements IAdminAccess
         {
             await this.proxy.GrantRole(info, { subject: EnvironmentService.DeveloperPrincipalId, role: EnvironmentService.DeveloperRoleName, resourceKind: EnvironmentService.RealmKindName, resourcePath: [] })
             return this.proxy.IssueToken(info, { principalId: EnvironmentService.DeveloperPrincipalId, scopes: [EnvironmentService.DevelopScope], expiresInSeconds: EnvironmentService.DeveloperTtlSeconds })
+        })
+    }
+
+    /** Mints a short-lived run/test credential for a Development environment: Role.Developer (never Admin) for the developer principal, scoped to the run/test method set, with the deploy token's 15-minute TTL. */
+    public async AdminIssueRunTestToken(name: string): Promise<TokenIssuedDto>
+    {
+        const rec = this.Require(name)
+        if (rec.type !== EnvType.Development)
+        {
+            throw new EnvironmentNotDevelopmentError(name)
+        }
+        return this.WithAdmin(name, async info =>
+        {
+            await this.proxy.GrantRole(info, { subject: EnvironmentService.DeveloperPrincipalId, role: EnvironmentService.DeveloperRoleName, resourceKind: EnvironmentService.RealmKindName, resourcePath: [] })
+            return this.proxy.IssueToken(info, { principalId: EnvironmentService.DeveloperPrincipalId, scopes: [EnvironmentService.RunTestScope], expiresInSeconds: EnvironmentService.RunTestTtlSeconds })
         })
     }
 

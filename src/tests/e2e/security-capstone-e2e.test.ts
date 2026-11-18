@@ -125,7 +125,7 @@ class CapstoneFx
         const server = this.Server
         const pack = await server.Pack()
         const service = new AdminService(pack.Grants, pack.Audit, await server.RealmConfigStore(), server.Realm(), async () => undefined, pack.Accounts, pack.Registrar, pack.Tokens, CapstoneFx.NoPacks, await server.SecurityAdmin())
-        const runtime = ServerConnectionHandler.RuntimeAttachArgs(server)
+        const runtime = ServerConnectionHandler.RuntimeAttachArgs(server, server.Purpose())
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
         const handler = ServerConnectionHandler.Attach(serverSocket, await server.LanguageService(), await server.Manager(), this.Fx.ContextFor(CapstoneFx.Principal(principalId)),
             runtime.connectors, runtime.cypherQuery, undefined, undefined, undefined, undefined, service, undefined, server.Purpose(), runtime.applications, runtime.data)

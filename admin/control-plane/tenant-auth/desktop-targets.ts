@@ -5,13 +5,14 @@ import { TenantAdminCapabilities, type AdminRoleCapabilities } from '../tenant-a
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import type { TenantSession } from './tenant-session.js'
 
-/** What the desktop app does to an environment: contribute graphs to a Development one, publish to a Runtime one, or (relay-only, either type) read-only inspect, or (relay-only, Development) develop: read and write source, drive the language service, and contribute. */
+/** What the desktop app does to an environment: contribute graphs to a Development one, publish to a Runtime one, or (relay-only, either type) read-only inspect, or (relay-only, Development) develop: read and write source, drive the language service, and contribute, or (relay-only, Development) run-test: load a build into the dev env's runtime and read back what runs. */
 export enum DesktopAction
 {
     Contribute = 'contribute',
     Publish = 'publish',
     Inspect = 'inspect',
     Develop = 'develop',
+    RunTest = 'run-test',
 }
 
 /** The outcome of `DesktopTargets.Check`: allowed now, not allowed at all, or allowed but the env is not running. */
@@ -102,6 +103,6 @@ export class DesktopTargets
 
     private static TypeFor(action: DesktopAction): EnvType
     {
-        return action === DesktopAction.Contribute || action === DesktopAction.Develop ? EnvType.Development : EnvType.Runtime
+        return action === DesktopAction.Contribute || action === DesktopAction.Develop || action === DesktopAction.RunTest ? EnvType.Development : EnvType.Runtime
     }
 }

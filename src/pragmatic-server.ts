@@ -133,6 +133,8 @@ export interface PragmaticServerIdentityOptions
 export interface PragmaticServerOptions
 {
     purpose?: EnvironmentPurpose
+    /** A Development environment that also serves the runtime surface (default false); the primary `purpose` is unchanged. */
+    runtimeCoHosted?: boolean
     applicationsRoot?: string
     packagesRoot?: string
     graphsRoot?: string
@@ -302,7 +304,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
      */
     private StartDirectorySync(): void
     {
-        if (this.Purpose() !== EnvironmentPurpose.Runtime || this.options.identity?.directorySyncOnStart === false)
+        // runtimeCoHosted requires identity, as a Runtime env does: without it the sync (and SecurityAdmin) fail with IdentityNotConfigured
+        if (!this.ServesRuntime() || this.options.identity?.directorySyncOnStart === false)
         {
             return
         }
@@ -366,12 +369,12 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * What the admin save checks a security setting against and reloads (EnvironmentSecurityAdmin); undefined on a
-     * Development environment, which refuses the setting (PR13). Requires identity.
+     * What the admin save checks a security setting against and reloads (EnvironmentSecurityAdmin); undefined unless the
+     * environment serves the runtime surface (a plain Development environment refuses the setting, PR13). Requires identity.
      */
     public async SecurityAdmin(): Promise<ISecuritySettingAdmin | undefined>
     {
-        if (this.Purpose() !== EnvironmentPurpose.Runtime)
+        if (!this.ServesRuntime())
         {
             return undefined
         }
@@ -434,6 +437,18 @@ export class PragmaticServer implements IEnvironmentGraphHost
     public Purpose(): EnvironmentPurpose
     {
         return this.options.purpose ?? EnvironmentPurpose.Development
+    }
+
+    /** True when this environment serves the development surface (its primary purpose is Development). */
+    public ServesDevelopment(): boolean
+    {
+        return this.Purpose() === EnvironmentPurpose.Development
+    }
+
+    /** True when this environment serves the runtime surface: primary Runtime, or a Development environment with a co-hosted runtime. */
+    public ServesRuntime(): boolean
+    {
+        return this.Purpose() === EnvironmentPurpose.Runtime || this.options.runtimeCoHosted === true
     }
 
     public AppsStorage(): IStorage
@@ -753,19 +768,19 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.promoteRecords
     }
 
-    /** Throws unless this is a Development environment: the graph catalog exists only there. */
+    /** Throws unless this environment serves the development surface ({@link ServesDevelopment}): the graph catalog exists only there. */
     private AssertDevelopmentPurpose(): void
     {
-        if (this.Purpose() !== EnvironmentPurpose.Development)
+        if (!this.ServesDevelopment())
         {
             throw new ResponseError(ErrorCodes.InvalidRequest, PragmaticServer.NotDevelopmentMessage)
         }
     }
 
-    /** Throws unless this is a Runtime environment: deploy and the applications registry exist only there. */
+    /** Throws unless this environment serves the runtime surface ({@link ServesRuntime}, a Runtime or a runtime-co-hosted one): deploy and the applications registry exist only there. */
     private AssertRuntimePurpose(): void
     {
-        if (this.Purpose() !== EnvironmentPurpose.Runtime)
+        if (!this.ServesRuntime())
         {
             throw new Error(PragmaticServer.ApplicationsRuntimeOnlyError)
         }

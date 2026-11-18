@@ -3,7 +3,7 @@ import {
 } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, SolutionSummaryDto, ModelViewPageDto, ModelViewParams, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, TeamMemberDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, CypherModelListDto, ConnectorReadParams, Page, EntityDto, PragmaticAppSummaryDto, GraphSummaryDto, GraphLoadParamsDto, GraphLoadedDto, SolutionCreateParamsDto, SolutionCreateResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { TeamMemberOrigin } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { ResponseError, ErrorCodes, DrainingError, ApplicationDeployProtocol, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ResponseError, ErrorCodes, DrainingError, ApplicationDeployProtocol, RunTestProtocol, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherAppDeployParamsDto, AppDeployResultDto, AppWriteParams, AppWriteResultDto, AppWriteOpDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto, DataChangedPayload } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { RequestType, NotificationType } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResourceRef, IdentityConfig, PresentedSecret, LocalAccountNotFoundError, InvalidSecurityModelError, MembershipOrigin } from '@pragmatic-tech-ai/todl-identity'
@@ -254,11 +254,11 @@ export class ServerConnectionHandler
      * The runtime-only Attach arguments: the application registry, the data/write, share and assign providers, deploy,
      * the promote seam, `cypher/query` / `cypher/execute` / `connector/*` on the environment engine (rulings S1, S13,
      * S14) and the `data/changed` feed (S16); all
-     * undefined unless the server is a Runtime environment.
+     * undefined unless this connection's effective purpose is Runtime and the server serves the runtime surface.
      */
-    public static RuntimeAttachArgs(server: { Purpose(): EnvironmentPurpose; Applications(): PragmaticAppsRegistry; WriteForPragmaticApp(context: AccessContext, name: string, operations: readonly AppWriteOpDto[]): Promise<AppWriteResultDto>; ShareForPragmaticApp(context: AccessContext, name: string, params: ShareParams): Promise<ShareResultDto>; UnshareForPragmaticApp(context: AccessContext, name: string, params: UnshareParams): Promise<UnshareResultDto>; ListSharesForPragmaticApp(context: AccessContext, name: string, params: ListSharesParams): Promise<ListSharesResultDto>; AssignForPragmaticApp(context: AccessContext, name: string, params: AssignParams): Promise<AssignResultDto>; DeployApplication(params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>; LoadEnvironmentGraph(params: GraphLoadParamsDto): Promise<GraphLoadedDto>; LoadedGraph(): Promise<GraphLoadedDto | null>; EnvironmentCypher(): IGraphCypherQuery; EnvironmentExecute(): IGraphCypherExecute; EnvironmentConnectors(): IGraphConnectorService; EnvironmentModelView(): IGraphModelView; EnvironmentScopes(): Promise<IGraphScopeSource>; DataChanges(): { Subscribe(scope: () => Promise<IGraphScope>, send: (payload: DataChangedPayload) => void, permits?: () => boolean): IDisposable } }): { applications: PragmaticAppsRegistry | undefined; deployProvider: ((params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>) | undefined; environmentGraphHost: IEnvironmentGraphHost | undefined; cypherQuery: IGraphCypherQuery | undefined; cypherExecute: IGraphCypherExecute | undefined; data: IEnvironmentDataService | undefined; connectors: IGraphConnectorService | undefined; modelView: IGraphModelView | undefined; dataChanges: IEnvironmentDataChanges | undefined }
+    public static RuntimeAttachArgs(server: { ServesRuntime(): boolean; Applications(): PragmaticAppsRegistry; WriteForPragmaticApp(context: AccessContext, name: string, operations: readonly AppWriteOpDto[]): Promise<AppWriteResultDto>; ShareForPragmaticApp(context: AccessContext, name: string, params: ShareParams): Promise<ShareResultDto>; UnshareForPragmaticApp(context: AccessContext, name: string, params: UnshareParams): Promise<UnshareResultDto>; ListSharesForPragmaticApp(context: AccessContext, name: string, params: ListSharesParams): Promise<ListSharesResultDto>; AssignForPragmaticApp(context: AccessContext, name: string, params: AssignParams): Promise<AssignResultDto>; DeployApplication(params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>; LoadEnvironmentGraph(params: GraphLoadParamsDto): Promise<GraphLoadedDto>; LoadedGraph(): Promise<GraphLoadedDto | null>; EnvironmentCypher(): IGraphCypherQuery; EnvironmentExecute(): IGraphCypherExecute; EnvironmentConnectors(): IGraphConnectorService; EnvironmentModelView(): IGraphModelView; EnvironmentScopes(): Promise<IGraphScopeSource>; DataChanges(): { Subscribe(scope: () => Promise<IGraphScope>, send: (payload: DataChangedPayload) => void, permits?: () => boolean): IDisposable } }, effectivePurpose: EnvironmentPurpose): { applications: PragmaticAppsRegistry | undefined; deployProvider: ((params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>) | undefined; environmentGraphHost: IEnvironmentGraphHost | undefined; cypherQuery: IGraphCypherQuery | undefined; cypherExecute: IGraphCypherExecute | undefined; data: IEnvironmentDataService | undefined; connectors: IGraphConnectorService | undefined; modelView: IGraphModelView | undefined; dataChanges: IEnvironmentDataChanges | undefined }
     {
-        if (server.Purpose() !== EnvironmentPurpose.Runtime)
+        if (effectivePurpose !== EnvironmentPurpose.Runtime || !server.ServesRuntime())
         {
             return { applications: undefined, deployProvider: undefined, environmentGraphHost: undefined, cypherQuery: undefined, cypherExecute: undefined, data: undefined, connectors: undefined, modelView: undefined, dataChanges: undefined }
         }
@@ -275,10 +275,10 @@ export class ServerConnectionHandler
         return { applications: server.Applications(), deployProvider: params => server.DeployApplication(params), environmentGraphHost: server, cypherQuery: server.EnvironmentCypher(), cypherExecute: server.EnvironmentExecute(), data, connectors: server.EnvironmentConnectors(), modelView: server.EnvironmentModelView(), dataChanges }
     }
 
-    /** The development-only Attach arguments (the container-owned graph service; `cypher/query`, `cypher/execute`, `connector/*` and the model view on the dev graph engine); all undefined unless the server is a Development environment. */
-    public static DevelopmentAttachArgs(server: { Purpose(): EnvironmentPurpose; GraphService(): IDevGraphService; DevCypher(): IGraphCypherQuery; DevExecute(): IGraphCypherExecute; DevModelView(): IGraphModelView; DevConnectors(): IGraphConnectorService }): { devGraphService: IDevGraphService | undefined; cypherQuery: IGraphCypherQuery | undefined; cypherExecute: IGraphCypherExecute | undefined; modelView: IGraphModelView | undefined; connectors: IGraphConnectorService | undefined }
+    /** The development-only Attach arguments (the container-owned graph service; `cypher/query`, `cypher/execute`, `connector/*` and the model view on the dev graph engine); all undefined unless this connection's effective purpose is Development and the server serves the development surface. */
+    public static DevelopmentAttachArgs(server: { ServesDevelopment(): boolean; GraphService(): IDevGraphService; DevCypher(): IGraphCypherQuery; DevExecute(): IGraphCypherExecute; DevModelView(): IGraphModelView; DevConnectors(): IGraphConnectorService }, effectivePurpose: EnvironmentPurpose): { devGraphService: IDevGraphService | undefined; cypherQuery: IGraphCypherQuery | undefined; cypherExecute: IGraphCypherExecute | undefined; modelView: IGraphModelView | undefined; connectors: IGraphConnectorService | undefined }
     {
-        if (server.Purpose() !== EnvironmentPurpose.Development)
+        if (effectivePurpose !== EnvironmentPurpose.Development || !server.ServesDevelopment())
         {
             return { devGraphService: undefined, cypherQuery: undefined, cypherExecute: undefined, modelView: undefined, connectors: undefined }
         }
@@ -609,6 +609,12 @@ export class ServerConnectionHandler
         return this.deployProvider(params)
     }
 
+    public async RunRunTestLoad(params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>
+    {
+        // Same load path as deploy; the RunTest distinction (scope/policy/relay) is enforced elsewhere.
+        return this.RunDeploy(params)
+    }
+
     public async RunAppDataWrite(params: AppWriteParams): Promise<AppWriteResultDto>
     {
         this.EnsureRuntime()
@@ -745,6 +751,7 @@ export class ServerConnectionHandler
             return summaries.map(a => ({ name: a.name, version: a.version }))
         })
         this.guarded(ApplicationDeployProtocol.Deploy, p => this.RunDeploy(p))
+        this.guarded(RunTestProtocol.Load, p => this.RunRunTestLoad(p))
         // S7: binds a LIVE app's name to the connection (data/write, shares and assign need it); no effect on the scope
         this.guarded(PragmaticAppProtocol.Open, async p =>
         {

@@ -1,7 +1,7 @@
 import { STATUS_CODES, type IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer, type RawData } from 'ws'
-import { ApplicationDeployProtocol, AppWriteStatus, GraphProtocol, PragmaticAppProtocol, type TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ApplicationDeployProtocol, AppWriteStatus, GraphProtocol, PragmaticAppProtocol, RunTestProtocol, type TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AuditRegistry } from '../audit-record.js'
 import { AuditThrottle } from '../audit-throttle.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
@@ -9,7 +9,7 @@ import type { IEnvironmentReach, EnvironmentUrlsLease } from '../environment-end
 import type { EnvironmentRecord } from '../environment-record.js'
 import { PlaneHttp } from '../plane-http.js'
 import { TransportFailure } from '../transport-failure.js'
-import { DevelopMethods } from '../../../src/host/token-scope.js'
+import { DevelopMethods, RunTestMethods } from '../../../src/host/token-scope.js'
 import { DesktopAction, DesktopTargetVerdict, type DesktopTargets } from './desktop-targets.js'
 import type { DesktopAuthGate } from './desktop-auth-gate.js'
 import type { IDesktopSessionConnections } from './desktop-endpoint.js'
@@ -101,12 +101,14 @@ export class DesktopRelayAllowlist
     private static readonly Publish: ReadonlySet<string> = new Set([ApplicationDeployProtocol.Deploy.method])
     private static readonly Inspect: ReadonlySet<string> = new Set([PragmaticAppProtocol.List.method, GraphProtocol.List.method, GraphProtocol.Loaded.method])
     private static readonly Develop: ReadonlySet<string> = new Set(DevelopMethods.All)
+    private static readonly RunTest: ReadonlySet<string> = new Set(RunTestMethods.All)
     /** Thrown for an action with no explicit case: fail closed rather than inherit another action's privileges. */
     public static readonly UnsupportedActionMessage = 'Unsupported desktop relay action.'
     /** Audited methods and the params field naming what they act on (the audit note). */
     private static readonly AuditedNoteField: ReadonlyMap<string, string> = new Map([
         [GraphProtocol.Contribute.method, 'graphName'],
         [ApplicationDeployProtocol.Deploy.method, 'appName'],
+        [RunTestProtocol.Load.method, 'appName'],
     ])
 
     public static For(action: DesktopAction): ReadonlySet<string>
@@ -121,6 +123,8 @@ export class DesktopRelayAllowlist
                 return DesktopRelayAllowlist.Publish
             case DesktopAction.Develop:
                 return DesktopRelayAllowlist.Develop
+            case DesktopAction.RunTest:
+                return DesktopRelayAllowlist.RunTest
             default:
                 throw new Error(DesktopRelayAllowlist.UnsupportedActionMessage)
         }
@@ -132,10 +136,10 @@ export class DesktopRelayAllowlist
         return DesktopRelayAllowlist.AuditedNoteField.get(method)
     }
 
-    /** Whether a reported outcome is an in-band failure (a deploy answered with a non-applied status). */
+    /** Whether a reported outcome is an in-band failure (a deploy or run-test load answered with a non-applied status). */
     public static IsInBandFailure(method: string, result: unknown): boolean
     {
-        if (method !== ApplicationDeployProtocol.Deploy.method || typeof result !== 'object' || result === null)
+        if ((method !== ApplicationDeployProtocol.Deploy.method && method !== RunTestProtocol.Load.method) || typeof result !== 'object' || result === null)
         {
             return false
         }
@@ -532,6 +536,8 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
                 return await this.service.AdminIssueDeployToken(envName)
             case DesktopAction.Develop:
                 return await this.service.AdminIssueDeveloperToken(envName)
+            case DesktopAction.RunTest:
+                return await this.service.AdminIssueRunTestToken(envName)
             default:
                 throw new Error(DesktopRelayAllowlist.UnsupportedActionMessage)
         }

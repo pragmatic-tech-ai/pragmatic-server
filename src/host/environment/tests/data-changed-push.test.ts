@@ -530,7 +530,7 @@ describe('data/changed push', () =>
         const server = new PragmaticServer({ purpose: EnvironmentPurpose.Development, packagesRoot: packages })
         try
         {
-            assert.equal(ServerConnectionHandler.RuntimeAttachArgs(server).dataChanges, undefined)
+            assert.equal(ServerConnectionHandler.RuntimeAttachArgs(server, server.Purpose()).dataChanges, undefined)
             assert.throws(() => server.DataChanges())
         }
         finally

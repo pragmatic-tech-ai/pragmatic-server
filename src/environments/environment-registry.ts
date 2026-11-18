@@ -235,6 +235,7 @@ export class EnvironmentRegistry
         return {
             packagesRoot: join(this.baseDir, environmentId, EnvironmentRegistry.PackagesDir),
             purpose: provisioning.purpose,
+            runtimeCoHosted: provisioning.runtimeCoHosted,
             applicationsRoot: join(this.baseDir, environmentId, EnvironmentRegistry.ApplicationsDir),
             graphsRoot: join(this.baseDir, environmentId, EnvironmentRegistry.GraphsDir),
             solutionsRoot: join(this.baseDir, environmentId, EnvironmentRegistry.SolutionsDir),

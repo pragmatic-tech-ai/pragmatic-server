@@ -1,5 +1,5 @@
 import { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { ApplicationDeployProtocol, GraphProtocol, LanguageProtocol, PragmaticAppProtocol, SolutionProtocol, StorageProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ApplicationDeployProtocol, GraphProtocol, LanguageProtocol, PragmaticAppProtocol, RunTestProtocol, SolutionProtocol, StorageProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /** Scopes a service token may carry that restrict which methods it can call. */
 export enum TokenScope
@@ -8,6 +8,7 @@ export enum TokenScope
     ApplicationDeploy = 'application-deploy',
     Inspect = 'environment-inspect',
     Develop = 'environment-develop',
+    RunTest = 'environment-run-test',
 }
 
 /** An AccessContext built from a service-token authentication, carrying that token's scopes explicitly.
@@ -65,6 +66,21 @@ export class DevelopMethods
     ]
 }
 
+/**
+ * The request methods a run/test credential may call: load a build into the run/test runtime, list the loaded applications,
+ * and read the loaded graph. Strictly narrower than application/deploy (administer-gated) and the develop allowlist: no data,
+ * shares, assignment, application/open or graph create/delete. Shared with the desktop relay's run/test allowlist so the two
+ * cannot drift.
+ */
+export class RunTestMethods
+{
+    public static readonly All: readonly string[] = [
+        RunTestProtocol.Load.method,
+        PragmaticAppProtocol.List.method,
+        GraphProtocol.Loaded.method,
+    ]
+}
+
 /** Restricts the methods a credential may call by its known scopes. With no known scope the gate allows everything. */
 export class TokenScopeGate
 {
@@ -73,6 +89,7 @@ export class TokenScopeGate
         [TokenScope.ApplicationDeploy, [ApplicationDeployProtocol.Deploy.method]],
         [TokenScope.Inspect, [PragmaticAppProtocol.List.method, GraphProtocol.List.method, GraphProtocol.Loaded.method]],
         [TokenScope.Develop, DevelopMethods.All],
+        [TokenScope.RunTest, RunTestMethods.All],
     ])
 
     private readonly allowed: ReadonlySet<string> | null

@@ -234,7 +234,7 @@ class DevWorld
     public Connect(context: AccessContext = DevWorld.Owner()): PragmaticClient
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const development = ServerConnectionHandler.DevelopmentAttachArgs(this.Server)
+        const development = ServerConnectionHandler.DevelopmentAttachArgs(this.Server, this.Server.Purpose())
         const handler = ServerConnectionHandler.Attach(serverSocket, this.Language, this.manager, context, undefined, development.cypherQuery,
             undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, development.devGraphService, undefined, development.modelView)
         const client = PragmaticClient.CreateOverSocket(clientSocket)
