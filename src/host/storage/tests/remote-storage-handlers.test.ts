@@ -2,7 +2,11 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { FakeStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { IStorageProviderRegistry } from '@pragmatic-tech-ai/todl'
 import { RemoteStorageHandlers } from '../remote-storage-handlers.js'
+import { AuthoringStorageResolver } from '../authoring-storage-resolver.js'
+import { AuthoringTarget } from '../../solutions/authoring-target.js'
+import { EnvSolutionRoots } from '../../solutions/env-solution-roots.js'
 
 class StorageFx
 {
@@ -143,4 +147,97 @@ test('WriteText rejects a non-string Content with InvalidParams', async () =>
     const handlers = StorageFx.Handlers()
     await StorageFx.Rejects(() => handlers.WriteText({ Path: 'a.txt', Content: 42 as unknown as string }))
     await StorageFx.Rejects(() => handlers.WriteText({ Path: 'a.txt', Content: undefined as unknown as string }))
+})
+
+class RoutingFx
+{
+    public static Roots(): EnvSolutionRoots
+    {
+        const stores = new Map<string, FakeStorage>()
+        const registry: IStorageProviderRegistry = {
+            CreateStorage: (location: string) =>
+            {
+                const store = stores.get(location) ?? new FakeStorage(location)
+                stores.set(location, store)
+                return store
+            }
+        }
+        return new EnvSolutionRoots('env/src', registry)
+    }
+
+    public static Connection(roots: EnvSolutionRoots, active: FakeStorage | undefined, activeName: string | undefined, select?: string): RemoteStorageHandlers
+    {
+        const target = new AuthoringTarget(() => activeName)
+        if (select !== undefined)
+        {
+            target.Select(select)
+        }
+        const resolver = new AuthoringStorageResolver(target, roots, () => activeName, () => active)
+        return new RemoteStorageHandlers(() => resolver.Resolve())
+    }
+}
+
+test('two connections selecting different solutions read and write disjoint roots', async () =>
+{
+    const roots = RoutingFx.Roots()
+    roots.EnsureRoot('A')
+    roots.EnsureRoot('B')
+    const a = RoutingFx.Connection(roots, undefined, undefined, 'A')
+    const b = RoutingFx.Connection(roots, undefined, undefined, 'B')
+    await a.WriteText({ Path: 'f.txt', Content: 'from-a' })
+    await b.WriteText({ Path: 'f.txt', Content: 'from-b' })
+    assert.equal((await a.ReadText({ Path: 'f.txt' })).Content, 'from-a')
+    assert.equal((await b.ReadText({ Path: 'f.txt' })).Content, 'from-b')
+    assert.equal(await roots.RootFor('A').ReadText('f.txt'), 'from-a')
+    assert.equal(await roots.RootFor('B').ReadText('f.txt'), 'from-b')
+})
+
+test('confinement still applies relative to the selected solution root', async () =>
+{
+    const roots = RoutingFx.Roots()
+    roots.EnsureRoot('A')
+    roots.EnsureRoot('B')
+    await roots.RootFor('B').WriteText('secret.txt', 's')
+    const a = RoutingFx.Connection(roots, undefined, undefined, 'A')
+    await StorageFx.Rejects(() => a.ReadText({ Path: '../B/secret.txt' }))
+    await StorageFx.Rejects(() => a.ReadText({ Path: '/B/secret.txt' }))
+    await StorageFx.Rejects(() => a.ReadText({ Path: 'C:B/secret.txt' }))
+    await StorageFx.Rejects(() => a.ReadText({ Path: 'x/b:stream' }))
+    await StorageFx.Rejects(() => a.ReadText({ Path: 'x/b\0c' }))
+    await StorageFx.Rejects(() => a.Delete({ Path: '' }))
+    await StorageFx.Rejects(() => a.Rename({ From: '.', To: 'z' }))
+    await StorageFx.Rejects(() => a.WriteText({ Path: 'a/..', Content: 'x' }))
+    assert.equal(await roots.RootFor('B').Exists('secret.txt'), true)
+})
+
+test('with no selection the active solution storage is used (Phase-2 back-compat)', async () =>
+{
+    const roots = RoutingFx.Roots()
+    roots.EnsureRoot('Active')
+    const active = new FakeStorage()
+    const conn = RoutingFx.Connection(roots, active, 'Active')
+    await conn.WriteText({ Path: 'x.txt', Content: 'act' })
+    assert.equal(await active.ReadText('x.txt'), 'act')
+    assert.equal(await roots.RootFor('Active').Exists('x.txt'), false)
+})
+
+test('selecting the active solution explicitly still uses the active storage', async () =>
+{
+    const roots = RoutingFx.Roots()
+    const active = new FakeStorage()
+    const conn = RoutingFx.Connection(roots, active, 'Active', 'Active')
+    await conn.WriteText({ Path: 'x.txt', Content: 'act' })
+    assert.equal(await active.Exists('x.txt'), true)
+})
+
+test('an unknown or invalid selection is refused, never routed to another root', async () =>
+{
+    const roots = RoutingFx.Roots()
+    const active = new FakeStorage()
+    for (const bad of ['Missing', '../A', 'a/b'])
+    {
+        const conn = RoutingFx.Connection(roots, active, 'Active', bad)
+        await assert.rejects(() => conn.WriteText({ Path: 'x.txt', Content: 'x' }), (e: unknown) => e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest)
+    }
+    assert.equal(await active.Exists('x.txt'), false)
 })

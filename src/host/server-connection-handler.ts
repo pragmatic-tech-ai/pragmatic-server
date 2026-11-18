@@ -14,6 +14,8 @@ import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import { AuthoringTarget } from './solutions/authoring-target.js'
 import type { SourceChangeBridge } from './solutions/source-change-bridge.js'
 import { RemoteStorageHandlers } from './storage/remote-storage-handlers.js'
+import { AuthoringStorageResolver } from './storage/authoring-storage-resolver.js'
+import type { EnvSolutionRoots } from './solutions/env-solution-roots.js'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { InvalidParamsPrefix } from './invalid-params-prefix.js'
 import { PolicyGate } from './policy-gate.js'
@@ -109,6 +111,8 @@ export class ServerConnectionHandler
     private readonly graphSubscription: IDisposable
     private readonly buildStateSubscription: IDisposable
     private readonly sourceChanges: SourceChangeBridge | undefined
+    /** Per-named-solution source roots; absent => storage/* serves the active solution only (Phase-2 behaviour). */
+    private readonly solutionRoots: EnvSolutionRoots | undefined
     private readonly storageChangedSubscription: IDisposable | undefined
     private readonly instrumentation: RequestInstrumentation | undefined
     private readonly parent: Context | undefined
@@ -141,10 +145,11 @@ export class ServerConnectionHandler
     private revoked = false
     private disposed = false
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectors: IGraphConnectorService | undefined, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: EnvironmentPurpose = EnvironmentPurpose.Development, applications?: PragmaticAppsRegistry, data?: IEnvironmentDataService, paging?: PagingLimits, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, modelView?: IGraphModelView, dataChanges?: IEnvironmentDataChanges, diagnostics?: IDispatchDiagnostics, sourceChanges?: SourceChangeBridge)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectors: IGraphConnectorService | undefined, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: EnvironmentPurpose = EnvironmentPurpose.Development, applications?: PragmaticAppsRegistry, data?: IEnvironmentDataService, paging?: PagingLimits, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, modelView?: IGraphModelView, dataChanges?: IEnvironmentDataChanges, diagnostics?: IDispatchDiagnostics, sourceChanges?: SourceChangeBridge, solutionRoots?: EnvSolutionRoots)
     {
         this.diagnostics = diagnostics ?? new LoggerDispatchDiagnostics()
         this.sourceChanges = sourceChanges
+        this.solutionRoots = solutionRoots
         this.cypherLimits = cypherLimits ?? new CypherLimits()
         this.paging = paging ?? new PagingLimits()
         this.purpose = purpose
@@ -276,10 +281,10 @@ export class ServerConnectionHandler
         return { devGraphService: server.GraphService(), cypherQuery: server.DevCypher(), cypherExecute: server.DevExecute(), modelView: server.DevModelView(), connectors: server.DevConnectors() }
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectors: IGraphConnectorService | undefined, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: EnvironmentPurpose = EnvironmentPurpose.Development, applications?: PragmaticAppsRegistry, data?: IEnvironmentDataService, paging?: PagingLimits, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, modelView?: IGraphModelView, dataChanges?: IEnvironmentDataChanges, diagnostics?: IDispatchDiagnostics, sourceChanges?: SourceChangeBridge): ServerConnectionHandler
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectors: IGraphConnectorService | undefined, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: EnvironmentPurpose = EnvironmentPurpose.Development, applications?: PragmaticAppsRegistry, data?: IEnvironmentDataService, paging?: PagingLimits, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, modelView?: IGraphModelView, dataChanges?: IEnvironmentDataChanges, diagnostics?: IDispatchDiagnostics, sourceChanges?: SourceChangeBridge, solutionRoots?: EnvSolutionRoots): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
-        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectors, cypherQuery, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, data, paging, cypherExecute, deployProvider, devGraphService, environmentGraphHost, modelView, dataChanges, diagnostics, sourceChanges)
+        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectors, cypherQuery, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, data, paging, cypherExecute, deployProvider, devGraphService, environmentGraphHost, modelView, dataChanges, diagnostics, sourceChanges, solutionRoots)
         connection.listen()
         return handler
     }
@@ -1297,10 +1302,11 @@ export class ServerConnectionHandler
         })
     }
 
-    /** Dev-only `storage/*`: the active solution's source store, driven remotely; paths are confined to its root by {@link RemoteStorageHandlers}. */
+    /** Dev-only `storage/*`: the connection's authoring solution's source store (its own root, or the active solution's when none is selected), driven remotely; paths are confined to its root by {@link RemoteStorageHandlers}. */
     private RegisterStorageHandlers(): void
     {
-        const handlers = new RemoteStorageHandlers(() => this.manager.ActiveSolution?.Storage, this.sourceChanges)
+        const resolver = new AuthoringStorageResolver(this.authoringTarget, this.solutionRoots, () => this.manager.ActiveSolution?.Name, () => this.manager.ActiveSolution?.Storage)
+        const handlers = new RemoteStorageHandlers(() => resolver.Resolve(), this.sourceChanges)
         this.guarded(StorageProtocol.ReadText, p => handlers.ReadText(p))
         this.guarded(StorageProtocol.ReadBytes, p => handlers.ReadBytes(p))
         this.guarded(StorageProtocol.WriteText, p => handlers.WriteText(p))
