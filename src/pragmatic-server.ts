@@ -901,10 +901,16 @@ export class PragmaticServer implements IEnvironmentGraphHost
 
     private async BuildSolutionRoots(): Promise<EnvSolutionRoots>
     {
+        // Defensive: composition (the env-wide shared member set) is a Development-only feature; both host call sites
+        // already gate on Purpose === Development, this pins that invariant should a third caller ever appear.
+        this.AssertDevelopmentPurpose()
         const roots = new EnvSolutionRoots(this.options.solutionsRoot ?? PragmaticServer.DefaultSolutionsDir, this.platform.CreateStorageProviderRegistry())
         await roots.Refresh()
         const manager = await this.Manager()
-        manager.SetComposedMemberSet(new ComposedSolutionLoader(manager, roots))
+        const loader = new ComposedSolutionLoader(manager, roots)
+        const logger = this.options.logger ?? new NullLogger()
+        loader.OverlapQuarantined.subscribe(message => logger.Warn(message))
+        manager.SetComposedMemberSet(loader)
         return roots
     }
 

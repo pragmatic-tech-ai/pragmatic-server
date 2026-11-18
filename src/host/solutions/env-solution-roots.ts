@@ -2,6 +2,7 @@ import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { SolutionManifest, SolutionMember } from '@pragmatic-tech-ai/todl'
 import type { IStorageProviderRegistry } from '@pragmatic-tech-ai/todl'
+import { PathConfinement } from '../path-confinement.js'
 import type { IEnvSolutionSource } from './composed-solution-loader.js'
 
 /** Raised when a solution name could address a path outside its own subdirectory of the env source area. */
@@ -45,14 +46,10 @@ export class EnvSolutionRoots implements IEnvSolutionSource
     private static readonly ManifestSuffix = '.pksln'
     private static readonly EmptyPath = ''
     private static readonly ForbiddenNamePattern = /[\\/:\u0000-\u001f\u007f]|\.\./
-    private static readonly ControlOrColonPattern = /[:\u0000-\u001f\u007f]/
     private static readonly ReservedDeviceNamePattern = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i
     private static readonly NotFoundPattern = /ENOENT|ENOTDIR/
     private static readonly CurrentSegment = '.'
-    private static readonly ParentSegment = '..'
-    private static readonly TrailingStrip = /[. ]+$/
     private static readonly TrailingUnsafePattern = /[. ]$/
-    private static readonly SegmentSplit = /[\\/]+/
 
     public readonly Changed = new Signal<void>()
     private readonly roots = new Map<string, IStorage>()
@@ -244,34 +241,12 @@ export class EnvSolutionRoots implements IEnvSolutionSource
     {
         try
         {
-            return SolutionManifest.parse(text).members.filter(m => EnvSolutionRoots.IsConfinedPath(m.path))
+            return SolutionManifest.parse(text).members.filter(m => PathConfinement.IsConfinedPath(m.path))
         }
         catch
         {
             return []
         }
-    }
-
-    /** A manifest member path must be relative and never climb out of its solution folder. */
-    private static IsConfinedPath(path: string): boolean
-    {
-        if (typeof path !== 'string' || path === EnvSolutionRoots.EmptyPath || EnvSolutionRoots.ControlOrColonPattern.test(path))
-        {
-            return false
-        }
-        const segments = path.split(EnvSolutionRoots.SegmentSplit)
-        if (segments[0] === EnvSolutionRoots.EmptyPath)
-        {
-            return false
-        }
-        return segments.every(s => !EnvSolutionRoots.IsDotSegment(s))
-    }
-
-    /** Windows strips trailing spaces/dots, so `.. `, `...` and `. ` all normalize to a dot segment (or nothing): treat them as one. */
-    private static IsDotSegment(segment: string): boolean
-    {
-        const stripped = segment.replace(EnvSolutionRoots.TrailingStrip, EnvSolutionRoots.EmptyPath)
-        return stripped === EnvSolutionRoots.EmptyPath || stripped === EnvSolutionRoots.CurrentSegment || stripped === EnvSolutionRoots.ParentSegment
     }
 
     private static IsValid(name: string): boolean

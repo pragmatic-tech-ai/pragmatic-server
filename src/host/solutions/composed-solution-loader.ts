@@ -1,6 +1,7 @@
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IComposedMemberSet, SolutionManagerService, SolutionMember } from '@pragmatic-tech-ai/todl'
+import { PathConfinement } from '../path-confinement.js'
 
 /** Supplies the OTHER named solutions' members for an environment; Task 5's EnvSolutionRoots implements it. */
 export interface IEnvSolutionSource
@@ -10,7 +11,7 @@ export interface IEnvSolutionSource
     readonly Changed: Signal<void>
 }
 
-/** Raised when two composed members' roots are equal or nested, which would break longest-prefix member lookup. */
+/** Describes two composed members whose roots are equal or nested, which would break longest-prefix member lookup. */
 export class OverlappingMemberRootsError extends Error
 {
     private static readonly Prefix = 'Composed solution members have overlapping roots: '
@@ -38,6 +39,12 @@ export class ComposedSolutionLoader implements IComposedMemberSet, IDisposable
     private static readonly TrailingSeparators = /\/+$/
 
     public readonly Changed = new Signal<void>()
+    /**
+     * Fires (non-fatal) with an {@link OverlappingMemberRootsError} message each time a member is dropped from the
+     * composed set because its absolute root overlaps one already kept. Members() feeds the env-wide shared language
+     * service, so a genuine overlap must quarantine the offending slice, never throw and break composition for all.
+     */
+    public readonly OverlapQuarantined = new Signal<string>()
     private readonly subscriptions: IDisposable[] = []
 
     public constructor(
@@ -52,22 +59,15 @@ export class ComposedSolutionLoader implements IComposedMemberSet, IDisposable
     public Members(): readonly SolutionMember[]
     {
         const byKey = new Map<string, SolutionMember>()
-        const candidates = [...(this.manager.ActiveSolution?.Members.ToArray() ?? [])]
-        for (const name of this.source.Names())
+        for (const member of this.Candidates())
         {
-            candidates.push(...this.source.MembersOf(name))
-        }
-        for (const member of candidates)
-        {
-            const key = ComposedSolutionLoader.Normalize(member.Ref.path) + ComposedSolutionLoader.KeyJoiner + member.Ref.type
+            const key = ComposedSolutionLoader.RootOf(member) + ComposedSolutionLoader.KeyJoiner + member.Ref.type
             if (!byKey.has(key))
             {
                 byKey.set(key, member)
             }
         }
-        const members = [...byKey.values()]
-        ComposedSolutionLoader.AssertDisjoint(members)
-        return members
+        return this.Disjoint([...byKey.values()])
     }
 
     public dispose(): void
@@ -78,22 +78,51 @@ export class ComposedSolutionLoader implements IComposedMemberSet, IDisposable
         }
     }
 
-    private static AssertDisjoint(members: readonly SolutionMember[]): void
+    /**
+     * The active solution's members unioned with every named solution's, both run through the identical path-confinement
+     * filter (the named source already filters at parse time; this also drops an active manifest member with an empty or
+     * `..` relative path, so a stray path can't trip the overlap logic for the whole environment).
+     */
+    private Candidates(): SolutionMember[]
     {
-        const roots = members.map(m => ComposedSolutionLoader.Normalize(m.Ref.path))
-        for (let i = 0; i < roots.length; i++)
+        const candidates = [...(this.manager.ActiveSolution?.Members.ToArray() ?? [])]
+        for (const name of this.source.Names())
         {
-            for (let j = i + 1; j < roots.length; j++)
-            {
-                if (ComposedSolutionLoader.Overlaps(roots[i], roots[j]))
-                {
-                    throw new OverlappingMemberRootsError(members[i].Ref.path, members[j].Ref.path)
-                }
-            }
+            candidates.push(...this.source.MembersOf(name))
         }
+        return candidates.filter(member => PathConfinement.IsConfinedPath(member.Ref.path))
     }
 
-    /** Assumes member paths are already canonical (relative manifest paths: no `./`, no `..`, Windows case not folded). */
+    /** Keeps the first member of each distinct absolute root and quarantines any later member whose root overlaps a kept one. */
+    private Disjoint(members: readonly SolutionMember[]): SolutionMember[]
+    {
+        const kept: SolutionMember[] = []
+        const keptRoots: string[] = []
+        for (const member of members)
+        {
+            const root = ComposedSolutionLoader.RootOf(member)
+            const clash = keptRoots.find(existing => ComposedSolutionLoader.Overlaps(root, existing))
+            if (clash !== undefined)
+            {
+                this.OverlapQuarantined.emit(new OverlappingMemberRootsError(root, clash).message)
+                continue
+            }
+            kept.push(member)
+            keptRoots.push(root)
+        }
+        return kept
+    }
+
+    /**
+     * A member's identity for composition: its resolved storage ROOT, the absolute rooted location the language service
+     * keys on (`member.Storage === consumerStorage`). The relative, manifest-local `Ref.path` is non-unique across
+     * solutions (two solutions can both own a `models` dir), so it is only a last resort for an as-yet-unresolved member.
+     */
+    private static RootOf(member: SolutionMember): string
+    {
+        return ComposedSolutionLoader.Normalize(member.Storage?.Root ?? member.Ref.path)
+    }
+
     private static Normalize(path: string): string
     {
         return path

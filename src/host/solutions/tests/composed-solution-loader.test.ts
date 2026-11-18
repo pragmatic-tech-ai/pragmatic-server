@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Signal, Observable } from '@pragmatic-tech-ai/todl-runtime'
+import { Signal, Observable, FakeStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { SolutionMember } from '@pragmatic-tech-ai/todl'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
-import { ComposedSolutionLoader, OverlappingMemberRootsError } from '../composed-solution-loader.js'
+import { ComposedSolutionLoader } from '../composed-solution-loader.js'
 import type { IEnvSolutionSource } from '../composed-solution-loader.js'
 
 class FakeActive
@@ -62,20 +62,26 @@ class FakeSource implements IEnvSolutionSource
 class Fx
 {
     private static readonly MemberType = 'todl'
-    private static readonly OverlapPattern = /overlapping roots/
 
     public readonly Manager = new FakeManager()
     public readonly Source = new FakeSource()
     public readonly Loader = new ComposedSolutionLoader(this.Manager as unknown as SolutionManagerService, this.Source)
+    public readonly Quarantined: string[] = []
 
-    public static Member(path: string): SolutionMember
+    public constructor()
     {
-        return new SolutionMember({ path, type: Fx.MemberType })
+        this.Loader.OverlapQuarantined.subscribe(message => this.Quarantined.push(message))
     }
 
-    public static IsOverlapError(e: unknown): boolean
+    /** A member keyed, in production, on its ABSOLUTE storage root; `root` sets that root, otherwise identity falls back to `path`. */
+    public static Member(path: string, root?: string): SolutionMember
     {
-        return e instanceof OverlappingMemberRootsError && Fx.OverlapPattern.test(e.message)
+        const member = new SolutionMember({ path, type: Fx.MemberType })
+        if (root !== undefined)
+        {
+            member.Storage = new FakeStorage(root)
+        }
+        return member
     }
 }
 
@@ -110,23 +116,57 @@ test('ActiveSolution is unchanged after constructing and using the loader', () =
     assert.equal(fx.Manager.ActiveSolution, before)
 })
 
-test('overlapping roots are rejected with a named error', () =>
+test('a genuinely nested member is quarantined (non-fatal), the rest keep composing', () =>
 {
     const fx = new Fx()
-    fx.Manager.SetActive([Fx.Member('proj')])
-    fx.Source.Solutions.set('one', [Fx.Member('proj/inner')])
-    assert.throws(() => fx.Loader.Members(), (e: unknown) => Fx.IsOverlapError(e))
-    const same = new Fx()
-    same.Manager.SetActive([Fx.Member('x')])
-    same.Source.Solutions.set('one', [new SolutionMember({ path: 'x', type: 'other' })])
-    assert.throws(() => same.Loader.Members(), OverlappingMemberRootsError)
+    const outer = Fx.Member('models', '/area/A/models')
+    fx.Manager.SetActive([outer])
+    fx.Source.Solutions.set('one', [Fx.Member('inner', '/area/A/models/inner')])
+    const members = fx.Loader.Members()
+    assert.deepEqual(members, [outer])
+    assert.equal(fx.Quarantined.length, 1)
+})
+
+test('two members on the same root but different types quarantine the second rather than throwing', () =>
+{
+    const fx = new Fx()
+    const first = Fx.Member('x', '/area/A/x')
+    fx.Manager.SetActive([first])
+    const other = new SolutionMember({ path: 'x', type: 'other' })
+    other.Storage = new FakeStorage('/area/A/x')
+    fx.Source.Solutions.set('one', [other])
+    assert.deepEqual(fx.Loader.Members(), [first])
+    assert.equal(fx.Quarantined.length, 1)
+})
+
+test('two solutions sharing a member dir name both compose: no collapse, no quarantine', () =>
+{
+    const fx = new Fx()
+    const a = Fx.Member('models', '/area/A/models')
+    const b = Fx.Member('models', '/area/B/models')
+    fx.Source.Solutions.set('A', [a])
+    fx.Source.Solutions.set('B', [b])
+    const members = fx.Loader.Members()
+    assert.equal(members.length, 2)
+    assert.deepEqual([...members].sort((x, y) => (x.Storage!.Root).localeCompare(y.Storage!.Root)), [a, b])
+    assert.equal(fx.Quarantined.length, 0)
+})
+
+test('an active member with an empty or .. relative path is dropped by confinement, not tripping overlap', () =>
+{
+    const fx = new Fx()
+    const good = Fx.Member('models', '/area/A/models')
+    fx.Manager.SetActive([Fx.Member('..'), Fx.Member('')])
+    fx.Source.Solutions.set('A', [good])
+    assert.deepEqual(fx.Loader.Members(), [good])
+    assert.equal(fx.Quarantined.length, 0)
 })
 
 test('sibling roots sharing a name prefix do not overlap', () =>
 {
     const fx = new Fx()
-    fx.Manager.SetActive([Fx.Member('app')])
-    fx.Source.Solutions.set('one', [Fx.Member('app2')])
+    fx.Manager.SetActive([Fx.Member('app', '/area/A/app')])
+    fx.Source.Solutions.set('one', [Fx.Member('app2', '/area/A/app2')])
     assert.equal(fx.Loader.Members().length, 2)
 })
 
@@ -145,26 +185,30 @@ test('Changed fires on source add/remove and active-solution change, and stops a
     assert.equal(count, 3)
 })
 
-test('distinct instances with the same root dedupe without throwing', () =>
+test('distinct instances with the same root dedupe without throwing, then a nested one quarantines', () =>
 {
     const fx = new Fx()
-    fx.Manager.SetActive([Fx.Member('proj')])
-    fx.Source.Solutions.set('active', [Fx.Member('proj')])
+    fx.Manager.SetActive([Fx.Member('proj', '/area/A/proj')])
+    fx.Source.Solutions.set('active', [Fx.Member('proj', '/area/A/proj')])
     assert.equal(fx.Loader.Members().length, 1)
-    fx.Source.Solutions.set('nested', [Fx.Member('proj/inner')])
-    assert.throws(() => fx.Loader.Members(), OverlappingMemberRootsError)
+    assert.equal(fx.Quarantined.length, 0)
+    fx.Source.Solutions.set('nested', [Fx.Member('inner', '/area/A/proj/inner')])
+    assert.equal(fx.Loader.Members().length, 1)
+    assert.equal(fx.Quarantined.length, 1)
 })
 
 test('backslash and trailing-slash roots are normalized for overlap', () =>
 {
     const back = new Fx()
-    back.Manager.SetActive([Fx.Member('proj\\inner')])
-    back.Source.Solutions.set('one', [Fx.Member('proj')])
-    assert.throws(() => back.Loader.Members(), OverlappingMemberRootsError)
+    back.Manager.SetActive([Fx.Member('inner', '/area/A/proj\\inner')])
+    back.Source.Solutions.set('one', [Fx.Member('proj', '/area/A/proj')])
+    assert.equal(back.Loader.Members().length, 1)
+    assert.equal(back.Quarantined.length, 1)
     const trailing = new Fx()
-    trailing.Manager.SetActive([Fx.Member('proj/')])
-    trailing.Source.Solutions.set('one', [Fx.Member('proj/inner')])
-    assert.throws(() => trailing.Loader.Members(), OverlappingMemberRootsError)
+    trailing.Manager.SetActive([Fx.Member('proj', '/area/A/proj/')])
+    trailing.Source.Solutions.set('one', [Fx.Member('inner', '/area/A/proj/inner')])
+    assert.equal(trailing.Loader.Members().length, 1)
+    assert.equal(trailing.Quarantined.length, 1)
 })
 
 test('dispose twice is a no-op', () =>
