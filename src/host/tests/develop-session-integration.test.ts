@@ -1,19 +1,18 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, createMessageConnection, NullLogger, StorageProtocol, SolutionProtocol, GraphProtocol, PragmaticAppProtocol, AppDataProtocol, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, createMessageConnection, NullLogger, StorageProtocol, SolutionProtocol, GraphProtocol, PragmaticAppProtocol, AppDataProtocol, AdminProtocol, CypherProtocol, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection, GraphContributeParamsDto, GraphCreateParamsDto, GraphDetailDto, GraphExportDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { FakeStorage, Signal } from '@pragmatic-tech-ai/todl-runtime'
-import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import type { IStorageProviderRegistry } from '@pragmatic-tech-ai/todl'
 import { EnvSolutionRoots } from '../solutions/env-solution-roots.js'
+import { MemoryStorageRegistry } from '../solutions/tests/memory-storage-registry.js'
 import { GraphBuildState } from '@pragmatic-tech-ai/todl'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
 import { SourceChangeBridge } from '../solutions/source-change-bridge.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
-import { DevelopMethods, ScopedAccessContext, TokenScope } from '../token-scope.js'
+import { DevelopMethods, ScopedAccessContext, TokenScope, TokenScopeGate } from '../token-scope.js'
 import type { IDevGraphService } from '../graphs/dev-graph-service.js'
 
 class RecordingGraphService implements IDevGraphService
@@ -219,22 +218,6 @@ test('graph/contribute succeeds under the develop scope, which allowlists it, wh
     }
 })
 
-class DeveloperRegistry implements IStorageProviderRegistry
-{
-    private readonly stores = new Map<string, FakeStorage>()
-
-    public CreateStorage(location: string): IStorage
-    {
-        let store = this.stores.get(location)
-        if (store === undefined)
-        {
-            store = new FakeStorage(location)
-            this.stores.set(location, store)
-        }
-        return store
-    }
-}
-
 class DeveloperAuthz
 {
     public static readonly NewName = 'sol-new'
@@ -247,12 +230,12 @@ class DeveloperAuthz
 test('authz: solution/create is allowlisted for develop and runs under Role.Developer; escalation methods stay denied', async () =>
 {
     assert.ok(DevelopMethods.All.includes(SolutionProtocol.CreateSolution.method))
-    for (const escalation of [SolutionProtocol.OpenSolution.method, GraphProtocol.Create.method, GraphProtocol.Delete.method, GraphProtocol.Load.method, PragmaticAppProtocol.Open.method, AppDataProtocol.Write.method])
+    for (const escalation of [SolutionProtocol.OpenSolution.method, GraphProtocol.Create.method, GraphProtocol.Delete.method, GraphProtocol.Load.method, GraphProtocol.Loaded.method, AdminProtocol.ListGrants.method, CypherProtocol.Execute.method, PragmaticAppProtocol.Open.method, AppDataProtocol.Write.method])
     {
         assert.ok(!DevelopMethods.All.includes(escalation), escalation)
     }
     const fx = new DevelopFixture()
-    const roots = new EnvSolutionRoots(DeveloperAuthz.Area, new DeveloperRegistry())
+    const roots = new EnvSolutionRoots(DeveloperAuthz.Area, new MemoryStorageRegistry())
     const manager = fx.Manager as unknown as { OpenSolution: (location: string) => Promise<void> }
     manager.OpenSolution = async () => undefined
     const a = fx.Attach([TokenScope.Develop], Role.Developer, roots)
@@ -265,6 +248,13 @@ test('authz: solution/create is allowlisted for develop and runs under Role.Deve
         await assert.rejects(() => a.Client.sendRequest(GraphProtocol.Create, DevelopFixture.CreateParams), denied)
         await assert.rejects(() => a.Client.sendRequest(PragmaticAppProtocol.Open, DeveloperAuthz.AppOpen as never), denied)
         await assert.rejects(() => a.Client.sendRequest(AppDataProtocol.Write, DeveloperAuthz.DataWrite as never), denied)
+        await assert.rejects(() => a.Client.sendRequest(GraphProtocol.Loaded), denied)
+        // admin/* and cypher/execute handlers are not registered in this fixture (no admin/cypher service), so assert the develop scope gate itself denies them
+        const gate = TokenScopeGate.For([TokenScope.Develop])
+        for (const method of [AdminProtocol.ListGrants.method, AdminProtocol.GrantRole.method, AdminProtocol.IssueToken.method, CypherProtocol.Execute.method])
+        {
+            assert.equal(gate.Allows(method), false, method)
+        }
     }
     finally
     {

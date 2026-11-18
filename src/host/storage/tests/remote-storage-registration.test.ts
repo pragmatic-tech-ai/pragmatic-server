@@ -4,12 +4,11 @@ import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, 
 import type { MessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { FakeStorage } from '@pragmatic-tech-ai/todl-runtime'
-import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import type { IStorageProviderRegistry } from '@pragmatic-tech-ai/todl'
 import { GraphBuildState } from '@pragmatic-tech-ai/todl'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { EnvSolutionRoots } from '../../solutions/env-solution-roots.js'
+import { MemoryStorageRegistry } from '../../solutions/tests/memory-storage-registry.js'
 import { EnvironmentPurpose } from '../../../environments/environment-purpose.js'
 import { SourceChangeBridge } from '../../solutions/source-change-bridge.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
@@ -174,22 +173,6 @@ test('after a handler is disposed it receives no further pushes', async () =>
     }
 })
 
-class CreateRegistry implements IStorageProviderRegistry
-{
-    private readonly stores = new Map<string, FakeStorage>()
-
-    public CreateStorage(location: string): IStorage
-    {
-        let store = this.stores.get(location)
-        if (store === undefined)
-        {
-            store = new FakeStorage(location)
-            this.stores.set(location, store)
-        }
-        return store
-    }
-}
-
 class CreateFixture
 {
     public static readonly Area = 'env/solutions'
@@ -197,9 +180,11 @@ class CreateFixture
     public static readonly Other = 'beta'
     public static readonly Seeded = 'seed.todl'
     public static readonly SeedText = 'entity X {}'
+    public static readonly NestedFile = 'proj/model.todl'
+    public static readonly NestedDir = 'proj'
     public static readonly BadNames: readonly unknown[] = ['', '../escape', 'a/b', undefined, 7]
 
-    public readonly Registry = new CreateRegistry()
+    public readonly Registry = new MemoryStorageRegistry()
     public readonly Roots = new EnvSolutionRoots(CreateFixture.Area, this.Registry)
     public readonly Opened: string[] = []
 
@@ -251,10 +236,13 @@ test('solution/create is create-or-replace, last-writer-wins: a re-create clears
     {
         await a.client.sendRequest(SolutionProtocol.CreateSolution, { Name: CreateFixture.Name })
         await fx.Roots.RootFor(CreateFixture.Name).WriteText(CreateFixture.Seeded, CreateFixture.SeedText)
+        await fx.Roots.RootFor(CreateFixture.Name).WriteText(CreateFixture.NestedFile, CreateFixture.SeedText)
         const again = await a.client.sendRequest(SolutionProtocol.CreateSolution, { Name: CreateFixture.Name })
         assert.deepEqual(again, { Name: CreateFixture.Name, Created: false })
         const root = fx.Roots.RootFor(CreateFixture.Name)
         assert.equal(await root.Exists(CreateFixture.Seeded), false)
+        assert.equal(await root.Exists(CreateFixture.NestedFile), false)
+        assert.equal(await root.Exists(CreateFixture.NestedDir), false)
         assert.equal(await root.Exists(CreateFixture.Manifest(CreateFixture.Name)), true)
         await a.client.sendRequest(SolutionProtocol.CreateSolution, { Name: CreateFixture.Other })
         assert.deepEqual([...fx.Roots.Names()].sort(), [CreateFixture.Name, CreateFixture.Other])

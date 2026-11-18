@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { SourceChangeBridge } from './host/solutions/source-change-bridge.js'
 import { EnvSolutionRoots } from './host/solutions/env-solution-roots.js'
+import { AutoConfirmPromptService } from './platform/auto-confirm-prompt-service.js'
 import { ComposedSolutionLoader } from './host/solutions/composed-solution-loader.js'
 import { ConnectorContext, StorageKind } from '@pragmatic-tech-ai/graph'
 import type { ISubscription } from '@pragmatic-tech-ai/graph'
@@ -1162,7 +1163,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
     {
         const services = this.root.Services()
         services.registerInstance(SolutionManagerService.StorageRegistryKey, this.platform.CreateStorageProviderRegistry())
-        services.registerInstance(SolutionManagerService.PromptServiceKey, this.platform.CreatePromptService())
+        // development environments auto-confirm discard prompts so a server-side solution switch (solution/create) never blocks on a headless refusal
+        const prompts = this.platform.CreatePromptService()
+        services.registerInstance(SolutionManagerService.PromptServiceKey, this.Purpose() === EnvironmentPurpose.Development ? new AutoConfirmPromptService(prompts) : prompts)
         const packagesStorage = this.platform.CreatePackagesStorage(packagesRoot)
         services.registerInstance(SolutionManagerService.PackageSourceKey, new StoragePackageSource(packagesStorage))
         services.registerInstance(PackageStoreKey, new StoragePackageStore(packagesStorage))

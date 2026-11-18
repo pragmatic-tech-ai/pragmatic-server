@@ -103,6 +103,11 @@ export class EnvSolutionRoots implements IEnvSolutionSource
      * Create-or-replace the named solution's root: any existing contents are cleared (last-writer-wins), an empty
      * `<name>.pksln` manifest is written, and the cache is refreshed so the composed set sees it. Returns whether the
      * name was newly created (false when it replaced an existing solution). Throws for an invalid name.
+     *
+     * IStorage.Delete removes a non-empty directory recursively (NodeFs rm -r; FakeStorage drops the prefix), so nested
+     * project folders are fully cleared. Wipe-then-write: a failure between the two leaves an empty root, acceptable under
+     * last-writer-wins. There is no per-name lock: two concurrent creates of the same name may interleave their delete/write
+     * steps; the last writer wins, which is the intended semantics.
      */
     public async CreateOrReplace(solutionName: string): Promise<boolean>
     {
