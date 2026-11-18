@@ -88,6 +88,32 @@ test('path escapes and absolute paths are rejected', async () =>
     await StorageFx.Rejects(() => handlers.List({ Path: '//server/share' }))
 })
 
+test('Windows trailing-dot/space segments that strip to a dot segment are rejected before storage is touched', async () =>
+{
+    const storage = new FakeStorage()
+    await storage.WriteText('keep.txt', 'k')
+    const handlers = StorageFx.Handlers(storage)
+    // `.. ` (dot-dot-space) and `..`+trailing-dot (`...`) both normalize to `..` / empty once Windows drops the trailing
+    // run, so each would climb out of the root; `.. /x` is the same escape with a trailing name. All must be refused.
+    for (const path of ['.. ', '...', '.. /x', 'a/.. /b', 'a/.../b', '. ', 'a/. /b'])
+    {
+        await StorageFx.Rejects(() => handlers.ReadText({ Path: path }))
+        await StorageFx.Rejects(() => handlers.WriteText({ Path: path, Content: 'x' }))
+        await StorageFx.Rejects(() => handlers.Delete({ Path: path }))
+    }
+    assert.equal(await storage.Exists('keep.txt'), true)
+    assert.equal(storage.size, 1)
+})
+
+test('segments carrying the full control-char range (not just NUL) are rejected', async () =>
+{
+    const handlers = StorageFx.Handlers()
+    for (const control of ['\u0001', '\u001f', '\u007f'])
+    {
+        await StorageFx.Rejects(() => handlers.ReadText({ Path: 'a/b' + control + 'c' }))
+    }
+})
+
 test('no active source storage is rejected', async () =>
 {
     const handlers = new RemoteStorageHandlers(() => undefined)
@@ -209,6 +235,22 @@ test('confinement still applies relative to the selected solution root', async (
     await StorageFx.Rejects(() => a.Rename({ From: '.', To: 'z' }))
     await StorageFx.Rejects(() => a.WriteText({ Path: 'a/..', Content: 'x' }))
     assert.equal(await roots.RootFor('B').Exists('secret.txt'), true)
+})
+
+test('a Windows trailing-dot/space escape from one solution root cannot reach a sibling solution root', async () =>
+{
+    const roots = RoutingFx.Roots()
+    roots.EnsureRoot('A')
+    roots.EnsureRoot('B')
+    await roots.RootFor('B').WriteText('secret.txt', 's')
+    const a = RoutingFx.Connection(roots, undefined, undefined, 'A')
+    for (const path of ['.. /B/secret.txt', '.../B/secret.txt', '.. ', 'a/.. /.. /B/secret.txt'])
+    {
+        await StorageFx.Rejects(() => a.ReadText({ Path: path }))
+        await StorageFx.Rejects(() => a.WriteText({ Path: path, Content: 'poisoned' }))
+        await StorageFx.Rejects(() => a.Delete({ Path: path }))
+    }
+    assert.equal(await roots.RootFor('B').ReadText('secret.txt'), 's')
 })
 
 test('with no selection the active solution storage is used (Phase-2 back-compat)', async () =>

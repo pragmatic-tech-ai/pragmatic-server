@@ -2,6 +2,7 @@ import { ResponseError, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol
 import type { StoragePathParams, StorageTextDto, StorageBytesDto, StorageWriteTextParams, StorageWriteBytesParams, StorageRenameParams, StorageEntryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
+import { PathConfinement } from '../path-confinement.js'
 import type { SourceChangeBridge } from '../solutions/source-change-bridge.js'
 
 /**
@@ -18,10 +19,10 @@ export class RemoteStorageHandlers
     private static readonly BadContentMessage = `${InvalidParamsPrefix.Text}Content must be a string`
     private static readonly Base64 = 'base64'
     private static readonly Base64Pattern = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/
-    private static readonly UnsafeSegmentPattern = /[\0:]/
     private static readonly SeparatorPattern = /[\\/]/
     private static readonly DriveLetterPattern = /^[A-Za-z]:/
     private static readonly Separator = '/'
+    private static readonly EmptySegment = ''
     private static readonly CurrentSegment = '.'
     private static readonly ParentSegment = '..'
 
@@ -163,7 +164,7 @@ export class RemoteStorageHandlers
         const kept: string[] = []
         for (const segment of path.split(RemoteStorageHandlers.SeparatorPattern))
         {
-            if (segment === '' || segment === RemoteStorageHandlers.CurrentSegment)
+            if (segment === RemoteStorageHandlers.EmptySegment || segment === RemoteStorageHandlers.CurrentSegment)
             {
                 continue
             }
@@ -175,7 +176,13 @@ export class RemoteStorageHandlers
                 }
                 continue
             }
-            if (RemoteStorageHandlers.UnsafeSegmentPattern.test(segment))
+            // A segment that is not literally '', '.' or '..' but strips to one on Windows (`.. `, `...`, `. `) would
+            // escape the root once the syscall drops the trailing dots/spaces; reject it before it reaches storage.
+            if (PathConfinement.IsDotSegment(segment))
+            {
+                throw new ResponseError(ErrorCodes.InvalidParams, RemoteStorageHandlers.EscapeMessage + path)
+            }
+            if (PathConfinement.HasUnsafeChar(segment))
             {
                 throw new ResponseError(ErrorCodes.InvalidParams, RemoteStorageHandlers.UnsafeSegmentMessage + path)
             }
