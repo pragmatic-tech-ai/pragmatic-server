@@ -1,6 +1,8 @@
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import { PROJECT_MANIFEST_FILENAME } from '@pragmatic-tech-ai/todl'
 import { EnvSolutionRoots } from './env-solution-roots.js'
+import { StructuredLogger } from '../../observability/logger.js'
+import type { ILogger } from '../../observability/logger.js'
 
 /**
  * Closes the live-refresh gap after `storage/*` writes: when a write touches a solution's manifest (`<name>.pksln`), the
@@ -11,8 +13,10 @@ import { EnvSolutionRoots } from './env-solution-roots.js'
 export class SolutionManifestRefresher
 {
     private static readonly Separator = '/'
+    private static readonly FailureLine = 'solution manifest live-refresh failed; the roots cache may be stale until the next Refresh: '
+    private static readonly UnknownName = 'UnknownError'
 
-    public constructor(private readonly roots: EnvSolutionRoots, private readonly manager: SolutionManagerService)
+    public constructor(private readonly roots: EnvSolutionRoots, private readonly manager: SolutionManagerService, private readonly logger: ILogger = StructuredLogger.ToStdout())
     {
     }
 
@@ -26,8 +30,8 @@ export class SolutionManifestRefresher
     public async PathsChanged(solutionName: string, paths: readonly string[]): Promise<void>
     {
         const solutionManifest = paths.some(path => EnvSolutionRoots.IsManifestPath(path))
-        const memberManifest = paths.some(path => SolutionManifestRefresher.IsMemberManifest(path))
-        if (!solutionManifest && !memberManifest)
+        const memberDirs = paths.filter(path => SolutionManifestRefresher.IsMemberManifest(path)).map(path => path.slice(0, path.indexOf(SolutionManifestRefresher.Separator)))
+        if (!solutionManifest && memberDirs.length === 0)
         {
             return
         }
@@ -37,16 +41,20 @@ export class SolutionManifestRefresher
             {
                 this.SyncActive(solutionName)
             }
-            if (memberManifest)
+            if (memberDirs.length > 0)
             {
                 // A member's project manifest landing after the solution manifest already listed it: the member set is unchanged but the
                 // language service only builds a member whose manifest exists, so force one recompose (content edits stay on the bridge).
-                this.roots.Invalidate(solutionName)
+                for (const dir of memberDirs)
+                {
+                    this.roots.Invalidate(solutionName, dir)
+                }
             }
         }
-        catch
+        catch (error)
         {
-            // best effort: the next explicit Refresh resynchronizes
+            // best effort (the write is committed): record it so a stale view is diagnosable; the next explicit Refresh resynchronizes
+            this.logger.Warn(SolutionManifestRefresher.FailureLine + (error instanceof Error ? error.name : SolutionManifestRefresher.UnknownName))
         }
     }
 
@@ -78,10 +86,11 @@ export class SolutionManifestRefresher
         solution.IsDirty = wasDirty
     }
 
-    /** A member's own project manifest: `project.plexus` in a subdirectory of the solution root. */
+    /** A member's own project manifest: `<member>/project.plexus`, exactly one directory below the solution root. */
     private static IsMemberManifest(path: string): boolean
     {
-        return path.endsWith(SolutionManifestRefresher.Separator + PROJECT_MANIFEST_FILENAME)
+        const parts = path.split(SolutionManifestRefresher.Separator)
+        return parts.length === 2 && parts[0].length > 0 && parts[1] === PROJECT_MANIFEST_FILENAME
     }
 
     private static Same(a: { Ref: { path: string, type: string } }, b: { Ref: { path: string, type: string } }): boolean

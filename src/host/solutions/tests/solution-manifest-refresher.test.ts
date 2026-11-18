@@ -41,6 +41,11 @@ class RefresherFx
     public static readonly Manifest = 'Alpha.pksln'
     public static readonly MemberType = 'meta-model'
     public static readonly MemberPath = 'alpha-models'
+    public static readonly OtherDir = 'not-a-member'
+    public static readonly Nested = 'nested/'
+    public static readonly ProjectFile = '/project.plexus'
+    public static readonly ModelFile = '/model.todl'
+    public static readonly Ghost = 'Ghost'
 
     public static ManifestText(paths: string[]): string
     {
@@ -78,23 +83,37 @@ test('a plain content edit does not re-read the manifest', async () =>
 {
     const { roots, store, refresher } = await RefresherFx.Make()
     await store.WriteText(RefresherFx.Manifest, RefresherFx.ManifestText([RefresherFx.MemberPath]))
-    await refresher.PathsChanged(RefresherFx.Name, [RefresherFx.MemberPath + '/model.todl', 'nested/' + RefresherFx.Manifest])
+    await refresher.PathsChanged(RefresherFx.Name, [RefresherFx.MemberPath + RefresherFx.ModelFile, RefresherFx.Nested + RefresherFx.Manifest])
     assert.deepEqual(roots.MembersOf(RefresherFx.Name), [])
 })
 
 test('an unknown solution name is a no-op', async () =>
 {
     const { refresher } = await RefresherFx.Make()
-    await refresher.PathsChanged('Ghost', [RefresherFx.Manifest])
+    await refresher.PathsChanged(RefresherFx.Ghost, [RefresherFx.Manifest])
 })
 
 test('a member project manifest write forces one recompose without re-reading the solution manifest', async () =>
 {
-    const { roots, refresher } = await RefresherFx.Make()
+    const { roots, store, refresher } = await RefresherFx.Make()
+    await store.WriteText(RefresherFx.Manifest, RefresherFx.ManifestText([RefresherFx.MemberPath]))
+    await refresher.PathsChanged(RefresherFx.Name, [RefresherFx.Manifest])
     let changes = 0
     roots.Changed.subscribe(() => changes++)
-    await refresher.PathsChanged(RefresherFx.Name, [RefresherFx.MemberPath + '/project.plexus'])
+    await refresher.PathsChanged(RefresherFx.Name, [RefresherFx.MemberPath + RefresherFx.ProjectFile])
     assert.equal(changes, 1)
-    await refresher.PathsChanged(RefresherFx.Name, [RefresherFx.MemberPath + '/model.todl'])
+    await refresher.PathsChanged(RefresherFx.Name, [RefresherFx.MemberPath + RefresherFx.ModelFile])
     assert.equal(changes, 1)
+})
+
+test('a deeply nested project.plexus, or one for a non-member directory, does not recompose', async () =>
+{
+    const { roots, store, refresher } = await RefresherFx.Make()
+    await store.WriteText(RefresherFx.Manifest, RefresherFx.ManifestText([RefresherFx.MemberPath]))
+    await refresher.PathsChanged(RefresherFx.Name, [RefresherFx.Manifest])
+    let changes = 0
+    roots.Changed.subscribe(() => changes++)
+    await refresher.PathsChanged(RefresherFx.Name, [RefresherFx.MemberPath + RefresherFx.Nested + RefresherFx.MemberPath + RefresherFx.ProjectFile])
+    await refresher.PathsChanged(RefresherFx.Name, [RefresherFx.OtherDir + RefresherFx.ProjectFile])
+    assert.equal(changes, 0)
 })

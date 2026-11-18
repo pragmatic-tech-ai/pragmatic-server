@@ -7,6 +7,8 @@ import { RemoteStorageHandlers } from '../remote-storage-handlers.js'
 import { AuthoringStorageResolver } from '../authoring-storage-resolver.js'
 import { AuthoringTarget } from '../../solutions/authoring-target.js'
 import { EnvSolutionRoots } from '../../solutions/env-solution-roots.js'
+import { SolutionManifestRefresher } from '../../solutions/solution-manifest-refresher.js'
+import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { SourceChangeBridge } from '../../solutions/source-change-bridge.js'
 
 class StorageFx
@@ -323,4 +325,68 @@ test('a write to the active root notifies the active bridge; a write to a non-ac
     await other.Delete({ Path: 'c.todl' })
     assert.deepEqual(fx.Calls, ['text:a.todl', 'text:b.todl'])
     assert.equal(await roots.RootFor('Other').Exists('c.todl'), false)
+})
+
+class ManifestFx
+{
+    public static readonly Name = 'Other'
+    public static readonly Manifest = 'Other.pksln'
+    public static readonly Renamed = 'Renamed.pksln'
+    public static readonly MemberDir = 'm1'
+    public static readonly Selected = 'Other'
+
+    public static Text(paths: string[]): string
+    {
+        return JSON.stringify({ kind: 'todl-solution', version: 1, name: ManifestFx.Name, members: paths.map(path => ({ path, type: 'meta-model' })), settings: {} })
+    }
+
+    public static Make(): { roots: EnvSolutionRoots, handlers: RemoteStorageHandlers, store: FakeStorage }
+    {
+        const roots = RoutingFx.Roots()
+        const store = roots.EnsureRoot(ManifestFx.Name) as FakeStorage
+        const refresher = new SolutionManifestRefresher(roots, { ActiveSolution: undefined } as unknown as SolutionManagerService)
+        const target = new AuthoringTarget(() => 'Active')
+        target.Select(ManifestFx.Selected)
+        const resolver = new AuthoringStorageResolver(target, roots, () => 'Active', () => new FakeStorage(), undefined, refresher)
+        return { roots, handlers: new RemoteStorageHandlers(() => resolver.Resolve(), () => resolver.Bridge(), () => resolver.ManifestReaction()), store }
+    }
+
+    public static Members(roots: EnvSolutionRoots): string[]
+    {
+        return roots.MembersOf(ManifestFx.Name).map(m => m.Ref.path)
+    }
+}
+
+test('a manifest WriteBytes refreshes the solution members live', async () =>
+{
+    const { roots, handlers } = ManifestFx.Make()
+    await handlers.WriteBytes({ Path: ManifestFx.Manifest, BytesBase64: Buffer.from(ManifestFx.Text([ManifestFx.MemberDir])).toString('base64') })
+    assert.deepEqual(ManifestFx.Members(roots), [ManifestFx.MemberDir])
+})
+
+test('a manifest Delete clears the solution members', async () =>
+{
+    const { roots, handlers } = ManifestFx.Make()
+    await handlers.WriteText({ Path: ManifestFx.Manifest, Content: ManifestFx.Text([ManifestFx.MemberDir]) })
+    assert.deepEqual(ManifestFx.Members(roots), [ManifestFx.MemberDir])
+    await handlers.Delete({ Path: ManifestFx.Manifest })
+    assert.deepEqual(ManifestFx.Members(roots), [])
+})
+
+test('a manifest Rename refreshes for both the from and the to path', async () =>
+{
+    const { roots, handlers } = ManifestFx.Make()
+    await handlers.WriteText({ Path: ManifestFx.Manifest, Content: ManifestFx.Text([ManifestFx.MemberDir]) })
+    // Renaming the manifest away (from = manifest): the old manifest no longer exists, the renamed file is still a manifest, so its members remain visible.
+    await handlers.Rename({ From: ManifestFx.Manifest, To: ManifestFx.Renamed })
+    assert.deepEqual(ManifestFx.Members(roots), [ManifestFx.MemberDir])
+    // Renaming a non-manifest onto a manifest path (to = manifest) is picked up through the `to` side.
+    await handlers.WriteText({ Path: 'draft.txt', Content: ManifestFx.Text([]) })
+    await handlers.Delete({ Path: ManifestFx.Renamed })
+    assert.deepEqual(ManifestFx.Members(roots), [])
+    await handlers.Rename({ From: 'draft.txt', To: ManifestFx.Manifest })
+    assert.deepEqual(ManifestFx.Members(roots), [])
+    await handlers.WriteText({ Path: 'draft2.txt', Content: ManifestFx.Text([ManifestFx.MemberDir]) })
+    await handlers.Rename({ From: 'draft2.txt', To: ManifestFx.Manifest })
+    assert.deepEqual(ManifestFx.Members(roots), [ManifestFx.MemberDir])
 })

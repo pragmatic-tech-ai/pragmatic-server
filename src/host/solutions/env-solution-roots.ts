@@ -194,13 +194,14 @@ export class EnvSolutionRoots implements IEnvSolutionSource
     }
 
     /**
-     * Forces a recompose for a known solution without re-reading its manifest (fires Changed). Used when a member's own project
-     * manifest appears or changes: the member set is unchanged, but the language service must rebuild to pick the member up.
+     * Forces a recompose for a known solution without re-reading its manifest (fires Changed), only when `memberPath` is one of its
+     * manifest members. Used when that member's own project manifest appears or changes: the member set is unchanged, but the
+     * language service must rebuild to pick the member up.
      */
-    public Invalidate(name: string): boolean
+    public Invalidate(name: string, memberPath: string): boolean
     {
         EnvSolutionRoots.Validate(name)
-        if (!this.roots.has(name))
+        if (!this.roots.has(name) || !this.MembersOf(name).some(m => m.Ref.path === memberPath))
         {
             return false
         }
