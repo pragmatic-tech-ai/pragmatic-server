@@ -8,11 +8,12 @@ import { AccessDefault, AccessScope, In } from '@pragmatic-tech-ai/graph'
 import type { ConnectorContext, Cypher, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
 import { CursorStaleError, ErrorCodes, InMemoryMessageSocket, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ModelMemberDto, ModelViewPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { EdgeKind, Repository } from '@pragmatic-tech-ai/todl'
-import type { Edge, SolutionManagerService } from '@pragmatic-tech-ai/todl'
+import { EdgeKind, Repository, WikiLocator } from '@pragmatic-tech-ai/todl'
+import type { Edge, SolutionManagerService, WikiOrigin } from '@pragmatic-tech-ai/todl'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
+import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { PagingLimits } from '../../../config/paging-limits.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { PpSecurityHarness } from '../../cypher/tests/pp-security-harness.js'
@@ -35,13 +36,13 @@ class FixedStructure implements IDevModelStructure
 {
     public readonly GraphRevision = 1
 
-    public constructor(private readonly model: Repository, private readonly provenance: ReadonlyMap<string, string> = new Map())
+    public constructor(private readonly model: Repository, private readonly provenance: ReadonlyMap<string, string> = new Map(), private readonly origins: ReadonlyMap<string, WikiOrigin> = new Map())
     {
     }
 
-    public async ModelView(): Promise<{ model: Repository; provenanceOf: ReadonlyMap<string, string> }>
+    public async ModelView(): Promise<{ model: Repository; provenanceOf: ReadonlyMap<string, string>; originOf: ReadonlyMap<string, WikiOrigin> }>
     {
-        return { model: this.model, provenanceOf: this.provenance }
+        return { model: this.model, provenanceOf: this.provenance, originOf: this.origins }
     }
 
     public async Resources(): Promise<readonly IDevModelResource[]>
@@ -181,6 +182,11 @@ class DevWorld
     public get MemberId(): string
     {
         return [...this.manager.ActiveSolution!.Members][0]!.Ref.path
+    }
+
+    public get MemberStorage(): IStorage
+    {
+        return [...this.manager.ActiveSolution!.Members][0]!.Storage!
     }
 
     public get ModelUri(): string
@@ -538,6 +544,38 @@ test('a structural definition node survives filtering', async () =>
     {
         const ids = await ModelFixture.Ids(world.View(new FixedStructure(ModelFixture.Build())), world.MemberId)
         assert.ok(ids.includes(ModelFixture.Concept))
+    })
+})
+
+test('the page carries the origin of each member: an open project by member id, a package by id and version', async () =>
+{
+    await DevWorld.With(FilterFixture.Todl, async world =>
+    {
+        const origins = new Map<string, WikiOrigin>([
+            [FilterFixture.Eu1, WikiLocator.OpenProjectOrigin(world.MemberStorage)],
+            [FilterFixture.Eu2, WikiLocator.PackageOrigin('acme.pkg', '1.2.3')],
+            [FilterFixture.Us1, WikiLocator.OpenProjectOrigin({ Root: 'elsewhere' } as unknown as IStorage)],
+        ])
+        const page = await FilterFixture.All(world.View(new FixedStructure(FilterFixture.Build(), new Map(), origins)), world)
+        assert.deepEqual(page.originOf![FilterFixture.Eu1], { kind: 'openProject', memberId: world.MemberId })
+        assert.deepEqual(page.originOf![FilterFixture.Eu2], { kind: 'package', id: 'acme.pkg', version: '1.2.3' })
+        assert.equal(page.originOf![FilterFixture.Us1], undefined)
+    })
+})
+
+test('a concept member carries its declared fields; an instance carries null class, canonicalId and storageId', async () =>
+{
+    await DevWorld.With(FilterFixture.Todl, async world =>
+    {
+        const page = await FilterFixture.All(world.View(new FixedStructure(FilterFixture.Build())), world)
+        const concept = FilterFixture.Member(page, FilterFixture.Concept)
+        assert.deepEqual(concept.fields!.map(f => f.name).sort(), [FilterFixture.Region, FilterFixture.Secret])
+        assert.ok(concept.fields!.every(f => typeof f.type === 'string' && typeof f.cardinality === 'string' && Number.isNaN(Number(f.cardinality))))
+        const instance = FilterFixture.Member(page, FilterFixture.Eu1)
+        assert.equal(instance.class, null)
+        assert.equal(instance.canonicalId, null)
+        assert.equal(instance.storageId, null)
+        assert.deepEqual(instance.fields, [])
     })
 })
 

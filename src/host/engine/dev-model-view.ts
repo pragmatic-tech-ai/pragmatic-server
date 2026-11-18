@@ -2,7 +2,8 @@ import { GraphError, GraphErrorCode } from '@pragmatic-tech-ai/graph'
 import type { GraphEngine, GraphReader, ISubscription, MemberDef } from '@pragmatic-tech-ai/graph'
 import { ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ModelViewPageDto, ResolvedResourceDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { Node, Repository } from '@pragmatic-tech-ai/todl'
+import type { Node, Repository, WikiOrigin } from '@pragmatic-tech-ai/todl'
+import type { WikiOriginDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { SnapshotDescriber, TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable, IStorage } from '@pragmatic-tech-ai/todl-runtime'
@@ -10,6 +11,7 @@ import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
 import type { IMemberReadGate } from '../model-member-builder.js'
 import { ModelProjection } from '../model-projection.js'
+import { WikiOriginWireMapper } from '../wiki-origin-wire.js'
 import type { IModelNodeGate } from '../model-projection.js'
 import { PageFingerprint, PageRequest } from '../paging/page-request.js'
 import type { IGraphScope, IGraphScopeSource } from './access-scope-source.js'
@@ -40,7 +42,7 @@ export interface IDevModelResource
 /** Where model/view's STRUCTURE comes from: the language service (unsaved buffers included), as before the engine. */
 export interface IDevModelStructure
 {
-    ModelView(storage: IStorage): Promise<{ readonly model: Repository; readonly provenanceOf: ReadonlyMap<string, string> } | undefined>
+    ModelView(storage: IStorage): Promise<{ readonly model: Repository; readonly provenanceOf: ReadonlyMap<string, string>; readonly originOf?: ReadonlyMap<string, WikiOrigin> } | undefined>
     Resources(nodeId: string): Promise<readonly IDevModelResource[]>
     readonly GraphRevision: number
 }
@@ -315,18 +317,39 @@ export class DevModelView implements IGraphModelView, IDisposable
         {
             throw new ResponseError(ErrorCodes.InvalidRequest, DevModelView.UnknownMemberError)
         }
+        const origins = DevModelView.WireOrigins(view.originOf, solution.Members.ToArray())
         // read the revision only once the view is in hand: acquiring it may itself commit the first build
         const revision = String(structure.GraphRevision)
         return this.Read(context, read =>
         {
             const fingerprint = PageFingerprint.Of(DevModelView.FingerprintTag, member.Ref.path, revision, read.Version, String(read.Commit), read.Scope.Digest)
             const request = PageRequest.Resolve(page.Params, fingerprint, page.Limits)
-            const members = new ModelProjection(view.model, read.Gate, read.Gate).Page(view.provenanceOf, request.Offset, request.Size)
+            const members = new ModelProjection(view.model, read.Gate, read.Gate).Page(view.provenanceOf, request.Offset, request.Size, origins)
             const nextCursor = request.NextCursor(members.HasMore)
             return nextCursor === undefined
-                ? { items: members.Items, provenanceOf: members.ProvenanceOf }
-                : { items: members.Items, provenanceOf: members.ProvenanceOf, nextCursor }
+                ? { items: members.Items, provenanceOf: members.ProvenanceOf, originOf: members.OriginOf }
+                : { items: members.Items, provenanceOf: members.ProvenanceOf, originOf: members.OriginOf, nextCursor }
         })
+    }
+
+    /** The engine's per-node origins on the wire; an origin with no wire form (storage outside the solution) is dropped. */
+    private static WireOrigins(originOf: ReadonlyMap<string, WikiOrigin> | undefined, members: readonly IDevModelMember[]): ReadonlyMap<string, WikiOriginDto>
+    {
+        const wire = new Map<string, WikiOriginDto>()
+        if (originOf === undefined)
+        {
+            return wire
+        }
+        const mapper = new WikiOriginWireMapper(members)
+        for (const [id, origin] of originOf)
+        {
+            const dto = mapper.Of(origin)
+            if (dto !== undefined)
+            {
+                wire.set(id, dto)
+            }
+        }
+        return wire
     }
 
     private async Hidden(context: AccessContext, nodeId: string): Promise<boolean>

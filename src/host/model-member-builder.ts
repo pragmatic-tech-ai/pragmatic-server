@@ -1,6 +1,7 @@
 import { EdgeKind, Tier } from '@pragmatic-tech-ai/todl'
+import { Cardinality } from '@pragmatic-tech-ai/todl'
 import type { Repository, Node, Edge } from '@pragmatic-tech-ai/todl'
-import type { ModelEdgeDto, ModelMemberDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { FieldDeclDto, ModelEdgeDto, ModelMemberDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { WireScalar } from './wire-scalar.js'
 import type { WireScalarValue } from './wire-scalar.js'
 
@@ -41,7 +42,21 @@ export class ModelMemberBuilder
             isClass: node.isClass,
             attrs: this.Attrs(node),
             edges: this.Edges(node),
+            class: node.class,
+            canonicalId: node.canonicalId,
+            storageId: node.storageId,
+            fields: node.fields.map(field => ModelMemberBuilder.FieldOf(field)),
         }
+    }
+
+    private static FieldOf(field: Node['fields'][number]): FieldDeclDto
+    {
+        const dto: FieldDeclDto = { name: field.name, type: field.type, cardinality: Cardinality[field.cardinality] }
+        if (field.secured === true)
+        {
+            dto.secured = true
+        }
+        return dto
     }
 
     private Attrs(node: Node): Record<string, WireScalarValue>

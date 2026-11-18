@@ -1,5 +1,5 @@
 import type { Repository, Node } from '@pragmatic-tech-ai/todl'
-import type { ModelMemberDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { ModelMemberDto, WikiOriginDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ModelMemberBuilder } from './model-member-builder.js'
 import type { IMemberReadGate } from './model-member-builder.js'
 
@@ -9,6 +9,7 @@ export interface ModelMemberPage
     Items: ModelMemberDto[]
     HasMore: boolean
     ProvenanceOf: Record<string, string>
+    OriginOf: Record<string, WikiOriginDto>
 }
 
 /** Which model nodes a reader sees at all (the projection's only visibility input). */
@@ -30,7 +31,7 @@ export class ModelProjection
     {
     }
 
-    public Page(provenance: ReadonlyMap<string, string>, offset: number, size: number): ModelMemberPage
+    public Page(provenance: ReadonlyMap<string, string>, offset: number, size: number, origins: ReadonlyMap<string, WikiOriginDto> = new Map()): ModelMemberPage
     {
         const visible: Node[] = []
         const visibleIds = new Set<string>()
@@ -48,15 +49,21 @@ export class ModelProjection
         const builder = new ModelMemberBuilder(this.model, this.members, visibleIds)
         const items = window.slice(0, size).map(node => builder.Build(node))
         const provenanceOf: Record<string, string> = {}
+        const originOf: Record<string, WikiOriginDto> = {}
         for (const item of items)
         {
+            const origin = origins.get(item.id)
+            if (origin !== undefined)
+            {
+                originOf[item.id] = origin
+            }
             const source = provenance.get(item.id)
             if (source !== undefined)
             {
                 provenanceOf[item.id] = source
             }
         }
-        return { Items: items, HasMore: hasMore, ProvenanceOf: provenanceOf }
+        return { Items: items, HasMore: hasMore, ProvenanceOf: provenanceOf, OriginOf: originOf }
     }
 
     /** True when the model holds `nodeId` and the node gate hides it (false for an id the model cannot resolve). */
