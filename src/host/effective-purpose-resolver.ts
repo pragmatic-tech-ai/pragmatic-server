@@ -17,6 +17,9 @@ export class EffectivePurposeResolver
     {
         if (viaCookie)
         {
+            // A cookie connection on a PURE Development env (not runtimeCoHosted) intentionally resolves to Runtime and so gets an
+            // empty service stack. Unreachable in practice: a pure dev env exposes no AppServingEndpoint/applications registry, so no
+            // browser-login cookie session exists (the authoring client uses a bearer Develop token).
             return EnvironmentPurpose.Runtime
         }
         if (context instanceof ScopedAccessContext)

@@ -611,12 +611,8 @@ export class ServerConnectionHandler
 
     public async RunRunTestLoad(params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>
     {
-        this.EnsureRuntime()
-        if (this.deployProvider === undefined)
-        {
-            throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.NotRuntimeMessage)
-        }
-        return this.deployProvider(params)
+        // Same load path as deploy; the RunTest distinction (scope/policy/relay) is enforced elsewhere.
+        return this.RunDeploy(params)
     }
 
     public async RunAppDataWrite(params: AppWriteParams): Promise<AppWriteResultDto>

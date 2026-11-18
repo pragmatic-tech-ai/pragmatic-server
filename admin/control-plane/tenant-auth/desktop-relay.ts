@@ -1,7 +1,7 @@
 import { STATUS_CODES, type IncomingMessage } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { WebSocket, WebSocketServer, type RawData } from 'ws'
-import { ApplicationDeployProtocol, AppWriteStatus, GraphProtocol, PragmaticAppProtocol, type TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ApplicationDeployProtocol, AppWriteStatus, GraphProtocol, PragmaticAppProtocol, RunTestProtocol, type TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AuditRegistry } from '../audit-record.js'
 import { AuditThrottle } from '../audit-throttle.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
@@ -108,6 +108,7 @@ export class DesktopRelayAllowlist
     private static readonly AuditedNoteField: ReadonlyMap<string, string> = new Map([
         [GraphProtocol.Contribute.method, 'graphName'],
         [ApplicationDeployProtocol.Deploy.method, 'appName'],
+        [RunTestProtocol.Load.method, 'appName'],
     ])
 
     public static For(action: DesktopAction): ReadonlySet<string>
@@ -135,10 +136,10 @@ export class DesktopRelayAllowlist
         return DesktopRelayAllowlist.AuditedNoteField.get(method)
     }
 
-    /** Whether a reported outcome is an in-band failure (a deploy answered with a non-applied status). */
+    /** Whether a reported outcome is an in-band failure (a deploy or run-test load answered with a non-applied status). */
     public static IsInBandFailure(method: string, result: unknown): boolean
     {
-        if (method !== ApplicationDeployProtocol.Deploy.method || typeof result !== 'object' || result === null)
+        if ((method !== ApplicationDeployProtocol.Deploy.method && method !== RunTestProtocol.Load.method) || typeof result !== 'object' || result === null)
         {
             return false
         }
