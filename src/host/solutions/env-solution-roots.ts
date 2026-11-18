@@ -168,6 +168,46 @@ export class EnvSolutionRoots implements IEnvSolutionSource
         }
     }
 
+    /** Whether a root-relative path is a solution manifest (`<name>.pksln` directly under the solution root). */
+    public static IsManifestPath(path: string): boolean
+    {
+        return !path.includes(EnvSolutionRoots.Separator) && path.endsWith(EnvSolutionRoots.ManifestSuffix)
+    }
+
+    /**
+     * Targeted refresh: re-reads ONE known solution's manifest (no area rescan) and fires Changed when its member set differs.
+     * Returns false (and does nothing) for an unknown name; the area scan in {@link Refresh} is what discovers new solutions.
+     */
+    public async RefreshSolution(name: string): Promise<boolean>
+    {
+        EnvSolutionRoots.Validate(name)
+        const root = this.roots.get(name)
+        if (root === undefined)
+        {
+            return false
+        }
+        if (await this.ReadMembers(name, root))
+        {
+            this.Changed.emit()
+        }
+        return true
+    }
+
+    /**
+     * Forces a recompose for a known solution without re-reading its manifest (fires Changed). Used when a member's own project
+     * manifest appears or changes: the member set is unchanged, but the language service must rebuild to pick the member up.
+     */
+    public Invalidate(name: string): boolean
+    {
+        EnvSolutionRoots.Validate(name)
+        if (!this.roots.has(name))
+        {
+            return false
+        }
+        this.Changed.emit()
+        return true
+    }
+
     /** Parses `<name>.pksln` into members (read-only); returns whether the member set differs from the cached one. */
     private async ReadMembers(name: string, root: IStorage): Promise<boolean>
     {
