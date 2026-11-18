@@ -627,7 +627,7 @@ export class WorkerHost
             {
                 return null
             }
-            return this.Authenticated(await this.authenticator.ResolveAsync(credential.Token, server.Realm(), await server.Pack()), true, server)
+            return EffectivePurposeResolver.ResolveAuthenticated(await this.authenticator.ResolveAsync(credential.Token, server.Realm(), await server.Pack()), true, server)
         }
         if (typeof header !== 'string' || !header.startsWith(WorkerHost.BearerPrefix))
         {
@@ -638,12 +638,7 @@ export class WorkerHost
         {
             return null
         }
-        return this.Authenticated(await this.authenticator.ResolveAsync(token, server.Realm(), await server.Pack()), false, server)
-    }
-
-    private Authenticated(context: AccessContext | null, viaCookie: boolean, server: PragmaticServer): { context: AccessContext; effectivePurpose: EnvironmentPurpose } | null
-    {
-        return context === null ? null : { context, effectivePurpose: EffectivePurposeResolver.Resolve(context, viaCookie, server) }
+        return EffectivePurposeResolver.ResolveAuthenticated(await this.authenticator.ResolveAsync(token, server.Realm(), await server.Pack()), false, server)
     }
 
     private async Request(req: IncomingMessage, res: ServerResponse): Promise<void>

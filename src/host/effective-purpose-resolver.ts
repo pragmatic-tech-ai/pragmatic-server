@@ -32,4 +32,10 @@ export class EffectivePurposeResolver
         }
         return server.Purpose()
     }
+
+    /** Pairs a resolved context (or null for a failed authentication) with its effective purpose. */
+    public static ResolveAuthenticated(context: AccessContext | null, viaCookie: boolean, server: { Purpose(): EnvironmentPurpose }): { context: AccessContext; effectivePurpose: EnvironmentPurpose } | null
+    {
+        return context === null ? null : { context, effectivePurpose: EffectivePurposeResolver.Resolve(context, viaCookie, server) }
+    }
 }

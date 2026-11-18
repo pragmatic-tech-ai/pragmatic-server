@@ -69,7 +69,9 @@ test('RunTest-scoped context on a dual server resolves Runtime and reaches the e
 test('a cookie session on a dual server resolves Runtime', () =>
 {
     const server = PurposeRoutingFixture.Dual()
-    assert.equal(EffectivePurposeResolver.Resolve(PurposeRoutingFixture.Context(null), true, server), EnvironmentPurpose.Runtime)
+    const purpose = EffectivePurposeResolver.Resolve(PurposeRoutingFixture.Context(null), true, server)
+    assert.equal(purpose, EnvironmentPurpose.Runtime)
+    assert.equal(PurposeRoutingFixture.Reached(server, purpose), server.EnvironmentCypher())
 })
 
 test('RunTest wins over Develop when both scopes are present', () =>
