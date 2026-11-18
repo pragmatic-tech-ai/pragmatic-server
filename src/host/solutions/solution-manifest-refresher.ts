@@ -1,5 +1,6 @@
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import { PROJECT_MANIFEST_FILENAME } from '@pragmatic-tech-ai/todl'
+import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { EnvSolutionRoots } from './env-solution-roots.js'
 import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
@@ -13,6 +14,7 @@ import type { ILogger } from '../../observability/logger.js'
 export class SolutionManifestRefresher
 {
     private static readonly Separator = '/'
+    private static readonly FunctionType = 'function'
     private static readonly FailureLine = 'solution manifest live-refresh failed; the roots cache may be stale until the next Refresh: '
     private static readonly UnknownName = 'UnknownError'
 
@@ -58,7 +60,11 @@ export class SolutionManifestRefresher
         }
     }
 
-    /** Reconciles the active solution's members to the roots cache (add new, drop gone); membership edits made here do not dirty it. */
+    /**
+     * Reconciles the active solution's members to the roots cache (add new, drop gone); membership edits made here do not dirty it.
+     * A solution that is ALREADY dirty holds an unsaved in-memory membership edit that the manifest does not yet contain, so the
+     * reconcile is skipped (the roots cache is already refreshed) rather than clobber it.
+     */
     private SyncActive(solutionName: string): void
     {
         const solution = this.manager.ActiveSolution
@@ -66,13 +72,16 @@ export class SolutionManifestRefresher
         {
             return
         }
-        const wasDirty = solution.IsDirty
+        if (solution.IsDirty)
+        {
+            return
+        }
         const wanted = this.roots.MembersOf(solutionName)
         for (const member of solution.Members.ToArray())
         {
             if (!wanted.some(w => SolutionManifestRefresher.Same(w, member)))
             {
-                (member.Project as { dispose?: () => void } | undefined)?.dispose?.()
+                SolutionManifestRefresher.DisposeProject(member.Project)
                 solution.RemoveMember(member)
             }
         }
@@ -83,7 +92,17 @@ export class SolutionManifestRefresher
                 solution.AddMember(want.Ref.path, want.Ref.type).Storage = want.Storage
             }
         }
-        solution.IsDirty = wasDirty
+        solution.IsDirty = false
+    }
+
+    /** SolutionMember.Project is typed `unknown` by the engine, so the IDisposable contract is probed, not assumed. Best effort. */
+    private static DisposeProject(project: unknown): void
+    {
+        const disposable = project as Partial<IDisposable> | undefined
+        if (typeof disposable?.dispose === SolutionManifestRefresher.FunctionType)
+        {
+            disposable?.dispose?.()
+        }
     }
 
     /** A member's own project manifest: `<member>/project.plexus`, exactly one directory below the solution root. */

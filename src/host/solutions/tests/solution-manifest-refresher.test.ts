@@ -46,6 +46,7 @@ class RefresherFx
     public static readonly ProjectFile = '/project.plexus'
     public static readonly ModelFile = '/model.todl'
     public static readonly Ghost = 'Ghost'
+    public static readonly InMemoryPath = 'in-memory'
 
     public static ManifestText(paths: string[]): string
     {
@@ -116,4 +117,26 @@ test('a deeply nested project.plexus, or one for a non-member directory, does no
     await refresher.PathsChanged(RefresherFx.Name, [RefresherFx.MemberPath + RefresherFx.Nested + RefresherFx.MemberPath + RefresherFx.ProjectFile])
     await refresher.PathsChanged(RefresherFx.Name, [RefresherFx.OtherDir + RefresherFx.ProjectFile])
     assert.equal(changes, 0)
+})
+
+test('a dirty active solution keeps its unsaved in-memory member: the reconcile is skipped while the roots cache still refreshes', async () =>
+{
+    const { roots, store, solution, refresher } = await RefresherFx.Make()
+    solution.AddMember(RefresherFx.InMemoryPath, RefresherFx.MemberType)
+    solution.IsDirty = true
+    await store.WriteText(RefresherFx.Manifest, RefresherFx.ManifestText([RefresherFx.MemberPath]))
+    await refresher.PathsChanged(RefresherFx.Name, [RefresherFx.Manifest])
+    assert.deepEqual(roots.MembersOf(RefresherFx.Name).map(m => m.Ref.path), [RefresherFx.MemberPath])
+    assert.deepEqual(solution.Members.ToArray().map(m => m.Ref.path), [RefresherFx.InMemoryPath])
+    assert.equal(solution.IsDirty, true)
+})
+
+test('RefreshSolution reports a change only when the member set differs', async () =>
+{
+    const { roots, store } = await RefresherFx.Make()
+    assert.equal(await roots.RefreshSolution(RefresherFx.Name), false)
+    await store.WriteText(RefresherFx.Manifest, RefresherFx.ManifestText([RefresherFx.MemberPath]))
+    assert.equal(await roots.RefreshSolution(RefresherFx.Name), true)
+    await store.WriteText(RefresherFx.Manifest, RefresherFx.ManifestText([RefresherFx.MemberPath]))
+    assert.equal(await roots.RefreshSolution(RefresherFx.Name), false)
 })

@@ -176,7 +176,8 @@ export class EnvSolutionRoots implements IEnvSolutionSource
 
     /**
      * Targeted refresh: re-reads ONE known solution's manifest (no area rescan) and fires Changed when its member set differs.
-     * Returns false (and does nothing) for an unknown name; the area scan in {@link Refresh} is what discovers new solutions.
+     * Returns whether the member set actually changed; false (and nothing done) for an unknown name or a no-op rewrite. The area
+     * scan in {@link Refresh} is what discovers new solutions.
      */
     public async RefreshSolution(name: string): Promise<boolean>
     {
@@ -186,11 +187,12 @@ export class EnvSolutionRoots implements IEnvSolutionSource
         {
             return false
         }
-        if (await this.ReadMembers(name, root))
+        const changed = await this.ReadMembers(name, root)
+        if (changed)
         {
             this.Changed.emit()
         }
-        return true
+        return changed
     }
 
     /**
