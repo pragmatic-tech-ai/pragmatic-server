@@ -118,7 +118,7 @@ test('overlapping roots are rejected with a named error', () =>
     assert.throws(() => fx.Loader.Members(), (e: unknown) => Fx.IsOverlapError(e))
     const same = new Fx()
     same.Manager.SetActive([Fx.Member('x')])
-    same.Source.Solutions.set('one', [Fx.Member('x')])
+    same.Source.Solutions.set('one', [new SolutionMember({ path: 'x', type: 'other' })])
     assert.throws(() => same.Loader.Members(), OverlappingMemberRootsError)
 })
 
@@ -143,4 +143,41 @@ test('Changed fires on source add/remove and active-solution change, and stops a
     fx.Source.Put('two', [])
     fx.Manager.SetActive([])
     assert.equal(count, 3)
+})
+
+test('distinct instances with the same root dedupe without throwing', () =>
+{
+    const fx = new Fx()
+    fx.Manager.SetActive([Fx.Member('proj')])
+    fx.Source.Solutions.set('active', [Fx.Member('proj')])
+    assert.equal(fx.Loader.Members().length, 1)
+    fx.Source.Solutions.set('nested', [Fx.Member('proj/inner')])
+    assert.throws(() => fx.Loader.Members(), OverlappingMemberRootsError)
+})
+
+test('backslash and trailing-slash roots are normalized for overlap', () =>
+{
+    const back = new Fx()
+    back.Manager.SetActive([Fx.Member('proj\\inner')])
+    back.Source.Solutions.set('one', [Fx.Member('proj')])
+    assert.throws(() => back.Loader.Members(), OverlappingMemberRootsError)
+    const trailing = new Fx()
+    trailing.Manager.SetActive([Fx.Member('proj/')])
+    trailing.Source.Solutions.set('one', [Fx.Member('proj/inner')])
+    assert.throws(() => trailing.Loader.Members(), OverlappingMemberRootsError)
+})
+
+test('dispose twice is a no-op', () =>
+{
+    const fx = new Fx()
+    fx.Loader.dispose()
+    assert.doesNotThrow(() => fx.Loader.dispose())
+})
+
+test('Members with no active solution returns only the source members', () =>
+{
+    const fx = new Fx()
+    const b = Fx.Member('b')
+    fx.Source.Solutions.set('one', [b])
+    assert.deepEqual(fx.Loader.Members(), [b])
 })
