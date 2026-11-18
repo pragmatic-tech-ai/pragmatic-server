@@ -185,6 +185,8 @@ export class EnvironmentService implements IAdminAccess
     private static readonly DeployScope = 'application-deploy'
     /** Fifteen minutes: a deploy token is single-purpose and short-lived; callers re-mint per publish. */
     private static readonly DeployTtlSeconds = 900
+    /** A run/test credential is short-lived like the deploy token: it carries the same fifteen minutes. */
+    private static readonly RunTestTtlSeconds = EnvironmentService.DeployTtlSeconds
     /** The well-known runtime principal a served environment-bound app authenticates as; holds the general read grant. */
     private static readonly AppReaderPrincipalId = 'app-reader'
     /** A read-only coarse role: Role.Viewer covers Action.Read, which the CypherProtocol.Query readTenant gate requires. */
@@ -645,7 +647,7 @@ export class EnvironmentService implements IAdminAccess
         return this.WithAdmin(name, async info =>
         {
             await this.proxy.GrantRole(info, { subject: EnvironmentService.DeveloperPrincipalId, role: EnvironmentService.DeveloperRoleName, resourceKind: EnvironmentService.RealmKindName, resourcePath: [] })
-            return this.proxy.IssueToken(info, { principalId: EnvironmentService.DeveloperPrincipalId, scopes: [EnvironmentService.RunTestScope], expiresInSeconds: EnvironmentService.DeployTtlSeconds })
+            return this.proxy.IssueToken(info, { principalId: EnvironmentService.DeveloperPrincipalId, scopes: [EnvironmentService.RunTestScope], expiresInSeconds: EnvironmentService.RunTestTtlSeconds })
         })
     }
 
