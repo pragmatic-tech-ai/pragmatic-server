@@ -50,6 +50,7 @@ export class EnvSolutionRoots implements IEnvSolutionSource
     private static readonly NotFoundPattern = /ENOENT|ENOTDIR/
     private static readonly CurrentSegment = '.'
     private static readonly ParentSegment = '..'
+    private static readonly TrailingStrip = /[. ]+$/
     private static readonly TrailingUnsafePattern = /[. ]$/
     private static readonly SegmentSplit = /[\\/]+/
 
@@ -106,7 +107,7 @@ export class EnvSolutionRoots implements IEnvSolutionSource
     public async Refresh(): Promise<void>
     {
         let changed = false
-        const entries = await this.registry.CreateStorage(this.area).List(EnvSolutionRoots.EmptyPath)
+        const entries = await EnvSolutionRoots.ListIfPresent(this.registry.CreateStorage(this.area))
         const present = new Set<string>()
         for (const entry of entries)
         {
@@ -142,7 +143,7 @@ export class EnvSolutionRoots implements IEnvSolutionSource
     /** Parses `<name>.pksln` into members (read-only); returns whether the member set differs from the cached one. */
     private async ReadMembers(name: string, root: IStorage): Promise<boolean>
     {
-        const list = await root.List(EnvSolutionRoots.EmptyPath)
+        const list = await EnvSolutionRoots.ListIfPresent(root)
         const file = list.find(e => !e.IsDirectory && e.Name.endsWith(EnvSolutionRoots.ManifestSuffix))
         let refs: { path: string, type: string }[] = []
         if (file !== undefined)
@@ -171,6 +172,23 @@ export class EnvSolutionRoots implements IEnvSolutionSource
     private LocationOf(name: string): string
     {
         return this.area + EnvSolutionRoots.Separator + name
+    }
+
+    /** The root's entries; a missing/not-a-directory root (not-found) lists as empty, any other I/O error propagates. */
+    private static async ListIfPresent(store: IStorage): Promise<readonly { Name: string, IsDirectory: boolean }[]>
+    {
+        try
+        {
+            return await store.List(EnvSolutionRoots.EmptyPath)
+        }
+        catch (error)
+        {
+            if (EnvSolutionRoots.NotFoundPattern.test(String(error)))
+            {
+                return []
+            }
+            throw error
+        }
     }
 
     /** The file's text, or undefined when it vanished (not-found); any other I/O error propagates rather than looking like an empty solution. */
@@ -215,7 +233,14 @@ export class EnvSolutionRoots implements IEnvSolutionSource
         {
             return false
         }
-        return segments.every(s => s !== EnvSolutionRoots.ParentSegment && s !== EnvSolutionRoots.CurrentSegment)
+        return segments.every(s => !EnvSolutionRoots.IsDotSegment(s))
+    }
+
+    /** Windows strips trailing spaces/dots, so `.. `, `...` and `. ` all normalize to a dot segment (or nothing): treat them as one. */
+    private static IsDotSegment(segment: string): boolean
+    {
+        const stripped = segment.replace(EnvSolutionRoots.TrailingStrip, EnvSolutionRoots.EmptyPath)
+        return stripped === EnvSolutionRoots.EmptyPath || stripped === EnvSolutionRoots.CurrentSegment || stripped === EnvSolutionRoots.ParentSegment
     }
 
     private static IsValid(name: string): boolean

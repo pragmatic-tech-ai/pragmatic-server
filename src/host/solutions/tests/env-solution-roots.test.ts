@@ -97,7 +97,7 @@ test('Refresh discovers solution folders, MembersOf reads manifest read-only, Ch
 test('MembersOf skips members whose path is a drive path or climbs out of the solution folder', async () =>
 {
     const { roots, registry } = RootsFx.Make()
-    await RootsFx.Seed(registry, 'Evil', [{ path: '../Other', type: 't' }, { path: 'C:/x', type: 't' }, { path: 'proj:stream', type: 't' }, { path: 'a/b:c', type: 't' }, { path: 'nl\nx', type: 't' }, { path: 'ok', type: 't' }])
+    await RootsFx.Seed(registry, 'Evil', [{ path: '../Other', type: 't' }, { path: 'C:/x', type: 't' }, { path: 'proj:stream', type: 't' }, { path: 'a/b:c', type: 't' }, { path: 'nl\nx', type: 't' }, { path: '.. /x', type: 't' }, { path: 'a/.../x', type: 't' }, { path: 'ok', type: 't' }])
     await roots.Refresh()
     assert.deepEqual(roots.MembersOf('Evil').map(m => m.Ref.path), ['ok'])
 })
@@ -138,4 +138,22 @@ test('a non-not-found I/O error during Refresh propagates and does not empty the
     store.ReadText = () => Promise.reject(new Error('EIO: transient'))
     await assert.rejects(() => roots.Refresh(), /EIO/)
     assert.deepEqual(roots.MembersOf('Flaky').map(m => m.Ref.path), ['p'])
+})
+
+test('Refresh on a source area that does not exist yet yields empty without throwing', async () =>
+{
+    const { roots } = RootsFx.Make()
+    await roots.Refresh()
+    assert.deepEqual(roots.Names(), [])
+})
+
+test('a not-found List error is tolerated but a genuine I/O error propagates', async () =>
+{
+    const { roots, registry } = RootsFx.Make()
+    const area = registry.CreateStorage(RootsFx.Area)
+    area.List = () => Promise.reject(new Error('ENOENT: no such dir'))
+    await roots.Refresh()
+    assert.deepEqual(roots.Names(), [])
+    area.List = () => Promise.reject(new Error('EIO: bad disk'))
+    await assert.rejects(() => roots.Refresh(), /EIO/)
 })
