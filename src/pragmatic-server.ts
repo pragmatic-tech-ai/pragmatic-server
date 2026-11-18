@@ -304,6 +304,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
      */
     private StartDirectorySync(): void
     {
+        // runtimeCoHosted requires identity, as a Runtime env does: without it the sync (and SecurityAdmin) fail with IdentityNotConfigured
         if (!this.ServesRuntime() || this.options.identity?.directorySyncOnStart === false)
         {
             return
@@ -368,8 +369,8 @@ export class PragmaticServer implements IEnvironmentGraphHost
     }
 
     /**
-     * What the admin save checks a security setting against and reloads (EnvironmentSecurityAdmin); undefined on a
-     * Development environment, which refuses the setting (PR13). Requires identity.
+     * What the admin save checks a security setting against and reloads (EnvironmentSecurityAdmin); undefined unless the
+     * environment serves the runtime surface (a plain Development environment refuses the setting, PR13). Requires identity.
      */
     public async SecurityAdmin(): Promise<ISecuritySettingAdmin | undefined>
     {
@@ -767,7 +768,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.promoteRecords
     }
 
-    /** Throws unless this is a Development environment: the graph catalog exists only there. */
+    /** Throws unless this environment serves the development surface ({@link ServesDevelopment}): the graph catalog exists only there. */
     private AssertDevelopmentPurpose(): void
     {
         if (!this.ServesDevelopment())
@@ -776,7 +777,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
         }
     }
 
-    /** Throws unless this is a Runtime environment: deploy and the applications registry exist only there. */
+    /** Throws unless this environment serves the runtime surface ({@link ServesRuntime}, a Runtime or a runtime-co-hosted one): deploy and the applications registry exist only there. */
     private AssertRuntimePurpose(): void
     {
         if (!this.ServesRuntime())
