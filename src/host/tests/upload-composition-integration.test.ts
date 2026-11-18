@@ -4,7 +4,7 @@ import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, relative, isAbsolute } from 'node:path'
 import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, createMessageConnection, NullLogger, SolutionProtocol, StorageProtocol, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { MessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { IMessageSocket, MessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
@@ -89,7 +89,7 @@ class UploadFixture
     }
 
     /** Attaches a develop-purpose connection handler; only the language service, graphs and solution roots matter to this flow. */
-    public static AttachHandler(socket: InMemoryMessageSocket, language: ILanguageService, manager: SolutionManagerService, graphs: IDevGraphService, roots: EnvSolutionRoots): ServerConnectionHandler
+    public static AttachHandler(socket: IMessageSocket, language: ILanguageService, manager: SolutionManagerService, graphs: IDevGraphService, roots: EnvSolutionRoots): ServerConnectionHandler
     {
         return ServerConnectionHandler.Attach(socket, language, manager, UploadFixture.Context(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, EnvironmentPurpose.Development, undefined, undefined, undefined, undefined, undefined, graphs, undefined, undefined, undefined, undefined, undefined, roots)
     }
