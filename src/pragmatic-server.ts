@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { SourceChangeBridge } from './host/solutions/source-change-bridge.js'
 import { ConnectorContext, StorageKind } from '@pragmatic-tech-ai/graph'
 import type { ISubscription } from '@pragmatic-tech-ai/graph'
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
@@ -208,6 +209,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private securityChangeLog: SecurityChangeLog | undefined
     private environmentRules: EnvironmentScopeRules | undefined
     private devExecute: DevCypherExecute | undefined
+    private devSourceChangeBridge: Promise<SourceChangeBridge> | undefined
 
     public constructor(options: PragmaticServerOptions)
     {
@@ -870,6 +872,19 @@ export class PragmaticServer implements IEnvironmentGraphHost
     public async LanguageService(): Promise<ILanguageService>
     {
         return this.root.Resolve(SolutionLanguageService.Key)
+    }
+
+    /** This environment's single source-change bridge, bound to its shared language service (memoized). */
+    public async DevSourceChangeBridge(): Promise<SourceChangeBridge>
+    {
+        // memoize the PROMISE: concurrent first callers share one in-flight construction, hence one bridge
+        this.devSourceChangeBridge ??= this.BuildSourceChangeBridge()
+        return this.devSourceChangeBridge
+    }
+
+    private async BuildSourceChangeBridge(): Promise<SourceChangeBridge>
+    {
+        return new SourceChangeBridge(await this.LanguageService())
     }
 
     /**

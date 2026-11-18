@@ -198,3 +198,15 @@ test('ExportGraph on an unknown graph rejects GraphNotFoundError', async () =>
 {
     await assert.rejects(Fixture.Service().ExportGraph(Fixture.Ref()), GraphNotFoundError)
 })
+
+test('ListSolutionIds derives the distinct solution ids from every graph record slice keys', async () =>
+{
+    const service = Fixture.Service()
+    assert.deepEqual(await service.ListSolutionIds(), [])
+    await service.CreateGraph({ graphName: 'g1', description: 'd' })
+    await service.CreateGraph({ graphName: 'g2', description: 'd' })
+    await service.ContributeGraph({ graphName: 'g1', solutionId: 'sol-a', packages: [Fixture.Pkg('p', '1.0.0')] })
+    await service.ContributeGraph({ graphName: 'g1', solutionId: 'sol-b', packages: [Fixture.Pkg('q', '1.0.0')] })
+    await service.ContributeGraph({ graphName: 'g2', solutionId: 'sol-a', packages: [Fixture.Pkg('r', '1.0.0')] })
+    assert.deepEqual((await service.ListSolutionIds()).sort(), ['sol-a', 'sol-b'])
+})

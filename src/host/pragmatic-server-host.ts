@@ -468,6 +468,7 @@ export class PragmaticServerHost
             }
             const parent = this.instrumentation !== undefined ? RequestCorrelation.Extract(req.headers) : undefined
             const languageService = await server.LanguageService()
+            const sourceChanges = await server.DevSourceChangeBridge()
             const manager = await server.Manager()
             const pack = await server.Pack()
             const admin = new AdminService(pack.Grants, pack.Audit, await server.RealmConfigStore(), server.Realm(), () => this.registry.DisposeEnvironment(environmentId), pack.Accounts, pack.Registrar, pack.Tokens, {
@@ -492,7 +493,7 @@ export class PragmaticServerHost
                         policy: new BackpressurePolicy(resilience.backpressureSoftBytes, resilience.backpressureHardBytes, resilience.backpressureGraceMs),
                         onShed: () => this.logger.Info(PragmaticServerHost.ShedLine, { [PragmaticServerHost.EventKey]: PragmaticServerHost.ShedEvent }),
                     })
-                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, runtime.connectors ?? development.connectors, runtime.cypherQuery ?? development.cypherQuery, this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.data, this.paging, runtime.cypherExecute ?? development.cypherExecute, runtime.deployProvider, development.devGraphService, runtime.environmentGraphHost, runtime.modelView ?? development.modelView, runtime.dataChanges)
+                    const handler = ServerConnectionHandler.Attach(socket, languageService, manager, context, runtime.connectors ?? development.connectors, runtime.cypherQuery ?? development.cypherQuery, this.instrumentation, parent, this.audit, this.rateLimit, admin, this.cypherLimits, server.Purpose(), runtime.applications, runtime.data, this.paging, runtime.cypherExecute ?? development.cypherExecute, runtime.deployProvider, development.devGraphService, runtime.environmentGraphHost, runtime.modelView ?? development.modelView, runtime.dataChanges, undefined, sourceChanges)
                     this.handlers.add(handler)
                     const revocable: IRevocableConnection =
                     {

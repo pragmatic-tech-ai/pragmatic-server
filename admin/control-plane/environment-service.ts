@@ -172,6 +172,12 @@ export class EnvironmentService implements IAdminAccess
     private static readonly MakerScope = 'graph-contribute'
     /** The maker also holds Viewer so graph/list passes the role check; the token scope still limits it to contribute + list. */
     private static readonly MakerListRoleName = 'Viewer'
+    /** The well-known principal a develop relay authenticates as: Role.Developer (Read, Write, Contribute), no Administer or Delete. */
+    private static readonly DeveloperPrincipalId = 'developer'
+    private static readonly DeveloperRoleName = 'Developer'
+    private static readonly DevelopScope = 'environment-develop'
+    /** One hour, like the maker token: a develop credential is short-lived and the relay re-mints on demand. */
+    private static readonly DeveloperTtlSeconds = 3600
     private static readonly DeployerPrincipalId = 'deployer'
     /** Administer on the Tenant, required by application/deploy; the application-deploy scope limits the token to that one method. */
     private static readonly DeployerRoleName = 'Admin'
@@ -609,6 +615,21 @@ export class EnvironmentService implements IAdminAccess
             await this.proxy.GrantRole(info, { subject: EnvironmentService.MakerPrincipalId, role: EnvironmentService.MakerRoleName, resourceKind: EnvironmentService.RealmKindName, resourcePath: [] })
             await this.proxy.GrantRole(info, { subject: EnvironmentService.MakerPrincipalId, role: EnvironmentService.MakerListRoleName, resourceKind: EnvironmentService.RealmKindName, resourcePath: [] })
             return this.proxy.IssueToken(info, { principalId: EnvironmentService.MakerPrincipalId, scopes: [EnvironmentService.MakerScope], expiresInSeconds: EnvironmentService.MakerTokenTtlSeconds })
+        })
+    }
+
+    /** Mints a short-lived develop credential for a Development environment: Role.Developer for the developer principal, scoped to the develop method set. */
+    public async AdminIssueDeveloperToken(name: string): Promise<TokenIssuedDto>
+    {
+        const rec = this.Require(name)
+        if (rec.type !== EnvType.Development)
+        {
+            throw new EnvironmentNotDevelopmentError(name)
+        }
+        return this.WithAdmin(name, async info =>
+        {
+            await this.proxy.GrantRole(info, { subject: EnvironmentService.DeveloperPrincipalId, role: EnvironmentService.DeveloperRoleName, resourceKind: EnvironmentService.RealmKindName, resourcePath: [] })
+            return this.proxy.IssueToken(info, { principalId: EnvironmentService.DeveloperPrincipalId, scopes: [EnvironmentService.DevelopScope], expiresInSeconds: EnvironmentService.DeveloperTtlSeconds })
         })
     }
 

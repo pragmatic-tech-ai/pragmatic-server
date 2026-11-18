@@ -26,6 +26,7 @@ export class AdminEnums
         ['Editor', Role.Editor],
         ['Viewer', Role.Viewer],
         ['Maker', Role.Maker],
+        ['Developer', Role.Developer],
     ])
 
     private static readonly ResourceKinds: ReadonlyMap<string, ResourceKind> = new Map<string, ResourceKind>([

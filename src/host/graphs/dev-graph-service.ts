@@ -47,6 +47,8 @@ export interface IDevGraphService
     DeleteGraph(params: GraphRefParamsDto): Promise<void>
     ContributeGraph(params: GraphContributeParamsDto): Promise<GraphDetailDto>
     ExportGraph(params: GraphRefParamsDto): Promise<GraphExportDto>
+    /** Every solution id that has contributed a slice to any graph. */
+    ListSolutionIds(): Promise<string[]>
 }
 
 /** Container-owned graph catalog: create/list/get/delete over the DevGraphStore. */
@@ -76,6 +78,20 @@ export class DevGraphService implements IDevGraphService
     {
         await this.store.Load()
         return this.store.List().map(r => DevGraphService.ToSummary(r))
+    }
+
+    public async ListSolutionIds(): Promise<string[]>
+    {
+        await this.store.Load()
+        const ids = new Set<string>()
+        for (const record of this.store.List())
+        {
+            for (const solutionId of Object.keys(record.slices))
+            {
+                ids.add(solutionId)
+            }
+        }
+        return [...ids]
     }
 
     public async GetGraph(params: GraphRefParamsDto): Promise<GraphDetailDto>

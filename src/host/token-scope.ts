@@ -1,5 +1,5 @@
 import { AccessContext } from '@pragmatic-tech-ai/todl-identity'
-import { ApplicationDeployProtocol, GraphProtocol, PragmaticAppProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ApplicationDeployProtocol, GraphProtocol, LanguageProtocol, PragmaticAppProtocol, SolutionProtocol, StorageProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /** Scopes a service token may carry that restrict which methods it can call. */
 export enum TokenScope
@@ -7,6 +7,7 @@ export enum TokenScope
     GraphContribute = 'graph-contribute',
     ApplicationDeploy = 'application-deploy',
     Inspect = 'environment-inspect',
+    Develop = 'environment-develop',
 }
 
 /** An AccessContext built from a service-token authentication, carrying that token's scopes explicitly.
@@ -24,6 +25,45 @@ export class ScopedAccessContext extends AccessContext
     }
 }
 
+/**
+ * The request methods a develop credential may call: list and select solutions, read and write source, drive the language
+ * service, and list and contribute graphs. Deliberately excludes graph create/delete/load, application/*, data/*, solution/open
+ * (administer-gated) and admin/*. Shared with the desktop relay's develop allowlist so the two cannot drift.
+ */
+export class DevelopMethods
+{
+    public static readonly All: readonly string[] = [
+        SolutionProtocol.ListSolutions.method,
+        SolutionProtocol.SelectAuthoring.method,
+        SolutionProtocol.ActiveSolution.method,
+        StorageProtocol.ReadText.method,
+        StorageProtocol.ReadBytes.method,
+        StorageProtocol.WriteText.method,
+        StorageProtocol.WriteBytes.method,
+        StorageProtocol.Exists.method,
+        StorageProtocol.Delete.method,
+        StorageProtocol.CreateDirectory.method,
+        StorageProtocol.Rename.method,
+        StorageProtocol.List.method,
+        LanguageProtocol.CompletionsAt.method,
+        LanguageProtocol.HoverAt.method,
+        LanguageProtocol.DefinitionAt.method,
+        LanguageProtocol.ReferencesAt.method,
+        LanguageProtocol.PrepareRename.method,
+        LanguageProtocol.RenameEdits.method,
+        LanguageProtocol.DocumentSymbols.method,
+        LanguageProtocol.FoldingRanges.method,
+        LanguageProtocol.WorkspaceSymbols.method,
+        LanguageProtocol.SemanticTokens.method,
+        LanguageProtocol.SignatureHelpAt.method,
+        LanguageProtocol.CodeActions.method,
+        LanguageProtocol.FormatDocument.method,
+        LanguageProtocol.DiagnosticsFor.method,
+        GraphProtocol.List.method,
+        GraphProtocol.Contribute.method,
+    ]
+}
+
 /** Restricts the methods a credential may call by its known scopes. With no known scope the gate allows everything. */
 export class TokenScopeGate
 {
@@ -31,6 +71,7 @@ export class TokenScopeGate
         [TokenScope.GraphContribute, [GraphProtocol.Contribute.method, GraphProtocol.List.method]],
         [TokenScope.ApplicationDeploy, [ApplicationDeployProtocol.Deploy.method]],
         [TokenScope.Inspect, [PragmaticAppProtocol.List.method, GraphProtocol.List.method, GraphProtocol.Loaded.method]],
+        [TokenScope.Develop, DevelopMethods.All],
     ])
 
     private readonly allowed: ReadonlySet<string> | null

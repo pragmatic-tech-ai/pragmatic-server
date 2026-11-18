@@ -62,6 +62,11 @@ class FakeGraphService implements IDevGraphService
         return { name: params.graphName, description: GraphFixture.Description, packages: [], createdAt: GraphFixture.Stamp }
     }
 
+    public async ListSolutionIds(): Promise<string[]>
+    {
+        return []
+    }
+
     public async DeleteGraph(params: GraphRefParamsDto): Promise<void>
     {
         this.Fail()
