@@ -9,7 +9,7 @@ import type { IEnvironmentReach, EnvironmentUrlsLease } from '../environment-end
 import type { EnvironmentRecord } from '../environment-record.js'
 import { PlaneHttp } from '../plane-http.js'
 import { TransportFailure } from '../transport-failure.js'
-import { DevelopMethods } from '../../../src/host/token-scope.js'
+import { DevelopMethods, RunTestMethods } from '../../../src/host/token-scope.js'
 import { DesktopAction, DesktopTargetVerdict, type DesktopTargets } from './desktop-targets.js'
 import type { DesktopAuthGate } from './desktop-auth-gate.js'
 import type { IDesktopSessionConnections } from './desktop-endpoint.js'
@@ -101,6 +101,7 @@ export class DesktopRelayAllowlist
     private static readonly Publish: ReadonlySet<string> = new Set([ApplicationDeployProtocol.Deploy.method])
     private static readonly Inspect: ReadonlySet<string> = new Set([PragmaticAppProtocol.List.method, GraphProtocol.List.method, GraphProtocol.Loaded.method])
     private static readonly Develop: ReadonlySet<string> = new Set(DevelopMethods.All)
+    private static readonly RunTest: ReadonlySet<string> = new Set(RunTestMethods.All)
     /** Thrown for an action with no explicit case: fail closed rather than inherit another action's privileges. */
     public static readonly UnsupportedActionMessage = 'Unsupported desktop relay action.'
     /** Audited methods and the params field naming what they act on (the audit note). */
@@ -121,6 +122,8 @@ export class DesktopRelayAllowlist
                 return DesktopRelayAllowlist.Publish
             case DesktopAction.Develop:
                 return DesktopRelayAllowlist.Develop
+            case DesktopAction.RunTest:
+                return DesktopRelayAllowlist.RunTest
             default:
                 throw new Error(DesktopRelayAllowlist.UnsupportedActionMessage)
         }
@@ -532,6 +535,8 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
                 return await this.service.AdminIssueDeployToken(envName)
             case DesktopAction.Develop:
                 return await this.service.AdminIssueDeveloperToken(envName)
+            case DesktopAction.RunTest:
+                return await this.service.AdminIssueRunTestToken(envName)
             default:
                 throw new Error(DesktopRelayAllowlist.UnsupportedActionMessage)
         }

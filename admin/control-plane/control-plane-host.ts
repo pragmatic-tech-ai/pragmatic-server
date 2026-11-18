@@ -100,6 +100,7 @@ export interface IEnvironmentService
     AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
     AdminIssueDeployToken(name: string): Promise<TokenIssuedDto>
     AdminIssueDeveloperToken(name: string): Promise<TokenIssuedDto>
+    AdminIssueRunTestToken(name: string): Promise<TokenIssuedDto>
     AdminIssueReaderToken(name: string): Promise<TokenIssuedDto>
     AdminListTokens(name: string): Promise<ServiceTokenSummaryDto[]>
     AdminIssueToken(name: string, params: IssueTokenParams): Promise<TokenIssuedDto>

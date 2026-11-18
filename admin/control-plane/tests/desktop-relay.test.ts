@@ -203,6 +203,11 @@ class RelayService
         return this.Mint(name, RelayKit.DeveloperToken)
     }
 
+    public async AdminIssueRunTestToken(name: string): Promise<TokenIssuedDto>
+    {
+        return this.Mint(name, RelayKit.RunTestToken)
+    }
+
     public async AdminRevokeToken(name: string, tokenRef: string): Promise<void>
     {
         this.revokes.push(name + '/' + tokenRef)
@@ -368,6 +373,7 @@ class RelayKit
     public static readonly DeployToken = 'minted-deploy-credential'
     public static readonly ReaderToken = 'minted-reader-credential'
     public static readonly DeveloperToken = 'minted-developer-credential'
+    public static readonly RunTestToken = 'minted-run-test-credential'
     public static readonly Graph = 'payments'
     public static readonly NotAvailable = 'This method is not available through the desktop relay.'
     /** The Dev env's recorded in-cluster endpoint (its Service DNS); only an in-cluster reach reads it. */
