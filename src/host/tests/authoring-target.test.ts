@@ -23,6 +23,13 @@ class AuthoringFixture
     public static readonly MemberType = 'todl'
     private static readonly Area = 'env/src'
     private static readonly ManifestSuffix = '.pksln'
+    private static readonly ManifestKindKey = 'kind'
+    private static readonly ManifestKind = 'todl-solution'
+    private static readonly ManifestVersionKey = 'version'
+    private static readonly ManifestVersion = 1
+    private static readonly NameKey = 'name'
+    private static readonly MembersKey = 'members'
+    private static readonly SettingsKey = 'settings'
     private static readonly EnvironmentId = 't1'
     private static readonly PrincipalId = 'p1'
     private static readonly EnvironmentName = 'Environment One'
@@ -40,15 +47,16 @@ class AuthoringFixture
         return { ListSolutionIds: async () => ids } as unknown as IDevGraphService
     }
 
-    /** Two named solutions on disk; only OtherA has a member. */
-    public static async Roots(): Promise<EnvSolutionRoots>
+    /** Named solutions on disk (default OtherA and OtherB); only OtherA has a member. */
+    public static async Roots(names: string[] = [AuthoringFixture.OtherA, AuthoringFixture.OtherB]): Promise<EnvSolutionRoots>
     {
         const registry = new MemoryStorageRegistry()
         const area = registry.CreateStorage(AuthoringFixture.Area)
-        const manifests = new Map([[AuthoringFixture.OtherA, [{ path: AuthoringFixture.MemberPath, type: AuthoringFixture.MemberType }]], [AuthoringFixture.OtherB, []]])
-        for (const [name, members] of manifests)
+        for (const name of names)
         {
-            await registry.CreateStorage(AuthoringFixture.Area + '/' + name).WriteText(name + AuthoringFixture.ManifestSuffix, JSON.stringify({ kind: 'todl-solution', version: 1, name, members, settings: {} }))
+            const members = name === AuthoringFixture.OtherA ? [{ path: AuthoringFixture.MemberPath, type: AuthoringFixture.MemberType }] : []
+            const manifest = { [AuthoringFixture.ManifestKindKey]: AuthoringFixture.ManifestKind, [AuthoringFixture.ManifestVersionKey]: AuthoringFixture.ManifestVersion, [AuthoringFixture.NameKey]: name, [AuthoringFixture.MembersKey]: members, [AuthoringFixture.SettingsKey]: {} }
+            await registry.CreateStorage(AuthoringFixture.Area + '/' + name).WriteText(name + AuthoringFixture.ManifestSuffix, JSON.stringify(manifest))
             await area.CreateDirectory(name)
         }
         const roots = new EnvSolutionRoots(AuthoringFixture.Area, registry)
@@ -237,6 +245,38 @@ test('selectAuthoring for an id unknown to the solution roots keeps the neutral 
     try
     {
         const summary = await a.client.sendRequest(SolutionProtocol.SelectAuthoring, { SolutionId: AuthoringFixture.Unknown })
+        assert.deepEqual(summary.members, [])
+        assert.equal(summary.buildState, BuildState.Building)
+    }
+    finally
+    {
+        a.client.dispose()
+        a.handler.Dispose()
+    }
+})
+
+test('an active solution that is also a named root appears exactly once in solution/list', async () =>
+{
+    const roots = await AuthoringFixture.Roots([AuthoringFixture.ActiveName, AuthoringFixture.OtherA])
+    const a = AuthoringFixture.Attach(AuthoringFixture.Manager(), Role.Owner, EnvironmentPurpose.Development, undefined, roots)
+    try
+    {
+        const list = await a.client.sendRequest(SolutionProtocol.ListSolutions)
+        assert.deepEqual(list.map(s => s.Id), [AuthoringFixture.ActiveName, AuthoringFixture.OtherA])
+    }
+    finally
+    {
+        a.client.dispose()
+        a.handler.Dispose()
+    }
+})
+
+test('without solution roots a non-active id falls back to empty members and Building', async () =>
+{
+    const a = AuthoringFixture.Attach(AuthoringFixture.Manager(), Role.Owner, EnvironmentPurpose.Development, undefined, undefined)
+    try
+    {
+        const summary = await a.client.sendRequest(SolutionProtocol.SelectAuthoring, { SolutionId: AuthoringFixture.OtherA })
         assert.deepEqual(summary.members, [])
         assert.equal(summary.buildState, BuildState.Building)
     }

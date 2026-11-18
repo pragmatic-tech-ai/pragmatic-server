@@ -1382,6 +1382,7 @@ export class ServerConnectionHandler
         {
             return active
         }
+        // Names() is a single snapshot copy per request (not called in a loop), so no local capture is needed.
         if (this.solutionRoots !== undefined && this.solutionRoots.Names().includes(solutionId))
         {
             return {
