@@ -3,7 +3,7 @@ import {
 } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, SolutionSummaryDto, ModelViewPageDto, ModelViewParams, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, TeamMemberDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, CypherModelListDto, ConnectorReadParams, Page, EntityDto, PragmaticAppSummaryDto, GraphSummaryDto, GraphLoadParamsDto, GraphLoadedDto, SolutionCreateParamsDto, SolutionCreateResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { TeamMemberOrigin } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { ResponseError, ErrorCodes, DrainingError, ApplicationDeployProtocol, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ResponseError, ErrorCodes, DrainingError, ApplicationDeployProtocol, RunTestProtocol, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherAppDeployParamsDto, AppDeployResultDto, AppWriteParams, AppWriteResultDto, AppWriteOpDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto, DataChangedPayload } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { RequestType, NotificationType } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResourceRef, IdentityConfig, PresentedSecret, LocalAccountNotFoundError, InvalidSecurityModelError, MembershipOrigin } from '@pragmatic-tech-ai/todl-identity'
@@ -609,6 +609,16 @@ export class ServerConnectionHandler
         return this.deployProvider(params)
     }
 
+    public async RunRunTestLoad(params: CypherAppDeployParamsDto): Promise<AppDeployResultDto>
+    {
+        this.EnsureRuntime()
+        if (this.deployProvider === undefined)
+        {
+            throw new ResponseError(ErrorCodes.InvalidRequest, ServerConnectionHandler.NotRuntimeMessage)
+        }
+        return this.deployProvider(params)
+    }
+
     public async RunAppDataWrite(params: AppWriteParams): Promise<AppWriteResultDto>
     {
         this.EnsureRuntime()
@@ -745,6 +755,7 @@ export class ServerConnectionHandler
             return summaries.map(a => ({ name: a.name, version: a.version }))
         })
         this.guarded(ApplicationDeployProtocol.Deploy, p => this.RunDeploy(p))
+        this.guarded(RunTestProtocol.Load, p => this.RunRunTestLoad(p))
         // S7: binds a LIVE app's name to the connection (data/write, shares and assign need it); no effect on the scope
         this.guarded(PragmaticAppProtocol.Open, async p =>
         {
