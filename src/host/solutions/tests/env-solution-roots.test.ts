@@ -26,7 +26,7 @@ class FakeRegistry implements IStorageProviderRegistry
 class RootsFx
 {
     public static readonly Area = 'env/src'
-    public static readonly BadNames = ['', '.', '..', 'a/b', 'a\\b', '/abs', '\\abs', 'C:x', 'c:', 'a..b', 'x\u0000y', 'a:b', '../escape', 'trail.', 'trail ']
+    public static readonly BadNames = ['', '.', '..', 'a/b', 'a\\b', '/abs', '\\abs', 'C:x', 'c:', 'a..b', 'x\u0000y', 'a:b', '../escape', 'trail.', 'trail ', ' lead', 'new\nline', 'tab\tx', 'CON', 'con', 'Nul', 'COM1', 'lpt9', 'aux.txt', '\u007f']
 
     public static Make(): { roots: EnvSolutionRoots, registry: FakeRegistry }
     {
@@ -97,7 +97,7 @@ test('Refresh discovers solution folders, MembersOf reads manifest read-only, Ch
 test('MembersOf skips members whose path is a drive path or climbs out of the solution folder', async () =>
 {
     const { roots, registry } = RootsFx.Make()
-    await RootsFx.Seed(registry, 'Evil', [{ path: '../Other', type: 't' }, { path: 'C:/x', type: 't' }, { path: 'ok', type: 't' }])
+    await RootsFx.Seed(registry, 'Evil', [{ path: '../Other', type: 't' }, { path: 'C:/x', type: 't' }, { path: 'proj:stream', type: 't' }, { path: 'a/b:c', type: 't' }, { path: 'nl\nx', type: 't' }, { path: 'ok', type: 't' }])
     await roots.Refresh()
     assert.deepEqual(roots.MembersOf('Evil').map(m => m.Ref.path), ['ok'])
 })
@@ -110,4 +110,32 @@ test('EnsureRoot of a new name fires Changed once; repeat does not', () =>
     roots.EnsureRoot('N')
     roots.EnsureRoot('N')
     assert.equal(changes, 1)
+})
+
+test('Refresh prunes a discovered solution that vanished, but keeps an ensured-not-yet-written one', async () =>
+{
+    const { roots, registry } = RootsFx.Make()
+    await RootsFx.Seed(registry, 'Gone', [])
+    roots.EnsureRoot('Pending')
+    await roots.Refresh()
+    assert.deepEqual([...roots.Names()].sort(), ['Gone', 'Pending'])
+    const area = registry.CreateStorage(RootsFx.Area)
+    await area.Delete('Gone')
+    let changes = 0
+    roots.Changed.subscribe(() => { changes++ })
+    await roots.Refresh()
+    assert.deepEqual(roots.Names(), ['Pending'])
+    assert.deepEqual(roots.MembersOf('Gone'), [])
+    assert.equal(changes, 1)
+})
+
+test('a non-not-found I/O error during Refresh propagates and does not empty the solution', async () =>
+{
+    const { roots, registry } = RootsFx.Make()
+    await RootsFx.Seed(registry, 'Flaky', [{ path: 'p', type: 't' }])
+    await roots.Refresh()
+    const store = registry.CreateStorage(RootsFx.Area + '/Flaky')
+    store.ReadText = () => Promise.reject(new Error('EIO: transient'))
+    await assert.rejects(() => roots.Refresh(), /EIO/)
+    assert.deepEqual(roots.MembersOf('Flaky').map(m => m.Ref.path), ['p'])
 })

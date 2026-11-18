@@ -1305,8 +1305,8 @@ export class ServerConnectionHandler
     /** Dev-only `storage/*`: the connection's authoring solution's source store (its own root, or the active solution's when none is selected), driven remotely; paths are confined to its root by {@link RemoteStorageHandlers}. */
     private RegisterStorageHandlers(): void
     {
-        const resolver = new AuthoringStorageResolver(this.authoringTarget, this.solutionRoots, () => this.manager.ActiveSolution?.Name, () => this.manager.ActiveSolution?.Storage)
-        const handlers = new RemoteStorageHandlers(() => resolver.Resolve(), this.sourceChanges)
+        const resolver = new AuthoringStorageResolver(this.authoringTarget, this.solutionRoots, () => this.manager.ActiveSolution?.Name, () => this.manager.ActiveSolution?.Storage, this.sourceChanges)
+        const handlers = new RemoteStorageHandlers(() => resolver.Resolve(), () => resolver.Bridge())
         this.guarded(StorageProtocol.ReadText, p => handlers.ReadText(p))
         this.guarded(StorageProtocol.ReadBytes, p => handlers.ReadBytes(p))
         this.guarded(StorageProtocol.WriteText, p => handlers.WriteText(p))

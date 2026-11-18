@@ -7,6 +7,7 @@ import { RemoteStorageHandlers } from '../remote-storage-handlers.js'
 import { AuthoringStorageResolver } from '../authoring-storage-resolver.js'
 import { AuthoringTarget } from '../../solutions/authoring-target.js'
 import { EnvSolutionRoots } from '../../solutions/env-solution-roots.js'
+import type { SourceChangeBridge } from '../../solutions/source-change-bridge.js'
 
 class StorageFx
 {
@@ -240,4 +241,44 @@ test('an unknown or invalid selection is refused, never routed to another root',
         await assert.rejects(() => conn.WriteText({ Path: 'x.txt', Content: 'x' }), (e: unknown) => e instanceof ResponseError && e.code === ErrorCodes.InvalidRequest)
     }
     assert.equal(await active.Exists('x.txt'), false)
+})
+
+class BridgeFx
+{
+    public readonly Calls: string[] = []
+
+    public get Bridge(): SourceChangeBridge
+    {
+        return { TextWritten: (_s: unknown, path: string) => this.Calls.push('text:' + path), Deleted: (path: string) => this.Calls.push('del:' + path) } as unknown as SourceChangeBridge
+    }
+
+    public Connection(roots: EnvSolutionRoots, active: FakeStorage, select?: string): RemoteStorageHandlers
+    {
+        const target = new AuthoringTarget(() => 'Active')
+        if (select !== undefined)
+        {
+            target.Select(select)
+        }
+        const resolver = new AuthoringStorageResolver(target, roots, () => 'Active', () => active, this.Bridge)
+        return new RemoteStorageHandlers(() => resolver.Resolve(), () => resolver.Bridge())
+    }
+}
+
+test('a write to the active root notifies the active bridge; a write to a non-active root does not', async () =>
+{
+    const roots = RoutingFx.Roots()
+    roots.EnsureRoot('Other')
+    const fx = new BridgeFx()
+    const active = new FakeStorage()
+    const unselected = fx.Connection(roots, active)
+    await unselected.WriteText({ Path: 'a.todl', Content: 'x' })
+    assert.deepEqual(fx.Calls, ['text:a.todl'])
+    const explicitActive = fx.Connection(roots, active, 'Active')
+    await explicitActive.WriteText({ Path: 'b.todl', Content: 'x' })
+    assert.deepEqual(fx.Calls, ['text:a.todl', 'text:b.todl'])
+    const other = fx.Connection(roots, active, 'Other')
+    await other.WriteText({ Path: 'c.todl', Content: 'x' })
+    await other.Delete({ Path: 'c.todl' })
+    assert.deepEqual(fx.Calls, ['text:a.todl', 'text:b.todl'])
+    assert.equal(await roots.RootFor('Other').Exists('c.todl'), false)
 })
