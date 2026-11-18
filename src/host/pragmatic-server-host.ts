@@ -54,7 +54,7 @@ import type { Observability } from '../observability/observability.js'
 import { DrainController } from '../observability/drain-controller.js'
 import { WsInFlightSource } from '../observability/ws-in-flight-source.js'
 import type { IInFlightSource } from '../observability/drain-controller.js'
-import { RequestCorrelation } from '../observability/request-correlation.js'
+import { RequestCorrelation } from '../observability/request-correlation.js'
 import { EnvironmentPurpose } from '../environments/environment-purpose.js'
 
 export interface PragmaticServerHostOptions
