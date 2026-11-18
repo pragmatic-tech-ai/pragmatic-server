@@ -56,6 +56,8 @@ test('the run-test scope allows exactly runtime/run-test, application list and g
     const gate = TokenScopeGate.For([TokenScope.RunTest])
     assert.equal(TokenScope.RunTest, 'environment-run-test')
     assert.equal(gate.Allows(RunTestProtocol.Load.method), true)
+    assert.equal(gate.Allows(PragmaticAppProtocol.List.method), true)
+    assert.equal(gate.Allows(GraphProtocol.Loaded.method), true)
     assert.equal(gate.Allows(RunTestFixture.DataWriteMethod), false)
     assert.deepEqual([...RunTestMethods.All], [RunTestProtocol.Load.method, PragmaticAppProtocol.List.method, GraphProtocol.Loaded.method])
     for (const method of [ApplicationDeployProtocol.Deploy.method, AppDataProtocol.Write.method, PragmaticAppProtocol.Open.method, GraphProtocol.Create.method, GraphProtocol.Delete.method, DataSharingProtocol.Share.method, DataAssignmentProtocol.Assign.method])
@@ -86,8 +88,24 @@ test('a Developer+RunTest connection loads via the deploy provider and is reject
         assert.deepEqual(result, RunTestFixture.LoadResult)
         assert.deepEqual(fx.Deployed, [RunTestFixture.LoadParams])
         await assert.rejects(() => a.Client.sendRequest(AppDataProtocol.Write, {} as never), (e: { code?: number; message?: string }) => e.code === ErrorCodes.InvalidRequest && e.message === RunTestFixture.OutsideScopeMessage)
-        await assert.rejects(() => a.Client.sendRequest(ApplicationDeployProtocol.Deploy, RunTestFixture.LoadParams), (e: { code?: number; message?: string }) => e.message === RunTestFixture.OutsideScopeMessage)
+        await assert.rejects(() => a.Client.sendRequest(ApplicationDeployProtocol.Deploy, RunTestFixture.LoadParams), (e: { code?: number; message?: string }) => e.code === ErrorCodes.InvalidRequest && e.message === RunTestFixture.OutsideScopeMessage)
         assert.equal(fx.Deployed.length, 1)
+    }
+    finally
+    {
+        a.Client.dispose()
+        a.Handler.Dispose()
+    }
+})
+
+test('a Viewer+RunTest connection is rejected on runtime/run-test by the policy check inside guarded dispatch', async () =>
+{
+    const fx = new RunTestFixture()
+    const a = fx.Attach(Role.Viewer)
+    try
+    {
+        await assert.rejects(() => a.Client.sendRequest(RunTestProtocol.Load, RunTestFixture.LoadParams), (e: { code?: number; message?: string }) => e.message !== RunTestFixture.OutsideScopeMessage)
+        assert.equal(fx.Deployed.length, 0)
     }
     finally
     {
