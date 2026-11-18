@@ -92,6 +92,32 @@ export class EnvSolutionRoots implements IEnvSolutionSource
         return root
     }
 
+    /** The storage location string of a (valid) solution's root, for opening it through the solution manager. */
+    public LocationFor(solutionName: string): string
+    {
+        EnvSolutionRoots.Validate(solutionName)
+        return this.LocationOf(solutionName)
+    }
+
+    /**
+     * Create-or-replace the named solution's root: any existing contents are cleared (last-writer-wins), an empty
+     * `<name>.pksln` manifest is written, and the cache is refreshed so the composed set sees it. Returns whether the
+     * name was newly created (false when it replaced an existing solution). Throws for an invalid name.
+     */
+    public async CreateOrReplace(solutionName: string): Promise<boolean>
+    {
+        EnvSolutionRoots.Validate(solutionName)
+        const existed = this.roots.has(solutionName)
+        const root = this.EnsureRoot(solutionName)
+        for (const entry of await EnvSolutionRoots.ListIfPresent(root))
+        {
+            await root.Delete(entry.Name)
+        }
+        await root.WriteText(solutionName + EnvSolutionRoots.ManifestSuffix, SolutionManifest.create(solutionName).stringify())
+        await this.Refresh()
+        return !existed
+    }
+
     public Names(): readonly string[]
     {
         return [...this.roots.keys()]

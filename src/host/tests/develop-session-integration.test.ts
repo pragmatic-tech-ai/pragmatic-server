@@ -1,9 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, createMessageConnection, NullLogger, StorageProtocol, SolutionProtocol, GraphProtocol, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, createMessageConnection, NullLogger, StorageProtocol, SolutionProtocol, GraphProtocol, PragmaticAppProtocol, AppDataProtocol, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection, GraphContributeParamsDto, GraphCreateParamsDto, GraphDetailDto, GraphExportDto, GraphRefParamsDto, GraphSummaryDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { FakeStorage, Signal } from '@pragmatic-tech-ai/todl-runtime'
+import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
+import type { IStorageProviderRegistry } from '@pragmatic-tech-ai/todl'
+import { EnvSolutionRoots } from '../solutions/env-solution-roots.js'
 import { GraphBuildState } from '@pragmatic-tech-ai/todl'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
@@ -100,11 +103,11 @@ class DevelopFixture
         this.Manager = { ActiveSolution: { Name: DevelopFixture.ActiveName, Storage: new FakeStorage(), Members: { ToArray: () => [] } } } as unknown as SolutionManagerService
     }
 
-    public static Context(scopes: readonly string[]): AccessContext
+    public static Context(scopes: readonly string[], role: Role = Role.Owner): AccessContext
     {
         const realm = new Realm(DevelopFixture.EnvironmentId, RealmKind.SelfHosted, DevelopFixture.EnvironmentName)
         const principal = new Principal(DevelopFixture.PrincipalId, DevelopFixture.EnvironmentId, PrincipalKind.User, new Map(), [])
-        const grants = [new Grant(DevelopFixture.PrincipalId, Role.Owner, new ResourceRef(ResourceKind.Realm, DevelopFixture.EnvironmentId, []))]
+        const grants = [new Grant(DevelopFixture.PrincipalId, role, new ResourceRef(ResourceKind.Realm, DevelopFixture.EnvironmentId, []))]
         return new ScopedAccessContext(new AccessContext(principal, realm, grants, new ResourceAuthorizationPolicy()), scopes)
     }
 
@@ -113,10 +116,10 @@ class DevelopFixture
         await new Promise(resolve => setTimeout(resolve, 50))
     }
 
-    public Attach(scopes: readonly string[] = [TokenScope.Develop]): DevelopConnection
+    public Attach(scopes: readonly string[] = [TokenScope.Develop], role: Role = Role.Owner, roots?: EnvSolutionRoots): DevelopConnection
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, this.language, this.Manager, DevelopFixture.Context(scopes), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, EnvironmentPurpose.Development, undefined, undefined, undefined, undefined, undefined, this.Graphs, undefined, undefined, undefined, undefined, this.Bridge)
+        const handler = ServerConnectionHandler.Attach(serverSocket, this.language, this.Manager, DevelopFixture.Context(scopes, role), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, EnvironmentPurpose.Development, undefined, undefined, undefined, undefined, undefined, this.Graphs, undefined, undefined, undefined, undefined, this.Bridge, roots)
         const client = createMessageConnection(new WebSocketMessageReader(clientSocket), new WebSocketMessageWriter(clientSocket), NullLogger)
         const connection = new DevelopConnection(handler, client)
         client.onNotification(StorageProtocol.Changed, payload => { connection.StoragePushes.push(payload) })
@@ -209,6 +212,59 @@ test('graph/contribute succeeds under the develop scope, which allowlists it, wh
         {
             control.Dispose()
         }
+    }
+    finally
+    {
+        a.Dispose()
+    }
+})
+
+class DeveloperRegistry implements IStorageProviderRegistry
+{
+    private readonly stores = new Map<string, FakeStorage>()
+
+    public CreateStorage(location: string): IStorage
+    {
+        let store = this.stores.get(location)
+        if (store === undefined)
+        {
+            store = new FakeStorage(location)
+            this.stores.set(location, store)
+        }
+        return store
+    }
+}
+
+class DeveloperAuthz
+{
+    public static readonly NewName = 'sol-new'
+    public static readonly Area = 'env/solutions'
+    public static readonly AppOpen = { name: 'app' }
+    public static readonly DataWrite = { appName: 'app', changes: [] }
+    public static readonly OtherLocation = 'x'
+}
+
+test('authz: solution/create is allowlisted for develop and runs under Role.Developer; escalation methods stay denied', async () =>
+{
+    assert.ok(DevelopMethods.All.includes(SolutionProtocol.CreateSolution.method))
+    for (const escalation of [SolutionProtocol.OpenSolution.method, GraphProtocol.Create.method, GraphProtocol.Delete.method, GraphProtocol.Load.method, PragmaticAppProtocol.Open.method, AppDataProtocol.Write.method])
+    {
+        assert.ok(!DevelopMethods.All.includes(escalation), escalation)
+    }
+    const fx = new DevelopFixture()
+    const roots = new EnvSolutionRoots(DeveloperAuthz.Area, new DeveloperRegistry())
+    const manager = fx.Manager as unknown as { OpenSolution: (location: string) => Promise<void> }
+    manager.OpenSolution = async () => undefined
+    const a = fx.Attach([TokenScope.Develop], Role.Developer, roots)
+    try
+    {
+        const result = await a.Client.sendRequest(SolutionProtocol.CreateSolution, { Name: DeveloperAuthz.NewName })
+        assert.deepEqual(result, { Name: DeveloperAuthz.NewName, Created: true })
+        const denied = (e: { code?: number; message?: string }) => e.code === ErrorCodes.InvalidRequest && e.message === DevelopFixture.OutsideScopeMessage
+        await assert.rejects(() => a.Client.sendRequest(SolutionProtocol.OpenSolution, { location: DeveloperAuthz.OtherLocation }), denied)
+        await assert.rejects(() => a.Client.sendRequest(GraphProtocol.Create, DevelopFixture.CreateParams), denied)
+        await assert.rejects(() => a.Client.sendRequest(PragmaticAppProtocol.Open, DeveloperAuthz.AppOpen as never), denied)
+        await assert.rejects(() => a.Client.sendRequest(AppDataProtocol.Write, DeveloperAuthz.DataWrite as never), denied)
     }
     finally
     {

@@ -1,5 +1,7 @@
 import { join } from 'node:path'
 import { SourceChangeBridge } from './host/solutions/source-change-bridge.js'
+import { EnvSolutionRoots } from './host/solutions/env-solution-roots.js'
+import { ComposedSolutionLoader } from './host/solutions/composed-solution-loader.js'
 import { ConnectorContext, StorageKind } from '@pragmatic-tech-ai/graph'
 import type { ISubscription } from '@pragmatic-tech-ai/graph'
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
@@ -133,6 +135,8 @@ export interface PragmaticServerOptions
     applicationsRoot?: string
     packagesRoot?: string
     graphsRoot?: string
+    /** The development environment's named-solution source area (one subfolder per solution); default `solutions`. */
+    solutionsRoot?: string
     identity?: PragmaticServerIdentityOptions
     deploymentMode?: DeploymentMode
     platform?: PlatformServices
@@ -157,6 +161,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
 {
     private static readonly DefaultPackagesDir = 'packages'
     private static readonly DefaultGraphsDir = 'graphs'
+    private static readonly DefaultSolutionsDir = 'solutions'
     private static readonly ApplicationsRootRequiredError = 'applicationsRoot is required for a runtime environment'
     private static readonly ErrorSeparator = '; '
 
@@ -210,6 +215,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private environmentRules: EnvironmentScopeRules | undefined
     private devExecute: DevCypherExecute | undefined
     private devSourceChangeBridge: Promise<SourceChangeBridge> | undefined
+    private devSolutionRoots: Promise<EnvSolutionRoots> | undefined
 
     public constructor(options: PragmaticServerOptions)
     {
@@ -880,6 +886,25 @@ export class PragmaticServer implements IEnvironmentGraphHost
         // memoize the PROMISE: concurrent first callers share one in-flight construction, hence one bridge
         this.devSourceChangeBridge ??= this.BuildSourceChangeBridge()
         return this.devSourceChangeBridge
+    }
+
+    /**
+     * This environment's named-solution roots, memoized: seeded from disk once, with the composed member set registered
+     * on the environment's manager exactly once (so the composition covers the active solution plus every named one).
+     */
+    public async DevSolutionRoots(): Promise<EnvSolutionRoots>
+    {
+        this.devSolutionRoots ??= this.BuildSolutionRoots()
+        return this.devSolutionRoots
+    }
+
+    private async BuildSolutionRoots(): Promise<EnvSolutionRoots>
+    {
+        const roots = new EnvSolutionRoots(this.options.solutionsRoot ?? PragmaticServer.DefaultSolutionsDir, this.platform.CreateStorageProviderRegistry())
+        await roots.Refresh()
+        const manager = await this.Manager()
+        manager.SetComposedMemberSet(new ComposedSolutionLoader(manager, roots))
+        return roots
     }
 
     private async BuildSourceChangeBridge(): Promise<SourceChangeBridge>

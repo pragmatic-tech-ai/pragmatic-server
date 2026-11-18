@@ -121,6 +121,7 @@ export class PolicyGate
             [SolutionProtocol.ActiveSolution.method, readRealm],
             [SolutionProtocol.ListSolutions.method, readRealm],
             [SolutionProtocol.SelectAuthoring.method, writeRealm],
+            [SolutionProtocol.CreateSolution.method, writeRealm],
             [StorageProtocol.ReadText.method, readRealm],
             [StorageProtocol.ReadBytes.method, readRealm],
             [StorageProtocol.Exists.method, readRealm],

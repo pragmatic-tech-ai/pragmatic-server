@@ -1,7 +1,7 @@
 import {
     createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol, GraphProtocol, StorageProtocol, BuildState,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, SolutionSummaryDto, ModelViewPageDto, ModelViewParams, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, TeamMemberDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, CypherModelListDto, ConnectorReadParams, Page, EntityDto, PragmaticAppSummaryDto, GraphSummaryDto, GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, SolutionSummaryDto, ModelViewPageDto, ModelViewParams, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, TeamMemberDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, CypherModelListDto, ConnectorReadParams, Page, EntityDto, PragmaticAppSummaryDto, GraphSummaryDto, GraphLoadParamsDto, GraphLoadedDto, SolutionCreateParamsDto, SolutionCreateResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { TeamMemberOrigin } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResponseError, ErrorCodes, DrainingError, ApplicationDeployProtocol, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherAppDeployParamsDto, AppDeployResultDto, AppWriteParams, AppWriteResultDto, AppWriteOpDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto, DataChangedPayload } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -15,6 +15,7 @@ import { AuthoringTarget } from './solutions/authoring-target.js'
 import type { SourceChangeBridge } from './solutions/source-change-bridge.js'
 import { RemoteStorageHandlers } from './storage/remote-storage-handlers.js'
 import { AuthoringStorageResolver } from './storage/authoring-storage-resolver.js'
+import { InvalidSolutionNameError } from './solutions/env-solution-roots.js'
 import type { EnvSolutionRoots } from './solutions/env-solution-roots.js'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { InvalidParamsPrefix } from './invalid-params-prefix.js'
@@ -83,6 +84,8 @@ export class ServerConnectionHandler
     private static readonly PagedExplicitBoundsMessage = `${InvalidParamsPrefix.Text}paging cannot be combined with an explicit SKIP or LIMIT`
     private static readonly ModelIdField = 'modelId'
     private static readonly CypherUnavailableMessage = `${InvalidParamsPrefix.Text}cypher not available`
+    private static readonly BadSolutionNameMessage = `${InvalidParamsPrefix.Text}Name must be a valid solution name`
+    private static readonly NoSolutionRootsMessage = `${InvalidParamsPrefix.Text}this environment has no named-solution source area`
     private static readonly BadSolutionIdMessage = `${InvalidParamsPrefix.Text}SolutionId must be a string`
     private static readonly ModelViewUnavailableMessage = `${InvalidParamsPrefix.Text}model view not available`
     private static readonly NotRuntimeMessage = 'operation requires a runtime environment'
@@ -1300,6 +1303,37 @@ export class ServerConnectionHandler
             this.authoringTarget.Select(p.SolutionId)
             return this.AuthoringSummary(p.SolutionId)
         })
+        this.guarded(SolutionProtocol.CreateSolution, p => this.CreateSolution(p))
+    }
+
+    /** Dev-only `solution/create`: create-or-replace the named solution's root, make it active and this connection's authoring target. */
+    private async CreateSolution(params: SolutionCreateParamsDto): Promise<SolutionCreateResultDto>
+    {
+        this.EnsureDevelopment()
+        if (typeof params?.Name !== 'string' || params.Name === '')
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.BadSolutionNameMessage)
+        }
+        if (this.solutionRoots === undefined)
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.NoSolutionRootsMessage)
+        }
+        let created: boolean
+        try
+        {
+            created = await this.solutionRoots.CreateOrReplace(params.Name)
+        }
+        catch (error)
+        {
+            if (error instanceof InvalidSolutionNameError)
+            {
+                throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.BadSolutionNameMessage)
+            }
+            throw error
+        }
+        await this.manager.OpenSolution(this.solutionRoots.LocationFor(params.Name))
+        this.authoringTarget.Select(params.Name)
+        return { Name: params.Name, Created: created }
     }
 
     /** Dev-only `storage/*`: the connection's authoring solution's source store (its own root, or the active solution's when none is selected), driven remotely; paths are confined to its root by {@link RemoteStorageHandlers}. */

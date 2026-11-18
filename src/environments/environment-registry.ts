@@ -35,6 +35,7 @@ export class EnvironmentRegistry
     private static readonly PackagesDir = 'packages'
     private static readonly ApplicationsDir = 'applications'
     private static readonly GraphsDir = 'graphs'
+    private static readonly SolutionsDir = 'solutions'
     private static readonly IdentityDir = 'identity'
     private static readonly UnprovisionedError = 'environment is not provisioned'
     private static readonly InvalidEnvironmentError = 'invalid environment id'
@@ -236,6 +237,7 @@ export class EnvironmentRegistry
             purpose: provisioning.purpose,
             applicationsRoot: join(this.baseDir, environmentId, EnvironmentRegistry.ApplicationsDir),
             graphsRoot: join(this.baseDir, environmentId, EnvironmentRegistry.GraphsDir),
+            solutionsRoot: join(this.baseDir, environmentId, EnvironmentRegistry.SolutionsDir),
             platform: this.platform,
             deploymentMode: this.deploymentMode,
             connectorsPolicy: provisioning.connectorsPolicy,
