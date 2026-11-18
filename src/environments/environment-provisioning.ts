@@ -8,6 +8,8 @@ export interface EnvironmentProvisioning
 {
     displayName: string
     purpose?: EnvironmentPurpose
+    /** A Development environment that also serves the runtime surface (a co-hosted runtime graph engine); default false. */
+    runtimeCoHosted?: boolean
     bootstrap?: BootstrapOptions
     oidc?: OidcServerOptions
     connectorsPolicy?: ConnectorsPolicy

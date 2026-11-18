@@ -36,3 +36,34 @@ test('a bare PragmaticServer is Development', () =>
 {
     assert.equal(new PragmaticServer({}).Purpose(), EnvironmentPurpose.Development)
 })
+
+test('ServesDevelopment / ServesRuntime across the provisioning shapes', () =>
+{
+    const registry = PurposeFixture.Registry()
+    const build = (provisioning: { purpose?: EnvironmentPurpose, runtimeCoHosted?: boolean }) => new PragmaticServer(registry.OptionsFor(PurposeFixture.EnvironmentId, { displayName: PurposeFixture.Display, ...provisioning }))
+    const dual = build({ purpose: EnvironmentPurpose.Development, runtimeCoHosted: true })
+    assert.equal(dual.ServesDevelopment(), true)
+    assert.equal(dual.ServesRuntime(), true)
+    assert.equal(dual.Purpose(), EnvironmentPurpose.Development)
+    const dev = build({ purpose: EnvironmentPurpose.Development })
+    assert.equal(dev.ServesDevelopment(), true)
+    assert.equal(dev.ServesRuntime(), false)
+    const runtime = build({ purpose: EnvironmentPurpose.Runtime })
+    assert.equal(runtime.ServesRuntime(), true)
+    assert.equal(runtime.ServesDevelopment(), false)
+})
+
+test('a dual-purpose server constructs both the dev and the runtime getters', () =>
+{
+    const options = PurposeFixture.Registry().OptionsFor(PurposeFixture.EnvironmentId, { displayName: PurposeFixture.Display, purpose: EnvironmentPurpose.Development, runtimeCoHosted: true })
+    const server = new PragmaticServer(options)
+    assert.ok(server.GraphService())
+    assert.ok(server.EnvironmentEngine())
+    assert.ok(server.Applications())
+})
+
+test('a plain Development server still refuses the runtime getters', () =>
+{
+    const server = new PragmaticServer(PurposeFixture.Registry().OptionsFor(PurposeFixture.EnvironmentId, { displayName: PurposeFixture.Display }))
+    assert.throws(() => server.Applications())
+})
