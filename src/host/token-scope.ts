@@ -35,6 +35,7 @@ export class DevelopMethods
     public static readonly All: readonly string[] = [
         SolutionProtocol.ListSolutions.method,
         SolutionProtocol.SelectAuthoring.method,
+        SolutionProtocol.CreateSolution.method,
         SolutionProtocol.ActiveSolution.method,
         StorageProtocol.ReadText.method,
         StorageProtocol.ReadBytes.method,

@@ -1,12 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, createMessageConnection, NullLogger, StorageProtocol, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, createMessageConnection, NullLogger, StorageProtocol, SolutionProtocol, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
 import { FakeStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { GraphBuildState } from '@pragmatic-tech-ai/todl'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
+import { EnvSolutionRoots } from '../../solutions/env-solution-roots.js'
+import { MemoryStorageRegistry } from '../../solutions/tests/memory-storage-registry.js'
 import { EnvironmentPurpose } from '../../../environments/environment-purpose.js'
 import { SourceChangeBridge } from '../../solutions/source-change-bridge.js'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
@@ -168,5 +170,119 @@ test('after a handler is disposed it receives no further pushes', async () =>
         writer.client.dispose()
         listener.client.dispose()
         writer.handler.Dispose()
+    }
+})
+
+class CreateFixture
+{
+    public static readonly Area = 'env/solutions'
+    public static readonly Name = 'alpha'
+    public static readonly Other = 'beta'
+    public static readonly Seeded = 'seed.todl'
+    public static readonly SeedText = 'entity X {}'
+    public static readonly NestedFile = 'proj/model.todl'
+    public static readonly NestedDir = 'proj'
+    public static readonly BadNames: readonly unknown[] = ['', '../escape', 'a/b', undefined, 7]
+
+    public readonly Registry = new MemoryStorageRegistry()
+    public readonly Roots = new EnvSolutionRoots(CreateFixture.Area, this.Registry)
+    public readonly Opened: string[] = []
+
+    public static Manifest(name: string): string
+    {
+        return `${name}.pksln`
+    }
+
+    public Attach(): { handler: ServerConnectionHandler; client: MessageConnection }
+    {
+        const manager = RegistrationFixture.Manager() as unknown as { OpenSolution: (location: string) => Promise<void> }
+        manager.OpenSolution = async location => { this.Opened.push(location) }
+        const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
+        const handler = ServerConnectionHandler.Attach(serverSocket, RegistrationFixture.Language(), manager as unknown as SolutionManagerService, RegistrationFixture.Context(Role.Owner), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, EnvironmentPurpose.Development, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, this.Roots)
+        const client = createMessageConnection(new WebSocketMessageReader(clientSocket), new WebSocketMessageWriter(clientSocket), NullLogger)
+        client.listen()
+        return { handler, client }
+    }
+}
+
+test('solution/create materializes the root + manifest, activates it, selects it as the authoring target and joins the composed set', async () =>
+{
+    const fx = new CreateFixture()
+    const a = fx.Attach()
+    try
+    {
+        let changes = 0
+        fx.Roots.Changed.subscribe(() => { changes++ })
+        const result = await a.client.sendRequest(SolutionProtocol.CreateSolution, { Name: CreateFixture.Name })
+        assert.deepEqual(result, { Name: CreateFixture.Name, Created: true })
+        assert.deepEqual(fx.Opened, [`${CreateFixture.Area}/${CreateFixture.Name}`])
+        assert.ok(changes > 0)
+        assert.equal(await fx.Roots.RootFor(CreateFixture.Name).Exists(CreateFixture.Manifest(CreateFixture.Name)), true)
+        assert.deepEqual(fx.Roots.Names(), [CreateFixture.Name])
+        assert.equal(a.handler.Authoring.Selected, CreateFixture.Name)
+    }
+    finally
+    {
+        a.client.dispose()
+        a.handler.Dispose()
+    }
+})
+
+test('solution/create is create-or-replace, last-writer-wins: a re-create clears the root and reports Created=false', async () =>
+{
+    const fx = new CreateFixture()
+    const a = fx.Attach()
+    try
+    {
+        await a.client.sendRequest(SolutionProtocol.CreateSolution, { Name: CreateFixture.Name })
+        await fx.Roots.RootFor(CreateFixture.Name).WriteText(CreateFixture.Seeded, CreateFixture.SeedText)
+        await fx.Roots.RootFor(CreateFixture.Name).WriteText(CreateFixture.NestedFile, CreateFixture.SeedText)
+        const again = await a.client.sendRequest(SolutionProtocol.CreateSolution, { Name: CreateFixture.Name })
+        assert.deepEqual(again, { Name: CreateFixture.Name, Created: false })
+        const root = fx.Roots.RootFor(CreateFixture.Name)
+        assert.equal(await root.Exists(CreateFixture.Seeded), false)
+        assert.equal(await root.Exists(CreateFixture.NestedFile), false)
+        assert.equal(await root.Exists(CreateFixture.NestedDir), false)
+        assert.equal(await root.Exists(CreateFixture.Manifest(CreateFixture.Name)), true)
+        await a.client.sendRequest(SolutionProtocol.CreateSolution, { Name: CreateFixture.Other })
+        assert.deepEqual([...fx.Roots.Names()].sort(), [CreateFixture.Name, CreateFixture.Other])
+    }
+    finally
+    {
+        a.client.dispose()
+        a.handler.Dispose()
+    }
+})
+
+test('solution/create rejects a bad or missing name with InvalidParams and keeps the connection alive', async () =>
+{
+    const fx = new CreateFixture()
+    const a = fx.Attach()
+    try
+    {
+        for (const bad of CreateFixture.BadNames)
+        {
+            await assert.rejects(() => a.client.sendRequest(SolutionProtocol.CreateSolution, { Name: bad as never }), (e: { code?: number }) => e.code === ErrorCodes.InvalidParams)
+        }
+        assert.deepEqual(await a.client.sendRequest(SolutionProtocol.CreateSolution, { Name: CreateFixture.Name }), { Name: CreateFixture.Name, Created: true })
+    }
+    finally
+    {
+        a.client.dispose()
+        a.handler.Dispose()
+    }
+})
+
+test('a Runtime environment does not register solution/create', async () =>
+{
+    const a = RegistrationFixture.Attach(EnvironmentPurpose.Runtime)
+    try
+    {
+        await assert.rejects(() => a.client.sendRequest(SolutionProtocol.CreateSolution, { Name: CreateFixture.Name }), (e: { code?: number }) => e.code !== undefined)
+    }
+    finally
+    {
+        a.client.dispose()
+        a.handler.Dispose()
     }
 })

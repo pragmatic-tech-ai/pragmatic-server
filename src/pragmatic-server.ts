@@ -1,5 +1,8 @@
 import { join } from 'node:path'
 import { SourceChangeBridge } from './host/solutions/source-change-bridge.js'
+import { EnvSolutionRoots } from './host/solutions/env-solution-roots.js'
+import { AutoConfirmPromptService } from './platform/auto-confirm-prompt-service.js'
+import { ComposedSolutionLoader } from './host/solutions/composed-solution-loader.js'
 import { ConnectorContext, StorageKind } from '@pragmatic-tech-ai/graph'
 import type { ISubscription } from '@pragmatic-tech-ai/graph'
 import { LazyCompositionRoot, HostKinds, ModuleStateKind } from '@pragmatic-tech-ai/todl-runtime'
@@ -133,6 +136,8 @@ export interface PragmaticServerOptions
     applicationsRoot?: string
     packagesRoot?: string
     graphsRoot?: string
+    /** The development environment's named-solution source area (one subfolder per solution); default `solutions`. */
+    solutionsRoot?: string
     identity?: PragmaticServerIdentityOptions
     deploymentMode?: DeploymentMode
     platform?: PlatformServices
@@ -157,6 +162,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
 {
     private static readonly DefaultPackagesDir = 'packages'
     private static readonly DefaultGraphsDir = 'graphs'
+    private static readonly DefaultSolutionsDir = 'solutions'
     private static readonly ApplicationsRootRequiredError = 'applicationsRoot is required for a runtime environment'
     private static readonly ErrorSeparator = '; '
 
@@ -210,6 +216,7 @@ export class PragmaticServer implements IEnvironmentGraphHost
     private environmentRules: EnvironmentScopeRules | undefined
     private devExecute: DevCypherExecute | undefined
     private devSourceChangeBridge: Promise<SourceChangeBridge> | undefined
+    private devSolutionRoots: Promise<EnvSolutionRoots> | undefined
 
     public constructor(options: PragmaticServerOptions)
     {
@@ -882,6 +889,31 @@ export class PragmaticServer implements IEnvironmentGraphHost
         return this.devSourceChangeBridge
     }
 
+    /**
+     * This environment's named-solution roots, memoized: seeded from disk once, with the composed member set registered
+     * on the environment's manager exactly once (so the composition covers the active solution plus every named one).
+     */
+    public async DevSolutionRoots(): Promise<EnvSolutionRoots>
+    {
+        this.devSolutionRoots ??= this.BuildSolutionRoots()
+        return this.devSolutionRoots
+    }
+
+    private async BuildSolutionRoots(): Promise<EnvSolutionRoots>
+    {
+        // Defensive: composition (the env-wide shared member set) is a Development-only feature; both host call sites
+        // already gate on Purpose === Development, this pins that invariant should a third caller ever appear.
+        this.AssertDevelopmentPurpose()
+        const roots = new EnvSolutionRoots(this.options.solutionsRoot ?? PragmaticServer.DefaultSolutionsDir, this.platform.CreateStorageProviderRegistry())
+        await roots.Refresh()
+        const manager = await this.Manager()
+        const loader = new ComposedSolutionLoader(manager, roots)
+        const logger = this.options.logger ?? new NullLogger()
+        loader.OverlapQuarantined.subscribe(message => logger.Warn(message))
+        manager.SetComposedMemberSet(loader)
+        return roots
+    }
+
     private async BuildSourceChangeBridge(): Promise<SourceChangeBridge>
     {
         return new SourceChangeBridge(await this.LanguageService())
@@ -1137,7 +1169,9 @@ export class PragmaticServer implements IEnvironmentGraphHost
     {
         const services = this.root.Services()
         services.registerInstance(SolutionManagerService.StorageRegistryKey, this.platform.CreateStorageProviderRegistry())
-        services.registerInstance(SolutionManagerService.PromptServiceKey, this.platform.CreatePromptService())
+        // development environments auto-confirm discard prompts so a server-side solution switch (solution/create) never blocks on a headless refusal
+        const prompts = this.platform.CreatePromptService()
+        services.registerInstance(SolutionManagerService.PromptServiceKey, this.Purpose() === EnvironmentPurpose.Development ? new AutoConfirmPromptService(prompts) : prompts)
         const packagesStorage = this.platform.CreatePackagesStorage(packagesRoot)
         services.registerInstance(SolutionManagerService.PackageSourceKey, new StoragePackageSource(packagesStorage))
         services.registerInstance(PackageStoreKey, new StoragePackageStore(packagesStorage))

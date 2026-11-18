@@ -16,6 +16,12 @@ export class AuthoringTarget
         return this.selected ?? this.fallback()
     }
 
+    /** The explicitly selected solution, or undefined while the connection still follows the environment. */
+    public get Selected(): string | undefined
+    {
+        return this.selected
+    }
+
     public Select(id: string): void
     {
         this.selected = id

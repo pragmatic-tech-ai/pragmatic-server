@@ -1,7 +1,7 @@
 import {
     createMessageConnection, NullLogger, WebSocketMessageReader, WebSocketMessageWriter, LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol, GraphProtocol, StorageProtocol, BuildState,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, SolutionSummaryDto, ModelViewPageDto, ModelViewParams, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, TeamMemberDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, CypherModelListDto, ConnectorReadParams, Page, EntityDto, PragmaticAppSummaryDto, GraphSummaryDto, GraphLoadParamsDto, GraphLoadedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { MessageConnection, IMessageSocket, ActiveSolutionSummary, SolutionSummaryDto, ModelViewPageDto, ModelViewParams, GrantDto, GrantMutationDto, IdentityConfigDto, SecurityModelDto, SetSecurityModelParams, TeamMemberDto, AccountDto, CreateAccountParams, ServiceTokenSummaryDto, IssueTokenParams, TokenIssuedDto, CypherQueryParams, CypherQueryPageDto, CypherExecuteParams, CypherExecuteResultDto, CypherModelListDto, ConnectorReadParams, Page, EntityDto, PragmaticAppSummaryDto, GraphSummaryDto, GraphLoadParamsDto, GraphLoadedDto, SolutionCreateParamsDto, SolutionCreateResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { TeamMemberOrigin } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ResponseError, ErrorCodes, DrainingError, ApplicationDeployProtocol, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { CypherAppDeployParamsDto, AppDeployResultDto, AppWriteParams, AppWriteResultDto, AppWriteOpDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto, ListSharesParams, ListSharesResultDto, AssignParams, AssignResultDto, DataChangedPayload } from '@pragmatic-tech-ai/pragmatic-protocol'
@@ -14,6 +14,9 @@ import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import { AuthoringTarget } from './solutions/authoring-target.js'
 import type { SourceChangeBridge } from './solutions/source-change-bridge.js'
 import { RemoteStorageHandlers } from './storage/remote-storage-handlers.js'
+import { AuthoringStorageResolver } from './storage/authoring-storage-resolver.js'
+import { InvalidSolutionNameError } from './solutions/env-solution-roots.js'
+import type { EnvSolutionRoots } from './solutions/env-solution-roots.js'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { InvalidParamsPrefix } from './invalid-params-prefix.js'
 import { PolicyGate } from './policy-gate.js'
@@ -81,6 +84,8 @@ export class ServerConnectionHandler
     private static readonly PagedExplicitBoundsMessage = `${InvalidParamsPrefix.Text}paging cannot be combined with an explicit SKIP or LIMIT`
     private static readonly ModelIdField = 'modelId'
     private static readonly CypherUnavailableMessage = `${InvalidParamsPrefix.Text}cypher not available`
+    private static readonly BadSolutionNameMessage = `${InvalidParamsPrefix.Text}Name must be a valid solution name`
+    private static readonly NoSolutionRootsMessage = `${InvalidParamsPrefix.Text}this environment has no named-solution source area`
     private static readonly BadSolutionIdMessage = `${InvalidParamsPrefix.Text}SolutionId must be a string`
     private static readonly ModelViewUnavailableMessage = `${InvalidParamsPrefix.Text}model view not available`
     private static readonly NotRuntimeMessage = 'operation requires a runtime environment'
@@ -109,6 +114,8 @@ export class ServerConnectionHandler
     private readonly graphSubscription: IDisposable
     private readonly buildStateSubscription: IDisposable
     private readonly sourceChanges: SourceChangeBridge | undefined
+    /** Per-named-solution source roots; absent => storage/* serves the active solution only (Phase-2 behaviour). */
+    private readonly solutionRoots: EnvSolutionRoots | undefined
     private readonly storageChangedSubscription: IDisposable | undefined
     private readonly instrumentation: RequestInstrumentation | undefined
     private readonly parent: Context | undefined
@@ -141,10 +148,11 @@ export class ServerConnectionHandler
     private revoked = false
     private disposed = false
 
-    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectors: IGraphConnectorService | undefined, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: EnvironmentPurpose = EnvironmentPurpose.Development, applications?: PragmaticAppsRegistry, data?: IEnvironmentDataService, paging?: PagingLimits, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, modelView?: IGraphModelView, dataChanges?: IEnvironmentDataChanges, diagnostics?: IDispatchDiagnostics, sourceChanges?: SourceChangeBridge)
+    private constructor(connection: MessageConnection, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectors: IGraphConnectorService | undefined, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: EnvironmentPurpose = EnvironmentPurpose.Development, applications?: PragmaticAppsRegistry, data?: IEnvironmentDataService, paging?: PagingLimits, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, modelView?: IGraphModelView, dataChanges?: IEnvironmentDataChanges, diagnostics?: IDispatchDiagnostics, sourceChanges?: SourceChangeBridge, solutionRoots?: EnvSolutionRoots)
     {
         this.diagnostics = diagnostics ?? new LoggerDispatchDiagnostics()
         this.sourceChanges = sourceChanges
+        this.solutionRoots = solutionRoots
         this.cypherLimits = cypherLimits ?? new CypherLimits()
         this.paging = paging ?? new PagingLimits()
         this.purpose = purpose
@@ -276,10 +284,10 @@ export class ServerConnectionHandler
         return { devGraphService: server.GraphService(), cypherQuery: server.DevCypher(), cypherExecute: server.DevExecute(), modelView: server.DevModelView(), connectors: server.DevConnectors() }
     }
 
-    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectors: IGraphConnectorService | undefined, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: EnvironmentPurpose = EnvironmentPurpose.Development, applications?: PragmaticAppsRegistry, data?: IEnvironmentDataService, paging?: PagingLimits, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, modelView?: IGraphModelView, dataChanges?: IEnvironmentDataChanges, diagnostics?: IDispatchDiagnostics, sourceChanges?: SourceChangeBridge): ServerConnectionHandler
+    public static Attach(socket: IMessageSocket, languageService: ILanguageService, manager: SolutionManagerService, accessContext: AccessContext, connectors: IGraphConnectorService | undefined, cypherQuery: IGraphCypherQuery | undefined, instrumentation?: RequestInstrumentation, parent?: Context, audit?: IAccessAuditSink, rateLimit?: RateLimitGuard, admin?: AdminService, cypherLimits?: CypherLimits, purpose: EnvironmentPurpose = EnvironmentPurpose.Development, applications?: PragmaticAppsRegistry, data?: IEnvironmentDataService, paging?: PagingLimits, cypherExecute?: IGraphCypherExecute, deployProvider?: (params: CypherAppDeployParamsDto) => Promise<AppDeployResultDto>, devGraphService?: IDevGraphService, environmentGraphHost?: IEnvironmentGraphHost, modelView?: IGraphModelView, dataChanges?: IEnvironmentDataChanges, diagnostics?: IDispatchDiagnostics, sourceChanges?: SourceChangeBridge, solutionRoots?: EnvSolutionRoots): ServerConnectionHandler
     {
         const connection = createMessageConnection(new WebSocketMessageReader(socket), new WebSocketMessageWriter(socket), NullLogger)
-        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectors, cypherQuery, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, data, paging, cypherExecute, deployProvider, devGraphService, environmentGraphHost, modelView, dataChanges, diagnostics, sourceChanges)
+        const handler = new ServerConnectionHandler(connection, languageService, manager, accessContext, connectors, cypherQuery, instrumentation, parent, audit, rateLimit, admin, cypherLimits, purpose, applications, data, paging, cypherExecute, deployProvider, devGraphService, environmentGraphHost, modelView, dataChanges, diagnostics, sourceChanges, solutionRoots)
         connection.listen()
         return handler
     }
@@ -1295,12 +1303,44 @@ export class ServerConnectionHandler
             this.authoringTarget.Select(p.SolutionId)
             return this.AuthoringSummary(p.SolutionId)
         })
+        this.guarded(SolutionProtocol.CreateSolution, p => this.CreateSolution(p))
     }
 
-    /** Dev-only `storage/*`: the active solution's source store, driven remotely; paths are confined to its root by {@link RemoteStorageHandlers}. */
+    /** Dev-only `solution/create`: create-or-replace the named solution's root, make it active and this connection's authoring target. */
+    private async CreateSolution(params: SolutionCreateParamsDto): Promise<SolutionCreateResultDto>
+    {
+        this.EnsureDevelopment()
+        if (typeof params?.Name !== 'string' || params.Name === '')
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.BadSolutionNameMessage)
+        }
+        if (this.solutionRoots === undefined)
+        {
+            throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.NoSolutionRootsMessage)
+        }
+        let created: boolean
+        try
+        {
+            created = await this.solutionRoots.CreateOrReplace(params.Name)
+        }
+        catch (error)
+        {
+            if (error instanceof InvalidSolutionNameError)
+            {
+                throw new ResponseError(ErrorCodes.InvalidParams, ServerConnectionHandler.BadSolutionNameMessage)
+            }
+            throw error
+        }
+        await this.manager.OpenSolution(this.solutionRoots.LocationFor(params.Name))
+        this.authoringTarget.Select(params.Name)
+        return { Name: params.Name, Created: created }
+    }
+
+    /** Dev-only `storage/*`: the connection's authoring solution's source store (its own root, or the active solution's when none is selected), driven remotely; paths are confined to its root by {@link RemoteStorageHandlers}. */
     private RegisterStorageHandlers(): void
     {
-        const handlers = new RemoteStorageHandlers(() => this.manager.ActiveSolution?.Storage, this.sourceChanges)
+        const resolver = new AuthoringStorageResolver(this.authoringTarget, this.solutionRoots, () => this.manager.ActiveSolution?.Name, () => this.manager.ActiveSolution?.Storage, this.sourceChanges)
+        const handlers = new RemoteStorageHandlers(() => resolver.Resolve(), () => resolver.Bridge())
         this.guarded(StorageProtocol.ReadText, p => handlers.ReadText(p))
         this.guarded(StorageProtocol.ReadBytes, p => handlers.ReadBytes(p))
         this.guarded(StorageProtocol.WriteText, p => handlers.WriteText(p))
@@ -1312,7 +1352,7 @@ export class ServerConnectionHandler
         this.guarded(StorageProtocol.List, p => handlers.List(p))
     }
 
-    /** The current solution plus every solution that has contributed a graph slice. */
+    /** Every named solution: the current one, each graph-slice contributor and each named solution in the env source area (deduplicated). */
     private async ListSolutions(): Promise<SolutionSummaryDto[]>
     {
         const ids = new Set<string>()
@@ -1325,17 +1365,31 @@ export class ServerConnectionHandler
         {
             ids.add(id)
         }
+        for (const name of this.solutionRoots?.Names() ?? [])
+        {
+            ids.add(name)
+        }
         return [...ids].map(id => ({ Name: id, Id: id }))
     }
 
-    /** The current solution's full summary when it is the selected one. Any other id has no loaded source here (it composes in a later phase),
-     *  so it reports no members and a neutral Building state rather than the current solution's build state. */
+    /** The current solution's full summary when it is the selected one. A non-current solution known to the env source area reports its real
+     *  manifest members and the composed graph's build state (it is compiled into that graph); an unknown id has no source here and reports
+     *  no members and a neutral Building state. */
     private AuthoringSummary(solutionId: string): ActiveSolutionSummary
     {
         const active = this.ActiveSolutionOrNull()
         if (active !== null && active.name === solutionId)
         {
             return active
+        }
+        // Names() is a single snapshot copy per request (not called in a loop), so no local capture is needed.
+        if (this.solutionRoots !== undefined && this.solutionRoots.Names().includes(solutionId))
+        {
+            return {
+                name: solutionId,
+                members: this.solutionRoots.MembersOf(solutionId).map(m => ({ id: m.Ref.path, type: m.Ref.type })),
+                buildState: BuildStateMapper.ToWire(this.languageService.BuildState),
+            }
         }
         return { name: solutionId, members: [], buildState: BuildState.Building }
     }

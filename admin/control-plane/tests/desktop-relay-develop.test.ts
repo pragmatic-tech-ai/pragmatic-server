@@ -8,7 +8,7 @@ import { TokenScope, TokenScopeGate } from '../../../src/host/token-scope.js'
 class DevelopFixture
 {
     public static readonly Admitted: readonly string[] = [
-        SolutionProtocol.ListSolutions.method, SolutionProtocol.SelectAuthoring.method, SolutionProtocol.ActiveSolution.method,
+        SolutionProtocol.ListSolutions.method, SolutionProtocol.SelectAuthoring.method, SolutionProtocol.CreateSolution.method, SolutionProtocol.ActiveSolution.method,
         StorageProtocol.ReadText.method, StorageProtocol.ReadBytes.method, StorageProtocol.WriteText.method, StorageProtocol.WriteBytes.method,
         StorageProtocol.Exists.method, StorageProtocol.Delete.method, StorageProtocol.CreateDirectory.method, StorageProtocol.Rename.method, StorageProtocol.List.method,
         LanguageProtocol.CompletionsAt.method, LanguageProtocol.HoverAt.method, LanguageProtocol.DefinitionAt.method, LanguageProtocol.ReferencesAt.method,
@@ -20,7 +20,7 @@ class DevelopFixture
 
     /** The authoritative, hand-written wire strings: verifies the protocol constants produce exactly the intended surface (not circular). */
     public static readonly ExpectedWire: readonly string[] = [
-        'solution/list', 'solution/selectAuthoring', 'solution/active',
+        'solution/list', 'solution/selectAuthoring', 'solution/create', 'solution/active',
         'storage/readText', 'storage/readBytes', 'storage/writeText', 'storage/writeBytes', 'storage/exists', 'storage/delete',
         'storage/createDirectory', 'storage/rename', 'storage/list',
         'language/completions', 'language/hover', 'language/definition', 'language/references', 'language/prepareRename', 'language/rename',
@@ -88,9 +88,9 @@ test('the develop token scope gate admits the develop set and denies the rest', 
     }
 })
 
-test('the develop relay allowlist equals the hand-written wire list (28 strings)', () =>
+test('the develop relay allowlist equals the hand-written wire list (29 strings)', () =>
 {
-    assert.equal(DevelopFixture.ExpectedWire.length, 28)
+    assert.equal(DevelopFixture.ExpectedWire.length, 29)
     assert.deepEqual([...DesktopRelayAllowlist.For(DesktopAction.Develop)].sort(), [...DevelopFixture.ExpectedWire].sort())
 })
 

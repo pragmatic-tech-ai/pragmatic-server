@@ -10,12 +10,26 @@ import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
 import type { IDevGraphService } from '../graphs/dev-graph-service.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { AuthoringTarget } from '../solutions/authoring-target.js'
+import { EnvSolutionRoots } from '../solutions/env-solution-roots.js'
+import { MemoryStorageRegistry } from '../solutions/tests/memory-storage-registry.js'
 
 class AuthoringFixture
 {
     public static readonly ActiveName = 'sol-active'
     public static readonly OtherA = 'sol-a'
     public static readonly OtherB = 'sol-b'
+    public static readonly Unknown = 'sol-unknown'
+    public static readonly MemberPath = 'app/app.todl'
+    public static readonly MemberType = 'todl'
+    private static readonly Area = 'env/src'
+    private static readonly ManifestSuffix = '.pksln'
+    private static readonly ManifestKindKey = 'kind'
+    private static readonly ManifestKind = 'todl-solution'
+    private static readonly ManifestVersionKey = 'version'
+    private static readonly ManifestVersion = 1
+    private static readonly NameKey = 'name'
+    private static readonly MembersKey = 'members'
+    private static readonly SettingsKey = 'settings'
     private static readonly EnvironmentId = 't1'
     private static readonly PrincipalId = 'p1'
     private static readonly EnvironmentName = 'Environment One'
@@ -33,6 +47,23 @@ class AuthoringFixture
         return { ListSolutionIds: async () => ids } as unknown as IDevGraphService
     }
 
+    /** Named solutions on disk (default OtherA and OtherB); only OtherA has a member. */
+    public static async Roots(names: string[] = [AuthoringFixture.OtherA, AuthoringFixture.OtherB]): Promise<EnvSolutionRoots>
+    {
+        const registry = new MemoryStorageRegistry()
+        const area = registry.CreateStorage(AuthoringFixture.Area)
+        for (const name of names)
+        {
+            const members = name === AuthoringFixture.OtherA ? [{ path: AuthoringFixture.MemberPath, type: AuthoringFixture.MemberType }] : []
+            const manifest = { [AuthoringFixture.ManifestKindKey]: AuthoringFixture.ManifestKind, [AuthoringFixture.ManifestVersionKey]: AuthoringFixture.ManifestVersion, [AuthoringFixture.NameKey]: name, [AuthoringFixture.MembersKey]: members, [AuthoringFixture.SettingsKey]: {} }
+            await registry.CreateStorage(AuthoringFixture.Area + '/' + name).WriteText(name + AuthoringFixture.ManifestSuffix, JSON.stringify(manifest))
+            await area.CreateDirectory(name)
+        }
+        const roots = new EnvSolutionRoots(AuthoringFixture.Area, registry)
+        await roots.Refresh()
+        return roots
+    }
+
     public static Language(): ILanguageService
     {
         const signal = { subscribe: () => ({ dispose: () => undefined }) }
@@ -45,10 +76,10 @@ class AuthoringFixture
         return { ActiveSolution: solution } as unknown as SolutionManagerService
     }
 
-    public static Attach(manager: SolutionManagerService, role: Role = Role.Owner, purpose: EnvironmentPurpose = EnvironmentPurpose.Development, graphs?: IDevGraphService): { handler: ServerConnectionHandler; client: MessageConnection }
+    public static Attach(manager: SolutionManagerService, role: Role = Role.Owner, purpose: EnvironmentPurpose = EnvironmentPurpose.Development, graphs?: IDevGraphService, solutionRoots?: EnvSolutionRoots): { handler: ServerConnectionHandler; client: MessageConnection }
     {
         const [serverSocket, clientSocket] = InMemoryMessageSocket.Pair()
-        const handler = ServerConnectionHandler.Attach(serverSocket, AuthoringFixture.Language(), manager, AuthoringFixture.Context(role), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, purpose, undefined, undefined, undefined, undefined, undefined, graphs)
+        const handler = ServerConnectionHandler.Attach(serverSocket, AuthoringFixture.Language(), manager, AuthoringFixture.Context(role), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, purpose, undefined, undefined, undefined, undefined, undefined, graphs, undefined, undefined, undefined, undefined, undefined, solutionRoots)
         const client = createMessageConnection(new WebSocketMessageReader(clientSocket), new WebSocketMessageWriter(clientSocket), NullLogger)
         client.listen()
         return { handler, client }
@@ -179,6 +210,75 @@ test('selectAuthoring rejects a non-string SolutionId with InvalidParams', async
         await assert.rejects(() => a.client.sendRequest(SolutionProtocol.SelectAuthoring, { SolutionId: 42 } as never), (e: { code?: number }) => e.code === ErrorCodes.InvalidParams)
         await assert.rejects(() => a.client.sendRequest(SolutionProtocol.SelectAuthoring, {} as never), (e: { code?: number }) => e.code === ErrorCodes.InvalidParams)
         assert.equal(a.handler.Authoring.SolutionId, AuthoringFixture.ActiveName)
+    }
+    finally
+    {
+        a.client.dispose()
+        a.handler.Dispose()
+    }
+})
+
+test('with named solutions composed, solution/list includes them and selectAuthoring reports real members and the composed build state for a non-current one', async () =>
+{
+    const roots = await AuthoringFixture.Roots()
+    const a = AuthoringFixture.Attach(AuthoringFixture.Manager(), Role.Owner, EnvironmentPurpose.Development, undefined, roots)
+    try
+    {
+        const list = await a.client.sendRequest(SolutionProtocol.ListSolutions)
+        assert.deepEqual(list.map(s => s.Id), [AuthoringFixture.ActiveName, AuthoringFixture.OtherA, AuthoringFixture.OtherB])
+        const summary = await a.client.sendRequest(SolutionProtocol.SelectAuthoring, { SolutionId: AuthoringFixture.OtherA })
+        assert.equal(summary.name, AuthoringFixture.OtherA)
+        assert.deepEqual(summary.members, [{ id: AuthoringFixture.MemberPath, type: AuthoringFixture.MemberType }])
+        assert.equal(summary.buildState, BuildState.Ready)
+    }
+    finally
+    {
+        a.client.dispose()
+        a.handler.Dispose()
+    }
+})
+
+test('selectAuthoring for an id unknown to the solution roots keeps the neutral placeholder', async () =>
+{
+    const roots = await AuthoringFixture.Roots()
+    const a = AuthoringFixture.Attach(AuthoringFixture.Manager(), Role.Owner, EnvironmentPurpose.Development, undefined, roots)
+    try
+    {
+        const summary = await a.client.sendRequest(SolutionProtocol.SelectAuthoring, { SolutionId: AuthoringFixture.Unknown })
+        assert.deepEqual(summary.members, [])
+        assert.equal(summary.buildState, BuildState.Building)
+    }
+    finally
+    {
+        a.client.dispose()
+        a.handler.Dispose()
+    }
+})
+
+test('an active solution that is also a named root appears exactly once in solution/list', async () =>
+{
+    const roots = await AuthoringFixture.Roots([AuthoringFixture.ActiveName, AuthoringFixture.OtherA])
+    const a = AuthoringFixture.Attach(AuthoringFixture.Manager(), Role.Owner, EnvironmentPurpose.Development, undefined, roots)
+    try
+    {
+        const list = await a.client.sendRequest(SolutionProtocol.ListSolutions)
+        assert.deepEqual(list.map(s => s.Id), [AuthoringFixture.ActiveName, AuthoringFixture.OtherA])
+    }
+    finally
+    {
+        a.client.dispose()
+        a.handler.Dispose()
+    }
+})
+
+test('without solution roots a non-active id falls back to empty members and Building', async () =>
+{
+    const a = AuthoringFixture.Attach(AuthoringFixture.Manager(), Role.Owner, EnvironmentPurpose.Development, undefined, undefined)
+    try
+    {
+        const summary = await a.client.sendRequest(SolutionProtocol.SelectAuthoring, { SolutionId: AuthoringFixture.OtherA })
+        assert.deepEqual(summary.members, [])
+        assert.equal(summary.buildState, BuildState.Building)
     }
     finally
     {
