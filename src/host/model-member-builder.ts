@@ -1,5 +1,4 @@
-import { EdgeKind, Tier } from '@pragmatic-tech-ai/todl'
-import { Cardinality } from '@pragmatic-tech-ai/todl'
+import { Cardinality, EdgeKind, Tier } from '@pragmatic-tech-ai/todl'
 import type { Repository, Node, Edge } from '@pragmatic-tech-ai/todl'
 import type { FieldDeclDto, ModelEdgeDto, ModelMemberDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { WireScalar } from './wire-scalar.js'

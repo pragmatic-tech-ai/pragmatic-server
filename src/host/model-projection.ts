@@ -12,6 +12,12 @@ export interface ModelMemberPage
     OriginOf: Record<string, WikiOriginDto>
 }
 
+/** The wire origin of a model node (undefined: none known, or none expressible on the wire). */
+export interface IModelOrigins
+{
+    OfNode(id: string): WikiOriginDto | undefined
+}
+
 /** Which model nodes a reader sees at all (the projection's only visibility input). */
 export interface IModelNodeGate
 {
@@ -31,7 +37,7 @@ export class ModelProjection
     {
     }
 
-    public Page(provenance: ReadonlyMap<string, string>, offset: number, size: number, origins: ReadonlyMap<string, WikiOriginDto> = new Map()): ModelMemberPage
+    public Page(provenance: ReadonlyMap<string, string>, offset: number, size: number, origins?: IModelOrigins): ModelMemberPage
     {
         const visible: Node[] = []
         const visibleIds = new Set<string>()
@@ -52,7 +58,7 @@ export class ModelProjection
         const originOf: Record<string, WikiOriginDto> = {}
         for (const item of items)
         {
-            const origin = origins.get(item.id)
+            const origin = origins?.OfNode(item.id)
             if (origin !== undefined)
             {
                 originOf[item.id] = origin

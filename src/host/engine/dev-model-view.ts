@@ -3,7 +3,6 @@ import type { GraphEngine, GraphReader, ISubscription, MemberDef } from '@pragma
 import { ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ModelViewPageDto, ResolvedResourceDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { Node, Repository, WikiOrigin } from '@pragmatic-tech-ai/todl'
-import type { WikiOriginDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { SnapshotDescriber, TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable, IStorage } from '@pragmatic-tech-ai/todl-runtime'
@@ -281,6 +280,8 @@ export class DevModelView implements IGraphModelView, IDisposable
     public static readonly NoActiveSolutionError = 'no active solution after open'
     public static readonly UnknownMemberError = 'unknown solution member'
     private static readonly FingerprintTag = 'modelView'
+    private static readonly OriginsDroppedPrefix = 'model view: '
+    private static readonly OriginsDroppedSuffix = ' member origin(s) withheld from the wire: their storage is not a member of the active solution'
 
     private readonly cache = new VisibleInstanceCache()
     private readonly subscriptions: ISubscription[] = []
@@ -317,7 +318,7 @@ export class DevModelView implements IGraphModelView, IDisposable
         {
             throw new ResponseError(ErrorCodes.InvalidRequest, DevModelView.UnknownMemberError)
         }
-        const origins = DevModelView.WireOrigins(view.originOf, solution.Members.ToArray())
+        const origins = new WikiOriginWireMapper(solution.Members.ToArray(), view.originOf)
         // read the revision only once the view is in hand: acquiring it may itself commit the first build
         const revision = String(structure.GraphRevision)
         return this.Read(context, read =>
@@ -325,31 +326,15 @@ export class DevModelView implements IGraphModelView, IDisposable
             const fingerprint = PageFingerprint.Of(DevModelView.FingerprintTag, member.Ref.path, revision, read.Version, String(read.Commit), read.Scope.Digest)
             const request = PageRequest.Resolve(page.Params, fingerprint, page.Limits)
             const members = new ModelProjection(view.model, read.Gate, read.Gate).Page(view.provenanceOf, request.Offset, request.Size, origins)
+            if (origins.Dropped.size > 0)
+            {
+                this.diagnostics.ModelViewDiagnostic(DevModelView.OriginsDroppedPrefix + origins.Dropped.size + DevModelView.OriginsDroppedSuffix)
+            }
             const nextCursor = request.NextCursor(members.HasMore)
             return nextCursor === undefined
                 ? { items: members.Items, provenanceOf: members.ProvenanceOf, originOf: members.OriginOf }
                 : { items: members.Items, provenanceOf: members.ProvenanceOf, originOf: members.OriginOf, nextCursor }
         })
-    }
-
-    /** The engine's per-node origins on the wire; an origin with no wire form (storage outside the solution) is dropped. */
-    private static WireOrigins(originOf: ReadonlyMap<string, WikiOrigin> | undefined, members: readonly IDevModelMember[]): ReadonlyMap<string, WikiOriginDto>
-    {
-        const wire = new Map<string, WikiOriginDto>()
-        if (originOf === undefined)
-        {
-            return wire
-        }
-        const mapper = new WikiOriginWireMapper(members)
-        for (const [id, origin] of originOf)
-        {
-            const dto = mapper.Of(origin)
-            if (dto !== undefined)
-            {
-                wire.set(id, dto)
-            }
-        }
-        return wire
     }
 
     private async Hidden(context: AccessContext, nodeId: string): Promise<boolean>
