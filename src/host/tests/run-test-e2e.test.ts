@@ -5,8 +5,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
-import { AppDataProtocol, AppWriteStatus, ErrorCodes, GraphProtocol, NullLogger, RunTestProtocol, WebSocketMessageReader, WebSocketMessageWriter, WsMessageSocket, createMessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { CypherAppDeployParamsDto, MessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { AppDataProtocol, AppWriteOpKind, AppWriteStatus, ErrorCodes, GraphProtocol, NullLogger, RunTestProtocol, WebSocketMessageReader, WebSocketMessageWriter, WsMessageSocket, createMessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { AppWriteParams, CypherAppDeployParamsDto, MessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { Repository, toJSON } from '@pragmatic-tech-ai/todl'
 import type { PackageDocument } from '@pragmatic-tech-ai/todl'
 import { Grant, ResourceKind, ResourceRef, Role } from '@pragmatic-tech-ai/todl-identity'
@@ -23,11 +23,14 @@ import { TokenScope } from '../token-scope.js'
  */
 class RunTestE2eFixture
 {
+    /** Mirrors the (private) message ServerConnectionHandler rejects out-of-scope methods with. */
     public static readonly OutsideScopeMessage = "method is outside this credential's scope"
     public static readonly App = 'shop'
     public static readonly Version = '1.0.0'
     public static readonly Entry = 'index.html'
     public static readonly Asset = 'assets/app.js'
+    private static readonly Base64 = 'base64'
+    private static readonly AssetBody = 'console.log(1)'
     public static readonly Shell = '<html><head></head><body>shell</body></html>'
     public static readonly OkStatus = 200
     public static readonly SignInStatus = 302
@@ -43,6 +46,7 @@ class RunTestE2eFixture
     private static readonly Loopback = '127.0.0.1'
     private static readonly Namespace = 'shop.core'
     private static readonly Concept = 'Order'
+    private static readonly RowId = 'o1'
     private static readonly PackageVersion = '1.0.0'
     private static readonly BrowserLoginPath = '/auth/browser-login?environment=t1'
     private static readonly ContentTypeHeader = 'Content-Type'
@@ -54,6 +58,7 @@ class RunTestE2eFixture
     private static readonly ErrorEvent = 'error'
     private static readonly AuthorizationHeader = 'authorization'
     private static readonly BearerPrefix = 'Bearer '
+    private static readonly NoCookieMessage = 'browser-login set no session cookie'
     private static readonly CookieSeparator = ';'
 
     public readonly Dir = mkdtempSync(join(tmpdir(), RunTestE2eFixture.DirPrefix))
@@ -75,8 +80,8 @@ class RunTestE2eFixture
             appVersion: RunTestE2eFixture.Version,
             packages: [{ id: RunTestE2eFixture.Namespace, version: RunTestE2eFixture.PackageVersion, modelJson: JSON.stringify(document) }],
             uiBundle: [
-                { path: RunTestE2eFixture.Entry, contentBase64: Buffer.from(RunTestE2eFixture.Shell).toString('base64') },
-                { path: RunTestE2eFixture.Asset, contentBase64: Buffer.from('console.log(1)').toString('base64') },
+                { path: RunTestE2eFixture.Entry, contentBase64: Buffer.from(RunTestE2eFixture.Shell).toString(RunTestE2eFixture.Base64) },
+                { path: RunTestE2eFixture.Asset, contentBase64: Buffer.from(RunTestE2eFixture.AssetBody).toString(RunTestE2eFixture.Base64) },
             ],
             manifest: {
                 name: RunTestE2eFixture.App,
@@ -85,6 +90,12 @@ class RunTestE2eFixture
                 ui: { entry: RunTestE2eFixture.Entry, assets: [RunTestE2eFixture.Asset] },
             },
         }
+    }
+
+    /** A well-formed write: only the scope gate can reject it. */
+    public static WriteParams(): AppWriteParams
+    {
+        return { operations: [{ op: AppWriteOpKind.Create, concept: RunTestE2eFixture.Concept, id: RunTestE2eFixture.RowId, fields: {} }] }
     }
 
     public async StartAsync(): Promise<void>
@@ -142,7 +153,9 @@ class RunTestE2eFixture
             body: JSON.stringify({ email: RunTestE2eFixture.AdminEmail, password: RunTestE2eFixture.AdminPassword }),
         })
         assert.equal(response.status, RunTestE2eFixture.OkStatus)
-        return response.headers.get(RunTestE2eFixture.SetCookieHeader)!.split(RunTestE2eFixture.CookieSeparator)[0]!
+        const setCookie = response.headers.get(RunTestE2eFixture.SetCookieHeader)
+        assert.ok(setCookie !== null, RunTestE2eFixture.NoCookieMessage)
+        return setCookie.split(RunTestE2eFixture.CookieSeparator)[0]!
     }
 
     public GetAsync(path: string, cookie?: string): Promise<Response>
@@ -183,7 +196,7 @@ test('a Developer+RunTest connection loads an app into the dual-purpose env, the
         assert.equal(shell.status, RunTestE2eFixture.OkStatus)
         assert.ok((await shell.text()).includes(`<meta name="pragmatic-app" content="${RunTestE2eFixture.App}">`))
 
-        await assert.rejects(() => connection.sendRequest(AppDataProtocol.Write, {} as never), (e: { code?: number; message?: string }) => e.code === ErrorCodes.InvalidRequest && e.message === RunTestE2eFixture.OutsideScopeMessage)
+        await assert.rejects(() => connection.sendRequest(AppDataProtocol.Write, RunTestE2eFixture.WriteParams()), (e: { code?: number; message?: string }) => e.code === ErrorCodes.InvalidRequest && e.message === RunTestE2eFixture.OutsideScopeMessage)
     }
     finally
     {
