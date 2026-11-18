@@ -6,6 +6,7 @@ import { join, relative, isAbsolute } from 'node:path'
 import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, createMessageConnection, NullLogger, SolutionProtocol, StorageProtocol, GraphProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { IMessageSocket, MessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
@@ -37,6 +38,8 @@ class UploadFixture
     public static readonly GraphsDir = 'graphs'
     public static readonly ApplicationsDir = 'applications'
     public static readonly PathSeparator = '/'
+    private static readonly SettleAttempts = 100
+    private static readonly SettleDelayMs = 20
     private static readonly MemberSuffix = '-models'
     private static readonly ManifestKind = 'todl-solution'
     private static readonly ManifestVersion = 1
@@ -94,13 +97,16 @@ class UploadFixture
         return ServerConnectionHandler.Attach(socket, language, manager, UploadFixture.Context(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, EnvironmentPurpose.Development, undefined, undefined, undefined, undefined, undefined, graphs, undefined, undefined, undefined, undefined, undefined, roots)
     }
 
-    /**
-     * Stand-in for the DEFERRED Phase-4 live refresh: nothing yet refreshes the env solution-roots cache when `storage/*`
-     * writes land in a non-active root, so the test performs the refresh a live watcher will do. Drop once Phase 4 ships it.
-     */
-    public static async SimulateDeferredLiveRefresh(roots: EnvSolutionRoots): Promise<void>
+    /** The model view once it declares every wanted entity (the live recompose is queued, not synchronous); the last view if it never does. */
+    public static async SettledView(language: ILanguageService, consumer: IStorage, wanted: readonly string[]): Promise<Awaited<ReturnType<ILanguageService['ModelView']>>>
     {
-        await roots.Refresh()
+        let view = await language.ModelView(consumer)
+        for (let attempt = 0; attempt < UploadFixture.SettleAttempts && !(view !== undefined && wanted.every(id => view!.model.has(id))); attempt++)
+        {
+            await new Promise(resolve => setTimeout(resolve, UploadFixture.SettleDelayMs))
+            view = await language.ModelView(consumer)
+        }
+        return view
     }
 
     /** Creates the solution, seeds its tree through storage/*, and contributes its graph slice. */
@@ -161,9 +167,7 @@ test('two uploaded solutions compose live: disjoint roots, both listed, real mem
         {
             await UploadFixture.Upload(client, UploadFixture.NameA, UploadFixture.PackageA)
             assert.equal(manager.ActiveSolution?.Name, UploadFixture.NameA)
-            await UploadFixture.SimulateDeferredLiveRefresh(roots)
             await UploadFixture.Upload(client, UploadFixture.NameB, UploadFixture.PackageB)
-            await UploadFixture.SimulateDeferredLiveRefresh(roots)
 
             // The active solution switched to B, but A is still on disk and composed (read-only loader: no eviction).
             assert.equal(manager.ActiveSolution?.Name, UploadFixture.NameB)
@@ -180,11 +184,9 @@ test('two uploaded solutions compose live: disjoint roots, both listed, real mem
             const listed = (await client.sendRequest(SolutionProtocol.ListSolutions) as { Name: string }[]).map(s => s.Name).sort()
             assert.deepEqual(listed, [UploadFixture.NameA, UploadFixture.NameB])
 
-            // PHASE-4 MARKER: the just-created ACTIVE solution's own summary is stale-empty (members are read from the manifest at
-            // open time, before the upload seeds it). When Phase 4 adds the live refresh this flips to the real member; drop the
-            // manual SimulateDeferredLiveRefresh calls then.
+            // Ruling T10 closed: the manifest write refreshed the roots cache and the active solution's own members live (no manual Refresh).
             const summaryB = await client.sendRequest(SolutionProtocol.SelectAuthoring, { SolutionId: UploadFixture.NameB }) as { members: { id: string; type: string }[] }
-            assert.deepEqual(summaryB.members, [])
+            assert.deepEqual(summaryB.members, [{ id: UploadFixture.MemberDir(UploadFixture.NameB), type: UploadFixture.MemberType }])
             // A (non-active) reports its real manifest members.
             const summaryA = await client.sendRequest(SolutionProtocol.SelectAuthoring, { SolutionId: UploadFixture.NameA }) as { members: { id: string; type: string }[] }
             assert.deepEqual(summaryA.members, [{ id: UploadFixture.MemberDir(UploadFixture.NameA), type: UploadFixture.MemberType }])
@@ -197,7 +199,8 @@ test('two uploaded solutions compose live: disjoint roots, both listed, real mem
             assert.deepEqual(composed.map(m => m.Ref.path).sort(), [UploadFixture.MemberDir(UploadFixture.NameA), UploadFixture.MemberDir(UploadFixture.NameB)])
 
             // The language service consumes ComposedMembers: its shared model must declare BOTH solutions' entities.
-            const view = await language.ModelView(composed[0].Storage!)
+            // The recompose is asynchronous (queued on the language service), so wait for it to settle rather than for a manual Refresh.
+            const view = await UploadFixture.SettledView(language, composed[0].Storage!, [UploadFixture.EntityId(UploadFixture.NameA), UploadFixture.EntityId(UploadFixture.NameB)])
             assert.ok(view !== undefined)
             assert.ok(view.model.has(UploadFixture.EntityId(UploadFixture.NameA)))
             assert.ok(view.model.has(UploadFixture.EntityId(UploadFixture.NameB)))

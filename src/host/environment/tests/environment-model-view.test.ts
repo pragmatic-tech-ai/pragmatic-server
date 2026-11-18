@@ -18,6 +18,7 @@ import type { IEnvironmentFixtureOptions } from './environment-fixture.js'
 class ViewFx
 {
     public static readonly App = 'crm-app'
+    public static readonly DevOnlyMemberFields = ['class', 'canonicalId', 'storageId', 'fields']
     public static readonly AppVersion = '1.0.0'
     public static readonly Crm = { id: 'crm', version: '1.0.0' }
     public static readonly Notes = { id: 'notes', version: '1.0.0' }
@@ -180,6 +181,12 @@ describe('runtime model/view on the environment engine', () =>
             assert.equal(a3.attrs[ViewFx.Owner], ViewFx.P1)
             assert.deepEqual(page.provenanceOf, {})
             assert.equal(page.nextCursor, undefined)
+            // the runtime has no class/schema structure or origins: the dev-only wire fields are absent, not empty
+            assert.equal('originOf' in page, false)
+            for (const absent of ViewFx.DevOnlyMemberFields)
+            {
+                assert.equal(absent in a3, false, absent)
+            }
         })
     })
 

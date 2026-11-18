@@ -13,6 +13,7 @@ import { Cypher } from '@pragmatic-tech-ai/graph'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import { AuthoringTarget } from './solutions/authoring-target.js'
 import type { SourceChangeBridge } from './solutions/source-change-bridge.js'
+import { SolutionManifestRefresher } from './solutions/solution-manifest-refresher.js'
 import { RemoteStorageHandlers } from './storage/remote-storage-handlers.js'
 import { AuthoringStorageResolver } from './storage/authoring-storage-resolver.js'
 import { InvalidSolutionNameError } from './solutions/env-solution-roots.js'
@@ -1339,8 +1340,8 @@ export class ServerConnectionHandler
     /** Dev-only `storage/*`: the connection's authoring solution's source store (its own root, or the active solution's when none is selected), driven remotely; paths are confined to its root by {@link RemoteStorageHandlers}. */
     private RegisterStorageHandlers(): void
     {
-        const resolver = new AuthoringStorageResolver(this.authoringTarget, this.solutionRoots, () => this.manager.ActiveSolution?.Name, () => this.manager.ActiveSolution?.Storage, this.sourceChanges)
-        const handlers = new RemoteStorageHandlers(() => resolver.Resolve(), () => resolver.Bridge())
+        const resolver = new AuthoringStorageResolver(this.authoringTarget, this.solutionRoots, () => this.manager.ActiveSolution?.Name, () => this.manager.ActiveSolution?.Storage, this.sourceChanges, this.solutionRoots === undefined ? undefined : new SolutionManifestRefresher(this.solutionRoots, this.manager))
+        const handlers = new RemoteStorageHandlers(() => resolver.Resolve(), () => resolver.Bridge(), () => resolver.ManifestReaction())
         this.guarded(StorageProtocol.ReadText, p => handlers.ReadText(p))
         this.guarded(StorageProtocol.ReadBytes, p => handlers.ReadBytes(p))
         this.guarded(StorageProtocol.WriteText, p => handlers.WriteText(p))

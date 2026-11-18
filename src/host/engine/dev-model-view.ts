@@ -2,7 +2,7 @@ import { GraphError, GraphErrorCode } from '@pragmatic-tech-ai/graph'
 import type { GraphEngine, GraphReader, ISubscription, MemberDef } from '@pragmatic-tech-ai/graph'
 import { ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ModelViewPageDto, ResolvedResourceDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { Node, Repository } from '@pragmatic-tech-ai/todl'
+import type { Node, Repository, WikiOrigin } from '@pragmatic-tech-ai/todl'
 import { SnapshotDescriber, TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
 import type { IDisposable, IStorage } from '@pragmatic-tech-ai/todl-runtime'
@@ -10,6 +10,7 @@ import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
 import type { IMemberReadGate } from '../model-member-builder.js'
 import { ModelProjection } from '../model-projection.js'
+import { WikiOriginWireMapper } from '../wiki-origin-wire.js'
 import type { IModelNodeGate } from '../model-projection.js'
 import { PageFingerprint, PageRequest } from '../paging/page-request.js'
 import type { IGraphScope, IGraphScopeSource } from './access-scope-source.js'
@@ -40,7 +41,7 @@ export interface IDevModelResource
 /** Where model/view's STRUCTURE comes from: the language service (unsaved buffers included), as before the engine. */
 export interface IDevModelStructure
 {
-    ModelView(storage: IStorage): Promise<{ readonly model: Repository; readonly provenanceOf: ReadonlyMap<string, string> } | undefined>
+    ModelView(storage: IStorage): Promise<{ readonly model: Repository; readonly provenanceOf: ReadonlyMap<string, string>; readonly originOf?: ReadonlyMap<string, WikiOrigin> } | undefined>
     Resources(nodeId: string): Promise<readonly IDevModelResource[]>
     readonly GraphRevision: number
 }
@@ -279,6 +280,8 @@ export class DevModelView implements IGraphModelView, IDisposable
     public static readonly NoActiveSolutionError = 'no active solution after open'
     public static readonly UnknownMemberError = 'unknown solution member'
     private static readonly FingerprintTag = 'modelView'
+    private static readonly OriginsDroppedPrefix = 'model view: '
+    private static readonly OriginsDroppedSuffix = ' member origin(s) withheld from the wire: their storage is not a member of the active solution'
 
     private readonly cache = new VisibleInstanceCache()
     private readonly subscriptions: ISubscription[] = []
@@ -315,18 +318,25 @@ export class DevModelView implements IGraphModelView, IDisposable
         {
             throw new ResponseError(ErrorCodes.InvalidRequest, DevModelView.UnknownMemberError)
         }
+        const origins = new WikiOriginWireMapper(solution.Members.ToArray(), view.originOf)
         // read the revision only once the view is in hand: acquiring it may itself commit the first build
         const revision = String(structure.GraphRevision)
-        return this.Read(context, read =>
+        const result = await this.Read(context, read =>
         {
             const fingerprint = PageFingerprint.Of(DevModelView.FingerprintTag, member.Ref.path, revision, read.Version, String(read.Commit), read.Scope.Digest)
             const request = PageRequest.Resolve(page.Params, fingerprint, page.Limits)
-            const members = new ModelProjection(view.model, read.Gate, read.Gate).Page(view.provenanceOf, request.Offset, request.Size)
+            const members = new ModelProjection(view.model, read.Gate, read.Gate).Page(view.provenanceOf, request.Offset, request.Size, origins)
             const nextCursor = request.NextCursor(members.HasMore)
             return nextCursor === undefined
-                ? { items: members.Items, provenanceOf: members.ProvenanceOf }
-                : { items: members.Items, provenanceOf: members.ProvenanceOf, nextCursor }
+                ? { items: members.Items, provenanceOf: members.ProvenanceOf, originOf: members.OriginOf }
+                : { items: members.Items, provenanceOf: members.ProvenanceOf, originOf: members.OriginOf, nextCursor }
         })
+        // once per successful page build, never inside the Read retry loop (the mapper's Dropped set is per request)
+        if (origins.Dropped.size > 0)
+        {
+            this.diagnostics.ModelViewDiagnostic(DevModelView.OriginsDroppedPrefix + origins.Dropped.size + DevModelView.OriginsDroppedSuffix)
+        }
+        return result
     }
 
     private async Hidden(context: AccessContext, nodeId: string): Promise<boolean>

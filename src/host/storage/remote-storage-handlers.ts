@@ -26,7 +26,7 @@ export class RemoteStorageHandlers
     private static readonly CurrentSegment = '.'
     private static readonly ParentSegment = '..'
 
-    public constructor(private readonly storage: () => IStorage | undefined, private readonly changes?: SourceChangeBridge | (() => SourceChangeBridge | undefined))
+    public constructor(private readonly storage: () => IStorage | undefined, private readonly changes?: SourceChangeBridge | (() => SourceChangeBridge | undefined), private readonly manifestReaction?: () => ((paths: readonly string[]) => Promise<void>) | undefined)
     {
     }
 
@@ -50,9 +50,11 @@ export class RemoteStorageHandlers
         }
         const store = this.Store()
         const changes = this.Changes()
+        const react = this.manifestReaction?.()
         const existed = await store.Exists(path)
         await store.WriteText(path, params.Content)
         changes?.TextWritten(store, path, params.Content, existed)
+        await react?.([path])
     }
 
     public async WriteBytes(params: StorageWriteBytesParams): Promise<void>
@@ -65,9 +67,11 @@ export class RemoteStorageHandlers
         const bytes = new Uint8Array(Buffer.from(params.BytesBase64, RemoteStorageHandlers.Base64))
         const store = this.Store()
         const changes = this.Changes()
+        const react = this.manifestReaction?.()
         const existed = await store.Exists(path)
         await store.WriteBytes(path, bytes)
         changes?.BytesWritten(path, existed)
+        await react?.([path])
     }
 
     public async Exists(params: StoragePathParams): Promise<boolean>
@@ -80,9 +84,11 @@ export class RemoteStorageHandlers
         const path = RemoteStorageHandlers.ResolveBelowRoot(params.Path)
         const store = this.Store()
         const changes = this.Changes()
+        const react = this.manifestReaction?.()
         const isDirectory = await this.IsDirectory(store, path)
         await store.Delete(path)
         changes?.Deleted(path, isDirectory)
+        await react?.([path])
     }
 
     public async CreateDirectory(params: StoragePathParams): Promise<void>
@@ -100,9 +106,11 @@ export class RemoteStorageHandlers
         const to = RemoteStorageHandlers.ResolveBelowRoot(params.To)
         const store = this.Store()
         const changes = this.Changes()
+        const react = this.manifestReaction?.()
         const isDirectory = await this.IsDirectory(store, from)
         await store.Rename(from, to)
         changes?.Renamed(from, to, isDirectory)
+        await react?.([from, to])
     }
 
     public async List(params: StoragePathParams): Promise<StorageEntryDto[]>
