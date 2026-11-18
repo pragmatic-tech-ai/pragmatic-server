@@ -321,20 +321,22 @@ export class DevModelView implements IGraphModelView, IDisposable
         const origins = new WikiOriginWireMapper(solution.Members.ToArray(), view.originOf)
         // read the revision only once the view is in hand: acquiring it may itself commit the first build
         const revision = String(structure.GraphRevision)
-        return this.Read(context, read =>
+        const result = await this.Read(context, read =>
         {
             const fingerprint = PageFingerprint.Of(DevModelView.FingerprintTag, member.Ref.path, revision, read.Version, String(read.Commit), read.Scope.Digest)
             const request = PageRequest.Resolve(page.Params, fingerprint, page.Limits)
             const members = new ModelProjection(view.model, read.Gate, read.Gate).Page(view.provenanceOf, request.Offset, request.Size, origins)
-            if (origins.Dropped.size > 0)
-            {
-                this.diagnostics.ModelViewDiagnostic(DevModelView.OriginsDroppedPrefix + origins.Dropped.size + DevModelView.OriginsDroppedSuffix)
-            }
             const nextCursor = request.NextCursor(members.HasMore)
             return nextCursor === undefined
                 ? { items: members.Items, provenanceOf: members.ProvenanceOf, originOf: members.OriginOf }
                 : { items: members.Items, provenanceOf: members.ProvenanceOf, originOf: members.OriginOf, nextCursor }
         })
+        // once per successful page build, never inside the Read retry loop (the mapper's Dropped set is per request)
+        if (origins.Dropped.size > 0)
+        {
+            this.diagnostics.ModelViewDiagnostic(DevModelView.OriginsDroppedPrefix + origins.Dropped.size + DevModelView.OriginsDroppedSuffix)
+        }
+        return result
     }
 
     private async Hidden(context: AccessContext, nodeId: string): Promise<boolean>
