@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ApplicationDeployProtocol, GraphProtocol, PragmaticAppProtocol, RunTestProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { ApplicationDeployProtocol, AppWriteStatus, GraphProtocol, PragmaticAppProtocol, RunTestProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { DesktopAction } from '../tenant-auth/desktop-targets.js'
 import { DesktopRelayAllowlist } from '../tenant-auth/desktop-relay.js'
 import { RunTestMethods, TokenScope } from '../../../src/host/token-scope.js'
@@ -39,4 +39,15 @@ test('the run-test relay allowlist refuses data/write, application/deploy, share
         assert.equal(allowed.has(method), false, method)
     }
     assert.equal(allowed.has(ApplicationDeployProtocol.Deploy.method), false)
+})
+
+test('a run-test load is audited with the app name, like deploy', () =>
+{
+    assert.equal(DesktopRelayAllowlist.NoteFieldOf(RunTestProtocol.Load.method), 'appName')
+})
+
+test('a run-test load answered with a non-applied status is an in-band failure', () =>
+{
+    assert.equal(DesktopRelayAllowlist.IsInBandFailure(RunTestProtocol.Load.method, { status: AppWriteStatus.Denied }), true)
+    assert.equal(DesktopRelayAllowlist.IsInBandFailure(RunTestProtocol.Load.method, { status: AppWriteStatus.Applied }), false)
 })
