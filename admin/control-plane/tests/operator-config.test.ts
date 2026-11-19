@@ -41,3 +41,27 @@ describe('ControlPlaneServer.ReadOperatorOptions', () =>
         assert.equal(ControlPlaneServer.ReadOperatorOptions({ PRAGMATIC_ADMIN_SECURE_COOKIE: 'yes' }, '/data').secureCookie, false)
     })
 })
+
+describe('ControlPlaneServer.AdminBindOf', () =>
+{
+    it('defaults to loopback', () =>
+    {
+        assert.equal(ControlPlaneServer.AdminBindOf({}), '127.0.0.1')
+    })
+
+    it('honors an explicit address', () =>
+    {
+        assert.equal(ControlPlaneServer.AdminBindOf({ PRAGMATIC_ADMIN_BIND: '0.0.0.0' }), '0.0.0.0')
+        assert.equal(ControlPlaneServer.AdminBindOf({ PRAGMATIC_ADMIN_BIND: '::' }), '::')
+    })
+
+    it('treats blank as unset', () =>
+    {
+        assert.equal(ControlPlaneServer.AdminBindOf({ PRAGMATIC_ADMIN_BIND: ' ' }), '127.0.0.1')
+    })
+
+    it('rejects a value that is not an address, naming the setting', () =>
+    {
+        assert.throws(() => ControlPlaneServer.AdminBindOf({ PRAGMATIC_ADMIN_BIND: 'not an ip' }), /PRAGMATIC_ADMIN_BIND/)
+    })
+})

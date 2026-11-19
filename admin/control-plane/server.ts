@@ -1,4 +1,5 @@
 import { mkdirSync } from 'node:fs'
+import { isIP } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { AuditRegistry } from './audit-record.js'
 import { AuditThrottle } from './audit-throttle.js'
@@ -110,6 +111,7 @@ interface IOperatorSideStart
 {
     host: ControlPlaneHost
     port: number
+    bind: string
     tenant: ITenantPlaneStart | undefined
 }
 
@@ -126,7 +128,6 @@ interface IAgentChannelStart
 /** What ControlPlaneServer.Main composed for each listener; ControlPlaneStart decides which of them this role starts. */
 class ComposedListeners implements IControlPlaneListenerStarts
 {
-    private static readonly BindHost = '127.0.0.1'
     private static readonly ListeningPrefix = 'Control plane listening on http://localhost:'
     private static readonly ListeningSuffix = '/'
     private static readonly AgentChannelListeningPrefix = 'Agent channel listening on '
@@ -139,14 +140,15 @@ class ComposedListeners implements IControlPlaneListenerStarts
     {
     }
 
-    /** The operator listener is structurally loopback-only: no tenant route is mounted on it. */
+    /** No tenant route is mounted on the operator listener. It binds PRAGMATIC_ADMIN_BIND (default loopback); a
+     *  container publishes it on host loopback only. */
     public async StartOperatorHost(): Promise<void>
     {
         if (this.operator === undefined)
         {
             return
         }
-        await this.operator.host.Listen(this.operator.port, ComposedListeners.BindHost)
+        await this.operator.host.Listen(this.operator.port, this.operator.bind)
         console.log(ComposedListeners.ListeningPrefix + String(this.operator.port) + ComposedListeners.ListeningSuffix)
     }
 
@@ -186,6 +188,10 @@ class ComposedListeners implements IControlPlaneListenerStarts
 export class ControlPlaneServer
 {
     private static readonly PortEnvVar = 'PRAGMATIC_ADMIN_PORT'
+    private static readonly AdminBindEnvVar = 'PRAGMATIC_ADMIN_BIND'
+    private static readonly DefaultAdminBind = '127.0.0.1'
+    private static readonly LocalhostName = 'localhost'
+    private static readonly BadAdminBindPrefix = 'Invalid PRAGMATIC_ADMIN_BIND (expected an IP address or localhost): '
     private static readonly ExitEvent = 'exit'
     private static readonly ShutdownSignals: readonly NodeJS.Signals[] = ['SIGINT', 'SIGTERM']
     private static readonly SignalExitBase = 128
@@ -395,7 +401,7 @@ export class ControlPlaneServer
             tenantStart = { host: tenantHost, port: tenantPort, bind: tenantBind, scheme, baseDomain }
         }
         // The admin role still derives the channel URL above (hive bundles point at the edge) but does not listen on it.
-        await new ControlPlaneStart(role).Run(new ComposedListeners({ host, port, tenant: tenantStart }, channelStart))
+        await new ControlPlaneStart(role).Run(new ComposedListeners({ host, port, bind: ControlPlaneServer.AdminBindOf(process.env), tenant: tenantStart }, channelStart))
         // The poll's timer is unref'd, so it never holds the process open; it is also stopped on shutdown, beside the tunnels.
         if (releases?.Poll !== undefined)
         {
@@ -493,6 +499,21 @@ export class ControlPlaneServer
     }
 
     /** Pure: the state folder; PRAGMATIC_ADMIN_DATA_ROOT (resolved) when set, so a test stack never shares the developer's `data` folder beside the server. */
+    /** PRAGMATIC_ADMIN_BIND: the operator listener's address. Blank or unset = loopback (the laptop's default). */
+    public static AdminBindOf(env: NodeJS.ProcessEnv): string
+    {
+        const raw = env[ControlPlaneServer.AdminBindEnvVar]?.trim() ?? ''
+        if (raw === '')
+        {
+            return ControlPlaneServer.DefaultAdminBind
+        }
+        if (isIP(raw) === 0 && raw !== ControlPlaneServer.LocalhostName)
+        {
+            throw new Error(ControlPlaneServer.BadAdminBindPrefix + raw)
+        }
+        return raw
+    }
+
     public static DataRootOf(env: NodeJS.ProcessEnv, here: string): string
     {
         const raw = env[ControlPlaneServer.DataRootEnvVar]
