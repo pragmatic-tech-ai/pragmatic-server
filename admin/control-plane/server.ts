@@ -403,7 +403,8 @@ export class ControlPlaneServer
         const releases = ControlPlaneServer.ReleasesOf(role, process.env, join(here, TenantPlaneComposer.ParentSegment, TenantPlaneComposer.ParentSegment), deployments)
         const agentChannelUrlRaw = process.env[ControlPlaneServer.AgentChannelUrlEnvVar]
         const agentChannelUrl = ControlPlaneServer.AgentChannelUrl(agentChannelPort, agentChannelUrlRaw)
-        if (agentChannelPort !== ControlPlaneServer.AgentChannelDisabled && agentChannelUrl === undefined)
+        const agentChannelUrlSet = agentChannelUrlRaw !== undefined && agentChannelUrlRaw !== ''
+        if (agentChannelUrl === undefined && (agentChannelUrlSet || agentChannelPort !== ControlPlaneServer.AgentChannelDisabled))
         {
             console.warn(ControlPlaneServer.AgentChannelUrlInvalidWarning + String(agentChannelUrlRaw))
         }
@@ -670,15 +671,16 @@ export class ControlPlaneServer
      */
     public static AgentChannelUrl(port: number, raw: string | undefined): string | undefined
     {
+        // A set override names where hives dial in, whether or not this process serves the channel itself (the edge does).
+        if (raw !== undefined && raw !== '')
+        {
+            return ControlPlaneServer.IsHttpUrl(raw) ? raw : undefined
+        }
         if (port === ControlPlaneServer.AgentChannelDisabled)
         {
             return undefined
         }
-        if (raw === undefined || raw === '')
-        {
-            return ControlPlaneServer.DefaultAgentChannelUrlPrefix + String(port)
-        }
-        return ControlPlaneServer.IsHttpUrl(raw) ? raw : undefined
+        return ControlPlaneServer.DefaultAgentChannelUrlPrefix + String(port)
     }
 
     private static IsHttpUrl(raw: string): boolean
