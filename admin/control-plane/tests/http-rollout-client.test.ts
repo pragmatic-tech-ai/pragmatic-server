@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { AgentChannelHost } from '../agent-channel-host.js'
+import { LocalAgentChannelBackend } from '../local-agent-channel-backend.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
@@ -118,7 +119,7 @@ describe('HttpRolloutClient against a real AgentChannelHost', () =>
         await directory.CreateHive({ id: Names.HiveId, tenantId: Names.Tenant, displayName: Names.HiveName, cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
         deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
         const token = await deployments.RegisterHive(Names.HiveId)
-        host = new AgentChannelHost(deployments)
+        host = new AgentChannelHost(new LocalAgentChannelBackend(deployments))
         await host.Listen(0, Names.Loopback)
         client = new HttpRolloutClient(Names.HttpPrefix + host.Address().port, token, Names.HiveId)
     })

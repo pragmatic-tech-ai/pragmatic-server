@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { AgentChannelHost } from './agent-channel-host.js'
+import { LocalAgentChannelBackend } from './local-agent-channel-backend.js'
 import { BundleBuilder } from '../../environments/seed/bundle.js'
 import { EnvServerSeedSource } from './env-server-seed.js'
 import { TemplateCatalog } from './template-catalog.js'
@@ -289,7 +290,7 @@ export class RolloutPullSmoke
     private async ServeChannel(deployments: PlatformDeploymentRegistry): Promise<string>
     {
         const S = RolloutPullSmoke
-        const channel = new AgentChannelHost(deployments)
+        const channel = new AgentChannelHost(new LocalAgentChannelBackend(deployments))
         await channel.Listen(0, S.ListenAddress)
         this.channel = channel
         const url = S.ClusterHostUrl + channel.Address().port

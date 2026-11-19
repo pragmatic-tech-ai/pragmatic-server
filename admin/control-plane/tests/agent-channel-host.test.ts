@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { PlaneHttp } from '../plane-http.js'
 import { AgentChannelHost } from '../agent-channel-host.js'
+import { LocalAgentChannelBackend } from '../local-agent-channel-backend.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
@@ -142,7 +143,7 @@ describe('AgentChannelHost', () =>
         adverts = new ConsoleAdvertRegistry(join(parent, 'console-adverts.json'))
         await adverts.Load()
         await directory.SetHiveConsole(Harness.HiveId, { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } })
-        host = new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts))
+        host = new AgentChannelHost(new LocalAgentChannelBackend(deployments, new ConsoleAdvertReceiver(directory, adverts)))
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -416,7 +417,7 @@ describe('AgentChannelHost', () =>
         const resets = new ConsoleOwnerResets(join(parent, ConsoleOwnerResets.FileName), () => new Date(OwnerResetAt))
         await resets.Load()
         await host.Close()
-        host = new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, resets))
+        host = new AgentChannelHost(new LocalAgentChannelBackend(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, resets)))
         await host.Listen(0, '127.0.0.1')
         const before = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)
         assert.deepEqual(JSON.parse(before.body), { refusedEmailDomains: ['gmail.com'] })
@@ -470,7 +471,7 @@ describe('AgentChannelHost', () =>
 
     it('answers 404 when no advert receiver is configured, even with a valid bearer', async () =>
     {
-        const bare = new AgentChannelHost(deployments)
+        const bare = new AgentChannelHost(new LocalAgentChannelBackend(deployments))
         await bare.Listen(0, '127.0.0.1')
         try
         {
@@ -501,7 +502,7 @@ describe('AgentChannelHost', () =>
     const UseDomains = async (domains: IConsoleDomainVerifications): Promise<void> =>
     {
         await host.Close()
-        host = new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, undefined, domains))
+        host = new AgentChannelHost(new LocalAgentChannelBackend(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, undefined, domains)))
         await host.Listen(0, '127.0.0.1')
     }
 
@@ -545,7 +546,7 @@ describe('AgentChannelHost', () =>
     it('GET on verify-domain is 404, and so is a host without an advert receiver', async () =>
     {
         assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, VerifyPath, Harness.BearerPrefix + token)).status, 404)
-        const bare = new AgentChannelHost(deployments)
+        const bare = new AgentChannelHost(new LocalAgentChannelBackend(deployments))
         await bare.Listen(0, '127.0.0.1')
         try
         {

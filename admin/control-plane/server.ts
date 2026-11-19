@@ -24,6 +24,7 @@ import { AdoptionLedgerRegistry } from './adoption-ledger-record.js'
 import { GatingRegistry } from './gating-record.js'
 import { SelectionRegistry } from './selection-record.js'
 import { AgentChannelHost } from './agent-channel-host.js'
+import { LocalAgentChannelBackend } from './local-agent-channel-backend.js'
 import { HiveObservationRegistry } from './hive-observation-record.js'
 import { HiveAgentInstaller, SystemInstallClock } from './hive-agent-installer.js'
 import { HiveAgentUninstaller } from './hive-agent-uninstaller.js'
@@ -423,7 +424,7 @@ export class ControlPlaneServer
         {
             return undefined
         }
-        return new AgentChannelHost(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, ownerResets, emailDomains))
+        return new AgentChannelHost(new LocalAgentChannelBackend(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, ownerResets, emailDomains)))
     }
 
     /**

@@ -33,6 +33,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { AgentChannelHost } from './agent-channel-host.js'
+import { LocalAgentChannelBackend } from './local-agent-channel-backend.js'
 import { ClientRegistry } from './client-registry.js'
 import { EnvironmentPlacement } from './environment-placement.js'
 import { EnvironmentRegistry } from './environment-registry.js'
@@ -329,7 +330,7 @@ export class TenantAdminSmoke
     private async ServeChannel(deployments: PlatformDeploymentRegistry): Promise<string>
     {
         const S = TenantAdminSmoke
-        const channel = new AgentChannelHost(deployments)
+        const channel = new AgentChannelHost(new LocalAgentChannelBackend(deployments))
         await channel.Listen(0, S.ListenAddress)
         this.channel = channel
         const url = S.HttpPrefix + this.channelHost + S.UrlPortSep + channel.Address().port
