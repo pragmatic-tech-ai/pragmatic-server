@@ -354,3 +354,58 @@ describe('image contents', () =>
         assert.match(bake, /org\.opencontainers\.image\.source/)
     })
 })
+
+describe('platform images: ports, health and tools (edge/admin split)', () =>
+{
+    const stage = (name: string) => ImageFiles.Stage(name)
+    const has = (name: string, pattern: RegExp) => stage(name).some(line => pattern.test(line))
+
+    it('admin exposes the operator and internal ports, edge its channel port', () =>
+    {
+        assert.ok(stage(ImageFiles.PlatformAdmin).includes('EXPOSE 7000 7001'))
+        assert.ok(stage(ImageFiles.PlatformEdge).includes('EXPOSE 7100'))
+    })
+
+    it('the edge listens on 7100 on all its container interfaces and has a healthcheck on that port', () =>
+    {
+        const edge = stage(ImageFiles.PlatformEdge)
+        assert.ok(edge.includes('ENV PRAGMATIC_AGENT_CHANNEL_PORT=7100'))
+        assert.ok(edge.includes('ENV PRAGMATIC_AGENT_CHANNEL_BIND=0.0.0.0'))
+        const probe = edge.find(line => line.startsWith('HEALTHCHECK '))
+        assert.ok(probe !== undefined && probe.includes('process.env.PRAGMATIC_AGENT_CHANNEL_PORT'))
+    })
+
+    it('admin ships kubectl, kind, the docker CLI and openssl; each download is checked against a per-arch sha256', () =>
+    {
+        const tools = stage('platform-admin-tools')
+        for (const tool of ['kubectl', 'kind', 'docker'])
+        {
+            assert.ok(tools.some(line => line.includes('sha256sum -c') && line.includes(tool)), tool)
+        }
+        assert.ok(tools.some(line => /TARGETARCH/.test(line)))
+        for (const arg of ['KUBECTL_SHA256_AMD64', 'KUBECTL_SHA256_ARM64', 'KIND_SHA256_AMD64', 'KIND_SHA256_ARM64', 'DOCKER_SHA256_AMD64', 'DOCKER_SHA256_ARM64'])
+        {
+            assert.ok(tools.some(line => new RegExp('^ARG ' + arg + '=[0-9a-f]{64}$').test(line)), arg)
+        }
+        assert.ok(has(ImageFiles.PlatformAdmin, /^COPY --from=platform-admin-tools .*\/usr\/local\/bin\/kubectl/))
+        assert.ok(has(ImageFiles.PlatformAdmin, /apt-get install .*--no-install-recommends.* openssl/))
+    })
+
+    it('the docker CLI is the client only: no daemon, containerd or runc is copied into admin', () =>
+    {
+        assert.ok(!stage(ImageFiles.PlatformAdmin).some(line => /dockerd|containerd|runc/.test(line)))
+    })
+
+    it('the edge installs nothing', () =>
+    {
+        assert.ok(!has(ImageFiles.PlatformEdge, /apt-get|curl|wget/))
+    })
+
+    it('both run as the unprivileged uid 10001', () =>
+    {
+        for (const name of [ImageFiles.PlatformAdmin, ImageFiles.PlatformEdge])
+        {
+            assert.ok(stage(name).includes('USER 10001'), name)
+        }
+    })
+})
