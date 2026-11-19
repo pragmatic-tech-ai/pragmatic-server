@@ -7,6 +7,7 @@ import { AuditThrottle } from './audit-throttle.js'
 import { LocalDesktopDiscoveryBackend } from './desktop-discovery-backend.js'
 import { InternalApiCredential } from './internal-api-credential.js'
 import { InternalApiHost } from './internal-api-host.js'
+import { EdgeComposition } from './edge-composition.js'
 import { DesktopDiscoveryEndpoint } from './desktop-discovery-endpoint.js'
 import { TenantAccountIndex } from './tenant-account-index.js'
 import { OperatorAuthorization } from './operator-authorization.js'
@@ -99,7 +100,7 @@ import type { TenantPlane } from './tenant-auth/tenant-plane.js'
 import type { IEnvironmentService } from './control-plane-host.js'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 import type { IRolloutClient } from './tenant-api/rollout-client.js'
-import { ControlPlaneRoles, ControlPlaneStart, type ControlPlaneRole, type IControlPlaneListenerStarts } from './control-plane-role.js'
+import { ControlPlaneRoles, ControlPlaneStart, ControlPlaneRole, type IControlPlaneListenerStarts } from './control-plane-role.js'
 import { ReleaseCatalogConfig, type IReleaseServices } from './release/release-catalog-config.js'
 import type { ReleasePoll } from './release/release-poll.js'
 
@@ -223,6 +224,8 @@ export class ControlPlaneServer
 {
     private static readonly PortEnvVar = 'PRAGMATIC_ADMIN_PORT'
     private static readonly AdminBindEnvVar = 'PRAGMATIC_ADMIN_BIND'
+    private static readonly EdgeListeningPrefix = 'Edge listening on '
+    private static readonly HostPortText = ':'
     private static readonly InternalPortEnvVar = 'PRAGMATIC_ADMIN_INTERNAL_PORT'
     private static readonly InternalBindEnvVar = 'PRAGMATIC_ADMIN_INTERNAL_BIND'
     private static readonly DisabledPortText = '0'
@@ -309,10 +312,15 @@ export class ControlPlaneServer
         const agentChannelRaw = process.env[ControlPlaneServer.AgentChannelPortEnvVar]
         const agentChannelPort = ControlPlaneServer.ParseAgentChannelPort(agentChannelRaw)
         ControlPlaneRoles.RequireListener(role, agentChannelPort !== ControlPlaneServer.AgentChannelDisabled)
-        // Operator-side state is opened only by roles that serve operators: the edge (agent channel only) skips the operator
-        // accounts, the master key and sealed secrets, the environment reconcile, the account back-fill and the DNS re-check.
-        // What the channel itself needs (the directory, the deployment registry and its signer, adverts, owner resets, email
-        // domains) is composed for every role (R3: the real split is piece 3).
+        if (role === ControlPlaneRole.Edge)
+        {
+            // The keyless edge: no data root, key, registry or master key is ever opened; admin answers over the internal API.
+            const edge = EdgeComposition.Compose(process.env)
+            await edge.Host.Listen(edge.Port, edge.Bind)
+            console.log(ControlPlaneServer.EdgeListeningPrefix + edge.Bind + ControlPlaneServer.HostPortText + String(edge.Port))
+            return
+        }
+        // From here on the role is `all` or `admin`: both open the operator-side state.
         const servesOperators = ControlPlaneRoles.ServesOperators(role)
         const here = dirname(fileURLToPath(import.meta.url))
         const dataRoot = ControlPlaneServer.DataRootOf(process.env, here)

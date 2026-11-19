@@ -15,6 +15,7 @@ import { AgentUnauthorizedError, ChannelNotSubscribedError, HiveNotRegisteredErr
 export class LocalAgentChannelBackend implements IAgentChannelBackend
 {
     public static readonly UnauthorizedReply: AgentChannelReply = { Status: 401, Body: { error: 'Unauthorized' } }
+    private static readonly NotFoundReply: AgentChannelReply = { Status: PlaneHttp.StatusNotFound, Body: { error: PlaneHttp.NotFoundMessage } }
     private static readonly LimitParam = 'limit'
     private static readonly DefaultLedgerLimit = 200
     private static readonly StatusNoContent = 204
@@ -51,6 +52,11 @@ export class LocalAgentChannelBackend implements IAgentChannelBackend
         try
         {
             await this.deployments.VerifyAgentToken(request.HiveId, request.Token)
+            if (!this.ServesConsole() && (request.Operation === AgentChannelOperation.Console || request.Operation === AgentChannelOperation.ConsoleVerifyDomain))
+            {
+                // Reached only through an edge that mounts the console routes; answers as an unmounted route would.
+                return LocalAgentChannelBackend.NotFoundReply
+            }
             return await this.Run(request)
         }
         catch (err)

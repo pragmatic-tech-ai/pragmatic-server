@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { request } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,6 +7,11 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 import { PlaneHttp } from '../plane-http.js'
 import { AgentChannelHost } from '../agent-channel-host.js'
 import { LocalAgentChannelBackend } from '../local-agent-channel-backend.js'
+import { RemoteAgentChannelBackend } from '../remote-agent-channel-backend.js'
+import { InternalApiClient } from '../internal-api-client.js'
+import { InternalApiCredential } from '../internal-api-credential.js'
+import { InternalApiHost } from '../internal-api-host.js'
+import type { DiscoveryReply, IDesktopDiscoveryBackend } from '../desktop-discovery-backend.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
@@ -63,6 +68,60 @@ class Harness
     }
 }
 
+/** How the suite turns an in-process backend into the host under test. */
+interface ChannelBackends
+{
+    Host(local: LocalAgentChannelBackend): Promise<AgentChannelHost>
+    CloseAll(): Promise<void>
+}
+
+class InProcessBackends implements ChannelBackends
+{
+    public async Host(local: LocalAgentChannelBackend): Promise<AgentChannelHost>
+    {
+        return new AgentChannelHost(local)
+    }
+
+    public async CloseAll(): Promise<void>
+    {
+    }
+}
+
+/** Puts a real InternalApiHost in front of the in-process backend and points a RemoteAgentChannelBackend at it. */
+class RemoteBackends implements ChannelBackends
+{
+    private readonly internals: InternalApiHost[] = []
+    private readonly secretDir = mkdtempSync(join(tmpdir(), 'channel-contract-'))
+
+    public async Host(local: LocalAgentChannelBackend): Promise<AgentChannelHost>
+    {
+        const secret = join(this.secretDir, 'secret')
+        writeFileSync(secret, 'c'.repeat(48))
+        const credential = InternalApiCredential.FromFile(secret)
+        const internal = new InternalApiHost(credential, local, new UnusedDiscovery())
+        await internal.Listen(0, '127.0.0.1')
+        this.internals.push(internal)
+        const client = new InternalApiClient('http://127.0.0.1:' + String(internal.Address().port), credential)
+        return new AgentChannelHost(new RemoteAgentChannelBackend(client, local.ServesConsole()))
+    }
+
+    public async CloseAll(): Promise<void>
+    {
+        for (const internal of this.internals.splice(0))
+        {
+            await internal.Close()
+        }
+    }
+}
+
+class UnusedDiscovery implements IDesktopDiscoveryBackend
+{
+    public async Discover(): Promise<DiscoveryReply>
+    {
+        throw new Error('not used by the agent-channel suite')
+    }
+}
+
 /** A verification source that records calls and can be told to fail. */
 class FakeDomains implements IConsoleDomainVerifications
 {
@@ -90,508 +149,520 @@ class FakeDomains implements IConsoleDomainVerifications
     }
 }
 
-describe('AgentChannelHost', () =>
+/** The whole suite, run once per backend: in-process, and through admin's internal API as the edge runs it. */
+class ChannelSuite
 {
-    const WrongToken = 'wrong-token-value'
-    const TargetPath = '/agent/hives/' + Harness.HiveId + '/target'
-    const SnapshotPath = '/agent/hives/' + Harness.HiveId + '/snapshot'
-    const GatedVersion = '1.0.0'
-    const UngatedVersion = '2.0.0'
-    const UnpublishedVersion = '9.9.9'
-    const GatedImage = 'img:1'
-    const UngatedImage = 'img:2'
-    const TenantId = 't1'
-    const MalformedJson = '{not json'
-    const AdoptablePath = '/agent/hives/' + Harness.HiveId + '/adoptable'
-    const StatusPath = '/agent/hives/' + Harness.HiveId + '/status'
-    const AdoptPath = '/agent/hives/' + Harness.HiveId + '/adopt'
-    const LedgerPath = '/agent/hives/' + Harness.HiveId + '/ledger'
-    const ConsolePath = '/agent/hives/' + Harness.HiveId + '/console'
-    const VerifyPath = ConsolePath + '/verify-domain'
-    const VerifyDomainName = 'acme.com'
-    const InnerMessage = 'INNER-SECRET-TEXT'
-    const ConsoleUrl = 'https://console-t1.localtest.me'
-    const Fingerprint = 'a'.repeat(64)
-    const Advert = { consoleUrl: ConsoleUrl, fingerprints: [Fingerprint], emailDomains: ['acme.com', 'gmail.com'] }
-    const OwnerResetAt = '2026-11-04T10:00:00.000Z'
-    const OtherPath = '/agent/hives/' + Harness.HiveId + '/other'
-    const LegacyPath = '/api/hives/' + Harness.HiveId + '/agent/target'
-    const UnregisteredPath = '/agent/hives/ghost/snapshot'
-    const BadEncodingPath = '/agent/hives/%E0%A4%A/target'
-    const Health = { environmentName: Harness.EnvName, ready: true, runningImage: 'img:1', detail: 'ok' }
-    let host: AgentChannelHost
-    let deployments: PlatformDeploymentRegistry
-    let parent: string
-    let token: string
-    let directory: PlatformDirectory
-    let adverts: ConsoleAdvertRegistry
-
-    beforeEach(async () =>
+    public static Define(name: string, mode: ChannelBackends): void
     {
-        parent = mkdtempSync(join(tmpdir(), 'agent-channel-'))
-        directory = new PlatformDirectory(
-            new ClientRegistry(join(parent, 'clients.json')),
-            new TenantRegistry(join(parent, 'tenants.json')),
-            new HiveRegistry(join(parent, 'hives.json')),
-            { List: () => [] })
-        await directory.Load()
-        await directory.CreateClient({ id: 'acme', displayName: 'Acme' })
-        await directory.CreateTenant({ id: 't1', clientId: 'acme', displayName: 'T' })
-        await directory.CreateHive({ id: Harness.HiveId, tenantId: 't1', displayName: 'L', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
-        deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
-        token = await deployments.RegisterHive(Harness.HiveId)
-        adverts = new ConsoleAdvertRegistry(join(parent, 'console-adverts.json'))
-        await adverts.Load()
-        await directory.SetHiveConsole(Harness.HiveId, { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } })
-        host = new AgentChannelHost(new LocalAgentChannelBackend(deployments, new ConsoleAdvertReceiver(directory, adverts)))
-        await host.Listen(0, '127.0.0.1')
-    })
-
-    afterEach(async () =>
-    {
-        await host.Close()
-        rmSync(parent, { recursive: true, force: true })
-    })
-
-    it('serves the selected target to a correct bearer, 404 when none is selected', async () =>
-    {
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, TargetPath, Harness.BearerPrefix + token)).status, 404)
-        await deployments.Publish('1.0.0', 'img:1')
-        await deployments.Gate('t1', '1.0.0')
-        await deployments.SelectTarget(Harness.HiveId, '1.0.0')
-        const reply = await Harness.Send(host, PlaneHttp.MethodGet, TargetPath, Harness.BearerPrefix + token)
-        assert.equal(reply.status, 200)
-        assert.deepEqual(JSON.parse(reply.body), { version: '1.0.0', image: 'img:1' })
-    })
-
-    it('records a snapshot for a correct bearer and answers 204', async () =>
-    {
-        const reply = await Harness.Send(host, PlaneHttp.MethodPost, SnapshotPath, Harness.BearerPrefix + token, { environments: [Health] })
-        assert.equal(reply.status, 204)
-        assert.deepEqual(deployments.StatusFor(Harness.HiveId).environments.map(e => e.environmentName), [Harness.EnvName])
-    })
-
-    it('rejects a missing, wrong or malformed bearer with 401 and writes nothing', async () =>
-    {
-        const replies = [
-            await Harness.Send(host, PlaneHttp.MethodPost, SnapshotPath, undefined, { environments: [Health] }),
-            await Harness.Send(host, PlaneHttp.MethodPost, SnapshotPath, Harness.BearerPrefix + WrongToken, { environments: [Health] }),
-            await Harness.Send(host, PlaneHttp.MethodPost, SnapshotPath, Harness.BasicPrefix + token, { environments: [Health] }),
-            await Harness.Send(host, PlaneHttp.MethodGet, TargetPath),
-            await Harness.Send(host, PlaneHttp.MethodGet, TargetPath, Harness.BearerPrefix + WrongToken)
-        ]
-        for (const r of replies)
+        describe(name, () =>
         {
-            assert.equal(r.status, 401)
-            assert.ok(!r.body.includes(token))
-            assert.ok(!r.body.includes(WrongToken))
-        }
-        assert.equal(deployments.StatusFor(Harness.HiveId).environments.length, 0)
-    })
+            const WrongToken = 'wrong-token-value'
+            const TargetPath = '/agent/hives/' + Harness.HiveId + '/target'
+            const SnapshotPath = '/agent/hives/' + Harness.HiveId + '/snapshot'
+            const GatedVersion = '1.0.0'
+            const UngatedVersion = '2.0.0'
+            const UnpublishedVersion = '9.9.9'
+            const GatedImage = 'img:1'
+            const UngatedImage = 'img:2'
+            const TenantId = 't1'
+            const MalformedJson = '{not json'
+            const AdoptablePath = '/agent/hives/' + Harness.HiveId + '/adoptable'
+            const StatusPath = '/agent/hives/' + Harness.HiveId + '/status'
+            const AdoptPath = '/agent/hives/' + Harness.HiveId + '/adopt'
+            const LedgerPath = '/agent/hives/' + Harness.HiveId + '/ledger'
+            const ConsolePath = '/agent/hives/' + Harness.HiveId + '/console'
+            const VerifyPath = ConsolePath + '/verify-domain'
+            const VerifyDomainName = 'acme.com'
+            const InnerMessage = 'INNER-SECRET-TEXT'
+            const ConsoleUrl = 'https://console-t1.localtest.me'
+            const Fingerprint = 'a'.repeat(64)
+            const Advert = { consoleUrl: ConsoleUrl, fingerprints: [Fingerprint], emailDomains: ['acme.com', 'gmail.com'] }
+            const OwnerResetAt = '2026-11-04T10:00:00.000Z'
+            const OtherPath = '/agent/hives/' + Harness.HiveId + '/other'
+            const LegacyPath = '/api/hives/' + Harness.HiveId + '/agent/target'
+            const UnregisteredPath = '/agent/hives/ghost/snapshot'
+            const BadEncodingPath = '/agent/hives/%E0%A4%A/target'
+            const Health = { environmentName: Harness.EnvName, ready: true, runningImage: 'img:1', detail: 'ok' }
+            let host: AgentChannelHost
+            let deployments: PlatformDeploymentRegistry
+            let parent: string
+            let token: string
+            let directory: PlatformDirectory
+            let adverts: ConsoleAdvertRegistry
 
-    it('rejects a malformed snapshot body with 400 and writes nothing', async () =>
-    {
-        const bodies: unknown[] = [
-            '{not json',
-            'null',
-            [],
-            {},
-            { environments: 'x' },
-            { environments: [{ ...Health, environmentName: '' }] },
-            { environments: [{ ...Health, ready: 'yes' }] },
-            { environments: [{ ...Health, runningImage: 5 }] },
-            { environments: [{ ...Health, detail: undefined }] },
-            { environments: [Health, null] }
-        ]
-        for (const b of bodies)
-        {
-            assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, SnapshotPath, Harness.BearerPrefix + token, b)).status, 400)
-        }
-        assert.equal(deployments.StatusFor(Harness.HiveId).environments.length, 0)
-    })
+            beforeEach(async () =>
+            {
+                parent = mkdtempSync(join(tmpdir(), 'agent-channel-'))
+                directory = new PlatformDirectory(
+                    new ClientRegistry(join(parent, 'clients.json')),
+                    new TenantRegistry(join(parent, 'tenants.json')),
+                    new HiveRegistry(join(parent, 'hives.json')),
+                    { List: () => [] })
+                await directory.Load()
+                await directory.CreateClient({ id: 'acme', displayName: 'Acme' })
+                await directory.CreateTenant({ id: 't1', clientId: 'acme', displayName: 'T' })
+                await directory.CreateHive({ id: Harness.HiveId, tenantId: 't1', displayName: 'L', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
+                deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
+                token = await deployments.RegisterHive(Harness.HiveId)
+                adverts = new ConsoleAdvertRegistry(join(parent, 'console-adverts.json'))
+                await adverts.Load()
+                await directory.SetHiveConsole(Harness.HiveId, { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } })
+                host = await mode.Host(new LocalAgentChannelBackend(deployments, new ConsoleAdvertReceiver(directory, adverts)))
+                await host.Listen(0, '127.0.0.1')
+            })
 
-    it('accepts an absent runningImage', async () =>
-    {
-        const h = { environmentName: Harness.EnvName, ready: false, detail: 'pending' }
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, SnapshotPath, Harness.BearerPrefix + token, { environments: [h] })).status, 204)
-    })
+            afterEach(async () =>
+            {
+                await host.Close()
+                await mode.CloseAll()
+                rmSync(parent, { recursive: true, force: true })
+            })
 
-    it('answers 404 for any other path or method', async () =>
-    {
-        const auth = Harness.BearerPrefix + token
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, '/', auth)).status, 404)
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, LegacyPath, auth)).status, 404)
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, TargetPath, auth, {})).status, 404)
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, SnapshotPath, auth)).status, 404)
-        assert.equal((await Harness.Send(host, Harness.MethodDelete, SnapshotPath, auth)).status, 404)
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, OtherPath, auth)).status, 404)
-    })
+            it('serves the selected target to a correct bearer, 404 when none is selected', async () =>
+            {
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, TargetPath, Harness.BearerPrefix + token)).status, 404)
+                await deployments.Publish('1.0.0', 'img:1')
+                await deployments.Gate('t1', '1.0.0')
+                await deployments.SelectTarget(Harness.HiveId, '1.0.0')
+                const reply = await Harness.Send(host, PlaneHttp.MethodGet, TargetPath, Harness.BearerPrefix + token)
+                assert.equal(reply.status, 200)
+                assert.deepEqual(JSON.parse(reply.body), { version: '1.0.0', image: 'img:1' })
+            })
 
-    it('answers 401 for a bearer sent to an unregistered hive, writes nothing and logs nothing', async () =>
-    {
-        const logged: unknown[][] = []
-        const original = console.error
-        console.error = (...a: unknown[]) => { logged.push(a) }
-        try
-        {
-            const reply = await Harness.Send(host, PlaneHttp.MethodPost, UnregisteredPath, Harness.BearerPrefix + token, { environments: [Health] })
-            assert.equal(reply.status, 401)
-            assert.ok(!reply.body.includes(token))
-            assert.ok(!reply.body.includes('ghost'))
-        }
-        finally
-        {
-            console.error = original
-        }
-        assert.equal(logged.length, 0)
-        assert.equal(deployments.StatusFor(Harness.HiveId).environments.length, 0)
-    })
+            it('records a snapshot for a correct bearer and answers 204', async () =>
+            {
+                const reply = await Harness.Send(host, PlaneHttp.MethodPost, SnapshotPath, Harness.BearerPrefix + token, { environments: [Health] })
+                assert.equal(reply.status, 204)
+                assert.deepEqual(deployments.StatusFor(Harness.HiveId).environments.map(e => e.environmentName), [Harness.EnvName])
+            })
 
-    it('answers 413 for an oversized body and writes nothing', async () =>
-    {
-        const big = { environments: [{ ...Health, detail: 'x'.repeat(1100000) }] }
-        const reply = await Harness.Send(host, PlaneHttp.MethodPost, SnapshotPath, Harness.BearerPrefix + token, big)
-        assert.equal(reply.status, 413)
-        assert.ok(!reply.body.includes(token))
-        assert.equal(deployments.StatusFor(Harness.HiveId).environments.length, 0)
-    })
+            it('rejects a missing, wrong or malformed bearer with 401 and writes nothing', async () =>
+            {
+                const replies = [
+                    await Harness.Send(host, PlaneHttp.MethodPost, SnapshotPath, undefined, { environments: [Health] }),
+                    await Harness.Send(host, PlaneHttp.MethodPost, SnapshotPath, Harness.BearerPrefix + WrongToken, { environments: [Health] }),
+                    await Harness.Send(host, PlaneHttp.MethodPost, SnapshotPath, Harness.BasicPrefix + token, { environments: [Health] }),
+                    await Harness.Send(host, PlaneHttp.MethodGet, TargetPath),
+                    await Harness.Send(host, PlaneHttp.MethodGet, TargetPath, Harness.BearerPrefix + WrongToken)
+                ]
+                for (const r of replies)
+                {
+                    assert.equal(r.status, 401)
+                    assert.ok(!r.body.includes(token))
+                    assert.ok(!r.body.includes(WrongToken))
+                }
+                assert.equal(deployments.StatusFor(Harness.HiveId).environments.length, 0)
+            })
 
-    it('answers 400 for an undecodable hive id and writes nothing', async () =>
-    {
-        const reply = await Harness.Send(host, PlaneHttp.MethodGet, BadEncodingPath, Harness.BearerPrefix + token)
-        assert.equal(reply.status, 400)
-        assert.equal(deployments.StatusFor(Harness.HiveId).environments.length, 0)
-    })
+            it('rejects a malformed snapshot body with 400 and writes nothing', async () =>
+            {
+                const bodies: unknown[] = [
+                    '{not json',
+                    'null',
+                    [],
+                    {},
+                    { environments: 'x' },
+                    { environments: [{ ...Health, environmentName: '' }] },
+                    { environments: [{ ...Health, ready: 'yes' }] },
+                    { environments: [{ ...Health, runningImage: 5 }] },
+                    { environments: [{ ...Health, detail: undefined }] },
+                    { environments: [Health, null] }
+                ]
+                for (const b of bodies)
+                {
+                    assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, SnapshotPath, Harness.BearerPrefix + token, b)).status, 400)
+                }
+                assert.equal(deployments.StatusFor(Harness.HiveId).environments.length, 0)
+            })
 
-    it('serves the adoptable (gated) versions of the hive tenant to a correct bearer', async () =>
-    {
-        await deployments.Publish(GatedVersion, GatedImage)
-        await deployments.Publish(UngatedVersion, UngatedImage)
-        await deployments.Gate(TenantId, GatedVersion)
-        const reply = await Harness.Send(host, PlaneHttp.MethodGet, AdoptablePath, Harness.BearerPrefix + token)
-        assert.equal(reply.status, 200)
-        assert.deepEqual((JSON.parse(reply.body) as Array<{ id: string }>).map(m => m.id), [GatedVersion])
-    })
+            it('accepts an absent runningImage', async () =>
+            {
+                const h = { environmentName: Harness.EnvName, ready: false, detail: 'pending' }
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, SnapshotPath, Harness.BearerPrefix + token, { environments: [h] })).status, 204)
+            })
 
-    it('serves the rollout status to a correct bearer', async () =>
-    {
-        await deployments.Publish(GatedVersion, GatedImage)
-        await deployments.Gate(TenantId, GatedVersion)
-        await deployments.RecordAdoption(Harness.HiveId, GatedVersion)
-        await deployments.ReportSnapshot(Harness.HiveId, [Health])
-        const reply = await Harness.Send(host, PlaneHttp.MethodGet, StatusPath, Harness.BearerPrefix + token)
-        assert.equal(reply.status, 200)
-        assert.deepEqual(JSON.parse(reply.body), deployments.StatusFor(Harness.HiveId))
-        assert.equal((JSON.parse(reply.body) as { targetVersion: string }).targetVersion, GatedVersion)
-    })
+            it('answers 404 for any other path or method', async () =>
+            {
+                const auth = Harness.BearerPrefix + token
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, '/', auth)).status, 404)
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, LegacyPath, auth)).status, 404)
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, TargetPath, auth, {})).status, 404)
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, SnapshotPath, auth)).status, 404)
+                assert.equal((await Harness.Send(host, Harness.MethodDelete, SnapshotPath, auth)).status, 404)
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, OtherPath, auth)).status, 404)
+            })
 
-    it('adopts a gated version: 204 and the selection is recorded', async () =>
-    {
-        await deployments.Publish(GatedVersion, GatedImage)
-        await deployments.Gate(TenantId, GatedVersion)
-        const reply = await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, Harness.BearerPrefix + token, { version: GatedVersion })
-        assert.equal(reply.status, 204)
-        assert.equal(deployments.TargetFor(Harness.HiveId)?.version, GatedVersion)
-    })
+            it('answers 401 for a bearer sent to an unregistered hive, writes nothing and logs nothing', async () =>
+            {
+                const logged: unknown[][] = []
+                const original = console.error
+                console.error = (...a: unknown[]) => { logged.push(a) }
+                try
+                {
+                    const reply = await Harness.Send(host, PlaneHttp.MethodPost, UnregisteredPath, Harness.BearerPrefix + token, { environments: [Health] })
+                    assert.equal(reply.status, 401)
+                    assert.ok(!reply.body.includes(token))
+                    assert.ok(!reply.body.includes('ghost'))
+                }
+                finally
+                {
+                    console.error = original
+                }
+                assert.equal(logged.length, 0)
+                assert.equal(deployments.StatusFor(Harness.HiveId).environments.length, 0)
+            })
 
-    it('refuses a non-gated or unpublished version with 403 and records nothing', async () =>
-    {
-        await deployments.Publish(GatedVersion, GatedImage)
-        for (const version of [GatedVersion, UnpublishedVersion])
-        {
-            const reply = await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, Harness.BearerPrefix + token, { version })
-            assert.equal(reply.status, 403)
-            assert.ok(!reply.body.includes(version))
-        }
-        assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
-    })
+            it('answers 413 for an oversized body and writes nothing', async () =>
+            {
+                const big = { environments: [{ ...Health, detail: 'x'.repeat(1100000) }] }
+                const reply = await Harness.Send(host, PlaneHttp.MethodPost, SnapshotPath, Harness.BearerPrefix + token, big)
+                assert.equal(reply.status, 413)
+                assert.ok(!reply.body.includes(token))
+                assert.equal(deployments.StatusFor(Harness.HiveId).environments.length, 0)
+            })
 
-    it('refuses a withdrawn-but-gated version with the generic 403, not 500', async () =>
-    {
-        await deployments.Publish(GatedVersion, GatedImage)
-        await deployments.Gate(TenantId, GatedVersion)
-        await deployments.SetWithdrawn(GatedVersion, true, 'bad build', 'op')
-        const reply = await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, Harness.BearerPrefix + token, { version: GatedVersion })
-        assert.equal(reply.status, 403)
-        assert.ok(!reply.body.includes('withdrawn'))
-        assert.ok(!reply.body.includes('bad build'))
-        assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
-    })
+            it('answers 400 for an undecodable hive id and writes nothing', async () =>
+            {
+                const reply = await Harness.Send(host, PlaneHttp.MethodGet, BadEncodingPath, Harness.BearerPrefix + token)
+                assert.equal(reply.status, 400)
+                assert.equal(deployments.StatusFor(Harness.HiveId).environments.length, 0)
+            })
 
-    it('refuses a gated registry release (hives cannot run those yet) with the generic 403, not 500', async () =>
-    {
-        const release = '4.0.0'
-        await deployments.ImportRelease({ id: release, image: 'ghcr.io/x@sha256:' + 'c'.repeat(64), signed: true, channel: Channel.Stable, publishedAt: '2026-11-12T10:00:00.000Z', release: { state: ReleaseState.Verified, builtAt: '2026-11-12T10:00:00.000Z', signingKeyId: 'k' } })
-        await deployments.Gate(TenantId, release)
-        const reply = await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, Harness.BearerPrefix + token, { version: release })
-        assert.equal(reply.status, 403)
-        assert.ok(!reply.body.includes(release))
-        assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
-    })
+            it('serves the adoptable (gated) versions of the hive tenant to a correct bearer', async () =>
+            {
+                await deployments.Publish(GatedVersion, GatedImage)
+                await deployments.Publish(UngatedVersion, UngatedImage)
+                await deployments.Gate(TenantId, GatedVersion)
+                const reply = await Harness.Send(host, PlaneHttp.MethodGet, AdoptablePath, Harness.BearerPrefix + token)
+                assert.equal(reply.status, 200)
+                assert.deepEqual((JSON.parse(reply.body) as Array<{ id: string }>).map(m => m.id), [GatedVersion])
+            })
 
-    it('rejects a malformed adopt body with 400 and records nothing', async () =>
-    {
-        await deployments.Publish(GatedVersion, GatedImage)
-        await deployments.Gate(TenantId, GatedVersion)
-        const bodies: unknown[] = [MalformedJson, 'null', [], {}, { version: 5 }, { version: '' }]
-        for (const b of bodies)
-        {
-            assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, Harness.BearerPrefix + token, b)).status, 400)
-        }
-        assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
-    })
+            it('serves the rollout status to a correct bearer', async () =>
+            {
+                await deployments.Publish(GatedVersion, GatedImage)
+                await deployments.Gate(TenantId, GatedVersion)
+                await deployments.RecordAdoption(Harness.HiveId, GatedVersion)
+                await deployments.ReportSnapshot(Harness.HiveId, [Health])
+                const reply = await Harness.Send(host, PlaneHttp.MethodGet, StatusPath, Harness.BearerPrefix + token)
+                assert.equal(reply.status, 200)
+                assert.deepEqual(JSON.parse(reply.body), deployments.StatusFor(Harness.HiveId))
+                assert.equal((JSON.parse(reply.body) as { targetVersion: string }).targetVersion, GatedVersion)
+            })
 
-    it('enforces the bearer on the tenant routes and does nothing on 401', async () =>
-    {
-        await deployments.Publish(GatedVersion, GatedImage)
-        await deployments.Gate(TenantId, GatedVersion)
-        const bad = Harness.BearerPrefix + WrongToken
-        const replies = [
-            await Harness.Send(host, PlaneHttp.MethodGet, AdoptablePath),
-            await Harness.Send(host, PlaneHttp.MethodGet, AdoptablePath, bad),
-            await Harness.Send(host, PlaneHttp.MethodGet, StatusPath, bad),
-            await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, undefined, { version: GatedVersion }),
-            await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, bad, { version: GatedVersion })
-        ]
-        for (const r of replies)
-        {
-            assert.equal(r.status, 401)
-        }
-        assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
-    })
+            it('adopts a gated version: 204 and the selection is recorded', async () =>
+            {
+                await deployments.Publish(GatedVersion, GatedImage)
+                await deployments.Gate(TenantId, GatedVersion)
+                const reply = await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, Harness.BearerPrefix + token, { version: GatedVersion })
+                assert.equal(reply.status, 204)
+                assert.equal(deployments.TargetFor(Harness.HiveId)?.version, GatedVersion)
+            })
 
-    it('answers 404 for the wrong method on the tenant routes', async () =>
-    {
-        const auth = Harness.BearerPrefix + token
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, AdoptablePath, auth, {})).status, 404)
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, StatusPath, auth, {})).status, 404)
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, AdoptPath, auth)).status, 404)
-    })
+            it('refuses a non-gated or unpublished version with 403 and records nothing', async () =>
+            {
+                await deployments.Publish(GatedVersion, GatedImage)
+                for (const version of [GatedVersion, UnpublishedVersion])
+                {
+                    const reply = await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, Harness.BearerPrefix + token, { version })
+                    assert.equal(reply.status, 403)
+                    assert.ok(!reply.body.includes(version))
+                }
+                assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
+            })
 
-    it('serves the tenant ledger as tenant-safe DTOs to a correct bearer', async () =>
-    {
-        await deployments.Publish(GatedVersion, GatedImage)
-        await deployments.Gate(TenantId, GatedVersion)
-        await deployments.SetWithdrawn(GatedVersion, true, 'bad build', 'op')
-        const reply = await Harness.Send(host, PlaneHttp.MethodGet, LedgerPath, Harness.BearerPrefix + token)
-        assert.equal(reply.status, 200)
-        const rows = JSON.parse(reply.body) as Array<Record<string, unknown>>
-        assert.ok(rows.length >= 2)
-        assert.ok(rows.every(r => !('tenantId' in r)))
-        assert.ok(rows.every(r => r.version === GatedVersion))
-        assert.equal(rows.length, deployments.LedgerForHive(Harness.HiveId, 200).length)
-    })
+            it('refuses a withdrawn-but-gated version with the generic 403, not 500', async () =>
+            {
+                await deployments.Publish(GatedVersion, GatedImage)
+                await deployments.Gate(TenantId, GatedVersion)
+                await deployments.SetWithdrawn(GatedVersion, true, 'bad build', 'op')
+                const reply = await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, Harness.BearerPrefix + token, { version: GatedVersion })
+                assert.equal(reply.status, 403)
+                assert.ok(!reply.body.includes('withdrawn'))
+                assert.ok(!reply.body.includes('bad build'))
+                assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
+            })
 
-    it('caps the ledger with ?limit=', async () =>
-    {
-        await deployments.Publish(GatedVersion, GatedImage)
-        await deployments.Gate(TenantId, GatedVersion)
-        await deployments.SetWithdrawn(GatedVersion, true, 'bad build', 'op')
-        const reply = await Harness.Send(host, PlaneHttp.MethodGet, LedgerPath + '?limit=1', Harness.BearerPrefix + token)
-        assert.equal(reply.status, 200)
-        assert.equal((JSON.parse(reply.body) as unknown[]).length, 1)
-    })
+            it('refuses a gated registry release (hives cannot run those yet) with the generic 403, not 500', async () =>
+            {
+                const release = '4.0.0'
+                await deployments.ImportRelease({ id: release, image: 'ghcr.io/x@sha256:' + 'c'.repeat(64), signed: true, channel: Channel.Stable, publishedAt: '2026-11-12T10:00:00.000Z', release: { state: ReleaseState.Verified, builtAt: '2026-11-12T10:00:00.000Z', signingKeyId: 'k' } })
+                await deployments.Gate(TenantId, release)
+                const reply = await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, Harness.BearerPrefix + token, { version: release })
+                assert.equal(reply.status, 403)
+                assert.ok(!reply.body.includes(release))
+                assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
+            })
 
-    it('rejects a missing or wrong bearer on the ledger route with 401, and a POST with 404', async () =>
-    {
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, LedgerPath)).status, 401)
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, LedgerPath, Harness.BearerPrefix + WrongToken)).status, 401)
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, LedgerPath, Harness.BearerPrefix + token, {})).status, 404)
-    })
+            it('rejects a malformed adopt body with 400 and records nothing', async () =>
+            {
+                await deployments.Publish(GatedVersion, GatedImage)
+                await deployments.Gate(TenantId, GatedVersion)
+                const bodies: unknown[] = [MalformedJson, 'null', [], {}, { version: 5 }, { version: '' }]
+                for (const b of bodies)
+                {
+                    assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, Harness.BearerPrefix + token, b)).status, 400)
+                }
+                assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
+            })
 
-    it('answers 401 for the ledger of an unregistered hive', async () =>
-    {
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, '/agent/hives/ghost/ledger', Harness.BearerPrefix + token)).status, 401)
-    })
+            it('enforces the bearer on the tenant routes and does nothing on 401', async () =>
+            {
+                await deployments.Publish(GatedVersion, GatedImage)
+                await deployments.Gate(TenantId, GatedVersion)
+                const bad = Harness.BearerPrefix + WrongToken
+                const replies = [
+                    await Harness.Send(host, PlaneHttp.MethodGet, AdoptablePath),
+                    await Harness.Send(host, PlaneHttp.MethodGet, AdoptablePath, bad),
+                    await Harness.Send(host, PlaneHttp.MethodGet, StatusPath, bad),
+                    await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, undefined, { version: GatedVersion }),
+                    await Harness.Send(host, PlaneHttp.MethodPost, AdoptPath, bad, { version: GatedVersion })
+                ]
+                for (const r of replies)
+                {
+                    assert.equal(r.status, 401)
+                }
+                assert.equal(deployments.TargetFor(Harness.HiveId), undefined)
+            })
 
-    it('accepts a console advert from the hive bearer and answers the refused domains', async () =>
-    {
-        const reply = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)
-        assert.equal(reply.status, 200)
-        assert.deepEqual(JSON.parse(reply.body), { refusedEmailDomains: ['gmail.com'] })
-        assert.equal(adverts.ForTenant(TenantId)?.consoleUrl, ConsoleUrl)
-    })
+            it('answers 404 for the wrong method on the tenant routes', async () =>
+            {
+                const auth = Harness.BearerPrefix + token
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, AdoptablePath, auth, {})).status, 404)
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, StatusPath, auth, {})).status, 404)
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, AdoptPath, auth)).status, 404)
+            })
 
-    it('the advert answer carries the tenant\'s last Owner reset', async () =>
-    {
-        const resets = new ConsoleOwnerResets(join(parent, ConsoleOwnerResets.FileName), () => new Date(OwnerResetAt))
-        await resets.Load()
-        await host.Close()
-        host = new AgentChannelHost(new LocalAgentChannelBackend(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, resets)))
-        await host.Listen(0, '127.0.0.1')
-        const before = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)
-        assert.deepEqual(JSON.parse(before.body), { refusedEmailDomains: ['gmail.com'] })
-        await resets.Record(TenantId)
-        const after = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)
-        assert.equal(after.status, 200)
-        assert.deepEqual(JSON.parse(after.body), { refusedEmailDomains: ['gmail.com'], ownerResetAt: OwnerResetAt })
-    })
+            it('serves the tenant ledger as tenant-safe DTOs to a correct bearer', async () =>
+            {
+                await deployments.Publish(GatedVersion, GatedImage)
+                await deployments.Gate(TenantId, GatedVersion)
+                await deployments.SetWithdrawn(GatedVersion, true, 'bad build', 'op')
+                const reply = await Harness.Send(host, PlaneHttp.MethodGet, LedgerPath, Harness.BearerPrefix + token)
+                assert.equal(reply.status, 200)
+                const rows = JSON.parse(reply.body) as Array<Record<string, unknown>>
+                assert.ok(rows.length >= 2)
+                assert.ok(rows.every(r => !('tenantId' in r)))
+                assert.ok(rows.every(r => r.version === GatedVersion))
+                assert.equal(rows.length, deployments.LedgerForHive(Harness.HiveId, 200).length)
+            })
 
-    it('rejects a console advert with a missing or wrong bearer: 401, nothing stored', async () =>
-    {
-        const replies = [
-            await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, undefined, Advert),
-            await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + WrongToken, Advert)
-        ]
-        for (const r of replies)
-        {
-            assert.equal(r.status, 401)
-            assert.ok(!r.body.includes(token))
-            assert.ok(!r.body.includes(WrongToken))
-        }
-        assert.equal(adverts.ForTenant(TenantId), undefined)
-    })
+            it('caps the ledger with ?limit=', async () =>
+            {
+                await deployments.Publish(GatedVersion, GatedImage)
+                await deployments.Gate(TenantId, GatedVersion)
+                await deployments.SetWithdrawn(GatedVersion, true, 'bad build', 'op')
+                const reply = await Harness.Send(host, PlaneHttp.MethodGet, LedgerPath + '?limit=1', Harness.BearerPrefix + token)
+                assert.equal(reply.status, 200)
+                assert.equal((JSON.parse(reply.body) as unknown[]).length, 1)
+            })
 
-    it('answers 409 for a hive without the console', async () =>
-    {
-        await directory.SetHiveConsole(Harness.HiveId, undefined)
-        const reply = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)
-        assert.equal(reply.status, 409)
-        assert.equal(typeof JSON.parse(reply.body).error, 'string')
-        assert.ok(!reply.body.includes(token))
-        assert.equal(adverts.ForTenant(TenantId), undefined)
-    })
+            it('rejects a missing or wrong bearer on the ledger route with 401, and a POST with 404', async () =>
+            {
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, LedgerPath)).status, 401)
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, LedgerPath, Harness.BearerPrefix + WrongToken)).status, 401)
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, LedgerPath, Harness.BearerPrefix + token, {})).status, 404)
+            })
 
-    it('answers 400 with the fixed sentence for an invalid advert and for a malformed JSON body', async () =>
-    {
-        const badHost = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, { ...Advert, consoleUrl: 'https://evil.example.com' })
-        assert.equal(badHost.status, 400)
-        assert.ok(!badHost.body.includes('evil.example.com'))
-        const malformed = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, MalformedJson)
-        assert.equal(malformed.status, 400)
-        assert.deepEqual(JSON.parse(malformed.body), { error: ConsoleAdvertReceiver.BadShape })
-        assert.ok(!malformed.body.includes('not json'))
-        assert.equal(adverts.ForTenant(TenantId), undefined)
-    })
+            it('answers 401 for the ledger of an unregistered hive', async () =>
+            {
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, '/agent/hives/ghost/ledger', Harness.BearerPrefix + token)).status, 401)
+            })
 
-    it('answers 404 for GET on the console route', async () =>
-    {
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, ConsolePath, Harness.BearerPrefix + token)).status, 404)
-    })
+            it('accepts a console advert from the hive bearer and answers the refused domains', async () =>
+            {
+                const reply = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)
+                assert.equal(reply.status, 200)
+                assert.deepEqual(JSON.parse(reply.body), { refusedEmailDomains: ['gmail.com'] })
+                assert.equal(adverts.ForTenant(TenantId)?.consoleUrl, ConsoleUrl)
+            })
 
-    it('answers 404 when no advert receiver is configured, even with a valid bearer', async () =>
-    {
-        const bare = new AgentChannelHost(new LocalAgentChannelBackend(deployments))
-        await bare.Listen(0, '127.0.0.1')
-        try
-        {
-            assert.equal((await Harness.Send(bare, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)).status, 404)
-            assert.equal((await Harness.Send(bare, PlaneHttp.MethodPost, ConsolePath, undefined, Advert)).status, 404)
-        }
-        finally
-        {
-            await bare.Close()
-        }
-    })
+            it('the advert answer carries the tenant\'s last Owner reset', async () =>
+            {
+                const resets = new ConsoleOwnerResets(join(parent, ConsoleOwnerResets.FileName), () => new Date(OwnerResetAt))
+                await resets.Load()
+                await host.Close()
+                host = await mode.Host(new LocalAgentChannelBackend(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, resets)))
+                await host.Listen(0, '127.0.0.1')
+                const before = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)
+                assert.deepEqual(JSON.parse(before.body), { refusedEmailDomains: ['gmail.com'] })
+                await resets.Record(TenantId)
+                const after = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)
+                assert.equal(after.status, 200)
+                assert.deepEqual(JSON.parse(after.body), { refusedEmailDomains: ['gmail.com'], ownerResetAt: OwnerResetAt })
+            })
 
-    it('answers 401 for a console advert from an unregistered hive', async () =>
-    {
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, '/agent/hives/ghost/console', Harness.BearerPrefix + token, Advert)).status, 401)
-        assert.equal(adverts.ForTenant(TenantId), undefined)
-    })
+            it('rejects a console advert with a missing or wrong bearer: 401, nothing stored', async () =>
+            {
+                const replies = [
+                    await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, undefined, Advert),
+                    await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + WrongToken, Advert)
+                ]
+                for (const r of replies)
+                {
+                    assert.equal(r.status, 401)
+                    assert.ok(!r.body.includes(token))
+                    assert.ok(!r.body.includes(WrongToken))
+                }
+                assert.equal(adverts.ForTenant(TenantId), undefined)
+            })
 
-    it('answers 413 for an oversized console advert and stores nothing', async () =>
-    {
-        const big = { ...Advert, emailDomains: ['x'.repeat(1100000)] }
-        const reply = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, big)
-        assert.equal(reply.status, 413)
-        assert.equal(adverts.ForTenant(TenantId), undefined)
-    })
+            it('answers 409 for a hive without the console', async () =>
+            {
+                await directory.SetHiveConsole(Harness.HiveId, undefined)
+                const reply = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)
+                assert.equal(reply.status, 409)
+                assert.equal(typeof JSON.parse(reply.body).error, 'string')
+                assert.ok(!reply.body.includes(token))
+                assert.equal(adverts.ForTenant(TenantId), undefined)
+            })
 
-    /** Replaces the host with one whose receiver verifies through `domains`. */
-    const UseDomains = async (domains: IConsoleDomainVerifications): Promise<void> =>
-    {
-        await host.Close()
-        host = new AgentChannelHost(new LocalAgentChannelBackend(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, undefined, domains)))
-        await host.Listen(0, '127.0.0.1')
+            it('answers 400 with the fixed sentence for an invalid advert and for a malformed JSON body', async () =>
+            {
+                const badHost = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, { ...Advert, consoleUrl: 'https://evil.example.com' })
+                assert.equal(badHost.status, 400)
+                assert.ok(!badHost.body.includes('evil.example.com'))
+                const malformed = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, MalformedJson)
+                assert.equal(malformed.status, 400)
+                assert.deepEqual(JSON.parse(malformed.body), { error: ConsoleAdvertReceiver.BadShape })
+                assert.ok(!malformed.body.includes('not json'))
+                assert.equal(adverts.ForTenant(TenantId), undefined)
+            })
+
+            it('answers 404 for GET on the console route', async () =>
+            {
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, ConsolePath, Harness.BearerPrefix + token)).status, 404)
+            })
+
+            it('answers 404 when no advert receiver is configured, even with a valid bearer', async () =>
+            {
+                const bare = await mode.Host(new LocalAgentChannelBackend(deployments))
+                await bare.Listen(0, '127.0.0.1')
+                try
+                {
+                    assert.equal((await Harness.Send(bare, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)).status, 404)
+                    assert.equal((await Harness.Send(bare, PlaneHttp.MethodPost, ConsolePath, undefined, Advert)).status, 404)
+                }
+                finally
+                {
+                    await bare.Close()
+                }
+            })
+
+            it('answers 401 for a console advert from an unregistered hive', async () =>
+            {
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, '/agent/hives/ghost/console', Harness.BearerPrefix + token, Advert)).status, 401)
+                assert.equal(adverts.ForTenant(TenantId), undefined)
+            })
+
+            it('answers 413 for an oversized console advert and stores nothing', async () =>
+            {
+                const big = { ...Advert, emailDomains: ['x'.repeat(1100000)] }
+                const reply = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, big)
+                assert.equal(reply.status, 413)
+                assert.equal(adverts.ForTenant(TenantId), undefined)
+            })
+
+            /** Replaces the host with one whose receiver verifies through `domains`. */
+            const UseDomains = async (domains: IConsoleDomainVerifications): Promise<void> =>
+            {
+                await host.Close()
+                host = await mode.Host(new LocalAgentChannelBackend(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, undefined, domains)))
+                await host.Listen(0, '127.0.0.1')
+            }
+
+            it('POST /agent/hives/h1/console/verify-domain with the hive bearer answers { verification }', async () =>
+            {
+                const fake = new FakeDomains()
+                await UseDomains(fake)
+                const reply = await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + token, { domain: VerifyDomainName })
+                assert.equal(reply.status, 200)
+                assert.deepEqual(JSON.parse(reply.body), { verification: FakeDomains.AnswerOf(VerifyDomainName) })
+                assert.deepEqual(fake.Verified, [{ tenantId: TenantId, domain: VerifyDomainName }])
+            })
+
+            it('a wrong bearer is 401 and nothing is verified', async () =>
+            {
+                const fake = new FakeDomains()
+                await UseDomains(fake)
+                const replies = [
+                    await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, undefined, { domain: VerifyDomainName }),
+                    await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + WrongToken, { domain: VerifyDomainName })
+                ]
+                for (const r of replies)
+                {
+                    assert.equal(r.status, 401)
+                }
+                assert.deepEqual(fake.Verified, [])
+            })
+
+            it('another registered hive\'s valid bearer on this hive\'s verify-domain path is 401 and nothing is verified', async () =>
+            {
+                await directory.CreateTenant({ id: 't2', clientId: 'acme', displayName: 'T2' })
+                await directory.CreateHive({ id: 'other1', tenantId: 't2', displayName: 'O', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
+                const otherToken = await deployments.RegisterHive('other1')
+                const fake = new FakeDomains()
+                await UseDomains(fake)
+                const reply = await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + otherToken, { domain: VerifyDomainName })
+                assert.equal(reply.status, 401)
+                assert.deepEqual(fake.Verified, [])
+            })
+
+            it('GET on verify-domain is 404, and so is a host without an advert receiver', async () =>
+            {
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, VerifyPath, Harness.BearerPrefix + token)).status, 404)
+                const bare = await mode.Host(new LocalAgentChannelBackend(deployments))
+                await bare.Listen(0, '127.0.0.1')
+                try
+                {
+                    assert.equal((await Harness.Send(bare, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + token, { domain: VerifyDomainName })).status, 404)
+                }
+                finally
+                {
+                    await bare.Close()
+                }
+            })
+
+            it('each verification error maps to its fixed text', async () =>
+            {
+                const cases: Array<{ error: Error; status: number; text: string }> = [
+                    { error: new InvalidEmailDomainError(InnerMessage), status: 400, text: 'Invalid email domain' },
+                    { error: new DomainNotClaimedError(InnerMessage), status: 409, text: 'Domain is not among the reported email domains' },
+                    { error: new DomainVerifyThrottledError(InnerMessage), status: 429, text: 'Too many verification attempts' },
+                    { error: new DomainVerificationUnavailableError(InnerMessage), status: 503, text: 'Domain verification unavailable' }
+                ]
+                for (const c of cases)
+                {
+                    const fake = new FakeDomains()
+                    fake.Failure = c.error
+                    await UseDomains(fake)
+                    const reply = await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + token, { domain: VerifyDomainName })
+                    assert.equal(reply.status, c.status, c.error.name)
+                    assert.deepEqual(JSON.parse(reply.body), { error: c.text })
+                    assert.ok(!reply.body.includes(InnerMessage))
+                }
+            })
+
+            it('a malformed verify body is 400 with the fixed sentence', async () =>
+            {
+                await UseDomains(new FakeDomains())
+                const reply = await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + token, MalformedJson)
+                assert.equal(reply.status, 400)
+                assert.ok(!reply.body.includes('not json'))
+                assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + token, { domain: 5 })).status, 400)
+            })
+
+            it('the advert answer carries domainVerifications', async () =>
+            {
+                await UseDomains(new FakeDomains())
+                const reply = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)
+                assert.equal(reply.status, 200)
+                assert.deepEqual(JSON.parse(reply.body), { refusedEmailDomains: ['gmail.com'], domainVerifications: [FakeDomains.AnswerOf('acme.com')] })
+            })
+        })
     }
+}
 
-    it('POST /agent/hives/h1/console/verify-domain with the hive bearer answers { verification }', async () =>
-    {
-        const fake = new FakeDomains()
-        await UseDomains(fake)
-        const reply = await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + token, { domain: VerifyDomainName })
-        assert.equal(reply.status, 200)
-        assert.deepEqual(JSON.parse(reply.body), { verification: FakeDomains.AnswerOf(VerifyDomainName) })
-        assert.deepEqual(fake.Verified, [{ tenantId: TenantId, domain: VerifyDomainName }])
-    })
+ChannelSuite.Define('AgentChannelHost (in-process backend)', new InProcessBackends())
+ChannelSuite.Define('AgentChannelHost (edge: remote backend over the internal API)', new RemoteBackends())
 
-    it('a wrong bearer is 401 and nothing is verified', async () =>
-    {
-        const fake = new FakeDomains()
-        await UseDomains(fake)
-        const replies = [
-            await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, undefined, { domain: VerifyDomainName }),
-            await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + WrongToken, { domain: VerifyDomainName })
-        ]
-        for (const r of replies)
-        {
-            assert.equal(r.status, 401)
-        }
-        assert.deepEqual(fake.Verified, [])
-    })
-
-    it('another registered hive\'s valid bearer on this hive\'s verify-domain path is 401 and nothing is verified', async () =>
-    {
-        await directory.CreateTenant({ id: 't2', clientId: 'acme', displayName: 'T2' })
-        await directory.CreateHive({ id: 'other1', tenantId: 't2', displayName: 'O', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
-        const otherToken = await deployments.RegisterHive('other1')
-        const fake = new FakeDomains()
-        await UseDomains(fake)
-        const reply = await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + otherToken, { domain: VerifyDomainName })
-        assert.equal(reply.status, 401)
-        assert.deepEqual(fake.Verified, [])
-    })
-
-    it('GET on verify-domain is 404, and so is a host without an advert receiver', async () =>
-    {
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodGet, VerifyPath, Harness.BearerPrefix + token)).status, 404)
-        const bare = new AgentChannelHost(new LocalAgentChannelBackend(deployments))
-        await bare.Listen(0, '127.0.0.1')
-        try
-        {
-            assert.equal((await Harness.Send(bare, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + token, { domain: VerifyDomainName })).status, 404)
-        }
-        finally
-        {
-            await bare.Close()
-        }
-    })
-
-    it('each verification error maps to its fixed text', async () =>
-    {
-        const cases: Array<{ error: Error; status: number; text: string }> = [
-            { error: new InvalidEmailDomainError(InnerMessage), status: 400, text: 'Invalid email domain' },
-            { error: new DomainNotClaimedError(InnerMessage), status: 409, text: 'Domain is not among the reported email domains' },
-            { error: new DomainVerifyThrottledError(InnerMessage), status: 429, text: 'Too many verification attempts' },
-            { error: new DomainVerificationUnavailableError(InnerMessage), status: 503, text: 'Domain verification unavailable' }
-        ]
-        for (const c of cases)
-        {
-            const fake = new FakeDomains()
-            fake.Failure = c.error
-            await UseDomains(fake)
-            const reply = await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + token, { domain: VerifyDomainName })
-            assert.equal(reply.status, c.status, c.error.name)
-            assert.deepEqual(JSON.parse(reply.body), { error: c.text })
-            assert.ok(!reply.body.includes(InnerMessage))
-        }
-    })
-
-    it('a malformed verify body is 400 with the fixed sentence', async () =>
-    {
-        await UseDomains(new FakeDomains())
-        const reply = await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + token, MalformedJson)
-        assert.equal(reply.status, 400)
-        assert.ok(!reply.body.includes('not json'))
-        assert.equal((await Harness.Send(host, PlaneHttp.MethodPost, VerifyPath, Harness.BearerPrefix + token, { domain: 5 })).status, 400)
-    })
-
-    it('the advert answer carries domainVerifications', async () =>
-    {
-        await UseDomains(new FakeDomains())
-        const reply = await Harness.Send(host, PlaneHttp.MethodPost, ConsolePath, Harness.BearerPrefix + token, Advert)
-        assert.equal(reply.status, 200)
-        assert.deepEqual(JSON.parse(reply.body), { refusedEmailDomains: ['gmail.com'], domainVerifications: [FakeDomains.AnswerOf('acme.com')] })
-    })
-})
