@@ -1,7 +1,8 @@
 /**
- * Which listeners one control-plane process starts (`PRAGMATIC_CONTROL_PLANE_ROLE`). `all` is today's single process;
- * `edge` runs only the agent-channel listener (the pragmatic-platform-edge image); `admin` runs everything except it
- * (the pragmatic-platform-admin image). Both images share one closure until the real split.
+ * Which listeners one control-plane process starts (`PRAGMATIC_CONTROL_PLANE_ROLE`). `all` is the single dev process;
+ * `edge` is the keyless public process (agent channel + desktop discovery, answered by admin over the internal API;
+ * the pragmatic-platform-edge image); `admin` runs everything except the public channel, plus the internal API (the
+ * pragmatic-platform-admin image).
  */
 export enum ControlPlaneRole
 {
@@ -16,6 +17,8 @@ export interface IControlPlaneListeners
     OperatorHost: boolean
     AgentChannel: boolean
     TenantPlane: boolean
+    /** Admin's internal API for the edge (started only when PRAGMATIC_ADMIN_INTERNAL_PORT is set). */
+    InternalApi: boolean
 }
 
 /** Starts each listener a composed control plane holds; ControlPlaneStart decides which of them a role starts. */
@@ -24,6 +27,7 @@ export interface IControlPlaneListenerStarts
     StartOperatorHost(): Promise<void>
     StartAgentChannel(): Promise<void>
     StartTenantPlane(): Promise<void>
+    StartInternalApi(): Promise<void>
 }
 
 /** The role variable holds a value that is not a known role (the value itself is never echoed). */
@@ -79,7 +83,7 @@ export class ControlPlaneRoles
     {
         const edge = role === ControlPlaneRole.Edge
         const admin = role === ControlPlaneRole.Admin
-        return { OperatorHost: !edge, AgentChannel: !admin, TenantPlane: !edge }
+        return { OperatorHost: !edge, AgentChannel: !admin, TenantPlane: !edge, InternalApi: !edge }
     }
 
     /**
@@ -108,7 +112,7 @@ export class ControlPlaneRoles
     }
 }
 
-/** The start sequence of one control-plane process: operator host, then agent channel, then tenant plane, as its role allows. */
+/** The start sequence of one control-plane process: operator host, internal API, agent channel, then tenant plane, as its role allows. */
 export class ControlPlaneStart
 {
     public constructor(private readonly role: ControlPlaneRole)
@@ -121,6 +125,10 @@ export class ControlPlaneStart
         if (starts.OperatorHost)
         {
             await listeners.StartOperatorHost()
+        }
+        if (starts.InternalApi)
+        {
+            await listeners.StartInternalApi()
         }
         if (starts.AgentChannel)
         {

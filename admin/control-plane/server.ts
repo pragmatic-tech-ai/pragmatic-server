@@ -5,6 +5,8 @@ import { dirname, join, resolve } from 'node:path'
 import { AuditRegistry } from './audit-record.js'
 import { AuditThrottle } from './audit-throttle.js'
 import { LocalDesktopDiscoveryBackend } from './desktop-discovery-backend.js'
+import { InternalApiCredential } from './internal-api-credential.js'
+import { InternalApiHost } from './internal-api-host.js'
 import { DesktopDiscoveryEndpoint } from './desktop-discovery-endpoint.js'
 import { TenantAccountIndex } from './tenant-account-index.js'
 import { OperatorAuthorization } from './operator-authorization.js'
@@ -120,6 +122,21 @@ interface IOperatorSideStart
     tenant: ITenantPlaneStart | undefined
 }
 
+/** Admin's internal API listener for the edge; absent unless PRAGMATIC_ADMIN_INTERNAL_PORT is set. */
+interface IInternalApiStart
+{
+    host: InternalApiHost
+    settings: InternalApiSettings
+}
+
+/** The parsed internal-API settings. */
+export interface InternalApiSettings
+{
+    Port: number
+    Bind: string
+    SecretFile: string
+}
+
 /** The agent-channel listener; `raw` is the port variable as given, for the invalid-port warning. */
 interface IAgentChannelStart
 {
@@ -138,11 +155,23 @@ class ComposedListeners implements IControlPlaneListenerStarts
     private static readonly AgentChannelListeningPrefix = 'Agent channel listening on '
     private static readonly AgentChannelInvalidPortWarning = 'Ignoring invalid PRAGMATIC_AGENT_CHANNEL_PORT (expected an integer 1-65535); agent channel not started: '
     private static readonly TenantListeningPrefix = 'Tenant plane listening on '
+    private static readonly InternalListeningPrefix = 'Internal API listening on '
     private static readonly SchemeHostSeparator = '://'
     private static readonly HostPortSeparator = ':'
 
-    public constructor(private readonly operator: IOperatorSideStart | undefined, private readonly channel: IAgentChannelStart)
+    public constructor(private readonly operator: IOperatorSideStart | undefined, private readonly channel: IAgentChannelStart, private readonly internal?: IInternalApiStart)
     {
+    }
+
+    public async StartInternalApi(): Promise<void>
+    {
+        const i = this.internal
+        if (i === undefined)
+        {
+            return
+        }
+        await i.host.Listen(i.settings.Port, i.settings.Bind)
+        console.log(ComposedListeners.InternalListeningPrefix + i.settings.Bind + ComposedListeners.HostPortSeparator + String(i.settings.Port))
     }
 
     /** No tenant route is mounted on the operator listener. It binds PRAGMATIC_ADMIN_BIND (default loopback); a
@@ -194,6 +223,12 @@ export class ControlPlaneServer
 {
     private static readonly PortEnvVar = 'PRAGMATIC_ADMIN_PORT'
     private static readonly AdminBindEnvVar = 'PRAGMATIC_ADMIN_BIND'
+    private static readonly InternalPortEnvVar = 'PRAGMATIC_ADMIN_INTERNAL_PORT'
+    private static readonly InternalBindEnvVar = 'PRAGMATIC_ADMIN_INTERNAL_BIND'
+    private static readonly DisabledPortText = '0'
+    private static readonly BadInternalPortPrefix = 'Invalid PRAGMATIC_ADMIN_INTERNAL_PORT (expected 0 or a port 1-65535): '
+    private static readonly BadInternalBindPrefix = 'Invalid PRAGMATIC_ADMIN_INTERNAL_BIND (expected an IP address or localhost): '
+    private static readonly InternalSecretRequired = 'PRAGMATIC_ADMIN_INTERNAL_PORT is set, so PRAGMATIC_INTERNAL_API_SECRET_FILE is required'
     private static readonly DefaultAdminBind = '127.0.0.1'
     private static readonly LocalhostName = 'localhost'
     private static readonly BadAdminBindPrefix = 'Invalid PRAGMATIC_ADMIN_BIND (expected an IP address or localhost): '
@@ -350,7 +385,8 @@ export class ControlPlaneServer
         // channel receives, over the shared adverts and approvals.
         const domainVerifier = new DomainTxtVerifier(new NodeTxtResolver())
         const emailDomains = new PlatformEmailDomains(directory, adverts, approvals, domainVerifier)
-        const channel = ControlPlaneServer.AgentChannelOf(role, deployments, directory, adverts, ownerResets, emailDomains)
+        const agentBackend = ControlPlaneServer.AgentChannelBackendOf(deployments, directory, adverts, ownerResets, emailDomains)
+        const channel = ControlPlaneRoles.ServesAgentChannel(role) ? new AgentChannelHost(agentBackend) : undefined
         const agentBind = ControlPlaneServer.ParseAgentChannelBind(process.env[ControlPlaneServer.AgentChannelBindEnvVar])
         const channelStart: IAgentChannelStart = { host: channel, port: agentChannelPort, raw: agentChannelRaw, bind: agentBind }
         if (operator === undefined || masterKey === undefined)
@@ -370,6 +406,9 @@ export class ControlPlaneServer
         const discoveryBackend = new LocalDesktopDiscoveryBackend(accountIndex, directory, ControlPlaneServer.DesktopTenantPlaneUrlOf(process.env),
             adverts, fingerprintKeys, approvals, registry)
         const discovery = new DesktopDiscoveryEndpoint(discoveryBackend, DesktopDiscoveryEndpoint.NewThrottle())
+        const internalSettings = ControlPlaneServer.InternalApiSettingsOf(process.env)
+        const internalStart: IInternalApiStart | undefined = internalSettings === undefined ? undefined
+            : { host: new InternalApiHost(InternalApiCredential.FromFile(internalSettings.SecretFile), agentBackend, discoveryBackend), settings: internalSettings }
         // Installs a Local hive's tenant console through the same cluster access.
         const consoleInstaller = new TenantConsoleInstaller(directory, orchestrators, new TenantAdminBootstrap(deployments), fingerprintKeys,
             new DevCertificateAuthority(join(dataRoot, DevCertificateAuthority.DirName), sealed), new InHiveIdpAdmin(orchestrators, sealed),
@@ -409,7 +448,7 @@ export class ControlPlaneServer
             tenantStart = { host: tenantHost, port: tenantPort, bind: tenantBind, scheme, baseDomain }
         }
         // The admin role still derives the channel URL above (hive bundles point at the edge) but does not listen on it.
-        await new ControlPlaneStart(role).Run(new ComposedListeners({ host, port, bind: ControlPlaneServer.AdminBindOf(process.env), tenant: tenantStart }, channelStart))
+        await new ControlPlaneStart(role).Run(new ComposedListeners({ host, port, bind: ControlPlaneServer.AdminBindOf(process.env), tenant: tenantStart }, channelStart, internalStart))
         // The poll's timer is unref'd, so it never holds the process open; it is also stopped on shutdown, beside the tunnels.
         if (releases?.Poll !== undefined)
         {
@@ -426,7 +465,42 @@ export class ControlPlaneServer
         {
             return undefined
         }
-        return new AgentChannelHost(new LocalAgentChannelBackend(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, ownerResets, emailDomains)))
+        return new AgentChannelHost(ControlPlaneServer.AgentChannelBackendOf(deployments, directory, adverts, ownerResets, emailDomains))
+    }
+
+    /** The in-process agent channel (registries + console advert receiver), shared by the public channel and the internal API. */
+    public static AgentChannelBackendOf(deployments: PlatformDeploymentRegistry, directory: PlatformDirectory, adverts: ConsoleAdvertRegistry,
+        ownerResets: ConsoleOwnerResets, emailDomains: PlatformEmailDomains): LocalAgentChannelBackend
+    {
+        return new LocalAgentChannelBackend(deployments, new ConsoleAdvertReceiver(directory, adverts, undefined, ownerResets, emailDomains))
+    }
+
+    /** PRAGMATIC_ADMIN_INTERNAL_PORT (0/blank = off), _BIND (default loopback) and PRAGMATIC_INTERNAL_API_SECRET_FILE (required when on). */
+    public static InternalApiSettingsOf(env: NodeJS.ProcessEnv): InternalApiSettings | undefined
+    {
+        const C = ControlPlaneServer
+        const rawPort = env[C.InternalPortEnvVar]?.trim() ?? ''
+        if (rawPort === '' || rawPort === C.DisabledPortText)
+        {
+            return undefined
+        }
+        const port = Number(rawPort)
+        if (!Number.isInteger(port) || port < 1 || port > C.MaxPort)
+        {
+            throw new Error(C.BadInternalPortPrefix + rawPort)
+        }
+        const rawBind = env[C.InternalBindEnvVar]?.trim() ?? ''
+        const bind = rawBind === '' ? C.DefaultAdminBind : rawBind
+        if (isIP(bind) === 0 && bind !== C.LocalhostName)
+        {
+            throw new Error(C.BadInternalBindPrefix + rawBind)
+        }
+        const secretFile = env[InternalApiCredential.SecretFileEnvVar]?.trim() ?? ''
+        if (secretFile === '')
+        {
+            throw new Error(C.InternalSecretRequired)
+        }
+        return { Port: port, Bind: bind, SecretFile: secretFile }
     }
 
     /**

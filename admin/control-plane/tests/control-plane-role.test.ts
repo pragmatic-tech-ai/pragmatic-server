@@ -15,6 +15,7 @@ class RecordingListeners implements IControlPlaneListenerStarts
     public static readonly Operator = 'operator'
     public static readonly Channel = 'channel'
     public static readonly Tenant = 'tenant'
+    public static readonly Internal = 'internal'
 
     public readonly Started: string[] = []
 
@@ -26,6 +27,11 @@ class RecordingListeners implements IControlPlaneListenerStarts
     public async StartAgentChannel(): Promise<void>
     {
         this.Started.push(RecordingListeners.Channel)
+    }
+
+    public async StartInternalApi(): Promise<void>
+    {
+        this.Started.push(RecordingListeners.Internal)
     }
 
     public async StartTenantPlane(): Promise<void>
@@ -56,7 +62,7 @@ describe('control-plane start sequence', () =>
     it('all starts the operator host, then the agent channel, then the tenant plane', async () =>
     {
         const R = RecordingListeners
-        assert.deepEqual(await R.StartedBy(ControlPlaneRole.All), [R.Operator, R.Channel, R.Tenant])
+        assert.deepEqual(await R.StartedBy(ControlPlaneRole.All), [R.Operator, R.Internal, R.Channel, R.Tenant])
     })
 
     it('edge starts only the agent channel', async () =>
@@ -67,7 +73,7 @@ describe('control-plane start sequence', () =>
     it('admin starts everything except the agent channel', async () =>
     {
         const R = RecordingListeners
-        assert.deepEqual(await R.StartedBy(ControlPlaneRole.Admin), [R.Operator, R.Tenant])
+        assert.deepEqual(await R.StartedBy(ControlPlaneRole.Admin), [R.Operator, R.Internal, R.Tenant])
     })
 
     it('only roles that start the agent channel compose its host (and the console advert receiver behind it)', () =>
@@ -102,21 +108,21 @@ describe('control-plane role', () =>
 
     it('all starts the operator host, the agent channel and the tenant plane', () =>
     {
-        assert.deepEqual(ControlPlaneRoles.ListenersOf(ControlPlaneRole.All), { OperatorHost: true, AgentChannel: true, TenantPlane: true })
+        assert.deepEqual(ControlPlaneRoles.ListenersOf(ControlPlaneRole.All), { OperatorHost: true, AgentChannel: true, TenantPlane: true, InternalApi: true })
     })
 
     it('edge composes the agent channel and not the operator host', () =>
     {
         const role = ControlPlaneRoles.Of({ PRAGMATIC_CONTROL_PLANE_ROLE: 'edge' })
         assert.equal(role, ControlPlaneRole.Edge)
-        assert.deepEqual(ControlPlaneRoles.ListenersOf(role), { OperatorHost: false, AgentChannel: true, TenantPlane: false })
+        assert.deepEqual(ControlPlaneRoles.ListenersOf(role), { OperatorHost: false, AgentChannel: true, TenantPlane: false, InternalApi: false })
     })
 
     it('admin composes the operator host and not the agent channel', () =>
     {
         const role = ControlPlaneRoles.Of({ PRAGMATIC_CONTROL_PLANE_ROLE: 'admin' })
         assert.equal(role, ControlPlaneRole.Admin)
-        assert.deepEqual(ControlPlaneRoles.ListenersOf(role), { OperatorHost: true, AgentChannel: false, TenantPlane: true })
+        assert.deepEqual(ControlPlaneRoles.ListenersOf(role), { OperatorHost: true, AgentChannel: false, TenantPlane: true, InternalApi: true })
     })
 
     it('an unknown role throws a typed error naming the variable only', () =>

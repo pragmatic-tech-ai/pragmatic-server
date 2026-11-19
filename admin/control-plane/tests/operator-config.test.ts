@@ -65,3 +65,28 @@ describe('ControlPlaneServer.AdminBindOf', () =>
         assert.throws(() => ControlPlaneServer.AdminBindOf({ PRAGMATIC_ADMIN_BIND: 'not an ip' }), /PRAGMATIC_ADMIN_BIND/)
     })
 })
+
+describe('ControlPlaneServer.InternalApiSettingsOf', () =>
+{
+    it('is off by default and when the port is 0 or blank', () =>
+    {
+        assert.equal(ControlPlaneServer.InternalApiSettingsOf({}), undefined)
+        assert.equal(ControlPlaneServer.InternalApiSettingsOf({ PRAGMATIC_ADMIN_INTERNAL_PORT: '0' }), undefined)
+        assert.equal(ControlPlaneServer.InternalApiSettingsOf({ PRAGMATIC_ADMIN_INTERNAL_PORT: ' ' }), undefined)
+    })
+
+    it('reads port, bind (default loopback) and the secret file', () =>
+    {
+        assert.deepEqual(ControlPlaneServer.InternalApiSettingsOf({ PRAGMATIC_ADMIN_INTERNAL_PORT: '7001', PRAGMATIC_INTERNAL_API_SECRET_FILE: '/run/secrets/edge' }),
+            { Port: 7001, Bind: '127.0.0.1', SecretFile: '/run/secrets/edge' })
+        assert.equal(ControlPlaneServer.InternalApiSettingsOf({ PRAGMATIC_ADMIN_INTERNAL_PORT: '7001', PRAGMATIC_ADMIN_INTERNAL_BIND: '0.0.0.0', PRAGMATIC_INTERNAL_API_SECRET_FILE: '/s' })?.Bind, '0.0.0.0')
+    })
+
+    it('refuses a port without a secret file, an invalid port and an invalid bind, naming the setting', () =>
+    {
+        assert.throws(() => ControlPlaneServer.InternalApiSettingsOf({ PRAGMATIC_ADMIN_INTERNAL_PORT: '7001' }), /PRAGMATIC_INTERNAL_API_SECRET_FILE/)
+        assert.throws(() => ControlPlaneServer.InternalApiSettingsOf({ PRAGMATIC_ADMIN_INTERNAL_PORT: '70000', PRAGMATIC_INTERNAL_API_SECRET_FILE: '/s' }), /PRAGMATIC_ADMIN_INTERNAL_PORT/)
+        assert.throws(() => ControlPlaneServer.InternalApiSettingsOf({ PRAGMATIC_ADMIN_INTERNAL_PORT: 'x', PRAGMATIC_INTERNAL_API_SECRET_FILE: '/s' }), /PRAGMATIC_ADMIN_INTERNAL_PORT/)
+        assert.throws(() => ControlPlaneServer.InternalApiSettingsOf({ PRAGMATIC_ADMIN_INTERNAL_PORT: '7001', PRAGMATIC_ADMIN_INTERNAL_BIND: 'nope', PRAGMATIC_INTERNAL_API_SECRET_FILE: '/s' }), /PRAGMATIC_ADMIN_INTERNAL_BIND/)
+    })
+})
