@@ -20,7 +20,7 @@ class OpenGolden
     public static readonly LazyMessage = 'dispose never constructs a language service that was not built'
     public static readonly WidgetId = 'acme.Widget'
     /** The engine's real error for a folder holding no .pksln manifest. */
-    public static readonly MissingManifestError = /No \.pksln solution manifest in /
+    public static readonly MissingManifestError = /No readable \.pksln solution manifest in /
 
     public static readonly ActiveMessage = 'a solution is active after OpenSolution'
     public static readonly MemberStorageMessage = 'the opened member exposes its storage'
