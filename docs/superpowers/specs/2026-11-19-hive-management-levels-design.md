@@ -22,7 +22,8 @@ be adding more machines"), so hosting our own hives must scale by adding machine
 > The customer owns the cluster. The platform never holds a credential into it. A hive only ever reaches out.
 > We make it smooth and back it with quality guardrails, never controls.
 
-The same rule applies to our own machines (§7): **everything reaches out, nothing is pushed.**
+The principle protects **customers' clusters**. On our own machines (§7) we are root on the host anyway, so the
+platform manages SaaS hives by push (owner, 2026-11-19). Machines still reach out to enrol and to take placements.
 
 ## 3. Goals, non-goals, anti-goals
 
@@ -32,7 +33,8 @@ The same rule applies to our own machines (§7): **everything reaches out, nothi
 - One install artefact, the **management engine**, for every connected hive, ours included.
 - Every action the platform takes on a hive arrives as **intent the hive pulls**, applied by software inside the
   cluster with permissions the customer granted and can read.
-- SaaS hives on our machines are ordinary Level 3 hives. Adding a machine is "install, enrol, done".
+- SaaS hives on our machines run the same engine, managed by push from the platform. Adding a machine is "install,
+  enrol, done".
 - The platform admin runs no containers anywhere.
 
 **Non-goals**
@@ -154,16 +156,23 @@ actor changes.
 - **Existing hives:** none migrate. The deployed platform starts clean (D25), and development hives on the laptop stay
   development hives. Enrolment is for new installs. *(Builder check: answered from D25.)*
 
-## 7. SaaS: our machines host ordinary Level 3 hives
+## 7. SaaS: platform-hosted hives on our machines
 
-- **A SaaS hive is a Level 3 hive under the customer's tenant,** installed and enrolled exactly like a bring-your-own
-  hive. Our machines are "hives where we are the customer of ourselves".
+- **A SaaS hive runs the same management engine under the customer's tenant,** enrolled like any hive (its identity,
+  trust root and discovery work the same way).
+- **It is managed by push (owner, 2026-11-19).** The platform holds a credential for the clusters on our own machines
+  and drives them directly, reusing today's install code. Why this doesn't weaken anything: on our machines we are root
+  on the host, so an in-cluster "place, never look" boundary could not be enforced against us there anyway. A SaaS
+  customer trusts us with their data the way they trust any SaaS provider. The pull path still exists, because
+  bring-your-own Level 2 and 3 hives need it; SaaS hives simply don't use it.
 - **Host agent (chosen approach A):** each of our machines runs a small host agent, installed once and enrolled with
   a code from the portal, the same pattern as a hive. When a SaaS hive is needed, the platform records "host a
   hive for tenant T" on a machine with room. That machine's host agent pulls the request and acts:
   1. it creates the cluster locally (k3s on Linux, kind on a WSL machine);
-  2. it installs the engine with an enrolment code;
-  3. the engine enrols as a Level 3 hive under tenant T.
+  2. it installs the engine with an enrolment code, and the engine enrols under tenant T;
+  3. it hands the platform a credential for that cluster, stored in the platform's secret store. The admin then reaches
+     the cluster's API server over the mesh, so hosting machines are mesh nodes. *(My call: push needs a route in,
+     and the mesh is how the platform already reaches its own machines.)*
 - **How customers reach a SaaS hive (owner, 2026-11-19): the edge relays with TLS passthrough.** Each host agent keeps
   an outbound tunnel to the edge. The edge routes by hostname (SNI) into the right machine's tunnel without
   terminating TLS. It never sees plaintext and stays keyless, and machines can be anywhere, even behind home NAT.
@@ -171,8 +180,9 @@ actor changes.
   Rejected: machines serving publicly on their own 443 (every machine would need a public address, and NAT-bound
   machines could not host).
 - The host agent reports capacity and health. Placement (which machine hosts which hive) is the platform's.
-- **No inbound ports on any machine,** and machines need not be on the mesh. The admin holds no credential to any
-  machine, so a break-in at the admin cannot take machines over.
+- **The host agent pulls placements;** the admin never logs in to a machine and holds no machine credential, only
+  the cluster credentials of the SaaS hives (§8 risk: a break-in at the admin reaches every SaaS hive's cluster, so
+  those credentials are scoped per cluster and rotate).
 - **Rejected:**
   - B, the admin pushing over the mesh with Docker TLS or SSH: the admin would hold root-equivalent keys to every
     machine, each new machine needs per-machine plumbing, and it would be the system's only push;
@@ -181,17 +191,19 @@ actor changes.
 
 ## 8. Consequences for the platform
 
-- **The admin never runs a container.** These disappear from the admin:
+- **The admin never runs a container itself.** These disappear from the admin as separate products:
   - the per-tenant sign-in container (sign-in lives in the hive);
   - platform-run Docker environments (environments run inside hives);
   - creating kind clusters on the admin's own host (the host agent creates clusters);
-  - installing the console with `kubectl` (the agent installs it).
+  - installing the console with `kubectl` on customers' clusters (the agent installs it there; on SaaS hives the
+    platform's push does).
 - **The edge gains a relay** for SaaS hives' user traffic (TLS passthrough, §7). It still terminates nothing for
   hives and holds no key.
 - **The admin's job:**
   1. records;
   2. answering hives' and host agents' pulls (intent, versions, trust, discovery);
-  3. placing SaaS hives on machines.
+  3. placing SaaS hives on machines;
+  4. pushing to SaaS hives' clusters (today's `kubectl` install and rollout code).
 - **Image trust uses registry digests** (index digests from the release catalogue), not a local Docker engine's
   image ids. Hives pull by digest from the platform's registry: GitHub's container registry today, the platform
   proxy later per the images spec.
@@ -232,7 +244,8 @@ comes before enrolment, because the registration account lives there:
 5. **Tenant sign-in setting:** local accounts, corporate OIDC, and "Sign in with Pragmatic" (with roadmap step 3,
    the central login).
 6. **Website registration** through the edge.
-7. **Host agent, SaaS placement and the edge's TLS-passthrough relay** on our machines.
+7. **Host agent, SaaS placement, push management of SaaS hives (reusing today's code) and the edge's
+   TLS-passthrough relay** on our machines.
 8. **Retire the admin's container paths** (§8).
 
 **MVP derivation:** a separate, explicit step after this design is approved. It decides which sub-projects the
