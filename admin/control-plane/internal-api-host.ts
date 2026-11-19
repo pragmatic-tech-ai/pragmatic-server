@@ -137,7 +137,7 @@ export class InternalApiHost
             }
             if (err instanceof BodyTooLargeError)
             {
-                // The rest of the body is read and discarded (the caller is already authenticated and on loopback), so
+                // The whole body was read and discarded first (the caller is already authenticated and on loopback), so
                 // the 413 reaches it instead of a connection reset; the connection then closes.
                 res.setHeader(I.ConnectionHeader, I.CloseValue)
                 PlaneHttp.WriteJson(res, I.StatusTooLarge, I.TooLargeBody)
@@ -211,17 +211,20 @@ export class InternalApiHost
                 {
                     tooLarge = true
                     chunks.length = 0
-                    reject(new BodyTooLargeError(InternalApiHost.TooLarge))
                     return
                 }
                 chunks.push(c)
             })
+            // An oversized body is refused only once it has drained: closing with unread bytes in the socket makes TCP
+            // reset the connection, and the caller would see ECONNRESET instead of the 413.
             req.on('end', () =>
             {
-                if (!tooLarge)
+                if (tooLarge)
                 {
-                    resolveBody(Buffer.concat(chunks).toString(InternalApiHost.Utf8))
+                    reject(new BodyTooLargeError(InternalApiHost.TooLarge))
+                    return
                 }
+                resolveBody(Buffer.concat(chunks).toString(InternalApiHost.Utf8))
             })
             req.on('error', reject)
         })
