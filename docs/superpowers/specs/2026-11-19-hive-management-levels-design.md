@@ -44,13 +44,26 @@ platform manages SaaS hives by push (owner, 2026-11-19). Machines still reach ou
 **Anti-goals** (a failure even if it works)
 - Any kubeconfig, service-account token or cloud credential for a customer's cluster on the platform's side.
 - Platform software inside a hive that can read or change the customer's environment data or applications.
-- A Level 1 hive that needs us to run, phones home, or breaks when we disappear.
+- A Standalone hive that needs us to run, phones home, or breaks when we disappear.
 - A step in the customer journey that waits for a Pragmatic employee.
 - A container engine reachable from the platform admin (no Docker API, no SSH into machines).
 
 ## 4. The three levels
 
-| | Level 1: do it yourself | Level 2: our engine, your hands | Level 3: we manage the hive |
+**Names (owner, 2026-11-19): the levels are named, not numbered:** **Standalone**, **Enrolled**, **Delegated**; SaaS
+hives on our machines (§7) are **Hosted**.
+
+| Name | Platform's reach over a hive's configuration and updates |
+|---|---|
+| **Standalone** | none: updates are published; the customer fetches and applies them |
+| **Enrolled** | announces updates; the customer approves; the hive validates and applies |
+| **Delegated** | manages by intents ("place, never look"); the hive pre-checks against its own configuration and reports results; the platform never reads the configuration or any data |
+| **Hosted** | everything (our machines): may read a copy of the configuration, pre-check upgrades centrally, gather telemetry, roll out centrally |
+
+At every level the configuration's source of truth is the configuration repository in the tenant admin console, in the
+tenant's home hive; only the platform's reach differs.
+
+| | Standalone: do it yourself | Enrolled: our engine, your hands | Delegated: we manage the hive |
 |---|---|---|---|
 | Install | our scripts and charts, run by the customer | the management engine | the management engine |
 | Connected to the platform | **no**, fully standalone | yes, enrolled | yes, enrolled |
@@ -58,16 +71,16 @@ platform manages SaaS hives by push (owner, 2026-11-19). Machines still reach ou
 | Platform software may touch | nothing (none runs) | what the customer approves | the hive's control layer only, **never data or applications** |
 | Guardrails | the scripts' own checks | preflight and health in the engine's UI | the same, plus drift detection |
 
-- **Level 2 vs Level 3 is "who presses approve", not different software.** A customer may switch at any time in
+- **Enrolled vs Delegated is "who presses approve", not different software.** A customer may switch at any time in
   the engine's UI.
-- **Level 1 is fully standalone.** No enrolment, no dial-home, no hive record on our side. It must run air-gapped:
+- **Standalone means fully standalone.** No enrolment, no dial-home, no hive record on our side. It must run air-gapped:
   - the images come from a public registry or an offline bundle;
   - trust comes from our **published** signing public key; nothing is checked online;
   - sign-in is the hive's own, upgrades are the customer pulling newer charts;
   - the desktop app connects to it by URL (no discovery through us).
 
-  Moving up to Level 2 later means installing the agent and enrolling; data and accounts carry over.
-- **Level 3's boundary: "place, never look"** (owner, 2026-11-19). The agent may create and update environment
+  Moving up to Enrolled later means installing the agent and enrolling; data and accounts carry over.
+- **Delegated's boundary: "place, never look"** (owner, 2026-11-19). The agent may create and update environment
   workloads: deploy applications, set versions, restart, create an environment's namespace. It can never:
   - read Secrets;
   - exec into pods;
@@ -104,14 +117,14 @@ platform manages SaaS hives by push (owner, 2026-11-19). Machines still reach ou
 Every action that today is a push (the admin running `kubectl` against a cluster) keeps its capability. Only the
 actor changes.
 
-| Action | Today | Target (Levels 2 and 3) |
+| Action | Today | Target (Enrolled and Delegated) |
 |---|---|---|
 | Install or upgrade the console and sign-in | the admin applies manifests with `kubectl` | the platform publishes "component X at version V" for the hive; the agent pulls it and applies the same manifests in-cluster |
 | Create an environment | the admin starts a container or applies a workload | the request is recorded on the platform; the agent pulls it and creates the environment in the hive |
 | Roll out a version | rollouts are already pulled by the agent | unchanged |
 | Repair or restart | the admin runs `kubectl` | the agent compares desired with observed state and acts |
 
-- At **Level 2** every intent waits in the engine's UI for the customer's approval. At **Level 3** the agent applies
+- In **Enrolled** every intent waits in the engine's UI for the customer's approval. In **Delegated** the agent applies
   it directly.
 - The manifest building and install steps that live in the admin today move into the agent. The admin sends
   intent, never commands with credentials.
@@ -126,7 +139,7 @@ actor changes.
   - central **"Sign in with Pragmatic"** (the hive's sign-in brokers to our central login);
   - or a combination.
 - Only when "Sign in with Pragmatic" is chosen do those staff identities live with us, and the customer opted in.
-  Level 1 offers the first two only.
+  Standalone offers the first two only.
 - **The account from website registration** is the customer administrators' account for managing their
   subscription and enrolling hives. It is not their staff's working login.
 - **The registration account lives in the central login** (Google Identity Platform, the deployment's "one login"),
@@ -146,14 +159,14 @@ ingress answers).
 | Our subdomain (`acme.hives.pragmatic-tech.ai`) | we publish a record to the ingress address the hive reports | the hive's own cert-manager requests it; the platform answers the DNS challenge for that one name. The private key never leaves their cluster | straight to their ingress |
 | Our subdomain, private cluster (no public ingress) | points at the edge | as above | through the edge relay with TLS passthrough (§7); the edge never sees plaintext |
 
-- Level 1 offers their own domain only.
+- Standalone offers their own domain only.
 - The relay is therefore a shared edge component (bring-your-own private clusters and SaaS hives), not SaaS-only.
 
 ## 6a. Ownership of state, credentials and reports (my calls, from §2)
 
 - **The hive is the source of truth for its environments at every level.** The engine's console creates and changes
-  them locally (as at Level 1). At Levels 2 and 3 the platform may *request* changes as intents, and the hive keeps
-  the platform's view current through reports. So moving from Level 1 to Level 2 needs no import, and drift is always
+  them locally (as in Standalone). In Enrolled and Delegated the platform may *request* changes as intents, and the hive keeps
+  the platform's view current through reports. So moving from Standalone to Enrolled needs no import, and drift is always
   measured against the hive's own desired state.
 - **No credential ever travels to the platform.** Today's platform features that reach inside environments move into
   the engine's console, and intents never return a credential. These features are:
@@ -178,7 +191,7 @@ ingress answers).
   and drives them directly, reusing today's install code. Why this doesn't weaken anything: on our machines we are root
   on the host, so an in-cluster "place, never look" boundary could not be enforced against us there anyway. A SaaS
   customer trusts us with their data the way they trust any SaaS provider. The pull path still exists, because
-  bring-your-own Level 2 and 3 hives need it; SaaS hives simply don't use it.
+  bring-your-own Enrolled and Delegated hives need it; SaaS hives simply don't use it.
 - **Host agent (chosen approach A):** each of our machines runs a small host agent, installed once and enrolled with
   a code from the portal, the same pattern as a hive. When a SaaS hive is needed, the platform records "host a
   hive for tenant T" on a machine with room. That machine's host agent pulls the request and acts:
@@ -249,11 +262,11 @@ ingress answers).
 **Sub-projects, in dependency order** (each gets its own design detail and plan). Central login (roadmap step 3)
 comes before enrolment, because the registration account lives there:
 1. **The management engine as one install artefact.** A chart containing the agent, console and sign-in, with images
-   by digest, preflight guardrails, and the Level 1 standalone mode.
+   by digest, preflight guardrails, and Standalone mode.
 2. **Enrolment.** "Connect this hive" in the engine's console, with sign-in by the registered account, the hive
    identity generated in the cluster, the hive record created at enrolment, and trust-root adoption.
 3. **Pull-only management.** Today's push paths move into the agent as desired-state handling, with an approval
-   queue in the engine's UI (Level 2) and delegation (Level 3).
+   queue in the engine's UI (Enrolled) and delegation (Delegated).
 4. **Registry-digest image trust** across signing, verification and rollouts.
 5. **Tenant sign-in setting:** local accounts, corporate OIDC, and "Sign in with Pragmatic" (with roadmap step 3,
    the central login).
@@ -272,7 +285,7 @@ current deployment (staff alpha) needs first, and in what reduced configuration.
 - The hive identity's key type and how requests are authenticated with it.
 - The wire format for intent, approval and reports.
 - The engine UI's approval experience.
-- The exact Kubernetes permission grant for Level 3.
+- The exact Kubernetes permission grant for Delegated.
 - Which cluster technology the host agent uses per machine kind.
 - Placement rules.
 - The registration call's shape and the website's checks.
