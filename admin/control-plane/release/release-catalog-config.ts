@@ -7,6 +7,7 @@ import { ReleasePoll } from './release-poll.js'
 import { ReleaseRefresher } from './release-refresher.js'
 import { ReleaseRegistry } from './release-registry.js'
 import { ReleaseTrustKeyInvalidError, ReleaseTrustKeys } from './release-trust-keys.js'
+import type { IReleaseCountersigner } from './release-countersigner.js'
 
 /** A release setting is unusable. The sentence names only the variable: never its value or a file's contents. */
 export class ReleaseConfigError extends Error
@@ -56,8 +57,11 @@ export class ReleaseCatalogConfig
     private static readonly BadRegistryMessage = ReleaseCatalogConfig.RegistryEnvVar + ' must be an absolute https URL (http only for a loopback registry)'
     private static readonly BadTrustDirMessage = ReleaseCatalogConfig.TrustDirEnvVar + ' must name a readable directory of release public keys'
 
-    /** Composes the release services, or undefined when no credential file is configured. The poll interval is always validated. */
-    public static Compose(env: NodeJS.ProcessEnv, repoRoot: string, deployments: PlatformDeploymentRegistry, fetchFn?: OciFetch): IReleaseServices | undefined
+    /**
+     * Composes the release services, or undefined when no credential file is configured. The poll interval is always validated.
+     * The countersigner, when given, adds the platform signature to every newly verified release's images.
+     */
+    public static Compose(env: NodeJS.ProcessEnv, repoRoot: string, deployments: PlatformDeploymentRegistry, fetchFn?: OciFetch, countersigner?: IReleaseCountersigner): IReleaseServices | undefined
     {
         const C = ReleaseCatalogConfig
         const pollSeconds = C.PollSecondsOf(env)
@@ -69,7 +73,7 @@ export class ReleaseCatalogConfig
         const registryUrl = C.RegistryOf(env)
         const registry = new OciRegistryClient(registryUrl, fetchFn, credential)
         const namespace = C.ValueOr(env, C.NamespaceEnvVar, ReleaseRegistry.DefaultNamespace)
-        const catalog = new ReleaseCatalog(registry, namespace, C.TrustOf(env, repoRoot), deployments, ReleaseRegistry.HostOf(registryUrl))
+        const catalog = new ReleaseCatalog(registry, namespace, C.TrustOf(env, repoRoot), deployments, ReleaseRegistry.HostOf(registryUrl), countersigner)
         const refresher = new ReleaseRefresher(catalog)
         const poll = pollSeconds === 0 ? undefined : new ReleasePoll(refresher, pollSeconds * C.MsPerSecond)
         return { Refresher: refresher, Poll: poll }

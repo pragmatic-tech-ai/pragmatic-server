@@ -73,7 +73,7 @@ import { PinnedKeyStore } from './pinned-key-store.js'
 import { ManifestSigner, type IManifestSigner } from './manifest-signer.js'
 import { PlatformImageSigner, PlatformSigningKey } from './platform-signing-key.js'
 import type { IImageSigner } from './image-signer.js'
-import { DockerImageDigest, type IImageDigest } from './image-digest.js'
+import { DockerImageDigest, RegistryRefImageDigest, type IImageDigest } from './image-digest.js'
 import { ImageSigner } from './image-signer.js'
 import { FileSignatureStore } from './signature-store.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
@@ -105,6 +105,7 @@ import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 import type { IRolloutClient } from './tenant-api/rollout-client.js'
 import { ControlPlaneRoles, ControlPlaneStart, ControlPlaneRole, type IControlPlaneListenerStarts } from './control-plane-role.js'
 import { ReleaseCatalogConfig, type IReleaseServices } from './release/release-catalog-config.js'
+import { PlatformReleaseCountersigner, type IReleaseCountersigner } from './release/release-countersigner.js'
 import type { ReleasePoll } from './release/release-poll.js'
 
 /** The composed tenant listener, its port/bind already validated (so a bad tenant port fails before any socket binds). */
@@ -400,7 +401,9 @@ export class ControlPlaneServer
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(signing.PlatformSigner.KeyRef, dataRoot, signing.ImageSigner, digests), policies, ledger)
         // The release catalogue and its poll are operator-side: composed (and their settings validated) before any listener
         // starts, and never by the edge.
-        const releases = ControlPlaneServer.ReleasesOf(role, process.env, join(here, TenantPlaneComposer.ParentSegment, TenantPlaneComposer.ParentSegment), deployments)
+        // Release images are countersigned by their registry digest (never a local docker id), into the same signature store.
+        const countersigner = new PlatformReleaseCountersigner(ControlPlaneServer.ImageSignerOf(dataRoot, keys, new RegistryRefImageDigest()), signing.PlatformSigner.KeyRef)
+        const releases = ControlPlaneServer.ReleasesOf(role, process.env, join(here, TenantPlaneComposer.ParentSegment, TenantPlaneComposer.ParentSegment), deployments, countersigner)
         const agentChannelUrlRaw = process.env[ControlPlaneServer.AgentChannelUrlEnvVar]
         const agentChannelUrl = ControlPlaneServer.AgentChannelUrl(agentChannelPort, agentChannelUrlRaw)
         const agentChannelUrlSet = agentChannelUrlRaw !== undefined && agentChannelUrlRaw !== ''
@@ -533,9 +536,9 @@ export class ControlPlaneServer
      * The release catalogue (POST /api/releases/refresh) and its periodic poll, for roles that serve operators only: the edge
      * never reads the release settings. Undefined there, and when no credential file is configured.
      */
-    public static ReleasesOf(role: ControlPlaneRole, env: NodeJS.ProcessEnv, repoRoot: string, deployments: PlatformDeploymentRegistry): IReleaseServices | undefined
+    public static ReleasesOf(role: ControlPlaneRole, env: NodeJS.ProcessEnv, repoRoot: string, deployments: PlatformDeploymentRegistry, countersigner?: IReleaseCountersigner): IReleaseServices | undefined
     {
-        return ControlPlaneRoles.ServesOperators(role) ? ReleaseCatalogConfig.Compose(env, repoRoot, deployments) : undefined
+        return ControlPlaneRoles.ServesOperators(role) ? ReleaseCatalogConfig.Compose(env, repoRoot, deployments, undefined, countersigner) : undefined
     }
 
     /** Derives operator-identity compose options and cookie policy from the environment (reads the password file, if one is named). */

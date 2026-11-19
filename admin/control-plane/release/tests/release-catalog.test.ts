@@ -20,6 +20,14 @@ import { ReleasePublisher } from '../release-publisher.js'
 import { ReleaseSignature } from '../release-signature.js'
 import { ReleaseApp, ReleaseApps, ReleaseTag } from '../release-tag.js'
 import { ReleaseTrustKeys } from '../release-trust-keys.js'
+import { PlatformReleaseCountersigner } from '../release-countersigner.js'
+import type { IReleaseCountersigner } from '../release-countersigner.js'
+import { ImageSigner } from '../../image-signer.js'
+import type { IImageSigner } from '../../image-signer.js'
+import { RegistryRefImageDigest } from '../../image-digest.js'
+import { FileSignatureStore } from '../../signature-store.js'
+import { FileKeyStore } from '../../key-store.js'
+import { PlatformSigningKey } from '../../platform-signing-key.js'
 
 class SigningKey
 {
@@ -133,9 +141,9 @@ class CatalogFixture
         return new OciRegistryClient(this.Registry.Origin, fetchFn, credential)
     }
 
-    public Catalog(credential?: { username: string; token: string }, imageHost?: string): ReleaseCatalog
+    public Catalog(credential?: { username: string; token: string }, imageHost?: string, countersigner?: IReleaseCountersigner): ReleaseCatalog
     {
-        return new ReleaseCatalog(this.Client(credential), CatalogFixture.Namespace, this.trust, this.Deployments, imageHost)
+        return new ReleaseCatalog(this.Client(credential), CatalogFixture.Namespace, this.trust, this.Deployments, imageHost, countersigner)
     }
 
     /** Apps whose image is stored as a multi-arch OCI index (as release.yml's imagetools merge produces). */
@@ -610,6 +618,83 @@ describe('ReleaseCatalog.Refresh', () =>
             assert.deepEqual(fx.Deployments.AllManifests(), [])
             const result = await fx.Catalog({ username: CatalogFixture.User, token: CatalogFixture.Token }).Refresh()
             assert.deepEqual(result.imported, [CatalogFixture.V1])
+        })
+    })
+})
+
+describe('ReleaseCatalog countersigning', () =>
+{
+    class RejectingSigner implements IImageSigner
+    {
+        public Calls = 0
+
+        public async Sign(): Promise<void>
+        {
+            this.Calls++
+            throw new Error('signer down')
+        }
+    }
+
+    class CountingCountersigner implements IReleaseCountersigner
+    {
+        public Calls = 0
+
+        public async Countersign(): Promise<void>
+        {
+            this.Calls++
+        }
+    }
+
+    it('countersigns every image of an imported release', async () =>
+    {
+        const dir = await mkdtemp(join(tmpdir(), CatalogFixture.TempPrefix))
+        try
+        {
+            await CatalogFixture.Run(async fx =>
+            {
+                const keysDir = join(dir, CatalogFixture.KeysDir)
+                await PlatformSigningKey.Ensure(keysDir, PlatformSigningKey.DefaultRef)
+                const store = new FileSignatureStore(join(dir, 'signatures.json'))
+                const signer = new ImageSigner(new RegistryRefImageDigest(), store, new FileKeyStore(keysDir))
+                const { descriptor } = await fx.Publish(CatalogFixture.V1)
+                await fx.Catalog(undefined, undefined, new PlatformReleaseCountersigner(signer, PlatformSigningKey.DefaultRef)).Refresh()
+                assert.equal(ReleaseApps.All.length, 8)
+                for (const app of ReleaseApps.All)
+                {
+                    assert.ok(await store.Get(descriptor.images[app].digest, PlatformSigningKey.DefaultRef) !== undefined, app)
+                }
+            })
+        }
+        finally
+        {
+            await rm(dir, { recursive: true, force: true })
+        }
+    })
+
+    it('a countersign failure keeps the import', async t =>
+    {
+        t.mock.method(console, 'warn', () => undefined)
+        await CatalogFixture.Run(async fx =>
+        {
+            await fx.Publish(CatalogFixture.V1)
+            const signer = new RejectingSigner()
+            const result = await fx.Catalog(undefined, undefined, new PlatformReleaseCountersigner(signer, PlatformSigningKey.DefaultRef)).Refresh()
+            assert.deepEqual(result.imported, [CatalogFixture.V1])
+            assert.equal(signer.Calls, 8)
+            assert.equal(fx.Release(CatalogFixture.V1)?.release?.state, ReleaseState.Verified)
+        })
+    })
+
+    it('a rejected release is not countersigned', async () =>
+    {
+        await CatalogFixture.Run(async fx =>
+        {
+            await fx.Publish(CatalogFixture.V1)
+            fx.Registry.PutManifest(CatalogFixture.Repo(ReleaseApp.EnvGateway), CatalogFixture.V1, new TextEncoder().encode(CatalogFixture.Rebuilt), CatalogFixture.ManifestType)
+            const countersigner = new CountingCountersigner()
+            const result = await fx.Catalog(undefined, undefined, countersigner).Refresh()
+            assert.deepEqual(result.rejected, [CatalogFixture.V1])
+            assert.equal(countersigner.Calls, 0)
         })
     })
 })

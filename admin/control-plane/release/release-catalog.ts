@@ -11,6 +11,7 @@ import { ReleaseRegistry } from './release-registry.js'
 import { ReleaseSignature } from './release-signature.js'
 import { ReleaseApp, ReleaseApps, ReleaseTag, ReleaseTagInvalidError } from './release-tag.js'
 import type { ReleaseTrustKeys } from './release-trust-keys.js'
+import type { IReleaseCountersigner } from './release-countersigner.js'
 
 /**
  * Versions imported by one refresh, split by outcome; how many listed versions were already imported releases; and the
@@ -58,6 +59,7 @@ export class ReleaseCatalog
     /**
      * @param imageHost the registry host the by-digest image references are recorded under (`ghcr.io`, or the host of
      * PRAGMATIC_RELEASE_REGISTRY): the same registry the descriptors and images are read from.
+     * @param countersigner when set, every image of each newly verified release is countersigned after it is recorded.
      */
     public constructor(
         private readonly registry: OciRegistryClient,
@@ -65,6 +67,7 @@ export class ReleaseCatalog
         private readonly trust: ReleaseTrustKeys,
         private readonly deployments: PlatformDeploymentRegistry,
         private readonly imageHost: string = ReleaseRegistry.DefaultHost,
+        private readonly countersigner?: IReleaseCountersigner,
     )
     {
     }
@@ -144,8 +147,13 @@ export class ReleaseCatalog
                 }
                 throw error
             }
-            const outcome = record.release?.state === ReleaseState.Verified ? result.imported : result.rejected
+            const verified = record.release?.state === ReleaseState.Verified
+            const outcome = verified ? result.imported : result.rejected
             outcome.push(record.id)
+            if (verified)
+            {
+                await this.Countersign(record)
+            }
         }
         for (const record of retried)
         {
@@ -164,8 +172,21 @@ export class ReleaseCatalog
                 throw error
             }
             result.imported.push(record.id)
+            await this.Countersign(record)
         }
         return result
+    }
+
+    /** Countersigns every app image of a verified record by its by-digest reference; failures are the countersigner's to log. */
+    private async Countersign(record: ManifestRecord): Promise<void>
+    {
+        const images = record.release?.images
+        if (this.countersigner === undefined || images === undefined)
+        {
+            return
+        }
+        const refs = ReleaseApps.All.map(app => ReleaseRegistry.DigestReference(this.imageHost, images[app].repository, images[app].digest))
+        await this.countersigner.Countersign(refs)
     }
 
     /** The record for one listed version; undefined when its descriptor has vanished since the tag listing. */
