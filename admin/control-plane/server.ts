@@ -1,4 +1,5 @@
 import { mkdirSync } from 'node:fs'
+import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { isIP } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { AuditRegistry } from './audit-record.js'
@@ -58,7 +59,9 @@ import { UiDeployActuator } from './ui-deploy-actuator.js'
 import { OciRegistryClient } from './oci-registry-client.js'
 import { InClusterRegistry } from './in-cluster-registry.js'
 import { UiArtifactSigner } from './ui-artifact-signer.js'
-import { FileKeyStore } from './key-store.js'
+import { FileKeyStore, type IKeyStore } from './key-store.js'
+import { KeyStores } from './key-stores.js'
+import { PinnedKeyStore } from './pinned-key-store.js'
 import { ManifestSigner, type IManifestSigner } from './manifest-signer.js'
 import { PlatformImageSigner, PlatformSigningKey } from './platform-signing-key.js'
 import type { IImageSigner } from './image-signer.js'
@@ -204,6 +207,8 @@ export class ControlPlaneServer
     private static readonly DataRootEnvVar = 'PRAGMATIC_ADMIN_DATA_ROOT'
     private static readonly KeysDirName = PlatformHiveOrchestratorFactory.KeysDirName
     private static readonly SigningKeyRefEnvVar = 'PRAGMATIC_ADMIN_SIGNING_KEY_REF'
+    private static readonly TempSuffix = '.tmp'
+    private static readonly PublicKeyMode = 0o644
     private static readonly SignaturesFileName = PlatformHiveOrchestratorFactory.SignaturesFileName
     private static readonly TrustAdoptedPrefix = 'Platform signing key '
     private static readonly TrustAdoptedInfix = ' set as the trust root of hives: '
@@ -366,7 +371,7 @@ export class ControlPlaneServer
         const consoleInstaller = new TenantConsoleInstaller(directory, orchestrators, new TenantAdminBootstrap(deployments), fingerprintKeys,
             new DevCertificateAuthority(join(dataRoot, DevCertificateAuthority.DirName), sealed), new InHiveIdpAdmin(orchestrators, sealed),
             new PlatformConsoleImageApproval(signing.PlatformSigner, PlatformHiveOrchestratorFactory.VerifierFor(dataRoot)),
-            new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)), agentChannelUrl, new SystemInstallClock(), adverts, ownerResets)
+            KeyStores.Of(dataRoot, process.env), agentChannelUrl, new SystemInstallClock(), adverts, ownerResets)
         // Daily DNS re-check of verified domains (after approvals.Load; its interval timer is unref'd, so no shutdown hook).
         new DomainVerificationRechecker(approvals, domainVerifier).Start()
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery, consoleInstaller, adverts, approvals, emailDomains, releases?.Refresher)
@@ -598,7 +603,7 @@ export class ControlPlaneServer
     /** The UI deploy actuator: pushes via the control-plane registry address and signs with the keys under dataRoot. */
     private static UiDeployerOf(dataRoot: string, orchestrators: HiveOrchestratorFactory, registry: EnvironmentRegistry): UiDeployActuator
     {
-        const keys = new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName))
+        const keys = KeyStores.Of(dataRoot, process.env)
         return new UiDeployActuator(new OciRegistryClient(ControlPlaneServer.HttpScheme + InClusterRegistry.PushBase()), new UiArtifactSigner(keys), keys, orchestrators, new K8sManifestBuilder(), registry)
     }
 
@@ -620,7 +625,13 @@ export class ControlPlaneServer
         const C = ControlPlaneServer
         const keysDir = join(dataRoot, C.KeysDirName)
         const ref = C.SigningKeyRefOf(env)
-        if (ref === PlatformSigningKey.DefaultRef)
+        const keys = KeyStores.Of(dataRoot, env)
+        if (keys instanceof PinnedKeyStore)
+        {
+            // The private key stays in memory; only its public half goes to disk, where every verifier reads it.
+            await C.WritePublicKey(keysDir, ref, keys.PublicPem)
+        }
+        else if (ref === PlatformSigningKey.DefaultRef)
         {
             await PlatformSigningKey.Ensure(keysDir, ref)
         }
@@ -633,8 +644,19 @@ export class ControlPlaneServer
         {
             console.log(C.TrustAdoptedPrefix + ref + C.TrustAdoptedInfix + adopted.join(C.HiveIdSeparator))
         }
-        const imageSigner = C.ImageSignerOf(dataRoot)
+        const imageSigner = C.ImageSignerOf(dataRoot, keys)
         return { ImageSigner: imageSigner, PlatformSigner: new PlatformImageSigner(imageSigner, ref) }
+    }
+
+    /** Writes `<ref>.pub` atomically (temp file + rename), replacing a stale one. Public material only. */
+    private static async WritePublicKey(keysDir: string, ref: string, publicPem: string): Promise<void>
+    {
+        const C = ControlPlaneServer
+        await mkdir(keysDir, { recursive: true })
+        const path = join(keysDir, ref + FileKeyStore.PublicSuffix)
+        const temp = path + C.TempSuffix
+        await writeFile(temp, publicPem, { mode: C.PublicKeyMode })
+        await rename(temp, path)
     }
 
     /** The registry manifest signer: publishes are signed with the platform signing key `ref`, through the shared image signer. */
@@ -645,11 +667,11 @@ export class ControlPlaneServer
     }
 
     /** Signs images into the same signature store the hive orchestrators verify against, with keys from the key store. */
-    public static ImageSignerOf(dataRoot: string): ImageSigner
+    public static ImageSignerOf(dataRoot: string, keys: IKeyStore = new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName))): ImageSigner
     {
         const digests = new DockerImageDigest()
         const store = new FileSignatureStore(join(dataRoot, ControlPlaneServer.SignaturesFileName))
-        return new ImageSigner(digests, store, new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)))
+        return new ImageSigner(digests, store, keys)
     }
 
     private static ResolvePort(raw: string | undefined): number
