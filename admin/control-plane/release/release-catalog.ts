@@ -59,7 +59,8 @@ export class ReleaseCatalog
     /**
      * @param imageHost the registry host the by-digest image references are recorded under (`ghcr.io`, or the host of
      * PRAGMATIC_RELEASE_REGISTRY): the same registry the descriptors and images are read from.
-     * @param countersigner when set, every image of each newly verified release is countersigned after it is recorded.
+     * @param countersigner when set, every verified release's images are offered to it on each refresh, after the imports (it
+     * skips what is already countersigned), so a failed or missing countersign is retried.
      */
     public constructor(
         private readonly registry: OciRegistryClient,
@@ -147,13 +148,8 @@ export class ReleaseCatalog
                 }
                 throw error
             }
-            const verified = record.release?.state === ReleaseState.Verified
-            const outcome = verified ? result.imported : result.rejected
+            const outcome = record.release?.state === ReleaseState.Verified ? result.imported : result.rejected
             outcome.push(record.id)
-            if (verified)
-            {
-                await this.Countersign(record)
-            }
         }
         for (const record of retried)
         {
@@ -172,7 +168,13 @@ export class ReleaseCatalog
                 throw error
             }
             result.imported.push(record.id)
-            await this.Countersign(record)
+        }
+        for (const record of this.deployments.AllManifests())
+        {
+            if (record.release?.state === ReleaseState.Verified)
+            {
+                await this.Countersign(record)
+            }
         }
         return result
     }

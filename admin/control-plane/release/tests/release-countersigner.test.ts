@@ -24,11 +24,13 @@ class RecordingSigner implements IImageSigner
 class SecretBearingError extends Error
 {
     public static readonly Secret = 'ghp_never_logged'
+    public static readonly ErrorName = 'SecretBearingError'
+    private static readonly MessagePrefix = 'signing failed with '
 
     public constructor()
     {
-        super('signing failed with ' + SecretBearingError.Secret)
-        this.name = 'SecretBearingError'
+        super(SecretBearingError.MessagePrefix + SecretBearingError.Secret)
+        this.name = SecretBearingError.ErrorName
     }
 }
 
@@ -57,7 +59,7 @@ describe('PlatformReleaseCountersigner', () =>
         assert.equal(warn.mock.callCount(), 1)
         const line = String(warn.mock.calls[0].arguments[0])
         assert.ok(line.includes(Refs.A), line)
-        assert.ok(line.includes('SecretBearingError'), line)
+        assert.ok(line.includes(SecretBearingError.ErrorName), line)
         assert.ok(!line.includes(SecretBearingError.Secret), line)
     })
 })

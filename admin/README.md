@@ -99,11 +99,28 @@ PRAGMATIC_AGENT_CHANNEL_PORT=7001 npx tsx admin/control-plane/server.ts
 
 Install bundles point the agent at PRAGMATIC_AGENT_CHANNEL_URL, which defaults to http://host.docker.internal:PORT (how a pod in Docker Desktop's Kubernetes reaches this machine). Set it to the channel's externally reachable URL anywhere else.
 
+An admin that serves no channel itself (role `admin` behind an edge) still offers bundles when PRAGMATIC_AGENT_CHANNEL_URL is set: that URL is where its hives dial in.
+
 The Stand up a hive wizard ends on its Bootstrap step with the bundle (Download bundle) and the commands that apply it: `kubectl apply -f bootstrap-HIVE.json`, a silent `read -rs PRAGMATIC_AGENT_TOKEN` prompt for the one-time agent token, then `kubectl -n pragmatic-system create secret generic ...` from that variable. Neither the bundle nor the commands carry the token, so it stays out of shell history; it is shown once on the page and the control plane keeps only its hash. A hive's page offers the same bundle at any time, and Reissue agent token (the rollout-registration route) mints a new one-time token, which stops the old one at once. Its commands replace the Secret and restart every deployment in pragmatic-system labelled for the hive: the agent and, when installed, the tenant-admin pod, which reads the same token. The first pull of pragmatic-server:dev into Docker Desktop's node can take a minute or two.
 
 Deleting a hive removes its agent from a cluster the control plane drives (an attached Local hive): the agent's objects and token Secret, the tenant-admin's IdP credential copies, and every deployment, service, service account and secret in pragmatic-system labelled for the hive, then revokes the agent token and removes the record; a provisioned (kind) hive's cluster is destroyed whole instead. The tenant-admin data volume and its seed Secret (whose master key decrypts it) are kept together, and the delete names them. If the cluster cannot be reached, or a kind cluster cannot be destroyed, the delete stops and keeps the record, and the hive page offers Delete anyway, which revokes the token and removes the record but leaves whatever is in the cluster (locked out) or the kind cluster behind. The API form is `DELETE /api/hives/ID?force=true`. Hive ids must be lowercase Kubernetes names (a-z, 0-9 and '-', at most 34 characters, the limit a kind cluster name sets).
 
 An invalid PRAGMATIC_AGENT_CHANNEL_URL (not an absolute http or https URL) is ignored with a startup warning, and hive pages then report the channel as not configured.
+
+## Infrastructure target
+
+PRAGMATIC_ADMIN_INFRA_TARGET says what this admin drives. Unset or blank means `local`.
+
+- `local`: the machine's own Docker and kind. The admin runs a per-tenant IdP container, tenant Owners get a one-time password, and hive agents and consoles run the locally built `pragmatic-server:dev` image.
+- `none`: no Docker and no cluster. Environments, IdPs and installs answer 503 "no Docker/cluster target configured".
+- `hosted`: no Docker. The admin pushes to registered clusters on our machines with kubectl. A hive must be an attached Local hive whose `configRef` names its kubeconfig context; without one the install answers 400 "a hosted hive must name its cluster's kubeconfig context (configRef)". It never provisions a cluster. PRAGMATIC_ADMIN_KUBECONFIG_FILE must name a readable kubeconfig file (YAML or JSON, one context per cluster). The admin checks it at start, refuses to start without it (naming the setting, never the file's content), and sets KUBECONFIG for every kubectl it runs.
+
+In `none` and `hosted`:
+- A tenant is a record: its client, its id and its Owner's email. No IdP and no password; sign-in lives in the tenant's home hive, and environments for it are created in that hive's console (a platform-created one answers 409).
+- Image digests come from registry references (`...@sha256:...`); a tag reference is refused as not pinned by digest.
+- Hive agents and consoles run the images of the newest verified, non-withdrawn release, by digest. Until one is imported, agent installs, console installs and bundle downloads answer 409 "no verified platform release yet".
+
+When the release catalogue is configured (any mode), each verified release's images are countersigned with the platform signing key on every refresh (skipping images already signed), so hives that trust the platform key accept them.
 
 ## Releases from the registry
 

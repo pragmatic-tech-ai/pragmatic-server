@@ -42,16 +42,17 @@ export class ReleasePlatformImages implements IPlatformImages
 
     public ImageOf(app: ReleaseApp): string | undefined
     {
-        const image = this.Newest()?.release?.images?.[app]
+        const image = this.NewestWith(app)?.release?.images?.[app]
         return image === undefined ? undefined : ReleaseRegistry.DigestReference(this.imageHost, image.repository, image.digest)
     }
 
-    private Newest(): ManifestRecord | undefined
+    /** The newest verified, non-withdrawn record that carries an image for the app (a release may predate an app). */
+    private NewestWith(app: ReleaseApp): ManifestRecord | undefined
     {
         let newest: ManifestRecord | undefined
         for (const record of this.manifests.List())
         {
-            if (record.release?.state !== ReleaseState.Verified || record.withdrawn === true || record.release.images === undefined)
+            if (record.release?.state !== ReleaseState.Verified || record.withdrawn === true || record.release.images?.[app] === undefined)
             {
                 continue
             }

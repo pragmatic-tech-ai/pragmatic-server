@@ -13,6 +13,8 @@ export class HostedKubeconfig
     private static readonly BadFileMessage = HostedKubeconfig.EnvVar + ' must name a readable kubeconfig file'
     /** The two top-level keys every kubeconfig carries; their presence is the whole shape check (no YAML parser here). */
     private static readonly RequiredKeys: readonly RegExp[] = [/^apiVersion\s*:/m, /^clusters\s*:/m]
+    private static readonly ApiVersionKey = 'apiVersion'
+    private static readonly ClustersKey = 'clusters'
 
     private constructor()
     {
@@ -35,10 +37,30 @@ export class HostedKubeconfig
         {
             throw new Error(H.BadFileMessage)
         }
-        if (!H.RequiredKeys.every(key => key.test(text)))
+        if (!H.IsYamlKubeconfig(text) && !H.IsJsonKubeconfig(text))
         {
             throw new Error(H.BadFileMessage)
         }
         env[H.KubeconfigEnvVar] = path
+    }
+
+    private static IsYamlKubeconfig(text: string): boolean
+    {
+        return HostedKubeconfig.RequiredKeys.every(key => key.test(text))
+    }
+
+    /** kubectl reads a JSON kubeconfig too: an object with both keys. */
+    private static IsJsonKubeconfig(text: string): boolean
+    {
+        try
+        {
+            const parsed: unknown = JSON.parse(text)
+            return typeof parsed === 'object' && parsed !== null
+                && Object.hasOwn(parsed, HostedKubeconfig.ApiVersionKey) && Object.hasOwn(parsed, HostedKubeconfig.ClustersKey)
+        }
+        catch
+        {
+            return false
+        }
     }
 }

@@ -1,4 +1,5 @@
 import { NodeExecFile, type IExecFile } from './kubectl.js'
+import { ImageVerificationError } from './image-verifier.js'
 
 export interface IImageDigest
 {
@@ -31,17 +32,22 @@ export class DockerImageDigest implements IImageDigest
     }
 }
 
-/** An image reference that names no content digest, so no signature can be checked against it. */
-export class TagReferenceError extends Error
+/**
+ * An image reference that names no content digest, so no signature can be checked against it. It is an image verification
+ * failure, so every path that shows one (installs, rollouts, environment bring-up) names the image instead of masking it.
+ */
+export class TagReferenceError extends ImageVerificationError
 {
     private static readonly Prefix = 'Image '
     private static readonly Suffix = ' is not pinned by digest'
-    private static readonly ErrorName = 'TagReferenceError'
+    private static readonly Reason = 'not pinned by digest'
+    private static readonly TagErrorName = 'TagReferenceError'
 
-    public constructor(public readonly ImageRef: string)
+    public constructor(imageRef: string)
     {
-        super(TagReferenceError.Prefix + ImageRef + TagReferenceError.Suffix)
-        this.name = TagReferenceError.ErrorName
+        super(imageRef, TagReferenceError.Reason)
+        this.message = TagReferenceError.Prefix + imageRef + TagReferenceError.Suffix
+        this.name = TagReferenceError.TagErrorName
     }
 }
 

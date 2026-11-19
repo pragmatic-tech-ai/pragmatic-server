@@ -10,6 +10,11 @@ import { KubectlHiveOrchestrator } from '../kubectl-hive-orchestrator.js'
 import { NoInfraTargetBackendError } from '../no-infra-target.js'
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 import { RegistryRefImageDigest } from '../image-digest.js'
+import { ControlPlaneServer } from '../server.js'
+import { InfraTargetMode } from '../infra-target-mode.js'
+import { ManifestRegistry } from '../manifest-record.js'
+import { DevPlatformImages, ReleasePlatformImages } from '../platform-images.js'
+import { ReleaseApp } from '../release/release-tag.js'
 
 class HostedFixture
 {
@@ -19,23 +24,31 @@ class HostedFixture
     public static readonly MissingRefCopy = "a hosted hive must name its cluster's kubeconfig context (configRef)"
     public static readonly Kubeconfig = 'apiVersion: v1\nkind: Config\nclusters:\n- name: pragmatic-hive\n  cluster:\n    server: https://100.64.0.3:16443\ncontexts: []\nusers: []\n'
     public static readonly NotKubeconfig = 'secret-looking-text: do-not-echo-me\n'
+    public static readonly SecretText = 'do-not-echo-me'
+    public static readonly JsonKubeconfig = JSON.stringify({ apiVersion: 'v1', kind: 'Config', clusters: [], contexts: [], users: [] })
+    public static readonly HiveId = 'pragmatic'
+    public static readonly DataDir = 'hosted-mode-data'
+    public static readonly FileDirPrefix = 'hosted-kubeconfig-'
+    public static readonly FileName = 'hosted_kubeconfig'
+    public static readonly CreatedAt = '2026-11-19T00:00:00.000Z'
 
     public static Hive(backend: HiveBackend, mode: InfraMode, configRef?: string): HiveRecord
     {
-        return { id: 'pragmatic', tenantId: 'pragmatic', displayName: 'Pragmatic', cluster: { backend, mode, configRef }, registry: { mode: InfraMode.Attach, endpoint: '' }, createdAt: '2026-11-19T00:00:00.000Z' }
+        const id = HostedFixture.HiveId
+        return { id, tenantId: id, displayName: id, cluster: { backend, mode, configRef }, registry: { mode: InfraMode.Attach, endpoint: '' }, createdAt: HostedFixture.CreatedAt }
     }
 
     public static Factory(): HostedHiveOrchestratorFactory
     {
-        return new HostedHiveOrchestratorFactory(undefined, join(tmpdir(), 'hosted-mode-data'), new RegistryRefImageDigest())
+        return new HostedHiveOrchestratorFactory(undefined, join(tmpdir(), HostedFixture.DataDir), new RegistryRefImageDigest())
     }
 
     public static WithFile(content: string | undefined, body: (path: string) => void): void
     {
-        const dir = mkdtempSync(join(tmpdir(), 'hosted-kubeconfig-'))
+        const dir = mkdtempSync(join(tmpdir(), HostedFixture.FileDirPrefix))
         try
         {
-            const path = join(dir, 'hosted_kubeconfig')
+            const path = join(dir, HostedFixture.FileName)
             if (content !== undefined)
             {
                 writeFileSync(path, content)
@@ -100,8 +113,18 @@ describe('HostedKubeconfig.Apply', () =>
         {
             const env: NodeJS.ProcessEnv = { [HostedFixture.Setting]: path }
             assert.throws(() => HostedKubeconfig.Apply(env), (err: unknown) =>
-                err instanceof Error && err.message === HostedFixture.BadFileCopy && !err.message.includes('do-not-echo-me'))
+                err instanceof Error && err.message === HostedFixture.BadFileCopy && !err.message.includes(HostedFixture.SecretText))
             assert.equal(env.KUBECONFIG, undefined)
+        })
+    })
+
+    it('accepts a JSON kubeconfig, which kubectl reads too', () =>
+    {
+        HostedFixture.WithFile(HostedFixture.JsonKubeconfig, path =>
+        {
+            const env: NodeJS.ProcessEnv = { [HostedFixture.Setting]: path }
+            HostedKubeconfig.Apply(env)
+            assert.equal(env.KUBECONFIG, path)
         })
     })
 
@@ -115,6 +138,30 @@ describe('HostedKubeconfig.Apply', () =>
         finally
         {
             chmodSync(dir, 0o755)
+            rmSync(dir, { recursive: true, force: true })
+        }
+    })
+})
+
+describe('ControlPlaneServer.PlatformImagesOf', () =>
+{
+    it('only local runs the dev image; none and hosted offer release images (and refuse until one is verified)', async () =>
+    {
+        const dir = mkdtempSync(join(tmpdir(), HostedFixture.FileDirPrefix))
+        try
+        {
+            const manifests = new ManifestRegistry(join(dir, HostedFixture.FileName))
+            await manifests.Load()
+            assert.ok(ControlPlaneServer.PlatformImagesOf(InfraTargetMode.Local, manifests, {}) instanceof DevPlatformImages)
+            for (const mode of [InfraTargetMode.None, InfraTargetMode.Hosted])
+            {
+                const images = ControlPlaneServer.PlatformImagesOf(mode, manifests, {})
+                assert.ok(images instanceof ReleasePlatformImages, mode)
+                assert.equal(images.ImageOf(ReleaseApp.HiveAgent), undefined)
+            }
+        }
+        finally
+        {
             rmSync(dir, { recursive: true, force: true })
         }
     })

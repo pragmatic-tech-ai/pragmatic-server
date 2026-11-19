@@ -301,10 +301,16 @@ export class FakeDevCa implements IDevCertificateIssuer
 export class FakeImageApproval implements IConsoleImageApproval
 {
     public readonly Approved: string[] = []
+    /** When set, approval refuses with it (e.g. a release image whose platform countersign never landed). */
+    public FailWith: Error | undefined
 
     public async Approve(hive: HiveRecord, baseImage: string): Promise<VerifiedImage>
     {
         this.Approved.push(hive.id + ':' + baseImage)
+        if (this.FailWith !== undefined)
+        {
+            throw this.FailWith
+        }
         return { imageRef: baseImage }
     }
 }

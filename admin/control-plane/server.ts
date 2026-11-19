@@ -393,8 +393,7 @@ export class ControlPlaneServer
         const graphService = new GraphService(registry, proxy, service)
         const staticRoot = join(here, TenantPlaneComposer.ParentSegment, ControlPlaneServer.PortalSegment, TenantPlaneComposer.DistSegment)
         const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneServer.ManifestsFile))
-        // Hosted hives run the newest verified release's images by digest; a development box keeps its local server image.
-        const platformImages: IPlatformImages = hosted ? new ReleasePlatformImages(manifests, ReleaseCatalogConfig.ImageHostOf(process.env)) : new DevPlatformImages()
+        const platformImages = ControlPlaneServer.PlatformImagesOf(infra, manifests, process.env)
         const audit = new AuditRegistry(join(dataRoot, ControlPlaneServer.AuditFile))
         const desktopAudit = new AuditRegistry(join(dataRoot, TenantPlaneComposer.DesktopAuditFile))
         const graphAudit = new AuditRegistry(join(dataRoot, TenantPlaneComposer.TenantGraphAuditFile))
@@ -416,7 +415,8 @@ export class ControlPlaneServer
         // The release catalogue and its poll are operator-side: composed (and their settings validated) before any listener
         // starts, and never by the edge.
         // Release images are countersigned by their registry digest (never a local docker id), into the same signature store.
-        const countersigner = new PlatformReleaseCountersigner(ControlPlaneServer.ImageSignerOf(dataRoot, keys, new RegistryRefImageDigest()), signing.PlatformSigner.KeyRef)
+        const countersigner = new PlatformReleaseCountersigner(ControlPlaneServer.ImageSignerOf(dataRoot, keys, new RegistryRefImageDigest()), signing.PlatformSigner.KeyRef,
+            new FileSignatureStore(join(dataRoot, ControlPlaneServer.SignaturesFileName)))
         const releases = ControlPlaneServer.ReleasesOf(role, process.env, join(here, TenantPlaneComposer.ParentSegment, TenantPlaneComposer.ParentSegment), deployments, countersigner)
         const agentChannelUrlRaw = process.env[ControlPlaneServer.AgentChannelUrlEnvVar]
         const agentChannelUrl = ControlPlaneServer.AgentChannelUrl(agentChannelPort, agentChannelUrlRaw)
@@ -546,10 +546,6 @@ export class ControlPlaneServer
         process.once(ControlPlaneServer.ExitEvent, () => poll.Stop())
     }
 
-    /**
-     * The release catalogue (POST /api/releases/refresh) and its periodic poll, for roles that serve operators only: the edge
-     * never reads the release settings. Undefined there, and when no credential file is configured.
-     */
     /** The hive drivers for the infra mode: none drives nothing, hosted drives registered clusters by context, local adds kind. */
     public static OrchestratorsOf(infra: InfraTargetMode, dataRoot: string, digests: IImageDigest): HiveOrchestratorFactory
     {
@@ -564,6 +560,20 @@ export class ControlPlaneServer
         return new PlatformHiveOrchestratorFactory(undefined, dataRoot, digests)
     }
 
+    /**
+     * Where the platform's own images come from. Only `local` runs the locally built server image; `none` and `hosted` offer
+     * the newest verified release by digest (so a bundle or install before any release refuses instead of naming an image
+     * no other cluster can pull), under the registry host the catalogue reads.
+     */
+    public static PlatformImagesOf(infra: InfraTargetMode, manifests: ManifestRegistry, env: NodeJS.ProcessEnv): IPlatformImages
+    {
+        return infra === InfraTargetMode.Local ? new DevPlatformImages() : new ReleasePlatformImages(manifests, ReleaseCatalogConfig.ImageHostOf(env))
+    }
+
+    /**
+     * The release catalogue (POST /api/releases/refresh) and its periodic poll, for roles that serve operators only: the edge
+     * never reads the release settings. Undefined there, and when no credential file is configured.
+     */
     public static ReleasesOf(role: ControlPlaneRole, env: NodeJS.ProcessEnv, repoRoot: string, deployments: PlatformDeploymentRegistry, countersigner?: IReleaseCountersigner): IReleaseServices | undefined
     {
         return ControlPlaneRoles.ServesOperators(role) ? ReleaseCatalogConfig.Compose(env, repoRoot, deployments, undefined, countersigner) : undefined

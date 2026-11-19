@@ -12,6 +12,16 @@ class Releases
 {
     public static readonly Host = 'ghcr.io'
     public static readonly Namespace = 'pragmatic-tech-ai/'
+    public static readonly TempPrefix = 'platform-images-'
+    public static readonly ManifestsFile = 'manifests.json'
+    public static readonly PathSeparator = '/'
+    public static readonly DigestSeparator = '@'
+    public static readonly V1 = '0.1.0'
+    public static readonly V3 = '0.3.0'
+    public static readonly Day1 = '2026-11-01T00:00:00.000Z'
+    public static readonly Day3 = '2026-11-03T00:00:00.000Z'
+    public static readonly FillA = 'a'
+    public static readonly FillC = 'c'
 
     public static Digest(fill: string): string
     {
@@ -30,15 +40,15 @@ class Releases
 
     public static AgentRef(fill: string): string
     {
-        return Releases.Host + '/' + Releases.Namespace + ReleaseApp.HiveAgent + '@' + Releases.Digest(fill)
+        return Releases.Host + Releases.PathSeparator + Releases.Namespace + ReleaseApp.HiveAgent + Releases.DigestSeparator + Releases.Digest(fill)
     }
 
     public static async With(records: ManifestRecord[], body: (images: ReleasePlatformImages) => void): Promise<void>
     {
-        const dir = await mkdtemp(join(tmpdir(), 'platform-images-'))
+        const dir = await mkdtemp(join(tmpdir(), Releases.TempPrefix))
         try
         {
-            const manifests = new ManifestRegistry(join(dir, 'manifests.json'))
+            const manifests = new ManifestRegistry(join(dir, Releases.ManifestsFile))
             await manifests.Load()
             for (const record of records)
             {
@@ -71,6 +81,14 @@ describe('ReleasePlatformImages', () =>
             Releases.Record('0.3.0', '2026-11-03T00:00:00.000Z', 'c', {}, ReleaseState.Rejected),
             { id: 'local-1', image: 'registry/pragmatic-server:1', publishedAt: '2026-11-04T00:00:00.000Z' },
         ], images => assert.equal(images.ImageOf(ReleaseApp.HiveAgent), Releases.AgentRef('a')))
+    })
+
+    it('skips a newer verified release that has no image for the app', async () =>
+    {
+        const partial = Releases.Record(Releases.V3, Releases.Day3, Releases.FillC)
+        delete (partial.release?.images as Partial<Record<ReleaseApp, unknown>>)[ReleaseApp.HiveAgent]
+        await Releases.With([Releases.Record(Releases.V1, Releases.Day1, Releases.FillA), partial],
+            images => assert.equal(images.ImageOf(ReleaseApp.HiveAgent), Releases.AgentRef(Releases.FillA)))
     })
 
     it('returns undefined with no records', async () =>

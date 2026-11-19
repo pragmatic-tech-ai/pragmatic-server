@@ -78,6 +78,8 @@ class CatalogFixture
     public static readonly Rebuilt = 'rebuilt'
     public static readonly ManifestsPath = '/manifests/'
     public static readonly Unreachable = 'connect ECONNREFUSED '
+    public static readonly SignaturesFile = 'signatures.json'
+    public static readonly SignerDown = 'signer down'
 
     public readonly Registry = new FakeOciRegistry()
     public readonly Rogue = new SigningKey(CatalogFixture.RogueId)
@@ -631,7 +633,22 @@ describe('ReleaseCatalog countersigning', () =>
         public async Sign(): Promise<void>
         {
             this.Calls++
-            throw new Error('signer down')
+            throw new Error(CatalogFixture.SignerDown)
+        }
+    }
+
+    class CountingSigner implements IImageSigner
+    {
+        public Calls = 0
+
+        public constructor(private readonly inner: IImageSigner)
+        {
+        }
+
+        public async Sign(imageRef: string, keyRef: string): Promise<void>
+        {
+            this.Calls++
+            await this.inner.Sign(imageRef, keyRef)
         }
     }
 
@@ -654,7 +671,7 @@ describe('ReleaseCatalog countersigning', () =>
             {
                 const keysDir = join(dir, CatalogFixture.KeysDir)
                 await PlatformSigningKey.Ensure(keysDir, PlatformSigningKey.DefaultRef)
-                const store = new FileSignatureStore(join(dir, 'signatures.json'))
+                const store = new FileSignatureStore(join(dir, CatalogFixture.SignaturesFile))
                 const signer = new ImageSigner(new RegistryRefImageDigest(), store, new FileKeyStore(keysDir))
                 const { descriptor } = await fx.Publish(CatalogFixture.V1)
                 await fx.Catalog(undefined, undefined, new PlatformReleaseCountersigner(signer, PlatformSigningKey.DefaultRef)).Refresh()
@@ -663,6 +680,36 @@ describe('ReleaseCatalog countersigning', () =>
                 {
                     assert.ok(await store.Get(descriptor.images[app].digest, PlatformSigningKey.DefaultRef) !== undefined, app)
                 }
+            })
+        }
+        finally
+        {
+            await rm(dir, { recursive: true, force: true })
+        }
+    })
+
+    it('countersigns an already-imported release on a later refresh, once', async () =>
+    {
+        const dir = await mkdtemp(join(tmpdir(), CatalogFixture.TempPrefix))
+        try
+        {
+            await CatalogFixture.Run(async fx =>
+            {
+                const keysDir = join(dir, CatalogFixture.KeysDir)
+                await PlatformSigningKey.Ensure(keysDir, PlatformSigningKey.DefaultRef)
+                const store = new FileSignatureStore(join(dir, CatalogFixture.SignaturesFile))
+                const signer = new CountingSigner(new ImageSigner(new RegistryRefImageDigest(), store, new FileKeyStore(keysDir)))
+                const { descriptor } = await fx.Publish(CatalogFixture.V1)
+                await fx.Catalog().Refresh()
+                const countersigner = new PlatformReleaseCountersigner(signer, PlatformSigningKey.DefaultRef, store)
+                await fx.Catalog(undefined, undefined, countersigner).Refresh()
+                assert.equal(signer.Calls, 8)
+                for (const app of ReleaseApps.All)
+                {
+                    assert.ok(await store.HasKeyed(descriptor.images[app].digest, PlatformSigningKey.DefaultRef), app)
+                }
+                await fx.Catalog(undefined, undefined, countersigner).Refresh()
+                assert.equal(signer.Calls, 8)
             })
         }
         finally

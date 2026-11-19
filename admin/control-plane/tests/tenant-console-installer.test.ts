@@ -23,6 +23,7 @@ import type { HiveRecord } from '../platform-records.js'
 import type { PlatformImageSigner } from '../platform-signing-key.js'
 import { PlatformImages, type IPlatformImages } from '../platform-images.js'
 import { ReleaseApp } from '../release/release-tag.js'
+import { ImageVerificationError } from '../image-verifier.js'
 
 type Item = { kind: string; type?: string; metadata: { name: string; namespace?: string }; spec?: { rules?: Array<{ host?: string }> }; data?: Record<string, string> }
 
@@ -58,6 +59,13 @@ class Items
     {
         return Items.Of(manifestJson).find(i => i.kind === 'Ingress' && i.metadata.name === name)
     }
+}
+
+class ConsoleRelease
+{
+    public static readonly AdminRef = 'ghcr.io/pragmatic-tech-ai/pragmatic-tenant-admin@sha256:' + 'e'.repeat(64)
+    public static readonly NoSignature = 'no signature for image'
+    public static readonly VerificationFailed = 'image signature verification failed'
 }
 
 describe('TenantConsoleInstaller', () =>
@@ -110,6 +118,19 @@ describe('TenantConsoleInstaller', () =>
         assert.ok(applied.includes(admin))
         assert.ok(applied.includes(idp))
         assert.ok(!applied.includes(K8sManifestBuilder.AgentImage))
+    })
+
+    it('a release image that fails verification (no platform countersign) ends Failed with the refusal shown, not a crash', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.Images.FailWith = new ImageVerificationError(ConsoleRelease.AdminRef, ConsoleRelease.NoSignature)
+        fx.Installer.Start('h1')
+        const status = await fx.Installer.WhenSettled('h1')
+        assert.equal(status?.state, ConsoleInstallState.Failed)
+        // The image ref itself is scrubbed (its digest looks like a secret run); the refusal and its reason are shown.
+        assert.ok((status?.error ?? '').includes(ConsoleRelease.VerificationFailed), status?.error)
+        assert.ok((status?.error ?? '').includes(ConsoleRelease.NoSignature), status?.error)
+        assert.deepEqual(fx.Kubectl.Applied, [])
     })
 
     it('Start is the one install check (there is no separate Supports)', async () =>
