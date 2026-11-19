@@ -258,6 +258,20 @@ class FakeService implements IEnvironmentService
         return { token: 'SECRET-DEPLOY-TOKEN-123', tokenRef: 'ref-2', principalId: 'deployer', scopes: ['application-deploy'], expiresAt: '2027-01-01T00:00:00.000Z' }
     }
 
+    public async AdminIssueDeveloperToken(name: string): Promise<any>
+    {
+        this.Calls.push(`adminIssueDeveloperToken:${name}`)
+        this.MaybeThrow()
+        return { token: 'SECRET-DEVELOPER-TOKEN-123', tokenRef: 'ref-4', principalId: 'developer', scopes: [], expiresAt: '2027-01-01T00:00:00.000Z' }
+    }
+
+    public async AdminIssueRunTestToken(name: string): Promise<any>
+    {
+        this.Calls.push(`adminIssueRunTestToken:${name}`)
+        this.MaybeThrow()
+        return { token: 'SECRET-RUNTEST-TOKEN-123', tokenRef: 'ref-5', principalId: 'run-test', scopes: [], expiresAt: '2027-01-01T00:00:00.000Z' }
+    }
+
     public async AdminGrantRole(name: string, mutation: GrantMutationDto): Promise<void>
     {
         this.Calls.push(`adminGrantRole:${name}:${JSON.stringify(mutation)}`)
