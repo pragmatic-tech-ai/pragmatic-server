@@ -22,6 +22,7 @@ import type { EnvironmentWorkload } from '../environment-workload.js'
 import type { HiveObservationRegistry } from '../hive-observation-record.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
+import { PlatformImages, type IPlatformImages } from '../platform-images.js'
 
 type Reply = { status: number; body: string; cacheControl?: string }
 
@@ -214,10 +215,11 @@ describe('ControlPlaneHost automatic agent install', () =>
     let orchestrators: FakeOrchestrators
     let kindFactory: GatedKindFactory
 
-    const Make = (installer: HiveAgentInstaller | undefined): ControlPlaneHost =>
+    const Make = (installer: HiveAgentInstaller | undefined, images?: IPlatformImages): ControlPlaneHost =>
         new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
             new FakeProvisioning(directory).AsService(), observations, undefined, false, undefined, undefined, undefined, [], undefined,
-            undefined, undefined, undefined, Harness.ChannelUrl, installer)
+            undefined, undefined, undefined, Harness.ChannelUrl, installer, undefined, undefined, undefined, undefined, undefined, undefined,
+            undefined, images)
 
     beforeEach(async () =>
     {
@@ -420,5 +422,21 @@ describe('ControlPlaneHost automatic agent install', () =>
         assert.match(JSON.parse(r.body).error, /manually/)
         assert.equal((await Harness.Send(host, 'GET', '/api/hives/local1/agent-install')).status, 404)
         assert.equal(JSON.parse((await Harness.Send(host, 'GET', '/api/hives/local1/bootstrap')).body).autoInstall, false)
+    })
+
+    it('with no verified platform release: the install and the bootstrap both answer 409 with the copy', async () =>
+    {
+        const none: IPlatformImages = { ImageOf: () => undefined }
+        await host.Close()
+        const installer = new HiveAgentInstaller(directory, orchestrators, deployments, observations, Harness.ChannelUrl, new SystemInstallClock(), { pollIntervalMs: 5, timeoutMs: 5000 }, none)
+        host = Make(installer, none)
+        await host.Listen(0, '127.0.0.1')
+        const install = await Harness.Send(host, 'POST', '/api/hives/local1/agent-install')
+        assert.equal(install.status, 409)
+        assert.deepEqual(JSON.parse(install.body), { error: PlatformImages.NoReleaseMessage })
+        const bundle = await Harness.Send(host, 'GET', '/api/hives/local1/bootstrap')
+        assert.equal(bundle.status, 409)
+        assert.deepEqual(JSON.parse(bundle.body), { error: 'no verified platform release yet' })
+        assert.deepEqual(orchestrators.Kubectl.Applied, [])
     })
 })

@@ -4,6 +4,8 @@ import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KubectlError } from './kubectl.js'
 import { HiveBackend, type HiveRecord } from './platform-records.js'
 import { UnknownHiveError } from './rollout-errors.js'
+import { DevPlatformImages, PlatformImages, type IPlatformImages } from './platform-images.js'
+import { ReleaseApp } from './release/release-tag.js'
 
 /** Where an automatic agent install stands. Values are the wire strings. */
 export enum InstallState
@@ -198,7 +200,8 @@ export class HiveAgentInstaller
         private readonly checkIns: IInstallCheckInSource,
         private readonly agentChannelUrl: string | undefined,
         private readonly clock: IInstallClock = new SystemInstallClock(),
-        private readonly timing: InstallTiming = HiveAgentInstaller.DefaultTiming)
+        private readonly timing: InstallTiming = HiveAgentInstaller.DefaultTiming,
+        private readonly images: IPlatformImages = new DevPlatformImages())
     {
     }
 
@@ -230,13 +233,18 @@ export class HiveAgentInstaller
         {
             throw new AgentInstallUnavailableError(HiveAgentInstaller.ChannelOffMessage)
         }
+        const agentImage = this.images.ImageOf(ReleaseApp.HiveAgent)
+        if (agentImage === undefined)
+        {
+            throw new AgentInstallUnavailableError(PlatformImages.NoReleaseMessage)
+        }
         if (this.runs.get(hiveId)?.state === InstallState.Installing)
         {
             throw new AgentInstallInProgressError(hiveId)
         }
         const run = new InstallRun(hiveId, new Date(this.clock.Now()).toISOString())
         this.runs.set(hiveId, run)
-        run.settled = this.Run(run, hive, channelUrl)
+        run.settled = this.Run(run, hive, channelUrl, agentImage)
         return run.Snapshot()
     }
 
@@ -268,7 +276,7 @@ export class HiveAgentInstaller
     }
 
     /** Runs the steps; never rejects: a failure is recorded on the run. */
-    private async Run(run: InstallRun, hive: HiveRecord, channelUrl: string): Promise<void>
+    private async Run(run: InstallRun, hive: HiveRecord, channelUrl: string, agentImage: string): Promise<void>
     {
         // Yield first, so Start returns before any step runs (and any synchronous step failure is still recorded).
         await Promise.resolve()
@@ -276,9 +284,9 @@ export class HiveAgentInstaller
         try
         {
             const orchestrator = this.orchestrators.For(hive)
-            const bundle = HiveBootstrapBundle.For(hive.id, channelUrl, true)
+            const bundle = HiveBootstrapBundle.For(hive.id, channelUrl, true, agentImage)
             this.Enter(run, InstallStep.PreparingCluster)
-            await orchestrator.PrepareAgent(K8sManifestBuilder.AgentImage)
+            await orchestrator.PrepareAgent(agentImage)
             this.Enter(run, InstallStep.ApplyingAgent)
             await orchestrator.Kubectl.Apply(bundle.manifest)
             this.Enter(run, InstallStep.StoringToken)

@@ -21,6 +21,8 @@ import type { IImageVerifier } from '../image-verifier.js'
 import { DevCaError } from '../../../src/idp/dev-ca.js'
 import type { HiveRecord } from '../platform-records.js'
 import type { PlatformImageSigner } from '../platform-signing-key.js'
+import { PlatformImages, type IPlatformImages } from '../platform-images.js'
+import { ReleaseApp } from '../release/release-tag.js'
 
 type Item = { kind: string; type?: string; metadata: { name: string; namespace?: string }; spec?: { rules?: Array<{ host?: string }> }; data?: Record<string, string> }
 
@@ -85,6 +87,29 @@ describe('TenantConsoleInstaller', () =>
         fx = await ConsoleInstallFixture.Create({ channelOn: false })
         assert.throws(() => fx.Installer.Start('h1'), /agent channel is not configured/)
         assert.equal(fx.Installer.StatusFor('h1'), undefined)
+    })
+
+    it('refuses to start with no verified platform release', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create({ platformImages: { ImageOf: () => undefined } })
+        assert.throws(() => fx.Installer.Start('h1'), (err: unknown) =>
+            err instanceof ConsoleInstallUnavailableError && err.message === PlatformImages.NoReleaseMessage)
+        assert.equal(fx.Installer.StatusFor('h1'), undefined)
+    })
+
+    it('installs the tenant-admin and IdP images of the newest release, each approved', async () =>
+    {
+        const admin = 'ghcr.io/pragmatic-tech-ai/pragmatic-tenant-admin@sha256:' + 'e'.repeat(64)
+        const idp = 'ghcr.io/pragmatic-tech-ai/pragmatic-tenant-idp@sha256:' + 'f'.repeat(64)
+        const images: IPlatformImages = { ImageOf: (app: ReleaseApp) => app === ReleaseApp.TenantAdmin ? admin : app === ReleaseApp.TenantIdp ? idp : undefined }
+        fx = await ConsoleInstallFixture.Create({ platformImages: images })
+        fx.Installer.Start('h1')
+        assert.equal((await fx.Installer.WhenSettled('h1'))?.state, ConsoleInstallState.Deployed)
+        assert.deepEqual(fx.Images.Approved, ['h1:' + admin, 'h1:' + idp])
+        const applied = fx.Kubectl.Applied.join(' ')
+        assert.ok(applied.includes(admin))
+        assert.ok(applied.includes(idp))
+        assert.ok(!applied.includes(K8sManifestBuilder.AgentImage))
     })
 
     it('Start is the one install check (there is no separate Supports)', async () =>

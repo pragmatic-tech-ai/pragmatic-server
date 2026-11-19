@@ -14,6 +14,21 @@ import type { EnvironmentWorkload } from '../environment-workload.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 import { UnknownHiveError } from '../rollout-errors.js'
+import type { IPlatformImages } from '../platform-images.js'
+import { PlatformImages } from '../platform-images.js'
+import { ReleaseApp } from '../release/release-tag.js'
+
+class FixedImages implements IPlatformImages
+{
+    public constructor(private readonly image: string | undefined)
+    {
+    }
+
+    public ImageOf(_app: ReleaseApp): string | undefined
+    {
+        return this.image
+    }
+}
 
 class FakeKubectl implements IKubectl
 {
@@ -202,7 +217,7 @@ class Fixture
     public readonly Clock = new FakeClock()
     public readonly Installer: HiveAgentInstaller
 
-    public constructor(channelOn: boolean = true)
+    public constructor(channelOn: boolean = true, images?: IPlatformImages)
     {
         const channelUrl = channelOn ? Fixture.ChannelUrl : undefined
         this.AddHive('h1', HiveBackend.Local, InfraMode.Attach)
@@ -215,7 +230,8 @@ class Fixture
             this.CheckIns,
             channelUrl,
             this.Clock,
-            { pollIntervalMs: Fixture.PollMs, timeoutMs: Fixture.TimeoutMs })
+            { pollIntervalMs: Fixture.PollMs, timeoutMs: Fixture.TimeoutMs },
+            images)
     }
 
     public get Kubectl(): FakeKubectl
@@ -243,6 +259,28 @@ class Fixture
 
 describe('HiveAgentInstaller', () =>
 {
+    it('refuses to start with no verified platform release', () =>
+    {
+        const fx = new Fixture(true, new FixedImages(undefined))
+        assert.throws(() => fx.Installer.Start('h1'), (err: unknown) =>
+            err instanceof AgentInstallUnavailableError && err.message === PlatformImages.NoReleaseMessage)
+        assert.equal(PlatformImages.NoReleaseMessage, 'no verified platform release yet')
+        assert.deepEqual(fx.Kubectl.Calls, [])
+    })
+
+    it('renders the agent Deployment with the release image by digest', async () =>
+    {
+        const ref = 'ghcr.io/pragmatic-tech-ai/pragmatic-hive-agent@sha256:' + 'd'.repeat(64)
+        const fx = new Fixture(true, new FixedImages(ref))
+        fx.CheckInAfter(1)
+        fx.Installer.Start('h1')
+        await fx.Installer.WhenSettled('h1')
+        assert.deepEqual(fx.Orchestrators.Orchestrator.Prepared, [ref])
+        const items = (JSON.parse(fx.Kubectl.Applied[0]) as { items: Array<{ kind: string; spec?: { template?: { spec?: { containers?: Array<{ image: string }> } } } }> }).items
+        const deployment = items.find(i => i.kind === 'Deployment')
+        assert.equal(deployment?.spec?.template?.spec?.containers?.[0].image, ref)
+    })
+
     it('runs every step in order and ends Connected once a check-in newer than the restart arrives', async () =>
     {
         const fx = new Fixture()

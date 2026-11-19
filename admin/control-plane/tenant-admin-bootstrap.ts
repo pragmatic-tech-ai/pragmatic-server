@@ -27,6 +27,8 @@ export interface TenantBootstrapInput
     /** The tenant's organisation name, seeded into the hive read-model when known. */
     organisation?: string
     tenantAdminImage: string
+    /** The hive agent's image when this bootstrap renders the agent (no reused token); the dev image when unset. */
+    agentImage?: string
     tenantPlanePort: number
     baseDomain: string
     externalScheme: string
@@ -354,7 +356,7 @@ export class TenantAdminBootstrap
             }
         }
         // A reused token means the hive agent already runs: re-applying it would revert its Deployment and RBAC.
-        const rendered = input.reuseAgentToken === true ? [] : [this.manifests.RenderHiveAgent(hive.id, input.channelUrl, agentTokenSecretName)]
+        const rendered = input.reuseAgentToken === true ? [] : [this.manifests.RenderHiveAgent(hive.id, input.channelUrl, agentTokenSecretName, input.agentImage ?? K8sManifestBuilder.AgentImage)]
         if (input.idp !== undefined)
         {
             const { image, port, tlsSecretName, adminTokenSecretName, adminTokenRef } = input.idp

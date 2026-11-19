@@ -37,8 +37,9 @@ export class HiveBootstrapBundle
     private static readonly FilePrefix = 'bootstrap-'
     private static readonly FileExtension = '.json'
     private static readonly JsonIndent = 2
-    /** Rendering for removal keeps identities only, so the channel URL (which lands in the Deployment spec) is irrelevant. */
+    /** Rendering for removal keeps identities only, so the channel URL and image (which land in the Deployment spec) are irrelevant. */
     private static readonly NoChannel = ''
+    private static readonly NoImage = ''
     private static readonly NamespaceKind = 'Namespace'
     private static readonly ListKind = 'List'
     private static readonly SecretKind = 'Secret'
@@ -48,10 +49,11 @@ export class HiveBootstrapBundle
     {
     }
 
-    public static For(hiveId: string, channelUrl: string, autoInstall: boolean = false): HiveBootstrapDto
+    /** The bundle for a hive whose agent runs `agentImage` (the newest release's by-digest reference, or the dev image). */
+    public static For(hiveId: string, channelUrl: string, autoInstall: boolean, agentImage: string): HiveBootstrapDto
     {
         const tokenSecretName = K8sManifestBuilder.AgentTokenSecretNameOf(hiveId)
-        const rendered = new K8sManifestBuilder().RenderHiveAgent(hiveId, channelUrl, tokenSecretName)
+        const rendered = new K8sManifestBuilder().RenderHiveAgent(hiveId, channelUrl, tokenSecretName, agentImage)
         return {
             hiveId,
             fileName: HiveBootstrapBundle.FilePrefix + hiveId + HiveBootstrapBundle.FileExtension,
@@ -75,7 +77,7 @@ export class HiveBootstrapBundle
     {
         const C = HiveBootstrapBundle
         const tokenSecretName = K8sManifestBuilder.AgentTokenSecretNameOf(hiveId)
-        const rendered = JSON.parse(new K8sManifestBuilder().RenderHiveAgent(hiveId, C.NoChannel, tokenSecretName)) as { items: K8sIdentity[] }
+        const rendered = JSON.parse(new K8sManifestBuilder().RenderHiveAgent(hiveId, C.NoChannel, tokenSecretName, C.NoImage)) as { items: K8sIdentity[] }
         const items: K8sIdentity[] = rendered.items
             .filter(i => i.kind !== C.NamespaceKind)
             .map(i => C.Identity(i.apiVersion, i.kind, i.metadata.name, i.metadata.namespace))

@@ -2,12 +2,13 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { HiveBootstrapBundle } from '../hive-bootstrap-bundle.js'
 import { InvalidRecordIdError } from '../platform-records.js'
+import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 
 describe('HiveBootstrapBundle', () =>
 {
     it('renders the agent objects for the hive, pointed at the channel, with the token Secret named but never filled', () =>
     {
-        const bundle = HiveBootstrapBundle.For('acme-hive', 'http://host.docker.internal:7001')
+        const bundle = HiveBootstrapBundle.For('acme-hive', 'http://host.docker.internal:7001', false, K8sManifestBuilder.AgentImage)
         assert.equal(bundle.fileName, 'bootstrap-acme-hive.json')
         assert.equal(bundle.namespace, 'pragmatic-system')
         assert.equal(bundle.agentName, 'pragmatic-hive-acme-hive-agent')
@@ -27,7 +28,7 @@ describe('HiveBootstrapBundle', () =>
 
     it('the removal manifest names every bundle object but the shared Namespace, plus the token Secret, and carries no spec or data', () =>
     {
-        const bundle = HiveBootstrapBundle.For('acme-hive', 'http://host.docker.internal:7001')
+        const bundle = HiveBootstrapBundle.For('acme-hive', 'http://host.docker.internal:7001', false, K8sManifestBuilder.AgentImage)
         const removal = JSON.parse(HiveBootstrapBundle.RemovalManifest('acme-hive')) as { kind: string; items: Record<string, unknown>[] }
         assert.equal(removal.kind, 'List')
         const rendered = (JSON.parse(bundle.manifest) as { items: { kind: string; apiVersion: string; metadata: { name: string; namespace?: string } }[] }).items
@@ -43,12 +44,12 @@ describe('HiveBootstrapBundle', () =>
 
     it('refuses an id that is not a valid label value: the manual rotation command restarts by its selector', () =>
     {
-        assert.throws(() => HiveBootstrapBundle.For('=b', 'http://host.docker.internal:7001'), InvalidRecordIdError)
-        assert.throws(() => HiveBootstrapBundle.For('b ', 'http://host.docker.internal:7001'), InvalidRecordIdError)
+        assert.throws(() => HiveBootstrapBundle.For('=b', 'http://host.docker.internal:7001', false, K8sManifestBuilder.AgentImage), InvalidRecordIdError)
+        assert.throws(() => HiveBootstrapBundle.For('b ', 'http://host.docker.internal:7001', false, K8sManifestBuilder.AgentImage), InvalidRecordIdError)
     })
 
     it('carries the automatic-install flag it is given', () =>
     {
-        assert.equal(HiveBootstrapBundle.For('acme-hive', 'http://host.docker.internal:7001', true).autoInstall, true)
+        assert.equal(HiveBootstrapBundle.For('acme-hive', 'http://host.docker.internal:7001', true, K8sManifestBuilder.AgentImage).autoInstall, true)
     })
 })

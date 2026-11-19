@@ -19,6 +19,7 @@ import { HiveBackend, InfraMode, type HiveRecord, type TenantRecord } from '../p
 import { SealedSecretStore } from '../sealed-secret-store.js'
 import { TenantAdminBootstrap, type IHiveRegistrar } from '../tenant-admin-bootstrap.js'
 import { TenantConsoleInstaller, type IConsoleDirectory, type IConsoleImageApproval } from '../tenant-console-installer.js'
+import type { IPlatformImages } from '../platform-images.js'
 
 type ManifestItem = { kind?: string; metadata?: { name?: string; namespace?: string }; data?: Record<string, string> }
 
@@ -382,7 +383,7 @@ export class ConsoleInstallFixture
     public readonly Adverts = new FakeAdvertLookup()
     public readonly Installer: TenantConsoleInstaller
 
-    private constructor(private readonly dir: string, public readonly Fingerprints: ConsoleFingerprintKeys, channelOn: boolean)
+    private constructor(private readonly dir: string, public readonly Fingerprints: ConsoleFingerprintKeys, channelOn: boolean, platformImages?: IPlatformImages)
     {
         this.Installer = new TenantConsoleInstaller(
             { GetHive: (id: string) => this.Hives.get(id), GetTenant: (id: string) => this.Tenants.get(id) },
@@ -395,17 +396,19 @@ export class ConsoleInstallFixture
             new FakeTrustRoots(),
             channelOn ? ConsoleInstallFixture.ChannelUrl : undefined,
             { Now: () => this.ClockMs, Delay: async () => undefined },
-            this.Adverts)
+            this.Adverts,
+            undefined,
+            platformImages)
         this.Tenants.set('acme', { id: 'acme', clientId: 'c1', displayName: 'Acme', createdAt: '2026-01-01T00:00:00.000Z', ownerEmail: 'owner@acme.test', ownerPrincipalId: 'owner' })
         this.Hives.set('h1', ConsoleInstallFixture.Hive('h1'))
         this.Kubectl.Put(K8sManifestBuilder.SystemNamespace, 'secret/' + K8sManifestBuilder.AgentTokenSecretNameOf('h1'), { data: { token: 'eA==' } })
     }
 
-    public static async Create(options: { channelOn?: boolean; runningIdp?: boolean } = {}): Promise<ConsoleInstallFixture>
+    public static async Create(options: { channelOn?: boolean; runningIdp?: boolean; platformImages?: IPlatformImages } = {}): Promise<ConsoleInstallFixture>
     {
         const dir = mkdtempSync(join(tmpdir(), 'console-install-'))
         const store = await SealedSecretStore.Open(join(dir, SealedSecretStore.FileName), randomBytes(32))
-        const fx = new ConsoleInstallFixture(dir, new ConsoleFingerprintKeys(store), options.channelOn ?? true)
+        const fx = new ConsoleInstallFixture(dir, new ConsoleFingerprintKeys(store), options.channelOn ?? true, options.platformImages)
         if (options.runningIdp ?? true)
         {
             fx.SeedRunningIdp()

@@ -23,6 +23,8 @@ import { HiveBackend, type HiveRecord, type TenantRecord } from './platform-reco
 import { UnknownHiveError } from './rollout-errors.js'
 import { TenantAdminBootstrap } from './tenant-admin-bootstrap.js'
 import { TenantConsoleAdmission } from './tenant-console-admission.js'
+import { DevPlatformImages, PlatformImages, type IPlatformImages } from './platform-images.js'
+import { ReleaseApp } from './release/release-tag.js'
 import { OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, IdpUnreachableError } from './tenant-provisioning-service.js'
 
 /** Where a console install stands. Values are the wire strings. */
@@ -147,6 +149,9 @@ export class PlatformConsoleImageApproval implements IConsoleImageApproval
         return { imageRef }
     }
 }
+
+/** The images one console install runs: the tenant-admin pod and the in-hive IdP. */
+type ConsoleImages = { tenantAdmin: string; idp: string }
 
 /** The IdP's CA + admin token for the bootstrap, and the seed Secrets to apply (undefined when the running IdP's are reused). */
 type IdpMaterial = { ca: Buffer; adminToken: string; secretsManifest: string | undefined; scrub: string[] }
@@ -293,7 +298,8 @@ export class TenantConsoleInstaller
         private readonly agentChannelUrl: string | undefined,
         private readonly clock: IInstallClock = new SystemInstallClock(),
         private readonly adverts?: IConsoleAdvertLookup,
-        private readonly ownerResets?: IOwnerResetRecorder)
+        private readonly ownerResets?: IOwnerResetRecorder,
+        private readonly platformImages: IPlatformImages = new DevPlatformImages())
     {
     }
 
@@ -332,6 +338,12 @@ export class TenantConsoleInstaller
         {
             throw new ConsoleInstallUnavailableError(TenantConsoleInstaller.ChannelOffMessage)
         }
+        const tenantAdminImage = this.platformImages.ImageOf(ReleaseApp.TenantAdmin)
+        const idpImage = this.platformImages.ImageOf(ReleaseApp.TenantIdp)
+        if (tenantAdminImage === undefined || idpImage === undefined)
+        {
+            throw new ConsoleInstallUnavailableError(PlatformImages.NoReleaseMessage)
+        }
         if (this.IsInstalling(hiveId))
         {
             throw new ConsoleInstallInProgressError(hiveId)
@@ -343,7 +355,7 @@ export class TenantConsoleInstaller
         }
         const run = new ConsoleInstallRun(hiveId, new Date(this.clock.Now()).toISOString())
         this.runs.set(hiveId, run)
-        run.settled = this.Run(run, hive, tenant, spec, channelUrl)
+        run.settled = this.Run(run, hive, tenant, spec, channelUrl, { tenantAdmin: tenantAdminImage, idp: idpImage })
         return run.Snapshot()
     }
 
@@ -524,7 +536,7 @@ export class TenantConsoleInstaller
     }
 
     /** Runs the steps; never rejects: a failure is recorded on the run. */
-    private async Run(run: ConsoleInstallRun, hive: HiveRecord, tenant: TenantRecord, spec: HiveConsoleSpec, channelUrl: string): Promise<void>
+    private async Run(run: ConsoleInstallRun, hive: HiveRecord, tenant: TenantRecord, spec: HiveConsoleSpec, channelUrl: string, images: ConsoleImages): Promise<void>
     {
         // Yield first, so Start returns before any step runs.
         await Promise.resolve()
@@ -555,7 +567,12 @@ export class TenantConsoleInstaller
             // A legacy record may predate today's console rules (e.g. a TLS Secret named like the IdP's own): refuse it here too.
             HiveConsoleSpecs.Validate(spec, t)
             const tlsCopy = await this.TlsMaterial(run, kubectl, spec, t, host)
-            const approved = await this.images.Approve(hive, K8sManifestBuilder.AgentImage)
+            // Each distinct console image is approved for the hive (the dev image serves both, so it is approved once).
+            const approved = [await this.images.Approve(hive, images.tenantAdmin)]
+            if (images.idp !== images.tenantAdmin)
+            {
+                approved.push(await this.images.Approve(hive, images.idp))
+            }
             const fingerprintKey = await this.fingerprints.Ensure(hive.id)
             C.Remember(run, fingerprintKey)
             // Minted here on a first install (not inside the bootstrap), so it is in the scrub list either way.
@@ -568,7 +585,7 @@ export class TenantConsoleInstaller
             const bootstrap = await this.bootstrap.GenerateBootstrap({
                 tenant,
                 hive,
-                tenantAdminImage: K8sManifestBuilder.AgentImage,
+                tenantAdminImage: images.tenantAdmin,
                 tenantPlanePort: C.ConsolePort,
                 baseDomain: spec.baseDomain,
                 externalScheme: C.HttpsScheme,
@@ -577,9 +594,9 @@ export class TenantConsoleInstaller
                 console: { host, ingressTls: spec.tls, ingressNamespace: HiveConsoleSpecs.IngressNamespaceOf(spec) },
                 fingerprintKey,
                 masterKey,
-                verifiedImages: [approved],
+                verifiedImages: approved,
                 idp: {
-                    image: K8sManifestBuilder.AgentImage,
+                    image: images.idp,
                     port: C.IdpPort,
                     tlsSecretName: InClusterIdpSeedSource.TlsSecretNameOf(t),
                     adminTokenSecretName: InClusterIdpSeedSource.AdminSecretNameOf(t),

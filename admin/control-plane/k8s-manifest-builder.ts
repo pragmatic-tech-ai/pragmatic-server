@@ -526,15 +526,15 @@ export class K8sManifestBuilder
         }
     }
 
-    /** Renders the single per-hive pull agent: SA + cluster-wide get/list/patch on deployments + Deployment. */
-    public RenderHiveAgent(hiveId: string, registryUrl: string, tokenSecretName: string): string
+    /** Renders the single per-hive pull agent: SA + cluster-wide get/list/patch on deployments + Deployment running `agentImage`. */
+    public RenderHiveAgent(hiveId: string, registryUrl: string, tokenSecretName: string, agentImage: string): string
     {
         const items: K8sObject[] = [
             this.HiveAgentNamespaceObject(),
             this.HiveAgentServiceAccount(hiveId),
             this.HiveAgentClusterRole(hiveId),
             this.HiveAgentClusterRoleBinding(hiveId),
-            this.HiveAgentDeployment(hiveId, registryUrl, tokenSecretName),
+            this.HiveAgentDeployment(hiveId, registryUrl, tokenSecretName, agentImage),
         ]
         return JSON.stringify({
             [K8sManifestBuilder.ApiVersionKey]: K8sManifestBuilder.ApiVersionCore,
@@ -652,7 +652,7 @@ export class K8sManifestBuilder
         }
     }
 
-    private HiveAgentDeployment(hiveId: string, registryUrl: string, tokenSecretName: string): K8sObject
+    private HiveAgentDeployment(hiveId: string, registryUrl: string, tokenSecretName: string, agentImage: string): K8sObject
     {
         const name = K8sManifestBuilder.HiveAgentNameOf(hiveId)
         return {
@@ -668,7 +668,7 @@ export class K8sManifestBuilder
                         [K8sManifestBuilder.ServiceAccountNameKey]: K8sManifestBuilder.HiveAgentNameOf(hiveId),
                         [K8sManifestBuilder.ContainersKey]: [{
                             [K8sManifestBuilder.NameKey]: K8sManifestBuilder.AgentContainerName,
-                            [K8sManifestBuilder.ImageKey]: K8sManifestBuilder.AgentImage,
+                            [K8sManifestBuilder.ImageKey]: agentImage,
                             [K8sManifestBuilder.ImagePullPolicyKey]: K8sManifestBuilder.IfNotPresent,
                             [K8sManifestBuilder.CommandKey]: K8sManifestBuilder.AgentEntrypoint,
                             [K8sManifestBuilder.EnvKey]: [

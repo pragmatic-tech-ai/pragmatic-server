@@ -220,7 +220,7 @@ describe('K8sManifestBuilder.RenderHiveAgent', () =>
     {
         public static Items(): any[]
         {
-            const doc = JSON.parse(new K8sManifestBuilder().RenderHiveAgent(HiveId, Registry, TokenSecret))
+            const doc = JSON.parse(new K8sManifestBuilder().RenderHiveAgent(HiveId, Registry, TokenSecret, K8sManifestBuilder.AgentImage))
             assert.equal(doc.apiVersion, 'v1')
             assert.equal(doc.kind, 'List')
             return doc.items

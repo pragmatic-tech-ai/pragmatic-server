@@ -46,6 +46,8 @@ import {
 } from './platform-directory.js'
 import { HivePlacementError } from './hive-placement-error.js'
 import { HiveBootstrapBundle } from './hive-bootstrap-bundle.js'
+import { DevPlatformImages, PlatformImages, type IPlatformImages } from './platform-images.js'
+import { ReleaseApp } from './release/release-tag.js'
 import type { ConsoleAdvertRegistry } from './console-advert-registry.js'
 import type { ConsoleDomainApprovals } from './console-domain-approvals.js'
 import { InvalidEmailDomainError } from './email-domain-policy.js'
@@ -596,7 +598,9 @@ export class ControlPlaneHost
         /** Tenant email domains, their approvals, revokes and verification (/api/tenants/ID/email-domains); undefined leaves those routes unmounted. */
         private readonly emailDomains?: PlatformEmailDomains,
         /** Refreshes the release catalogue from the registry (POST /api/releases/refresh); undefined when no registry is configured (409). */
-        private readonly releases?: ReleaseRefresher)
+        private readonly releases?: ReleaseRefresher,
+        /** Where the hive agent image in a bootstrap bundle comes from; without a release the bundle is refused (409). */
+        private readonly platformImages: IPlatformImages = new DevPlatformImages())
     {
         this.allowedHosts = new Set([...ControlPlaneHost.DefaultAllowedHosts, ...allowedHosts.map(h => h.toLowerCase())])
         this.staticRootAbs = resolve(staticRoot)
@@ -1384,7 +1388,7 @@ export class ControlPlaneHost
         return id
     }
 
-    /** Serves GET /api/hives/ID/bootstrap: the agent's objects for the client's cluster. Secret-free; 409 while the agent channel is off. */
+    /** Serves GET /api/hives/ID/bootstrap: the agent's objects for the client's cluster. Secret-free; 409 while the agent channel is off or no platform release is verified. */
     private RouteHiveBootstrap(res: ServerResponse, method: string, m: RegExpExecArray): boolean
     {
         if (method !== PlaneHttp.MethodGet)
@@ -1401,9 +1405,15 @@ export class ControlPlaneHost
             PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: ControlPlaneHost.AgentChannelOffMessage })
             return true
         }
+        const agentImage = this.platformImages.ImageOf(ReleaseApp.HiveAgent)
+        if (agentImage === undefined)
+        {
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusConflict, { error: PlatformImages.NoReleaseMessage })
+            return true
+        }
         const hive = this.directory.GetHive(id)
         const autoInstall = hive !== undefined && this.agentInstaller !== undefined && this.agentInstaller.Supports(hive)
-        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, HiveBootstrapBundle.For(id, this.agentChannelUrl, autoInstall))
+        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, HiveBootstrapBundle.For(id, this.agentChannelUrl, autoInstall, agentImage))
         return true
     }
 

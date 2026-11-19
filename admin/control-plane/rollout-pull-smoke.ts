@@ -311,7 +311,7 @@ export class RolloutPullSmoke
         // Remember whether the shared namespace was already there: cleanup deletes it only if this smoke created it.
         this.systemNamespacePreExisted = await this.NamespaceExists(S.SystemNamespace)
         this.applied = true
-        await kubectl.Apply(new K8sManifestBuilder().RenderHiveAgent(S.HiveId, channelUrl, S.TokenSecretName))
+        await kubectl.Apply(new K8sManifestBuilder().RenderHiveAgent(S.HiveId, channelUrl, S.TokenSecretName, K8sManifestBuilder.AgentImage))
         await kubectl.Apply(JSON.stringify({
             [S.ApiVersionKey]: S.SecretApiVersion,
             [S.KindKey]: S.SecretKind,
