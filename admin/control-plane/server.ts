@@ -8,6 +8,7 @@ import { LocalDesktopDiscoveryBackend } from './desktop-discovery-backend.js'
 import { InternalApiCredential } from './internal-api-credential.js'
 import { InternalApiHost } from './internal-api-host.js'
 import { InfraTargetMode, InfraTargetModes } from './infra-target-mode.js'
+import { TenantIdpMode } from './tenant-idp-mode.js'
 import { NoTargetEnvironmentRuntime, NoTargetHiveOrchestratorFactory, NoTargetIdpDriver, NoTargetImageDigest } from './no-infra-target.js'
 import type { IAgentChannelBackend } from './agent-channel-backend.js'
 import { EdgeComposition, EdgeShutdown } from './edge-composition.js'
@@ -347,6 +348,8 @@ export class ControlPlaneServer
         const infra = InfraTargetModes.Parse(process.env)
         console.log(ControlPlaneServer.InfraTargetLogPrefix + infra)
         const noTarget = infra === InfraTargetMode.None
+        // Only a local target runs tenant IdPs itself; anywhere else a tenant is a record and signs in through its home hive.
+        const tenantIdpMode = infra === InfraTargetMode.Local ? TenantIdpMode.Central : TenantIdpMode.InHive
         const docker = new DockerEnvAdapter(new DockerEnv())
         const hostRuntime = noTarget ? new NoTargetEnvironmentRuntime() : undefined
         const registry = new EnvironmentRegistry(join(dataRoot, TenantPlaneComposer.RegistryFile), hostRuntime ?? docker)
@@ -377,7 +380,7 @@ export class ControlPlaneServer
         const tunnels = new ClusterTunnelPool()
         ControlPlaneServer.CloseOnShutdown(tunnels)
         const endpoints = new EnvironmentEndpoints(orchestrators, directory, tunnels, new NodeProcessSpawner())
-        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(hostRuntime ?? new DockerEnvironmentRuntime(docker, bundle), new InClusterEnvironmentRuntime(orchestrators, placement, directory, bundle, signing.PlatformSigner), directory, orchestrators), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), ControlPlaneServer.UiDeployerOf(orchestrators, registry, keys), endpoints)
+        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(hostRuntime ?? new DockerEnvironmentRuntime(docker, bundle), new InClusterEnvironmentRuntime(orchestrators, placement, directory, bundle, signing.PlatformSigner), directory, orchestrators), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), ControlPlaneServer.UiDeployerOf(orchestrators, registry, keys), endpoints, tenantIdpMode)
         const graphService = new GraphService(registry, proxy, service)
         const staticRoot = join(here, TenantPlaneComposer.ParentSegment, ControlPlaneServer.PortalSegment, TenantPlaneComposer.DistSegment)
         const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneServer.ManifestsFile))
@@ -422,7 +425,7 @@ export class ControlPlaneServer
         // One tenant session store for the tenant plane and the Owner password reset (which ends the Owner's sessions).
         const tenantSessions = TenantPlaneComposer.TenantSessionsOf(dataRoot)
         const principalSessions = new TenantPrincipalSessions(tenantSessions)
-        const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn), principalSessions, accountIndex)
+        const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn), principalSessions, accountIndex, tenantIdpMode)
         // Installs a Local hive's agent through the same cluster access the orchestrators already hold; off with the channel.
         const agentInstaller = new HiveAgentInstaller(directory, orchestrators, deployments, observations, agentChannelUrl)
         // Console keys and the dev CA are sealed under the master key; discovery and the console installer share one fingerprint-key source.

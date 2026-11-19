@@ -395,7 +395,9 @@ describe('Stand up a hive (provision wizard)', () =>
         const reachable = Inspect.ReachableStrings(wizard, [fx.Api])
         assert.equal(Inspect.ReachableStrings(fx.Section, [fx.Api]).some(v => v === fx.Api.AgentToken || v === fx.Api.OwnerPassword), false)
         assert.ok(reachable.includes('initech-hive'))
-        assert.equal(reachable.includes(fx.Api.OwnerPassword), false)
+        const ownerPassword = fx.Api.OwnerPassword
+        assert.ok(ownerPassword !== undefined)
+        assert.equal(reachable.includes(ownerPassword), false)
         assert.equal(reachable.includes(fx.Api.AgentToken), false)
         const detail = fx.Content
         assert.ok(detail instanceof HiveDetailPageViewModel)

@@ -128,6 +128,7 @@ type ComposedPlane = {
 export class TenantLoginE2eSmoke
 {
     private static readonly TempPrefix = 'tenant-login-e2e-smoke-'
+    private static readonly NoOwnerPasswordMessage = 'central provisioning returned no Owner password'
     private static readonly StaticDir = 'static'
     private static readonly OrchestratorDir = 'orchestrator'
     private static readonly KeysDirName = 'keys'
@@ -313,6 +314,10 @@ export class TenantLoginE2eSmoke
         const provisioning = new TenantProvisioningService(plane.idpService, plane.directory, conn => new IdpAdminClient(conn))
         const provisioned = await provisioning.Provision({ id: S.TenantId, clientId: S.ClientId, displayName: S.DisplayName, ownerEmail: S.OwnerEmail })
         const ownerPassword = provisioned.ownerPassword
+        if (ownerPassword === undefined)
+        {
+            throw new Error(S.NoOwnerPasswordMessage)
+        }
         const conn = await plane.idpService.EnsureForTenant(S.TenantId, S.DisplayName)
         await this.CheckIdpHealthy(conn)
 

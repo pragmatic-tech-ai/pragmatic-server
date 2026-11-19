@@ -34,8 +34,9 @@ export type TenantDto =
     createdAt?: string
 }
 
-// POST /api/tenants provisions the tenant's Owner and reveals its password exactly once in the response.
-export type TenantOwnerDto = { email: string; principalId: string; password: string }
+// POST /api/tenants provisions the tenant's Owner and reveals its password exactly once in the response. There is no
+// password when the tenant signs in through its own hive (the control plane runs no IdP for it).
+export type TenantOwnerDto = { email: string; principalId: string; password?: string }
 export type CreatedTenantDto = TenantDto & { owner: TenantOwnerDto }
 
 // A reset tenant Owner password (the owner-password route's reply), shown once. sessionsRevoked is false, with a

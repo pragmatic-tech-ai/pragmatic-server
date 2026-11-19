@@ -135,6 +135,25 @@ describe('Tenants section', () =>
         assert.equal(fx.Section.Current, reveal)
     })
 
+    it('a tenant that signs in through its own hive reveals no password and returns to the list', async () =>
+    {
+        const fx = new TenantsFixture()
+        fx.Api.OwnerPassword = undefined
+        const list = await fx.List()
+        list.NewCommand.Execute()
+        await Tick.Settle()
+        const dialog = fx.Dialogs.Last as NewTenantDialogViewModel
+        dialog.SelectedClient = dialog.Clients.Get(0)
+        dialog.Id = 'initech-prod'
+        dialog.DisplayName = 'Initech Production'
+        dialog.OwnerEmail = 'owner@initech.test'
+        dialog.ConfirmCommand.Execute()
+        await Tick.Settle()
+        assert.ok(!(fx.Section.Current instanceof OwnerPasswordRevealPageViewModel))
+        assert.ok(fx.Content instanceof TenantsPageViewModel)
+        assert.ok(fx.Content.Rows.ToArray().some(r => r.Id === 'initech-prod'))
+    })
+
     it('dismissing the dialog while the create is in flight still reveals the Owner password', async () =>
     {
         const fx = new TenantsFixture()
@@ -157,6 +176,7 @@ describe('Tenants section', () =>
         const reveal = fx.Content
         assert.ok(reveal instanceof OwnerPasswordRevealPageViewModel)
         const revealed = fx.Api.OwnerPassword
+        assert.ok(revealed !== undefined)
         assert.equal(reveal.Value, revealed)
         // The fake itself holds the fixture value (reachable via the dialog's
         // session); rotate it so only a copy kept by the dialog would match.

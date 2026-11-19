@@ -18,9 +18,11 @@ import { ClientRegistry } from '../client-registry.js';
 import { TenantRegistry } from '../tenant-registry.js';
 import { HiveRegistry } from '../hive-registry.js';
 import { PlatformDirectory, RecordExistsError, UnknownClientError, UnknownTenantError } from '../platform-directory.js';
-import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, OwnerResetInProgressError, TenantIdpMissingError, TenantProvisioningService, type IOwnerSessionRevoker } from '../tenant-provisioning-service.js';
+import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, OwnerResetInProgressError, TenantIdpMissingError, TenantProvisioningService, type IOwnerSessionRevoker, type TenantProvisionResult } from '../tenant-provisioning-service.js';
+import type { TenantRecord } from '../platform-records.js';
 import { IdpAdminTransportError } from '../idp-admin-client.js';
 import { TenantAccountIndex } from '../tenant-account-index.js';
+import { TenantIdpMode } from '../tenant-idp-mode.js';
 import { TenantSessionKind, TenantSessionStore } from '../tenant-auth/tenant-session.js';
 import { TenantPrincipalSessions } from '../tenant-auth/tenant-principal-sessions.js';
 
@@ -146,6 +148,13 @@ class ProvFixture
         }
     }
 
+    /** A Central-mode result, whose one-time Owner password is always present. */
+    public static Central(result: TenantProvisionResult): { record: TenantRecord; ownerPassword: string }
+    {
+        assert.ok(result.ownerPassword !== undefined);
+        return { record: result.record, ownerPassword: result.ownerPassword };
+    }
+
     public static Input(): { id: string; clientId: string; displayName: string; ownerEmail: string }
     {
         return { id: ProvFixture.TenantId, clientId: ProvFixture.ClientId, displayName: ProvFixture.DisplayName, ownerEmail: ProvFixture.OwnerEmail };
@@ -231,7 +240,7 @@ test('Provision ensures the realm, seeds an Owner who can authenticate, and pers
 {
     await ProvFixture.WithHost(async (conn, realms, directory) =>
     {
-        const { record, ownerPassword } = await ProvFixture.Service(conn, directory).Provision(ProvFixture.Input());
+        const { record, ownerPassword } = ProvFixture.Central(await ProvFixture.Service(conn, directory).Provision(ProvFixture.Input()));
         assert.ok(ownerPassword.length >= ProvFixture.MinPasswordLength);
         const realm = realms.For(ProvFixture.TenantId);
         assert.ok(realm !== undefined);
@@ -250,7 +259,7 @@ test('the persisted record never contains the password, the admin token, or the 
 {
     await ProvFixture.WithHost(async (conn, _realms, directory) =>
     {
-        const { record, ownerPassword } = await ProvFixture.Service(conn, directory).Provision(ProvFixture.Input());
+        const { record, ownerPassword } = ProvFixture.Central(await ProvFixture.Service(conn, directory).Provision(ProvFixture.Input()));
         const text = JSON.stringify(record) + JSON.stringify(directory.GetTenant(ProvFixture.TenantId));
         assert.ok(!text.includes(ownerPassword));
         assert.ok(!text.includes(ProvFixture.Token));
@@ -303,7 +312,7 @@ test('re-provisioning is rejected cleanly by the directory and the original pass
     await ProvFixture.WithHost(async (conn, realms, directory) =>
     {
         const service = ProvFixture.Service(conn, directory);
-        const first = await service.Provision(ProvFixture.Input());
+        const first = ProvFixture.Central(await service.Provision(ProvFixture.Input()));
         await assert.rejects(service.Provision(ProvFixture.Input()), (err: unknown) =>
         {
             assert.ok(err instanceof RecordExistsError);
@@ -321,7 +330,7 @@ test('ResetOwnerPassword sets a fresh strong password for the Owner principal: i
     await ProvFixture.WithHost(async (conn, realms, directory) =>
     {
         const service = ProvFixture.Service(conn, directory);
-        const first = await service.Provision(ProvFixture.Input());
+        const first = ProvFixture.Central(await service.Provision(ProvFixture.Input()));
         const reset = await service.ResetOwnerPassword(ProvFixture.TenantId);
         assert.equal(reset.ownerEmail, ProvFixture.OwnerEmail);
         assert.ok(reset.ownerPassword.length >= ProvFixture.MinPasswordLength);
@@ -504,3 +513,55 @@ test('a second reset of the same tenant while one is in flight is refused; anoth
         assert.equal((await service.ResetOwnerPassword(ProvFixture.TenantId)).ownerEmail, ProvFixture.OwnerEmail);
     });
 });
+
+class NeverIdp implements IIdpService
+{
+    public Calls = 0;
+
+    public async ConnectForTenant(_tenantId: string): Promise<IdpConnection | undefined>
+    {
+        this.Calls++;
+        throw new Error('no IdP in in-hive mode');
+    }
+
+    public async TeardownForTenant(_tenantId: string): Promise<void>
+    {
+        this.Calls++;
+        throw new Error('no IdP in in-hive mode');
+    }
+
+    public async EnsureForTenant(_tenantId: string, _displayName: string): Promise<IdpConnection>
+    {
+        this.Calls++;
+        throw new Error('no IdP in in-hive mode');
+    }
+}
+
+test('in-hive mode records the tenant with its owner email and starts no IdP', async () =>
+{
+    await ProvFixture.WithHost(async (_conn, _realms, directory) =>
+    {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), ProvFixture.DirPrefix));
+        try
+        {
+            const index = new TenantAccountIndex(path.join(dir, 'tenant-accounts.json'));
+            await index.Load();
+            const idp = new NeverIdp();
+            const service = new TenantProvisioningService(idp, directory, () => { throw new Error('no admin client in in-hive mode'); }, undefined, index, TenantIdpMode.InHive);
+            const result = await service.Provision(ProvFixture.Input());
+            assert.equal(idp.Calls, 0);
+            assert.equal(result.ownerPassword, undefined);
+            assert.equal(result.record.ownerEmail, ProvFixture.OwnerEmail);
+            assert.equal(result.record.ownerPrincipalId, 'owner');
+            assert.equal(result.record.idpBaseUrl, undefined);
+            assert.deepEqual(directory.GetTenant(ProvFixture.TenantId)?.ownerEmail, ProvFixture.OwnerEmail);
+            assert.deepEqual(index.TenantsFor(ProvFixture.OwnerEmail), [ProvFixture.TenantId]);
+            await assert.rejects(service.Provision(ProvFixture.Input()), RecordExistsError);
+        }
+        finally
+        {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+});
+

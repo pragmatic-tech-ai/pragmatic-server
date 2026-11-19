@@ -123,13 +123,16 @@ export class TenantsPageViewModel extends PortalPageViewModel
         }
     }
 
-    // A created tenant reveals its Owner password first, then the list reloads.
+    // A created tenant reveals its Owner password first (when the control plane seeded one), then the list reloads.
     private CreateTenant(): Promise<void>
     {
         return this.OpenCreate(this.section.Dialogs, dialogs => new NewTenantDialogViewModel(this.Session, dialogs),
             TenantsPageViewModel.NewTenantTitle, created =>
             {
-                this.section.RevealOwnerPassword(created)
+                if (created.owner.password !== undefined)
+                {
+                    this.section.RevealOwnerPassword(created.id, created.owner.email, created.owner.password)
+                }
                 return this.Refresh()
             })
     }

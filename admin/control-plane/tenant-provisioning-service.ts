@@ -5,10 +5,12 @@ import { UnknownTenantError, type PlatformDirectory } from './platform-directory
 import type { TenantRecord } from './platform-records.js';
 import type { TenantAccountIndex } from './tenant-account-index.js';
 import { TenantOwner } from './tenant-owner.js';
+import { TenantIdpMode } from './tenant-idp-mode.js';
 
 export type TenantProvisionInput = { id: string; clientId: string; displayName: string; ownerEmail: string };
 
-export type TenantProvisionResult = { record: TenantRecord; ownerPassword: string };
+/** The created tenant, and the Owner's one-time password when the platform seeded one (Central mode only). */
+export type TenantProvisionResult = { record: TenantRecord; ownerPassword?: string };
 
 /**
  * A reset Owner password, returned once to the operator. `sessionsRevoked` is false when the password changed but the
@@ -148,7 +150,9 @@ export class TenantProvisioningService
         /** Ends the Owner's tenant-portal sessions after a reset; absent where no tenant plane runs. */
         private readonly sessions?: IOwnerSessionRevoker,
         /** The email-discovery index every account created here must be recorded in (see TenantAccountIndex). */
-        private readonly accounts?: TenantAccountIndex)
+        private readonly accounts?: TenantAccountIndex,
+        /** Central: the platform runs the tenant's IdP. InHive: the tenant is a record; its sign-in lives in its home hive. */
+        private readonly mode: TenantIdpMode = TenantIdpMode.Central)
     {
     }
 
@@ -156,6 +160,10 @@ export class TenantProvisioningService
     {
         // Fail fast before any IdP mutation so a duplicate or bad-client request never orphans a realm + Owner.
         this.directory.AssertCanCreateTenant(input.id, input.clientId);
+        if (this.mode === TenantIdpMode.InHive)
+        {
+            return { record: await this.ProvisionRecord(input) };
+        }
         const conn = await this.idp.EnsureForTenant(input.id, input.displayName);
         const client = this.adminClientFactory(conn);
         await client.EnsureRealm(input.id, input.displayName);
@@ -179,6 +187,20 @@ export class TenantProvisioningService
         });
         await this.IndexOwner(record);
         return { record, ownerPassword };
+    }
+
+    /** In-hive sign-in: records the tenant with its Owner email (no IdP, no password) and indexes the Owner for discovery. */
+    private async ProvisionRecord(input: TenantProvisionInput): Promise<TenantRecord>
+    {
+        const record = await this.directory.CreateTenant({
+            id: input.id,
+            clientId: input.clientId,
+            displayName: input.displayName,
+            ownerEmail: input.ownerEmail,
+            ownerPrincipalId: TenantProvisioningService.OwnerPrincipalId,
+        });
+        await this.IndexOwner(record);
+        return record;
     }
 
     /**

@@ -46,6 +46,7 @@ import { ClusterTunnelPool } from '../cluster-tunnel-pool.js'
 import { GraphService } from '../graph-service.js'
 import { EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrlsLease, type IEnvironmentReach } from '../environment-endpoints.js'
 import type { IHiveOrchestrator } from '../hive-orchestrator.js'
+import { TenantIdpMode, TenantSignInInHiveError } from '../tenant-idp-mode.js'
 
 /**
  * Routes every record (bound or not) to the one Docker fake, preserving the pre-resolver service tests. The real
@@ -560,6 +561,12 @@ class Harness
         })
         h.Service = new EnvironmentService(h.Registry, new FakeAllocator(h.Calls, busy), SingleBackendResolver.Of(new DockerEnvironmentRuntime(h.Docker, h.Bundle), h.Directory, new HiveOrchestratorFactory()), h.Seeder, h.DataRoot, h.Proxy, h.Directory, h.Idp, c => new IdpAdminClient(c))
         return h
+    }
+
+    /** Rebuilds the service for a platform whose tenants sign in through their own hive (shares everything else). */
+    public UseInHiveTenants(): void
+    {
+        this.Service = new EnvironmentService(this.Registry, new FakeAllocator(this.Calls, false), SingleBackendResolver.Of(new DockerEnvironmentRuntime(this.Docker, this.Bundle), this.Directory, new HiveOrchestratorFactory()), this.Seeder, this.DataRoot, this.Proxy, this.Directory, this.Idp, c => new IdpAdminClient(c), undefined, undefined, TenantIdpMode.InHive)
     }
 
     /** Rebuilds the service over a different IdP seam (shares registry, docker, bundle, directory). */
@@ -1807,3 +1814,13 @@ test('a graph call that outlives the tunnel idle window keeps its tunnel; the id
     assert.equal(tunnel.Killed, true)
     pool.CloseAll()
 })
+
+test('in-hive tenants: a platform-created environment bound to a tenant hive is refused before any side effect', async () =>
+{
+    const h = await Harness.Make()
+    h.UseInHiveTenants()
+    await assert.rejects(h.Service.Create('bound-in-hive', Template.DevBlank, EnvType.Development, undefined, 'h1'), TenantSignInInHiveError)
+    assert.deepEqual(h.Calls, [])
+    assert.equal(h.Registry.Get('bound-in-hive'), undefined)
+})
+

@@ -224,7 +224,8 @@ export class FakeControlPlane
     public Activity: ActivityDto[] = []
     public Operators: OperatorSummaryDto[] = []
     public Selections: SelectionDto[] = []
-    public OwnerPassword = 'fixture-owner-password'
+    /** Undefined: the control plane runs no tenant IdP (in-hive sign-in), so a create returns no Owner password. */
+    public OwnerPassword: string | undefined = 'fixture-owner-password'
     public ResetPassword = 'fixture-reset-password'
     public AgentToken = 'fixture-agent-token'
     public ReissuedToken = 'fixture-reissued-token'
@@ -644,7 +645,10 @@ export class FakeControlPlane
         this.ThrowIfFailing()
         this.CreatedTenants.push([id, clientId, displayName, ownerEmail])
         this.Tenants.push({ id, clientId, displayName })
-        return { id, clientId, displayName, owner: { email: ownerEmail, principalId: 'p-' + id, password: this.OwnerPassword } }
+        const owner = this.OwnerPassword === undefined
+            ? { email: ownerEmail, principalId: 'p-' + id }
+            : { email: ownerEmail, principalId: 'p-' + id, password: this.OwnerPassword }
+        return { id, clientId, displayName, owner }
     }
 
     // Records the hive and lists it in the fleet (never checked in yet).

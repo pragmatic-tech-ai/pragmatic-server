@@ -218,6 +218,17 @@ describe('ControlPlaneHost platform routes', () =>
         assert.deepEqual(body.owner, { email: 'o@x.test', principalId: 'owner', password: FakeProvisioning.Password })
     })
 
+    it('POST /api/tenants answers 201 with owner {email, principalId} and no password in in-hive mode', async () =>
+    {
+        fake.RecordOnly = true
+        await Harness.Send(host, 'POST', '/api/clients', { id: 'acme', displayName: 'Acme' })
+        const r = await Harness.Send(host, 'POST', '/api/tenants', { id: 't1', clientId: 'acme', displayName: 'T', ownerEmail: 'o@x.test' })
+        assert.equal(r.status, 201)
+        const body = JSON.parse(r.body)
+        assert.deepEqual(body.owner, { email: 'o@x.test', principalId: 'owner' })
+        assert.equal(r.body.includes('password'), false)
+    })
+
     it('rejects a tenant create without ownerEmail or with a reserved _ id', async () =>
     {
         await Harness.Send(host, 'POST', '/api/clients', { id: 'acme', displayName: 'Acme' })

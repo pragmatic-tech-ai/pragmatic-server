@@ -11,6 +11,7 @@ import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import type { TenantSession } from '../tenant-auth/tenant-session.js'
 import { ResRecorder } from './res-recorder.js'
+import { TenantSignInInHiveError } from '../tenant-idp-mode.js'
 
 // Captures console.error lines for the duration of one call, restoring it afterwards.
 class ErrorLog
@@ -186,6 +187,14 @@ describe('TenantApiEndpoint POST /tenant-api/environments', () =>
         const res = await Post(Fixtures.Valid())
         assert.equal(res.status, 409)
         assert.deepEqual(res.Json(), { error: 'An environment with that name already exists' })
+    })
+
+    it('409s TenantSignInInHiveError with its copy: a platform-created environment for an in-hive tenant', async () =>
+    {
+        service.Failure = new TenantSignInInHiveError()
+        const res = await Post(Fixtures.Valid())
+        assert.equal(res.status, 409)
+        assert.deepEqual(res.Json(), { error: 'This tenant signs in through its own hive; create environments in its console' })
     })
 
     it('400s UnsupportedBackendError with a fixed body', async () =>

@@ -1,5 +1,4 @@
 import { ServiceKey, type IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
-import type { CreatedTenantDto } from '../../portal-types.js'
 import { PortalSectionService } from '../../shell/portal-section-service.js'
 import type { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import { HivesSectionService } from '../hives/hives-section-service.js'
@@ -23,11 +22,11 @@ export class TenantsSectionService extends PortalSectionService
         this.Present(new TenantDetailPageViewModel(this.Session, this, id))
     }
 
-    // Shows a just-created tenant's Owner password once. The created DTO is
-    // not kept; only the reveal page holds the value.
-    public RevealOwnerPassword(created: CreatedTenantDto): void
+    // Shows a just-created tenant's Owner password once. Only the reveal page
+    // holds the value.
+    public RevealOwnerPassword(tenantId: string, email: string, password: string): void
     {
-        this.Present(new OwnerPasswordRevealPageViewModel(this, created.id, created.owner.email, created.owner.password))
+        this.Present(new OwnerPasswordRevealPageViewModel(this, tenantId, email, password))
     }
 
     // Shows a reset Owner password once, over the tenant's detail (Back to the

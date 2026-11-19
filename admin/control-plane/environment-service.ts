@@ -25,6 +25,7 @@ import type { IUiDeployActuator, UiDeployBundle } from './ui-deploy-actuator.js'
 import { InClusterOperationFailedError } from './in-cluster-environment-runtime.js'
 import { EnvironmentSecuritySeed, SecuritySeedError } from './environment-security-seed.js'
 import { EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrlsLease, type IEnvironmentReach } from './environment-endpoints.js'
+import { TenantIdpMode, TenantSignInInHiveError } from './tenant-idp-mode.js'
 
 export class EnvironmentExistsError extends Error
 {
@@ -219,7 +220,9 @@ export class EnvironmentService implements IAdminAccess
         private readonly idp: IIdpService,
         private readonly adminClientFactory: (conn: IdpConnection) => IdpAdminClient,
         private readonly uiDeployer?: IUiDeployActuator,
-        private readonly endpoints?: IEnvironmentReach)
+        private readonly endpoints?: IEnvironmentReach,
+        /** InHive: tenants sign in through their own hive, so this platform creates no environment bound to a tenant's hive. */
+        private readonly tenantIdpMode: TenantIdpMode = TenantIdpMode.Central)
     {
     }
 
@@ -290,6 +293,10 @@ export class EnvironmentService implements IAdminAccess
     {
         const safe = TemplateCatalog.SanitizeName(name)
         const platformTenantId = this.ResolveHiveTenant(hiveId)
+        if (platformTenantId !== undefined && this.tenantIdpMode === TenantIdpMode.InHive)
+        {
+            throw new TenantSignInInHiveError()
+        }
         if (this.registry.Get(safe) !== undefined || this.inFlight.has(safe))
         {
             throw new EnvironmentExistsError(safe)

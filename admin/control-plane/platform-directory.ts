@@ -219,7 +219,8 @@ export class PlatformDirectory
         return this.tenants.Get(id)
     }
 
-    public async CreateTenant(input: { id: string; clientId: string; displayName: string }): Promise<TenantRecord>
+    /** Records a tenant; with an Owner (email and principal) when its sign-in runs in its hive rather than in a platform IdP. */
+    public async CreateTenant(input: { id: string; clientId: string; displayName: string; ownerEmail?: string; ownerPrincipalId?: string }): Promise<TenantRecord>
     {
         this.AssertNew(RecordKind.Tenant, input.id, this.tenants.Get(input.id))
         if (this.clients.Get(input.clientId) === undefined)
@@ -227,6 +228,11 @@ export class PlatformDirectory
             throw new UnknownClientError(input.clientId)
         }
         const record: TenantRecord = { id: input.id, clientId: input.clientId, displayName: input.displayName, createdAt: this.Stamp() }
+        if (input.ownerEmail !== undefined && input.ownerPrincipalId !== undefined)
+        {
+            record.ownerEmail = input.ownerEmail
+            record.ownerPrincipalId = input.ownerPrincipalId
+        }
         await this.tenants.Put(record)
         return record
     }

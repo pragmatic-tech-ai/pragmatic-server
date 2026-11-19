@@ -21,6 +21,7 @@ import { EnvType, Template } from '../environment-record.js'
 import { UnsupportedBackendError } from '../hive-orchestrator.js'
 import { PlaneHttp } from '../plane-http.js'
 import { TenantGraphAccess } from './tenant-graph-access.js'
+import { TenantSignInInHiveError } from '../tenant-idp-mode.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, IssueTokenParams, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /** A graph request's final status and the graph name its audit note carries ('' when a POST body had no usable name). */
@@ -478,6 +479,11 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         {
             status = C.StatusConflict
             message = C.CreateExistsMessage
+        }
+        else if (err instanceof TenantSignInInHiveError)
+        {
+            status = C.StatusConflict
+            message = err.message
         }
         else if (err instanceof UnsupportedBackendError)
         {

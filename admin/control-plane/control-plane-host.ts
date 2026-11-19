@@ -2378,7 +2378,11 @@ export class ControlPlaneHost
             const { record, ownerPassword } = await this.provisioning.Provision({ id, clientId: body.clientId as string, displayName, ownerEmail: body.ownerEmail as string })
             // The one-time Owner password is revealed exactly once here; never logged or stored.
             res.setHeader(ControlPlaneHost.CacheControlHeader, ControlPlaneHost.NoStore)
-            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, { ...ControlPlaneHost.ToTenantDto(record), owner: { email: record.ownerEmail, principalId: record.ownerPrincipalId, password: ownerPassword } })
+            // In-hive sign-in seeds no password: the Owner signs in through the tenant's hive, so none is shown.
+            const owner = ownerPassword === undefined
+                ? { email: record.ownerEmail, principalId: record.ownerPrincipalId }
+                : { email: record.ownerEmail, principalId: record.ownerPrincipalId, password: ownerPassword }
+            PlaneHttp.WriteJson(res, ControlPlaneHost.StatusCreated, { ...ControlPlaneHost.ToTenantDto(record), owner })
             return
         }
         else

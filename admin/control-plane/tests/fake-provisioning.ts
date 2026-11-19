@@ -11,6 +11,8 @@ export class FakeProvisioning
     private static readonly IdpBaseUrl = 'https://idp.test'
 
     public FailWith: Error | undefined
+    /** When set, Provision behaves as in-hive mode: a record only, with no password. */
+    public RecordOnly = false
     public ResetFailWith: Error | undefined
     // When set, the reset reports that the Owner's sessions could not be ended, with this warning.
     public ResetWarning: string | undefined
@@ -29,6 +31,11 @@ export class FakeProvisioning
         if (this.FailWith !== undefined)
         {
             throw this.FailWith
+        }
+        if (this.RecordOnly)
+        {
+            // In-hive sign-in: the tenant is a record with its Owner email; no IdP, no password.
+            return { record: await this.directory.CreateTenant({ ...input, ownerPrincipalId: FakeProvisioning.OwnerPrincipalId }) }
         }
         const record = await this.directory.CreateProvisionedTenant({ ...input, ownerPrincipalId: FakeProvisioning.OwnerPrincipalId, idpBaseUrl: FakeProvisioning.IdpBaseUrl })
         return { record, ownerPassword: FakeProvisioning.Password }
