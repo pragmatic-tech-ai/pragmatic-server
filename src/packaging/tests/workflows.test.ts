@@ -271,3 +271,73 @@ test('ci workflow clones the graph engine and points TODL at it before the serve
     const server = text.indexOf('name: Build pragmatic-server')
     assert.ok(link !== -1 && server !== -1 && link < server, 'TODL is re-pointed at the sibling engine before the server builds')
 })
+
+class MultiArch
+{
+    public static readonly PlatformApps = ['pragmatic-platform-admin', 'pragmatic-platform-edge']
+    public static readonly Matrix = [{ arch: 'amd64', runner: 'ubuntu-latest' }, { arch: 'arm64', runner: 'ubuntu-24.04-arm' }]
+
+    public static Jobs(name: string): Record<string, { 'runs-on'?: string; needs?: string | string[]; strategy?: { matrix?: { include?: unknown[] } }; steps?: IWorkflowStep[] }>
+    {
+        return (parse(Workflows.Text(name)) as { jobs: Record<string, never> }).jobs
+    }
+
+    public static Runs(steps: IWorkflowStep[] | undefined): string[]
+    {
+        return (steps ?? []).map(step => step.run ?? '')
+    }
+}
+
+test('release builds platform-admin and platform-edge natively per arch, pushed by digest', () =>
+{
+    const job = MultiArch.Jobs('release.yml')['platform-images']
+    assert.ok(job !== undefined, 'a platform-images job')
+    assert.deepEqual(job.strategy?.matrix?.include, MultiArch.Matrix)
+    assert.equal(job['runs-on'], '${{ matrix.runner }}')
+    const bake = MultiArch.Runs(job.steps).find(run => /docker buildx bake/.test(run)) ?? ''
+    assert.match(bake, /PLATFORMS=linux\/\$\{\{ matrix\.arch \}\}/)
+    assert.match(bake, /push-by-digest=true/)
+    for (const app of MultiArch.PlatformApps)
+    {
+        assert.ok(bake.includes(app), app)
+    }
+    assert.ok((job.steps ?? []).some(step => (step.uses ?? '').startsWith('actions/upload-artifact@')), 'digests are handed to the release job')
+})
+
+test('the release job merges both arches into one tag per platform image before it signs', () =>
+{
+    const jobs = MultiArch.Jobs('release.yml')
+    const release = jobs.release
+    assert.deepEqual([release.needs].flat(), ['platform-images'])
+    const runs = MultiArch.Runs(release.steps)
+    const merge = runs.findIndex(run => /docker buildx imagetools create/.test(run) && MultiArch.PlatformApps.every(app => run.includes(app)))
+    const publish = runs.findIndex(run => /pragmatic-release-publish\.ts publish/.test(run))
+    assert.ok(merge !== -1 && merge < publish, 'imagetools create runs before the descriptor is signed')
+    const bake = runs.find(run => /docker buildx bake/.test(run)) ?? ''
+    assert.match(bake, /amd64-only/)
+})
+
+test('ci also bakes the two platform images for arm64 on a native runner, without pushing', () =>
+{
+    const job = MultiArch.Jobs('ci.yml')['platform-images-arm64']
+    assert.ok(job !== undefined, 'a platform-images-arm64 job')
+    assert.equal(job['runs-on'], 'ubuntu-24.04-arm')
+    const bake = MultiArch.Runs(job.steps).find(run => /docker buildx bake/.test(run)) ?? ''
+    assert.match(bake, /PLATFORMS=linux\/arm64/)
+    assert.doesNotMatch(bake, /--push|push=true/)
+})
+
+test('bake: the platform images take PLATFORMS; the six other apps form the amd64-only group', () =>
+{
+    const bake = readFileSync(join(Workflows.Dir(), '..', '..', 'docker', 'docker-bake.hcl'), 'utf8')
+    assert.match(bake, /variable "PLATFORMS"\s*\{\s*default = "linux\/amd64"\s*\}/)
+    for (const app of MultiArch.PlatformApps)
+    {
+        const block = new RegExp('target "' + app + '" ' + /\{[^}]*platforms\s*=\s*split\(",", PLATFORMS\)/.source)
+        assert.match(bake, block, app)
+    }
+    const group = /group "amd64-only" \{\s*targets = \[([^\]]*)\]/.exec(bake)
+    assert.ok(group !== null)
+    const members = (group[1].match(/"[^"]+"/g) ?? []).map(m => m.slice(1, -1))
+    assert.deepEqual(members.sort(), ['pragmatic-env-gateway', 'pragmatic-env-server', 'pragmatic-hive-agent', 'pragmatic-tenant-admin', 'pragmatic-tenant-idp', 'pragmatic-ui-unpack'])
+})

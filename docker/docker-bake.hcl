@@ -20,6 +20,12 @@ variable "NPMRC_FILE" {
   default = ""
 }
 
+# The control-plane images (admin, edge) are built per arch on native runners (release.yml, platform-images job):
+# PLATFORMS=linux/arm64 there; comma-separated for a local multi-arch build. The other six stay linux/amd64.
+variable "PLATFORMS" {
+  default = "linux/amd64"
+}
+
 function "tags" {
   params = [app]
   result = ["${REGISTRY}/${app}:${VERSION}", "${REGISTRY}/${app}:git-${SERVER_SHA}"]
@@ -29,6 +35,18 @@ group "default" {
   targets = [
     "pragmatic-platform-admin",
     "pragmatic-platform-edge",
+    "pragmatic-env-server",
+    "pragmatic-env-gateway",
+    "pragmatic-hive-agent",
+    "pragmatic-tenant-admin",
+    "pragmatic-tenant-idp",
+    "pragmatic-ui-unpack",
+  ]
+}
+
+# Everything except the two multi-arch control-plane images (release.yml bakes these on amd64 only).
+group "amd64-only" {
+  targets = [
     "pragmatic-env-server",
     "pragmatic-env-gateway",
     "pragmatic-hive-agent",
@@ -52,15 +70,17 @@ target "_app" {
 }
 
 target "pragmatic-platform-admin" {
-  inherits = ["_app"]
-  target   = "pragmatic-platform-admin"
-  tags     = tags("pragmatic-platform-admin")
+  inherits  = ["_app"]
+  target    = "pragmatic-platform-admin"
+  platforms = split(",", PLATFORMS)
+  tags      = tags("pragmatic-platform-admin")
 }
 
 target "pragmatic-platform-edge" {
-  inherits = ["_app"]
-  target   = "pragmatic-platform-edge"
-  tags     = tags("pragmatic-platform-edge")
+  inherits  = ["_app"]
+  target    = "pragmatic-platform-edge"
+  platforms = split(",", PLATFORMS)
+  tags      = tags("pragmatic-platform-edge")
 }
 
 target "pragmatic-env-server" {

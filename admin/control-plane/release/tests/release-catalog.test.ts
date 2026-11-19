@@ -47,6 +47,7 @@ class CatalogFixture
     public static readonly SiblingCommit = 'b'.repeat(40)
     public static readonly SiblingRepo = 'todl'
     public static readonly ManifestType = 'application/vnd.oci.image.manifest.v1+json'
+    public static readonly IndexType = 'application/vnd.oci.image.index.v1+json'
     public static readonly BuiltAt = '2026-11-12T10:00:00.000Z'
     public static readonly User = 'release-reader'
     public static readonly Token = 'ghp_catalog_secret_token'
@@ -137,11 +138,14 @@ class CatalogFixture
         return new ReleaseCatalog(this.Client(credential), CatalogFixture.Namespace, this.trust, this.Deployments, imageHost)
     }
 
+    /** Apps whose image is stored as a multi-arch OCI index (as release.yml's imagetools merge produces). */
+    public readonly IndexApps = new Set<ReleaseApp>()
+
     public SeedImages(version: string): void
     {
         for (const app of ReleaseApps.All)
         {
-            this.Registry.PutManifest(CatalogFixture.Repo(app), version, CatalogFixture.ImageBytes(app, version), CatalogFixture.ManifestType)
+            this.Registry.PutManifest(CatalogFixture.Repo(app), version, CatalogFixture.ImageBytes(app, version), this.IndexApps.has(app) ? CatalogFixture.IndexType : CatalogFixture.ManifestType)
         }
     }
 
@@ -246,6 +250,21 @@ describe('ReleaseCatalog.Refresh', () =>
             const again = await fx.Catalog().Refresh()
             assert.deepEqual(again, { imported: [], rejected: [], unchanged: 1, shadowed: [] })
             assert.equal(fx.Deployments.AllManifests().length, 1)
+        })
+    })
+
+    it('imports a release whose platform images are multi-arch indexes: their index digests are what is signed and verified', async () =>
+    {
+        await CatalogFixture.Run(async fx =>
+        {
+            fx.IndexApps.add(ReleaseApp.PlatformAdmin)
+            fx.IndexApps.add(ReleaseApp.PlatformEdge)
+            const { descriptor } = await fx.Publish(CatalogFixture.V1)
+            for (const app of [ReleaseApp.PlatformAdmin, ReleaseApp.PlatformEdge])
+            {
+                assert.equal(descriptor.images[app].digest, await fx.Client().HeadManifest(CatalogFixture.Repo(app), CatalogFixture.V1), app)
+            }
+            assert.deepEqual(await fx.Catalog().Refresh(), { imported: [CatalogFixture.V1], rejected: [], unchanged: 0, shadowed: [] })
         })
     })
 
