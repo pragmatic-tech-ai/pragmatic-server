@@ -13,7 +13,7 @@ import { FileSignatureStore } from './signature-store.js'
 
 /**
  * The platform's (dev-box) orchestrator factory: everything HiveOrchestratorFactory drives, with a kubectl-driven hive's images
- * verified against local docker digests and the data root's signature and key stores, plus a Local hive the platform
+ * verified against the given image digests (local docker by default) and the data root's signature and key stores, plus a Local hive the platform
  * provisions itself, as a kind cluster named after the hive and driven through its kubectl context.
  */
 export class PlatformHiveOrchestratorFactory extends HiveOrchestratorFactory
@@ -32,9 +32,14 @@ export class PlatformHiveOrchestratorFactory extends HiveOrchestratorFactory
             new FileKeyStore(join(dataRoot, PlatformHiveOrchestratorFactory.KeysDirName)))
     }
 
+    public constructor(localContext?: string, dataRoot?: string, private readonly digests: IImageDigest = new DockerImageDigest())
+    {
+        super(localContext, dataRoot)
+    }
+
     protected override Verifier(): IImageVerifier
     {
-        return PlatformHiveOrchestratorFactory.VerifierFor(this.dataRoot)
+        return PlatformHiveOrchestratorFactory.VerifierFor(this.dataRoot, this.digests)
     }
 
     protected override ForProvisionedLocal(hive: HiveRecord): IHiveOrchestrator

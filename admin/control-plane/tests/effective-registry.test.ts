@@ -28,6 +28,19 @@ class HiveFactory
 
 describe('EffectiveRegistry', () =>
 {
+    it('ImageRef leaves a full reference untouched', () =>
+    {
+        const reg = EffectiveRegistry.For(HiveFactory.Make({ mode: InfraMode.Provision }))
+        const byDigest = 'ghcr.io/x/y@sha256:' + 'b'.repeat(64)
+        const otherRegistry = 'registry.example.com/x:1'
+        const localhostRef = 'localhost/x:1'
+        assert.equal(reg.ImageRef(byDigest), byDigest)
+        assert.equal(reg.ImageRef(otherRegistry), otherRegistry)
+        assert.equal(reg.ImageRef(localhostRef), localhostRef)
+        assert.equal(reg.ImageRef('localhost:5000/x:1'), 'localhost:5000/x:1')
+        assert.equal(reg.ImageRef(HiveFactory.Image), 'localhost:5000/pragmatic-server:dev')
+    })
+
     it('defaults a provision hive to the local registry', () =>
     {
         const reg = EffectiveRegistry.For(HiveFactory.Make({ mode: InfraMode.Provision }))

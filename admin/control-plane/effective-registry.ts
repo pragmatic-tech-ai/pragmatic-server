@@ -11,6 +11,10 @@ export class EffectiveRegistry
 {
     private static readonly DefaultProvisionEndpoint = 'localhost:5000'
     private static readonly PathSeparator = '/'
+    private static readonly DigestMarker = '@sha256:'
+    private static readonly HostDot = '.'
+    private static readonly HostPort = ':'
+    private static readonly LocalhostHost = 'localhost'
 
     private constructor(
         private readonly endpoint: string | undefined,
@@ -49,10 +53,26 @@ export class EffectiveRegistry
 
     public ImageRef(baseImage: string): string
     {
-        if (this.endpoint === undefined || this.endpoint.length === 0)
+        if (this.endpoint === undefined || this.endpoint.length === 0 || EffectiveRegistry.IsFullReference(baseImage))
         {
             return baseImage
         }
         return this.endpoint + EffectiveRegistry.PathSeparator + baseImage
+    }
+
+    /** A reference pinned by digest, or one that already names its registry host, keeps where it comes from. */
+    private static IsFullReference(image: string): boolean
+    {
+        if (image.includes(EffectiveRegistry.DigestMarker))
+        {
+            return true
+        }
+        const slash = image.indexOf(EffectiveRegistry.PathSeparator)
+        if (slash < 0)
+        {
+            return false
+        }
+        const first = image.slice(0, slash)
+        return first.includes(EffectiveRegistry.HostDot) || first.includes(EffectiveRegistry.HostPort) || first === EffectiveRegistry.LocalhostHost
     }
 }

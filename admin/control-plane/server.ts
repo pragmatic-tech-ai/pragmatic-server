@@ -370,7 +370,7 @@ export class ControlPlaneServer
         const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), noTarget
             ? new NoTargetIdpDriver()
             : new DockerIdpDriver(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
-        const orchestrators = noTarget ? new NoTargetHiveOrchestratorFactory() : new PlatformHiveOrchestratorFactory(undefined, dataRoot)
+        const orchestrators = noTarget ? new NoTargetHiveOrchestratorFactory() : new PlatformHiveOrchestratorFactory(undefined, dataRoot, digests)
         const placement = new EnvironmentPlacement(directory)
         // In-cluster environments are reached through pooled kubectl port-forwards; every tunnel dies with the process.
         const tunnels = new ClusterTunnelPool()

@@ -30,3 +30,36 @@ export class DockerImageDigest implements IImageDigest
         return result.stdout.trim()
     }
 }
+
+/** An image reference that names no content digest, so no signature can be checked against it. */
+export class TagReferenceError extends Error
+{
+    private static readonly Prefix = 'Image '
+    private static readonly Suffix = ' is not pinned by digest'
+    private static readonly ErrorName = 'TagReferenceError'
+
+    public constructor(public readonly ImageRef: string)
+    {
+        super(TagReferenceError.Prefix + ImageRef + TagReferenceError.Suffix)
+        this.name = TagReferenceError.ErrorName
+    }
+}
+
+/**
+ * Reads an image's digest from its registry reference (`…@sha256:<64 hex>`): the index digest a release names. It needs no
+ * docker, so it serves a control plane that runs no containers; a tag reference is refused, never resolved.
+ */
+export class RegistryRefImageDigest implements IImageDigest
+{
+    private static readonly ByDigest = /@(sha256:[0-9a-f]{64})$/
+
+    public async Of(imageRef: string): Promise<string>
+    {
+        const match = RegistryRefImageDigest.ByDigest.exec(imageRef)
+        if (match === null)
+        {
+            throw new TagReferenceError(imageRef)
+        }
+        return match[1]
+    }
+}
