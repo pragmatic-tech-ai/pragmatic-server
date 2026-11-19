@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, readFileSync } from 'node:fs'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { isIP } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
@@ -272,6 +272,12 @@ export class ControlPlaneServer
     private static readonly MasterKeyEnvVar = 'PRAGMATIC_ADMIN_MASTER_KEY_FILE'
     private static readonly OperatorEmailEnvVar = 'PRAGMATIC_ADMIN_OPERATOR_EMAIL'
     private static readonly OperatorPasswordEnvVar = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD'
+    private static readonly OperatorPasswordFileEnvVar = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE'
+    private static readonly PasswordBothSetMessage = 'Set either PRAGMATIC_ADMIN_OPERATOR_PASSWORD or PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE, not both'
+    private static readonly PasswordFileUnreadableMessage = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE must name a readable file'
+    private static readonly PasswordFileEmptyMessage = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE names an empty file'
+    private static readonly Utf8 = 'utf8'
+    private static readonly TrailingNewline = /\r?\n$/
     private static readonly SecureCookieEnvVar = 'PRAGMATIC_ADMIN_SECURE_COOKIE'
     private static readonly DefaultOperatorEmail = 'admin@control-plane.test'
     private static readonly IdentitySegment = 'identity'
@@ -521,7 +527,7 @@ export class ControlPlaneServer
     /** Pure: derives operator-identity compose options and cookie policy from the environment. */
     public static ReadOperatorOptions(env: NodeJS.ProcessEnv, dataRoot: string): OperatorComposeOptions & { secureCookie: boolean; trustedProxy: boolean; allowedHosts: readonly string[] }
     {
-        const password = env[ControlPlaneServer.OperatorPasswordEnvVar]
+        const password = ControlPlaneServer.InitialPasswordOf(env)
         const secure = env[ControlPlaneServer.SecureCookieEnvVar]
         const proxied = env[ControlPlaneServer.TrustedProxyEnvVar]
         return {
@@ -533,6 +539,39 @@ export class ControlPlaneServer
             trustedProxy: TenantPlaneComposer.ReadsTrue(proxied),
             allowedHosts: ControlPlaneServer.ParseHostList(env[ControlPlaneServer.AllowedHostsEnvVar]),
         }
+    }
+
+    /**
+     * The first-start operator password: PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE (one trailing newline stripped) or the
+     * PRAGMATIC_ADMIN_OPERATOR_PASSWORD value, never both. Errors name the settings only, never a value or a path.
+     */
+    private static InitialPasswordOf(env: NodeJS.ProcessEnv): string | undefined
+    {
+        const value = env[ControlPlaneServer.OperatorPasswordEnvVar]
+        const file = env[ControlPlaneServer.OperatorPasswordFileEnvVar]?.trim() ?? ''
+        if (file === '')
+        {
+            return value
+        }
+        if (value !== undefined && value !== '')
+        {
+            throw new Error(ControlPlaneServer.PasswordBothSetMessage)
+        }
+        let content: string
+        try
+        {
+            content = readFileSync(file, ControlPlaneServer.Utf8)
+        }
+        catch
+        {
+            throw new Error(ControlPlaneServer.PasswordFileUnreadableMessage)
+        }
+        const password = content.replace(ControlPlaneServer.TrailingNewline, '')
+        if (password === '')
+        {
+            throw new Error(ControlPlaneServer.PasswordFileEmptyMessage)
+        }
+        return password
     }
 
     /** Pure: splits a comma-separated host list, trimming blanks and dropping empties. */
@@ -648,7 +687,8 @@ export class ControlPlaneServer
 
     /**
      * Where the desktop app finds the tenant plane: `PRAGMATIC_DESKTOP_TENANT_PLANE_URL` when set, else the loopback
-     * tenant listener when the tenant plane is enabled (both port and base domain set), else undefined (discovery answers 503).
+     * tenant listener when the tenant plane is enabled (both port and base domain set), else undefined (discovery then
+     * answers without `tenantPlaneUrl` and lists only tenants with a console of their own).
      */
     public static DesktopTenantPlaneUrlOf(env: NodeJS.ProcessEnv): string | undefined
     {

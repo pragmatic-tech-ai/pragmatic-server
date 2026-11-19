@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, it } from 'node:test'
+import { after, describe, it } from 'node:test'
 import { ControlPlaneServer } from '../server.js'
 
 describe('ControlPlaneServer.ReadOperatorOptions', () =>
@@ -39,6 +41,66 @@ describe('ControlPlaneServer.ReadOperatorOptions', () =>
     {
         assert.equal(ControlPlaneServer.ReadOperatorOptions({ PRAGMATIC_ADMIN_SECURE_COOKIE: '1' }, '/data').secureCookie, true)
         assert.equal(ControlPlaneServer.ReadOperatorOptions({ PRAGMATIC_ADMIN_SECURE_COOKIE: 'yes' }, '/data').secureCookie, false)
+    })
+})
+
+class SeedFileFixture
+{
+    public static readonly Root = mkdtempSync(join(tmpdir(), 'operator-seed-'))
+    public static readonly Setting = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE'
+    public static readonly ValueSetting = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD'
+
+    public static File(name: string, content: string): string
+    {
+        const path = join(SeedFileFixture.Root, name)
+        writeFileSync(path, content, { mode: 0o600 })
+        return path
+    }
+}
+
+describe('ControlPlaneServer.ReadOperatorOptions with a password file', () =>
+{
+    after(() => rmSync(SeedFileFixture.Root, { recursive: true, force: true }))
+
+    it('reads the initial password from PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE, stripping one trailing newline', () =>
+    {
+        const lf = SeedFileFixture.File('lf', 'seed-pw-123\n')
+        const crlf = SeedFileFixture.File('crlf', 'seed-pw-456\r\n')
+        const bare = SeedFileFixture.File('bare', ' spaced pw \n\n')
+        assert.equal(ControlPlaneServer.ReadOperatorOptions({ [SeedFileFixture.Setting]: lf }, '/data').initialPassword, 'seed-pw-123')
+        assert.equal(ControlPlaneServer.ReadOperatorOptions({ [SeedFileFixture.Setting]: crlf }, '/data').initialPassword, 'seed-pw-456')
+        assert.equal(ControlPlaneServer.ReadOperatorOptions({ [SeedFileFixture.Setting]: bare }, '/data').initialPassword, ' spaced pw \n')
+    })
+
+    it('refuses both the password and the password file, naming both and echoing neither', () =>
+    {
+        const file = SeedFileFixture.File('both', 'FILE-SECRET')
+        assert.throws(() => ControlPlaneServer.ReadOperatorOptions({ [SeedFileFixture.Setting]: file, [SeedFileFixture.ValueSetting]: 'ENV-SECRET' }, '/data'), (e: Error) =>
+        {
+            assert.match(e.message, /PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE/)
+            assert.match(e.message, /PRAGMATIC_ADMIN_OPERATOR_PASSWORD(?!_)/)
+            assert.ok(!e.message.includes('FILE-SECRET') && !e.message.includes('ENV-SECRET'))
+            return true
+        })
+    })
+
+    it('refuses a missing or empty password file, naming the setting only', () =>
+    {
+        for (const path of [join(SeedFileFixture.Root, 'nope'), SeedFileFixture.File('empty', ''), SeedFileFixture.File('newline', '\n')])
+        {
+            assert.throws(() => ControlPlaneServer.ReadOperatorOptions({ [SeedFileFixture.Setting]: path }, '/data'), (e: Error) =>
+            {
+                assert.match(e.message, /PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE/)
+                assert.ok(!e.message.includes(SeedFileFixture.Root))
+                return true
+            })
+        }
+    })
+
+    it('treats a blank file setting as unset, so the value setting still works', () =>
+    {
+        assert.equal(ControlPlaneServer.ReadOperatorOptions({ [SeedFileFixture.Setting]: '' }, '/data').initialPassword, undefined)
+        assert.equal(ControlPlaneServer.ReadOperatorOptions({ [SeedFileFixture.Setting]: ' ', [SeedFileFixture.ValueSetting]: 'pw' }, '/data').initialPassword, 'pw')
     })
 })
 
