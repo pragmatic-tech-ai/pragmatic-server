@@ -242,9 +242,11 @@ export class HiveAgentInstaller
         {
             throw new AgentInstallInProgressError(hiveId)
         }
+        // Resolved before the run: a hive the factory cannot drive (no cluster context, no target) is refused here, plainly.
+        const orchestrator = this.orchestrators.For(hive)
         const run = new InstallRun(hiveId, new Date(this.clock.Now()).toISOString())
         this.runs.set(hiveId, run)
-        run.settled = this.Run(run, hive, channelUrl, agentImage)
+        run.settled = this.Run(run, hive, orchestrator, channelUrl, agentImage)
         return run.Snapshot()
     }
 
@@ -276,14 +278,13 @@ export class HiveAgentInstaller
     }
 
     /** Runs the steps; never rejects: a failure is recorded on the run. */
-    private async Run(run: InstallRun, hive: HiveRecord, channelUrl: string, agentImage: string): Promise<void>
+    private async Run(run: InstallRun, hive: HiveRecord, orchestrator: IHiveOrchestrator, channelUrl: string, agentImage: string): Promise<void>
     {
         // Yield first, so Start returns before any step runs (and any synchronous step failure is still recorded).
         await Promise.resolve()
         let token: string | undefined
         try
         {
-            const orchestrator = this.orchestrators.For(hive)
             const bundle = HiveBootstrapBundle.For(hive.id, channelUrl, true, agentImage)
             this.Enter(run, InstallStep.PreparingCluster)
             await orchestrator.PrepareAgent(agentImage)

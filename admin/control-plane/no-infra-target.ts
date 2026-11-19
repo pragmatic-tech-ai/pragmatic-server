@@ -2,7 +2,6 @@ import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import type { IdpRecord } from './idp-record.js'
-import type { IImageDigest } from './image-digest.js'
 import type { IdpWorkloadRequest, IdpWorkloadResult, IIdpWorkloadDriver } from './idp-workload-driver.js'
 import { NoHostEnvironmentRuntime } from './no-host-environment-runtime.js'
 import type { HiveRecord } from './platform-records.js'
@@ -60,15 +59,6 @@ export class NoTargetIdpDriver implements IIdpWorkloadDriver
 
     public async Discard(_record: IdpRecord): Promise<void>
     {
-    }
-}
-
-/** Reads no image digest: there is no local docker to ask (signers then record signed:false, verifiers refuse). */
-export class NoTargetImageDigest implements IImageDigest
-{
-    public Of(_imageRef: string): Promise<string>
-    {
-        return Promise.reject(new NoInfraTargetError())
     }
 }
 

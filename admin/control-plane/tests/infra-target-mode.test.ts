@@ -22,6 +22,12 @@ describe('InfraTargetModes.Parse', () =>
         assert.equal(InfraTargetModes.Parse({ [ModeFixture.Setting]: ' NONE ' }), InfraTargetMode.None)
     })
 
+    it('reads hosted', () =>
+    {
+        assert.equal(InfraTargetModes.Parse({ [ModeFixture.Setting]: 'hosted' }), InfraTargetMode.Hosted)
+        assert.equal(InfraTargetModes.Parse({ [ModeFixture.Setting]: ' Hosted ' }), InfraTargetMode.Hosted)
+    })
+
     it('refuses any other value, naming the setting', () =>
     {
         assert.throws(() => InfraTargetModes.Parse({ [ModeFixture.Setting]: 'docker' }), /PRAGMATIC_ADMIN_INFRA_TARGET/)

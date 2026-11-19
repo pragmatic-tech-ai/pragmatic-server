@@ -127,6 +127,12 @@ export class ReleaseCatalogConfig
         return { username, token }
     }
 
+    /** The host release images are named under (`ghcr.io`, or the host of PRAGMATIC_RELEASE_REGISTRY): where hives pull them from. */
+    public static ImageHostOf(env: NodeJS.ProcessEnv): string
+    {
+        return ReleaseRegistry.HostOf(ReleaseCatalogConfig.RegistryOf(env))
+    }
+
     private static RegistryOf(env: NodeJS.ProcessEnv): string
     {
         const C = ReleaseCatalogConfig

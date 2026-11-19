@@ -124,6 +124,13 @@ describe('ReleaseCatalogConfig', () =>
         }
     })
 
+    it('names the image host of the release registry: ghcr.io by default, else the configured registry host', () =>
+    {
+        assert.equal(ReleaseCatalogConfig.ImageHostOf({}), 'ghcr.io')
+        assert.equal(ReleaseCatalogConfig.ImageHostOf({ [F.RegistryVar]: 'https://registry.example.com' }), 'registry.example.com')
+        assert.equal(ReleaseCatalogConfig.ImageHostOf({ [F.RegistryVar]: 'http://127.0.0.1:5000' }), '127.0.0.1:5000')
+    })
+
     it('has no credential when the variable is absent or blank', () =>
     {
         assert.equal(ReleaseCatalogConfig.CredentialOf({}), undefined)

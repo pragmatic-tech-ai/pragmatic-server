@@ -9,7 +9,10 @@ import { InternalApiCredential } from './internal-api-credential.js'
 import { InternalApiHost } from './internal-api-host.js'
 import { InfraTargetMode, InfraTargetModes } from './infra-target-mode.js'
 import { TenantIdpMode } from './tenant-idp-mode.js'
-import { NoTargetEnvironmentRuntime, NoTargetHiveOrchestratorFactory, NoTargetIdpDriver, NoTargetImageDigest } from './no-infra-target.js'
+import { NoTargetEnvironmentRuntime, NoTargetHiveOrchestratorFactory, NoTargetIdpDriver } from './no-infra-target.js'
+import { HostedHiveOrchestratorFactory } from './hosted-hive-orchestrator-factory.js'
+import { HostedKubeconfig } from './hosted-kubeconfig.js'
+import { DevPlatformImages, ReleasePlatformImages, type IPlatformImages } from './platform-images.js'
 import type { IAgentChannelBackend } from './agent-channel-backend.js'
 import { EdgeComposition, EdgeShutdown } from './edge-composition.js'
 import { DesktopDiscoveryEndpoint } from './desktop-discovery-endpoint.js'
@@ -343,17 +346,23 @@ export class ControlPlaneServer
         const opts = ControlPlaneServer.ReadOperatorOptions(process.env, dataRoot)
         const operator = await OperatorIdentity.Compose(opts)
         const masterKey = MasterKeyFile.Load(opts.masterKeyFile)
-        // D28 interim: with no Docker/cluster target, every docker/kind/kubectl seam below is wired to a refusing stand-in
-        // (environments, IdP, orchestrators, image digests), so nothing spawns them whatever records exist.
+        // Only `local` has a Docker engine. `none` (no target) and `hosted` (registered clusters on our machines, pushed over
+        // the mesh) wire every docker/kind seam to a refusing stand-in (environments, IdP), read image digests from registry
+        // references only, and keep tenants as records whose sign-in lives in their home hive.
         const infra = InfraTargetModes.Parse(process.env)
         console.log(ControlPlaneServer.InfraTargetLogPrefix + infra)
-        const noTarget = infra === InfraTargetMode.None
-        // Only a local target runs tenant IdPs itself; anywhere else a tenant is a record and signs in through its home hive.
-        const tenantIdpMode = infra === InfraTargetMode.Local ? TenantIdpMode.Central : TenantIdpMode.InHive
+        const hosted = infra === InfraTargetMode.Hosted
+        const noDocker = infra !== InfraTargetMode.Local
+        if (hosted)
+        {
+            // Before anything spawns kubectl: every child inherits KUBECONFIG from here.
+            HostedKubeconfig.Apply(process.env)
+        }
+        const tenantIdpMode = noDocker ? TenantIdpMode.InHive : TenantIdpMode.Central
         const docker = new DockerEnvAdapter(new DockerEnv())
-        const hostRuntime = noTarget ? new NoTargetEnvironmentRuntime() : undefined
+        const hostRuntime = noDocker ? new NoTargetEnvironmentRuntime() : undefined
         const registry = new EnvironmentRegistry(join(dataRoot, TenantPlaneComposer.RegistryFile), hostRuntime ?? docker)
-        const digests: IImageDigest = noTarget ? new NoTargetImageDigest() : new DockerImageDigest()
+        const digests: IImageDigest = noDocker ? new RegistryRefImageDigest() : new DockerImageDigest()
         await registry.Load()
         await registry.Reconcile()
         const directory = new PlatformDirectory(
@@ -371,10 +380,10 @@ export class ControlPlaneServer
         const bundle = new BundleBuilderAdapter()
         const seeder = new UserSeederAdapter(new UserSeeder())
         const proxy = new AdminProxy(new WsAdminConnector())
-        const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), noTarget
+        const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), noDocker
             ? new NoTargetIdpDriver()
             : new DockerIdpDriver(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
-        const orchestrators = noTarget ? new NoTargetHiveOrchestratorFactory() : new PlatformHiveOrchestratorFactory(undefined, dataRoot, digests)
+        const orchestrators = ControlPlaneServer.OrchestratorsOf(infra, dataRoot, digests)
         const placement = new EnvironmentPlacement(directory)
         // In-cluster environments are reached through pooled kubectl port-forwards; every tunnel dies with the process.
         const tunnels = new ClusterTunnelPool()
@@ -384,6 +393,8 @@ export class ControlPlaneServer
         const graphService = new GraphService(registry, proxy, service)
         const staticRoot = join(here, TenantPlaneComposer.ParentSegment, ControlPlaneServer.PortalSegment, TenantPlaneComposer.DistSegment)
         const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneServer.ManifestsFile))
+        // Hosted hives run the newest verified release's images by digest; a development box keeps its local server image.
+        const platformImages: IPlatformImages = hosted ? new ReleasePlatformImages(manifests, ReleaseCatalogConfig.ImageHostOf(process.env)) : new DevPlatformImages()
         const audit = new AuditRegistry(join(dataRoot, ControlPlaneServer.AuditFile))
         const desktopAudit = new AuditRegistry(join(dataRoot, TenantPlaneComposer.DesktopAuditFile))
         const graphAudit = new AuditRegistry(join(dataRoot, TenantPlaneComposer.TenantGraphAuditFile))
@@ -427,7 +438,7 @@ export class ControlPlaneServer
         const principalSessions = new TenantPrincipalSessions(tenantSessions)
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn), principalSessions, accountIndex, tenantIdpMode)
         // Installs a Local hive's agent through the same cluster access the orchestrators already hold; off with the channel.
-        const agentInstaller = new HiveAgentInstaller(directory, orchestrators, deployments, observations, agentChannelUrl)
+        const agentInstaller = new HiveAgentInstaller(directory, orchestrators, deployments, observations, agentChannelUrl, new SystemInstallClock(), HiveAgentInstaller.DefaultTiming, platformImages)
         // Console keys and the dev CA are sealed under the master key; discovery and the console installer share one fingerprint-key source.
         const sealed = await SealedSecretStore.Open(join(dataRoot, SealedSecretStore.FileName), masterKey)
         const fingerprintKeys = new ConsoleFingerprintKeys(sealed)
@@ -441,10 +452,10 @@ export class ControlPlaneServer
         const consoleInstaller = new TenantConsoleInstaller(directory, orchestrators, new TenantAdminBootstrap(deployments), fingerprintKeys,
             new DevCertificateAuthority(join(dataRoot, DevCertificateAuthority.DirName), sealed), new InHiveIdpAdmin(orchestrators, sealed),
             new PlatformConsoleImageApproval(signing.PlatformSigner, PlatformHiveOrchestratorFactory.VerifierFor(dataRoot, digests)),
-            keys, agentChannelUrl, new SystemInstallClock(), adverts, ownerResets)
+            keys, agentChannelUrl, new SystemInstallClock(), adverts, ownerResets, platformImages)
         // Daily DNS re-check of verified domains (after approvals.Load; its interval timer is unref'd, so no shutdown hook).
         new DomainVerificationRechecker(approvals, domainVerifier).Start()
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery, consoleInstaller, adverts, approvals, emailDomains, releases?.Refresher)
+        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery, consoleInstaller, adverts, approvals, emailDomains, releases?.Refresher, platformImages)
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
             masterKey, adminClientRegistry, TenantPlaneComposer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]), tenantSessions, principalSessions,
@@ -539,6 +550,20 @@ export class ControlPlaneServer
      * The release catalogue (POST /api/releases/refresh) and its periodic poll, for roles that serve operators only: the edge
      * never reads the release settings. Undefined there, and when no credential file is configured.
      */
+    /** The hive drivers for the infra mode: none drives nothing, hosted drives registered clusters by context, local adds kind. */
+    public static OrchestratorsOf(infra: InfraTargetMode, dataRoot: string, digests: IImageDigest): HiveOrchestratorFactory
+    {
+        if (infra === InfraTargetMode.None)
+        {
+            return new NoTargetHiveOrchestratorFactory()
+        }
+        if (infra === InfraTargetMode.Hosted)
+        {
+            return new HostedHiveOrchestratorFactory(undefined, dataRoot, digests)
+        }
+        return new PlatformHiveOrchestratorFactory(undefined, dataRoot, digests)
+    }
+
     public static ReleasesOf(role: ControlPlaneRole, env: NodeJS.ProcessEnv, repoRoot: string, deployments: PlatformDeploymentRegistry, countersigner?: IReleaseCountersigner): IReleaseServices | undefined
     {
         return ControlPlaneRoles.ServesOperators(role) ? ReleaseCatalogConfig.Compose(env, repoRoot, deployments, undefined, countersigner) : undefined

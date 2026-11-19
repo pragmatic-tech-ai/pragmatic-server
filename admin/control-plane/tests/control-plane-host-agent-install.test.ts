@@ -23,6 +23,8 @@ import type { HiveObservationRegistry } from '../hive-observation-record.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 import { PlatformImages, type IPlatformImages } from '../platform-images.js'
+import { HostedHiveOrchestratorFactory } from '../hosted-hive-orchestrator-factory.js'
+import { RegistryRefImageDigest } from '../image-digest.js'
 
 type Reply = { status: number; body: string; cacheControl?: string }
 
@@ -439,4 +441,18 @@ describe('ControlPlaneHost automatic agent install', () =>
         assert.deepEqual(JSON.parse(bundle.body), { error: 'no verified platform release yet' })
         assert.deepEqual(orchestrators.Kubectl.Applied, [])
     })
+
+    it('hosted mode: installing a hive that names no cluster context answers 400 with the copy and applies nothing', async () =>
+    {
+        await host.Close()
+        const hosted = new HostedHiveOrchestratorFactory(undefined, parent, new RegistryRefImageDigest())
+        const installer = new HiveAgentInstaller(directory, hosted, deployments, observations, Harness.ChannelUrl, new SystemInstallClock(), { pollIntervalMs: 5, timeoutMs: 5000 })
+        host = Make(installer)
+        await host.Listen(0, '127.0.0.1')
+        const r = await Harness.Send(host, 'POST', '/api/hives/local1/agent-install')
+        assert.equal(r.status, 400)
+        assert.deepEqual(JSON.parse(r.body), { error: "a hosted hive must name its cluster's kubeconfig context (configRef)" })
+        assert.equal((await Harness.Send(host, 'GET', '/api/hives/local1/agent-install')).status, 404)
+    })
 })
+

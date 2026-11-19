@@ -1,11 +1,12 @@
 /**
- * Whether this admin drives infrastructure on its own host (`local`: the laptop's Docker and kind) or has no
- * Docker/cluster target at all (`none`: frontdoor until remote provisioning targets exist, D28).
+ * Whether this admin drives infrastructure on its own host (`local`: the laptop's Docker and kind), has no Docker/cluster
+ * target at all (`none`), or pushes to registered clusters on our machines over the mesh (`hosted`: SaaS hives, D30).
  */
 export enum InfraTargetMode
 {
     Local = 'local',
-    None = 'none'
+    None = 'none',
+    Hosted = 'hosted'
 }
 
 /** Reads PRAGMATIC_ADMIN_INFRA_TARGET. Unset or blank is `local`, so a development setup is unchanged. */

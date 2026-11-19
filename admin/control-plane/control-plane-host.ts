@@ -64,6 +64,7 @@ import { PlaneHttp } from './plane-http.js'
 import { ProvisioningOrchestrator, ProvisionFailedError } from './provisioning-orchestrator.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
 import { NoInfraTargetBackendError, NoInfraTargetError } from './no-infra-target.js'
+import { HostedClusterRefMissingError } from './hosted-hive-orchestrator-factory.js'
 import { KubectlError, PortForwardError } from './kubectl.js'
 import type { HiveRolloutStatus, PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import type { ManifestRecord } from './manifest-record.js'
@@ -480,6 +481,7 @@ export class ControlPlaneHost
         // D28 interim: this admin has no Docker/cluster target; 503 passes the plain sentence through unmasked.
         [NoInfraTargetError, ControlPlaneHost.StatusUnavailable],
         [NoInfraTargetBackendError, ControlPlaneHost.StatusUnavailable],
+        [HostedClusterRefMissingError, ControlPlaneHost.StatusBadRequest],
         [KubectlError, ControlPlaneHost.StatusBadGateway],
         // The tenant is not authorized to that version (it was never gated to it): forbidden, not missing.
         [ManifestNotGatedError, ControlPlaneHost.StatusForbidden],
