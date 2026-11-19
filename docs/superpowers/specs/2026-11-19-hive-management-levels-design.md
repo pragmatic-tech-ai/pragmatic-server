@@ -259,9 +259,9 @@ comes before enrolment, because the registration account lives there:
    the central login).
 6. **Website registration** through the edge.
 7. **Host agent, SaaS placement and push management of SaaS hives** (reusing today's code) on our machines.
-7a. **The edge's TLS-passthrough relay and hive subdomains** (DNS records, DNS-challenge answering): shared by SaaS
+8. **The edge's TLS-passthrough relay and hive subdomains** (DNS records, DNS-challenge answering): shared by SaaS
    hives and private bring-your-own clusters.
-8. **Retire the admin's container paths** (§8).
+9. **Retire the admin's container paths** (§8).
 
 **MVP derivation:** a separate, explicit step after this design is approved. It decides which sub-projects the
 current deployment (staff alpha) needs first, and in what reduced configuration.
