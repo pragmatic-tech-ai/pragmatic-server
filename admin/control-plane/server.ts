@@ -4,6 +4,7 @@ import { isIP } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { AuditRegistry } from './audit-record.js'
 import { AuditThrottle } from './audit-throttle.js'
+import { LocalDesktopDiscoveryBackend } from './desktop-discovery-backend.js'
 import { DesktopDiscoveryEndpoint } from './desktop-discovery-endpoint.js'
 import { TenantAccountIndex } from './tenant-account-index.js'
 import { OperatorAuthorization } from './operator-authorization.js'
@@ -366,8 +367,9 @@ export class ControlPlaneServer
         // Console keys and the dev CA are sealed under the master key; discovery and the console installer share one fingerprint-key source.
         const sealed = await SealedSecretStore.Open(join(dataRoot, SealedSecretStore.FileName), masterKey)
         const fingerprintKeys = new ConsoleFingerprintKeys(sealed)
-        const discovery = new DesktopDiscoveryEndpoint(accountIndex, directory, ControlPlaneServer.DesktopTenantPlaneUrlOf(process.env), DesktopDiscoveryEndpoint.NewThrottle(),
+        const discoveryBackend = new LocalDesktopDiscoveryBackend(accountIndex, directory, ControlPlaneServer.DesktopTenantPlaneUrlOf(process.env),
             adverts, fingerprintKeys, approvals, registry)
+        const discovery = new DesktopDiscoveryEndpoint(discoveryBackend, DesktopDiscoveryEndpoint.NewThrottle())
         // Installs a Local hive's tenant console through the same cluster access.
         const consoleInstaller = new TenantConsoleInstaller(directory, orchestrators, new TenantAdminBootstrap(deployments), fingerprintKeys,
             new DevCertificateAuthority(join(dataRoot, DevCertificateAuthority.DirName), sealed), new InHiveIdpAdmin(orchestrators, sealed),

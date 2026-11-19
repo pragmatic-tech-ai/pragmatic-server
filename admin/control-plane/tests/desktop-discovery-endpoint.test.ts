@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ConsoleAdvertRecord, IConsoleAdvertLookup } from '../console-advert-registry.js'
+import { LocalDesktopDiscoveryBackend, type DiscoveryReply, type IDesktopDiscoveryBackend } from '../desktop-discovery-backend.js'
 import { DesktopDiscoveryEndpoint } from '../desktop-discovery-endpoint.js'
 import type { IPlatformEnvironmentSource } from '../desktop-discovery-endpoint.js'
 import type { IDiscoveryDirectory } from '../desktop-tenant-matcher.js'
@@ -136,8 +137,9 @@ describe('DesktopDiscoveryEndpoint', () =>
     async function Start(url: string | undefined, tenants: readonly TenantRecord[], hives: readonly HiveRecord[] = [], adverts: readonly ConsoleAdvertRecord[] = [],
         approved: ReadonlyMap<string, readonly string[]> = new Map(), platform?: IPlatformEnvironmentSource): Promise<void>
     {
-        const endpoint = new DesktopDiscoveryEndpoint(index, new FakeDirectory(tenants, hives), url, DesktopDiscoveryEndpoint.NewThrottle(), new FakeAdverts(adverts),
+        const backend = new LocalDesktopDiscoveryBackend(index, new FakeDirectory(tenants, hives), url, new FakeAdverts(adverts),
             undefined, { StandingOf: tenantId => ({ approved: approved.get(tenantId) ?? [], revoked: [], verified: [] }) }, platform)
+        const endpoint = new DesktopDiscoveryEndpoint(backend, DesktopDiscoveryEndpoint.NewThrottle())
         server = createServer((req, res) =>
         {
             void endpoint.Handle(req, res)
@@ -263,12 +265,20 @@ describe('DesktopDiscoveryEndpoint', () =>
         }
     })
 
-    it('answers 503 unavailable when no tenant plane url is configured', async () =>
+    it('without a tenant plane url, answers the in-hive tenants with no tenantPlaneUrl field', async () =>
+    {
+        await Start(undefined, [DiscoveryFixture.Tenant('acme', 'Acme')], [DiscoveryFixture.ConsoleHive('h1', 'acme')], [DiscoveryFixture.Advert('acme', 'h1')])
+        const reply = await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))
+        assert.equal(reply.status, 200)
+        assert.deepEqual(reply.body, { tenants: [{ id: 'acme', displayName: 'Acme', consoleUrl: DiscoveryFixture.Console }] })
+    })
+
+    it('without a tenant plane url, a control-plane-only tenant is left out: 404 no-account', async () =>
     {
         await Start(undefined, [DiscoveryFixture.Tenant('acme', 'Acme')])
         const reply = await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))
-        assert.equal(reply.status, 503)
-        assert.deepEqual(reply.body, { error: 'unavailable' })
+        assert.equal(reply.status, 404)
+        assert.deepEqual(reply.body, { error: 'no-account' })
     })
 
     it('answers 403 when an Origin header is present and does not count it against the throttle', async () =>
@@ -291,5 +301,67 @@ describe('DesktopDiscoveryEndpoint', () =>
         const reply = await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))
         assert.equal(reply.status, 429)
         assert.ok(Number(reply.retryAfter) > 0)
+    })
+})
+
+class RecordingDiscoveryBackend implements IDesktopDiscoveryBackend
+{
+    public readonly Asked: string[] = []
+
+    public async Discover(email: string): Promise<DiscoveryReply>
+    {
+        this.Asked.push(email)
+        return { Status: 404, Body: { error: 'no-account' } }
+    }
+}
+
+describe('DesktopDiscoveryEndpoint (HTTP layer)', () =>
+{
+    let server: Server
+    let backend: RecordingDiscoveryBackend
+
+    async function Start(clientIpOf: (n: number) => string): Promise<void>
+    {
+        backend = new RecordingDiscoveryBackend()
+        const endpoint = new DesktopDiscoveryEndpoint(backend, DesktopDiscoveryEndpoint.NewThrottle())
+        let n = 0
+        server = createServer((req, res) =>
+        {
+            void endpoint.Handle(req, res, clientIpOf(n++))
+        })
+        await new Promise<void>(r => server.listen(0, DiscoveryFixture.Loopback, r))
+    }
+
+    afterEach(async () =>
+    {
+        await new Promise<void>(r => server.close(() => r()))
+    })
+
+    it('never asks the backend for an Origin request, an oversized body or a throttled address', async () =>
+    {
+        await Start(() => '198.51.100.7')
+        assert.equal((await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann), { origin: DiscoveryFixture.EvilOrigin })).status, 403)
+        assert.equal((await DiscoveryFixture.Post(server, JSON.stringify({ email: 'x'.repeat(5000) }))).status, 400)
+        for (let i = 0; i < DiscoveryFixture.ThrottleLimit - 1; i++)
+        {
+            await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Nobody))
+        }
+        const asked = backend.Asked.length
+        const reply = await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))
+        assert.equal(reply.status, 429)
+        assert.ok(Number(reply.retryAfter) > 0)
+        assert.equal(backend.Asked.length, asked)
+        assert.ok(!backend.Asked.includes('x'.repeat(5000)))
+    })
+
+    it('throttles per address: another address is still served', async () =>
+    {
+        await Start(n => n < DiscoveryFixture.ThrottleLimit + 1 ? '198.51.100.7' : '198.51.100.8')
+        for (let i = 0; i < DiscoveryFixture.ThrottleLimit; i++)
+        {
+            await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Nobody))
+        }
+        assert.equal((await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))).status, 429)
+        assert.equal((await DiscoveryFixture.Post(server, DiscoveryFixture.Email(DiscoveryFixture.Ann))).status, 404)
     })
 })

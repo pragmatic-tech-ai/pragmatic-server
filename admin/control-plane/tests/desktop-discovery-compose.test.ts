@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { ControlPlaneHost } from '../control-plane-host.js'
 import type { IEnvironmentService, IGraphService } from '../control-plane-host.js'
+import { LocalDesktopDiscoveryBackend } from '../desktop-discovery-backend.js'
 import { DesktopDiscoveryEndpoint } from '../desktop-discovery-endpoint.js'
 import type { IOperatorIdentity } from '../operator-identity.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
@@ -77,7 +78,7 @@ describe('ControlPlaneHost desktop discovery route', () =>
         await index.Record('acme', 'owner', ComposeFixture.Ann)
         const tenant: TenantRecord = { id: 'acme', clientId: 'c1', displayName: 'Acme', createdAt: '2026-01-01T00:00:00.000Z' }
         const directory = { GetTenant: (id: string) => id === 'acme' ? tenant : undefined, ListTenants: () => [tenant], ListHives: () => [] } as unknown as PlatformDirectory
-        const endpoint = new DesktopDiscoveryEndpoint(index, directory, ComposeFixture.Plane, DesktopDiscoveryEndpoint.NewThrottle())
+        const endpoint = new DesktopDiscoveryEndpoint(new LocalDesktopDiscoveryBackend(index, directory, ComposeFixture.Plane), DesktopDiscoveryEndpoint.NewThrottle())
         host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, dir, {} as IOperatorIdentity, false,
             directory, {} as PlatformDeploymentRegistry, {} as TenantProvisioningService, {} as HiveObservationRegistry,
             undefined, trustedProxy, undefined, undefined, undefined, [], undefined, undefined, undefined, undefined, undefined, undefined, undefined, endpoint)

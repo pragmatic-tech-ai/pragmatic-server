@@ -1,22 +1,15 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { AuditThrottle } from './audit-throttle.js'
-import type { IConsoleAdvertLookup } from './console-advert-registry.js'
-import { DesktopTenantMatcher } from './desktop-tenant-matcher.js'
-import type { IDiscoveryDirectory, IDomainApprovalSource, IFingerprintKeySource } from './desktop-tenant-matcher.js'
+import type { IDesktopDiscoveryBackend } from './desktop-discovery-backend.js'
 import { PlaneHttp } from './plane-http.js'
-import type { TenantAccountIndex } from './tenant-account-index.js'
 
-/** Whether the platform manages environments for a tenant (EnvironmentRegistry satisfies it). */
-export interface IPlatformEnvironmentSource
-{
-    HasEnvironmentsOf(tenantId: string): boolean
-}
+export type { IPlatformEnvironmentSource } from './desktop-discovery-backend.js'
 
 /**
- * Public `POST /api/desktop/discover`: tells the desktop app which tenant(s) an email belongs to and, per tenant, which
- * console to sign in at (an in-hive tenant's advertised console, else the tenant plane). Matching is DesktopTenantMatcher's.
- * Unauthenticated by design, so it is desktop-only (any Origin header is refused, which blocks browser-page probing) and
- * every non-browser request counts against a per-address throttle.
+ * Public `POST /api/desktop/discover`, the HTTP layer: tells the desktop app which tenant(s) an email belongs to. The
+ * answer is the backend's (in-process matching on admin/all, or admin's internal API from the edge). Unauthenticated by
+ * design, so it is desktop-only (any Origin header is refused, which blocks browser-page probing) and every non-browser
+ * request counts against a per-address throttle, here, where the real client address is known.
  */
 export class DesktopDiscoveryEndpoint
 {
@@ -35,30 +28,14 @@ export class DesktopDiscoveryEndpoint
     private static readonly MsPerSecond = 1000
     private static readonly StatusBadRequest = 400
     private static readonly StatusForbidden = 403
-    private static readonly StatusNotFound = 404
     private static readonly StatusTooManyRequests = 429
-    private static readonly StatusUnavailable = 503
     private static readonly ForbiddenBody = { error: 'forbidden' }
     private static readonly TooManyBody = { error: 'too-many-requests' }
     private static readonly InvalidEmailBody = { error: 'invalid-email' }
-    private static readonly UnavailableBody = { error: 'unavailable' }
-    private static readonly NoAccountBody = { error: 'no-account' }
     private static readonly EmailField = 'email'
-    private static readonly PlatformEnvironmentsField = 'platformEnvironments'
 
-    private readonly matcher: DesktopTenantMatcher
-
-    public constructor(
-        index: TenantAccountIndex,
-        directory: IDiscoveryDirectory,
-        private readonly tenantPlaneUrl: string | undefined,
-        private readonly throttle: AuditThrottle,
-        adverts?: IConsoleAdvertLookup,
-        keys?: IFingerprintKeySource,
-        approvals?: IDomainApprovalSource,
-        private readonly platformEnvironments?: IPlatformEnvironmentSource)
+    public constructor(private readonly backend: IDesktopDiscoveryBackend, private readonly throttle: AuditThrottle)
     {
-        this.matcher = new DesktopTenantMatcher(index, directory, adverts, keys, approvals)
     }
 
     /** Builds the throttle this endpoint expects (10 hits per minute per address). */
@@ -91,22 +68,8 @@ export class DesktopDiscoveryEndpoint
             PlaneHttp.WriteJson(res, DesktopDiscoveryEndpoint.StatusBadRequest, DesktopDiscoveryEndpoint.InvalidEmailBody)
             return
         }
-        if (this.tenantPlaneUrl === undefined)
-        {
-            PlaneHttp.WriteJson(res, DesktopDiscoveryEndpoint.StatusUnavailable, DesktopDiscoveryEndpoint.UnavailableBody)
-            return
-        }
-        const tenants = (await this.matcher.Match(email, this.tenantPlaneUrl))
-            .map(d => ({
-                id: d.tenant.id, displayName: d.tenant.displayName, consoleUrl: d.consoleUrl,
-                ...(d.inHive && this.platformEnvironments?.HasEnvironmentsOf(d.tenant.id) === true ? { [DesktopDiscoveryEndpoint.PlatformEnvironmentsField]: true } : {})
-            }))
-        if (tenants.length === 0)
-        {
-            PlaneHttp.WriteJson(res, DesktopDiscoveryEndpoint.StatusNotFound, DesktopDiscoveryEndpoint.NoAccountBody)
-            return
-        }
-        PlaneHttp.WriteJson(res, PlaneHttp.StatusOk, { tenants, tenantPlaneUrl: this.tenantPlaneUrl })
+        const reply = await this.backend.Discover(email)
+        PlaneHttp.WriteJson(res, reply.Status, reply.Body)
     }
 
     /** The body's email when it is a non-empty string of at most 254 characters; otherwise undefined. */
