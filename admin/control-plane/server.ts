@@ -7,7 +7,8 @@ import { AuditThrottle } from './audit-throttle.js'
 import { LocalDesktopDiscoveryBackend } from './desktop-discovery-backend.js'
 import { InternalApiCredential } from './internal-api-credential.js'
 import { InternalApiHost } from './internal-api-host.js'
-import { EdgeComposition } from './edge-composition.js'
+import type { IAgentChannelBackend } from './agent-channel-backend.js'
+import { EdgeComposition, EdgeShutdown } from './edge-composition.js'
 import { DesktopDiscoveryEndpoint } from './desktop-discovery-endpoint.js'
 import { TenantAccountIndex } from './tenant-account-index.js'
 import { OperatorAuthorization } from './operator-authorization.js'
@@ -225,6 +226,7 @@ export class ControlPlaneServer
     private static readonly PortEnvVar = 'PRAGMATIC_ADMIN_PORT'
     private static readonly AdminBindEnvVar = 'PRAGMATIC_ADMIN_BIND'
     private static readonly EdgeListeningPrefix = 'Edge listening on '
+    private static readonly EdgeTrustedProxySuffix = ' (client addresses from the trusted proxy)'
     private static readonly HostPortText = ':'
     private static readonly InternalPortEnvVar = 'PRAGMATIC_ADMIN_INTERNAL_PORT'
     private static readonly InternalBindEnvVar = 'PRAGMATIC_ADMIN_INTERNAL_BIND'
@@ -317,24 +319,22 @@ export class ControlPlaneServer
             // The keyless edge: no data root, key, registry or master key is ever opened; admin answers over the internal API.
             const edge = EdgeComposition.Compose(process.env)
             await edge.Host.Listen(edge.Port, edge.Bind)
-            console.log(ControlPlaneServer.EdgeListeningPrefix + edge.Bind + ControlPlaneServer.HostPortText + String(edge.Port))
+            EdgeShutdown.Install(edge.Host)
+            console.log(ControlPlaneServer.EdgeListeningPrefix + edge.Bind + ControlPlaneServer.HostPortText + String(edge.Port)
+                + (edge.TrustedProxy ? ControlPlaneServer.EdgeTrustedProxySuffix : ''))
             return
         }
         // From here on the role is `all` or `admin`: both open the operator-side state.
-        const servesOperators = ControlPlaneRoles.ServesOperators(role)
         const here = dirname(fileURLToPath(import.meta.url))
         const dataRoot = ControlPlaneServer.DataRootOf(process.env, here)
         mkdirSync(dataRoot, { recursive: true })
         const opts = ControlPlaneServer.ReadOperatorOptions(process.env, dataRoot)
-        const operator = servesOperators ? await OperatorIdentity.Compose(opts) : undefined
-        const masterKey = servesOperators ? MasterKeyFile.Load(opts.masterKeyFile) : undefined
+        const operator = await OperatorIdentity.Compose(opts)
+        const masterKey = MasterKeyFile.Load(opts.masterKeyFile)
         const docker = new DockerEnvAdapter(new DockerEnv())
         const registry = new EnvironmentRegistry(join(dataRoot, TenantPlaneComposer.RegistryFile), docker)
         await registry.Load()
-        if (servesOperators)
-        {
-            await registry.Reconcile()
-        }
+        await registry.Reconcile()
         const directory = new PlatformDirectory(
             new ClientRegistry(join(dataRoot, ControlPlaneServer.ClientsFile)),
             new TenantRegistry(join(dataRoot, ControlPlaneServer.TenantsFile)),
@@ -343,7 +343,9 @@ export class ControlPlaneServer
         await directory.Load()
         // Every role: the deployment registry the agent channel serves is built over the manifest signer, which needs the
         // platform key (the trust-root back-fill this runs is idempotent, so a co-deployed edge and admin agree).
-        const signing = await ControlPlaneServer.PlatformSigningOf(process.env, dataRoot, directory)
+        // One key store for every signer: the signing-key file (if any) is read once, here.
+        const keys = KeyStores.Of(dataRoot, process.env, ControlPlaneServer.SigningKeyRefOf(process.env))
+        const signing = await ControlPlaneServer.PlatformSigningOf(process.env, dataRoot, directory, keys)
         const allocator = new PortAllocator(TenantPlaneComposer.EnvPortFloor, new NetPortProbe())
         const bundle = new BundleBuilderAdapter()
         const seeder = new UserSeederAdapter(new UserSeeder())
@@ -355,7 +357,7 @@ export class ControlPlaneServer
         const tunnels = new ClusterTunnelPool()
         ControlPlaneServer.CloseOnShutdown(tunnels)
         const endpoints = new EnvironmentEndpoints(orchestrators, directory, tunnels, new NodeProcessSpawner())
-        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, bundle), new InClusterEnvironmentRuntime(orchestrators, placement, directory, bundle, signing.PlatformSigner), directory, orchestrators), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), ControlPlaneServer.UiDeployerOf(dataRoot, orchestrators, registry), endpoints)
+        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, bundle), new InClusterEnvironmentRuntime(orchestrators, placement, directory, bundle, signing.PlatformSigner), directory, orchestrators), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), ControlPlaneServer.UiDeployerOf(orchestrators, registry, keys), endpoints)
         const graphService = new GraphService(registry, proxy, service)
         const staticRoot = join(here, TenantPlaneComposer.ParentSegment, ControlPlaneServer.PortalSegment, TenantPlaneComposer.DistSegment)
         const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneServer.ManifestsFile))
@@ -375,10 +377,7 @@ export class ControlPlaneServer
         // Operator Owner resets of in-hive consoles: recorded by the console installer, answered to the console in its advert.
         const ownerResets = new ConsoleOwnerResets(join(dataRoot, ControlPlaneServer.ConsoleOwnerResetsFile))
         await Promise.all([manifests.Load(), audit.Load(), desktopAudit.Load(), graphAudit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load(), accountIndex.Load(), adverts.Load(), approvals.Load(), ownerResets.Load()])
-        if (servesOperators)
-        {
-            await accountIndex.BackfillFrom(directory)
-        }
+        await accountIndex.BackfillFrom(directory)
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(signing.PlatformSigner.KeyRef, dataRoot, signing.ImageSigner), policies, ledger)
         // The release catalogue and its poll are operator-side: composed (and their settings validated) before any listener
         // starts, and never by the edge.
@@ -394,14 +393,9 @@ export class ControlPlaneServer
         const domainVerifier = new DomainTxtVerifier(new NodeTxtResolver())
         const emailDomains = new PlatformEmailDomains(directory, adverts, approvals, domainVerifier)
         const agentBackend = ControlPlaneServer.AgentChannelBackendOf(deployments, directory, adverts, ownerResets, emailDomains)
-        const channel = ControlPlaneRoles.ServesAgentChannel(role) ? new AgentChannelHost(agentBackend) : undefined
+        const channel = ControlPlaneServer.AgentChannelOf(role, agentBackend)
         const agentBind = ControlPlaneServer.ParseAgentChannelBind(process.env[ControlPlaneServer.AgentChannelBindEnvVar])
         const channelStart: IAgentChannelStart = { host: channel, port: agentChannelPort, raw: agentChannelRaw, bind: agentBind }
-        if (operator === undefined || masterKey === undefined)
-        {
-            await new ControlPlaneStart(role).Run(new ComposedListeners(undefined, channelStart))
-            return
-        }
         // One tenant session store for the tenant plane and the Owner password reset (which ends the Owner's sessions).
         const tenantSessions = TenantPlaneComposer.TenantSessionsOf(dataRoot)
         const principalSessions = new TenantPrincipalSessions(tenantSessions)
@@ -421,7 +415,7 @@ export class ControlPlaneServer
         const consoleInstaller = new TenantConsoleInstaller(directory, orchestrators, new TenantAdminBootstrap(deployments), fingerprintKeys,
             new DevCertificateAuthority(join(dataRoot, DevCertificateAuthority.DirName), sealed), new InHiveIdpAdmin(orchestrators, sealed),
             new PlatformConsoleImageApproval(signing.PlatformSigner, PlatformHiveOrchestratorFactory.VerifierFor(dataRoot)),
-            KeyStores.Of(dataRoot, process.env), agentChannelUrl, new SystemInstallClock(), adverts, ownerResets)
+            keys, agentChannelUrl, new SystemInstallClock(), adverts, ownerResets)
         // Daily DNS re-check of verified domains (after approvals.Load; its interval timer is unref'd, so no shutdown hook).
         new DomainVerificationRechecker(approvals, domainVerifier).Start()
         const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery, consoleInstaller, adverts, approvals, emailDomains, releases?.Refresher)
@@ -465,15 +459,10 @@ export class ControlPlaneServer
         }
     }
 
-    /** The agent-channel host (over its console advert receiver) for a role that serves the channel; undefined for the admin role. */
-    public static AgentChannelOf(role: ControlPlaneRole, deployments: PlatformDeploymentRegistry, directory: PlatformDirectory, adverts: ConsoleAdvertRegistry,
-        ownerResets: ConsoleOwnerResets, emailDomains: PlatformEmailDomains): AgentChannelHost | undefined
+    /** The public agent-channel host for a role that serves it (`all`); undefined for `admin`, whose channel the edge serves. */
+    public static AgentChannelOf(role: ControlPlaneRole, backend: IAgentChannelBackend): AgentChannelHost | undefined
     {
-        if (!ControlPlaneRoles.ServesAgentChannel(role))
-        {
-            return undefined
-        }
-        return new AgentChannelHost(ControlPlaneServer.AgentChannelBackendOf(deployments, directory, adverts, ownerResets, emailDomains))
+        return ControlPlaneRoles.ServesAgentChannel(role) ? new AgentChannelHost(backend) : undefined
     }
 
     /** The in-process agent channel (registries + console advert receiver), shared by the public channel and the internal API. */
@@ -588,7 +577,6 @@ export class ControlPlaneServer
             masterKey, adminClientRegistry, secretTtlHours, sessions, principals, TenantPlaneComposer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]), true, relay, emailDomains, undefined, graphs)
     }
 
-    /** Pure: the state folder; PRAGMATIC_ADMIN_DATA_ROOT (resolved) when set, so a test stack never shares the developer's `data` folder beside the server. */
     /** PRAGMATIC_ADMIN_BIND: the operator listener's address. Blank or unset = loopback (the laptop's default). */
     public static AdminBindOf(env: NodeJS.ProcessEnv): string
     {
@@ -604,6 +592,7 @@ export class ControlPlaneServer
         return raw
     }
 
+    /** Pure: the state folder; PRAGMATIC_ADMIN_DATA_ROOT (resolved) when set, so a test stack never shares the developer's `data` folder beside the server. */
     public static DataRootOf(env: NodeJS.ProcessEnv, here: string): string
     {
         const raw = env[ControlPlaneServer.DataRootEnvVar]
@@ -685,10 +674,9 @@ export class ControlPlaneServer
             : ControlPlaneServer.ExternalPortWarningPrefix + String(tenantPort) + ControlPlaneServer.ExternalPortWarningSuffix
     }
 
-    /** The UI deploy actuator: pushes via the control-plane registry address and signs with the keys under dataRoot. */
-    private static UiDeployerOf(dataRoot: string, orchestrators: HiveOrchestratorFactory, registry: EnvironmentRegistry): UiDeployActuator
+    /** The UI deploy actuator: pushes via the control-plane registry address and signs with the control plane's key store. */
+    private static UiDeployerOf(orchestrators: HiveOrchestratorFactory, registry: EnvironmentRegistry, keys: IKeyStore): UiDeployActuator
     {
-        const keys = KeyStores.Of(dataRoot, process.env)
         return new UiDeployActuator(new OciRegistryClient(ControlPlaneServer.HttpScheme + InClusterRegistry.PushBase()), new UiArtifactSigner(keys), keys, orchestrators, new K8sManifestBuilder(), registry)
     }
 
@@ -705,12 +693,12 @@ export class ControlPlaneServer
      * trust root of every hive that has none; that back-fill is permanent, so hives keep the key they were given even if
      * the operator later names another one. Returns one shared image signer and the platform signer built over it.
      */
-    public static async PlatformSigningOf(env: NodeJS.ProcessEnv, dataRoot: string, directory: PlatformDirectory): Promise<{ ImageSigner: IImageSigner; PlatformSigner: PlatformImageSigner }>
+    public static async PlatformSigningOf(env: NodeJS.ProcessEnv, dataRoot: string, directory: PlatformDirectory,
+        keys: IKeyStore = KeyStores.Of(dataRoot, env, ControlPlaneServer.SigningKeyRefOf(env))): Promise<{ ImageSigner: IImageSigner; PlatformSigner: PlatformImageSigner }>
     {
         const C = ControlPlaneServer
         const keysDir = join(dataRoot, C.KeysDirName)
         const ref = C.SigningKeyRefOf(env)
-        const keys = KeyStores.Of(dataRoot, env)
         if (keys instanceof PinnedKeyStore)
         {
             // The private key stays in memory; only its public half goes to disk, where every verifier reads it.

@@ -77,3 +77,33 @@ export class EdgeComposition
         return value
     }
 }
+
+/** What EdgeShutdown closes: the edge's listener. */
+export interface IClosable
+{
+    Close(): Promise<void>
+}
+
+/**
+ * The edge's SIGTERM/SIGINT handling. It runs as PID 1 in its container, where a signal without a handler is ignored,
+ * so `podman stop` would otherwise wait out its timeout and SIGKILL in-flight requests. Closes the listener, then exits
+ * 128+signal; exits even when closing fails.
+ */
+export class EdgeShutdown
+{
+    private static readonly Signals: readonly NodeJS.Signals[] = ['SIGINT', 'SIGTERM']
+    private static readonly SignalExitBase = 128
+    private static readonly SignalNumbers: Readonly<Record<string, number>> = { SIGINT: 2, SIGTERM: 15 }
+
+    public static Install(host: IClosable, proc: NodeJS.Process = process): void
+    {
+        for (const signal of EdgeShutdown.Signals)
+        {
+            proc.once(signal, () =>
+            {
+                const code = EdgeShutdown.SignalExitBase + (EdgeShutdown.SignalNumbers[signal] ?? 0)
+                host.Close().then(() => proc.exit(code), () => proc.exit(code))
+            })
+        }
+    }
+}

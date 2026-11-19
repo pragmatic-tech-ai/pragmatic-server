@@ -6,7 +6,10 @@ import { InternalApiRoutes } from './internal-api-routes.js'
  *  the edge holds no registry, token hash or key. Admin unreachable or malformed = 503, never admin's text. */
 export class RemoteAgentChannelBackend implements IAgentChannelBackend
 {
-    public static readonly UnavailableReply: AgentChannelReply = { Status: 503, Body: { error: 'unavailable' } }
+    /** The one body the edge answers when admin can't: shared by every remote backend. */
+    public static readonly UnavailableBody = { error: 'unavailable' }
+    public static readonly UnavailableStatus = 503
+    public static readonly UnavailableReply: AgentChannelReply = { Status: RemoteAgentChannelBackend.UnavailableStatus, Body: RemoteAgentChannelBackend.UnavailableBody }
 
     /** servesConsole mirrors the admin this edge fronts; a deployed admin always serves the console routes. */
     public constructor(private readonly client: InternalApiClient, private readonly servesConsole: boolean = true)

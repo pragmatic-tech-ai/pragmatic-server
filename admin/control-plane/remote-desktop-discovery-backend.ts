@@ -7,7 +7,7 @@ import { RemoteAgentChannelBackend } from './remote-agent-channel-backend.js'
  *  Admin unreachable or malformed = 503 `unavailable`. */
 export class RemoteDesktopDiscoveryBackend implements IDesktopDiscoveryBackend
 {
-    private static readonly UnavailableReply: DiscoveryReply = { Status: 503, Body: { error: 'unavailable' } }
+    private static readonly UnavailableReply: DiscoveryReply = { Status: RemoteAgentChannelBackend.UnavailableStatus, Body: RemoteAgentChannelBackend.UnavailableBody }
     private static readonly EmailField = 'email'
 
     public constructor(private readonly client: InternalApiClient)

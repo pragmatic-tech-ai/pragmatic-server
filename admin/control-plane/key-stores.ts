@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { FileKeyStore, type IKeyStore } from './key-store.js'
 import { PinnedKeyStore } from './pinned-key-store.js'
 import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
-import { PlatformSigningKey } from './platform-signing-key.js'
 
 /** Raised for an unusable PRAGMATIC_ADMIN_SIGNING_KEY_FILE. Names the setting and the reason, never key material. */
 export class SigningKeyFileError extends Error
@@ -24,35 +23,19 @@ export class KeyStores
 {
     public static readonly SigningKeyFileEnvVar = 'PRAGMATIC_ADMIN_SIGNING_KEY_FILE'
     public static readonly ReasonSeparator = ': '
-    private static readonly SigningKeyRefEnvVar = 'PRAGMATIC_ADMIN_SIGNING_KEY_REF'
     private static readonly Ed25519 = 'ed25519'
     private static readonly Utf8 = 'utf8'
     private static readonly Unreadable = 'file is missing or unreadable'
     private static readonly NotAKey = 'file is not a PEM private key'
     private static readonly NotEd25519 = 'key is not Ed25519'
 
-    public static Of(dataRoot: string, env: NodeJS.ProcessEnv): IKeyStore
+    /** Built once per process (ControlPlaneServer.Main) and passed to every signer; `ref` is the platform signing key
+     *  ref (ControlPlaneServer.SigningKeyRefOf), under which the file's key is pinned. */
+    public static Of(dataRoot: string, env: NodeJS.ProcessEnv, ref: string): IKeyStore
     {
         const files = new FileKeyStore(join(dataRoot, PlatformHiveOrchestratorFactory.KeysDirName))
-        const pinned = KeyStores.PinnedOf(env, files)
-        return pinned ?? files
-    }
-
-    /** The pinned signing key, or undefined when PRAGMATIC_ADMIN_SIGNING_KEY_FILE is unset or blank. */
-    public static PinnedOf(env: NodeJS.ProcessEnv, inner: IKeyStore): PinnedKeyStore | undefined
-    {
         const path = env[KeyStores.SigningKeyFileEnvVar]?.trim() ?? ''
-        if (path === '')
-        {
-            return undefined
-        }
-        return new PinnedKeyStore(KeyStores.RefOf(env), KeyStores.ReadEd25519(path), inner)
-    }
-
-    private static RefOf(env: NodeJS.ProcessEnv): string
-    {
-        const ref = env[KeyStores.SigningKeyRefEnvVar]?.trim() ?? ''
-        return ref !== '' ? ref : PlatformSigningKey.DefaultRef
+        return path === '' ? files : new PinnedKeyStore(ref, KeyStores.ReadEd25519(path), files)
     }
 
     private static ReadEd25519(path: string): string

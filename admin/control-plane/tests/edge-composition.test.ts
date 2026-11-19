@@ -3,7 +3,8 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
-import { EdgeComposition } from '../edge-composition.js'
+import { EventEmitter } from 'node:events'
+import { EdgeComposition, EdgeShutdown } from '../edge-composition.js'
 
 class CompositionFixture
 {
@@ -85,5 +86,42 @@ describe('EdgeComposition', () =>
         assert.equal(EdgeComposition.Compose(CompositionFixture.Env()).TrustedProxy, false)
         assert.equal(EdgeComposition.Compose(CompositionFixture.Env({ PRAGMATIC_EDGE_TRUSTED_PROXY: '1' })).TrustedProxy, true)
         assert.equal(EdgeComposition.Compose(CompositionFixture.Env({ PRAGMATIC_EDGE_TRUSTED_PROXY: 'true' })).TrustedProxy, true)
+    })
+})
+
+class FakeProcess extends EventEmitter
+{
+    public Exited: number | undefined
+
+    public exit(code: number): never
+    {
+        this.Exited = code
+        return undefined as never
+    }
+}
+
+describe('EdgeShutdown', () =>
+{
+    it('closes the edge listener and exits 128+n on SIGTERM and SIGINT', async () =>
+    {
+        for (const [signal, code] of [['SIGTERM', 143], ['SIGINT', 130]] as const)
+        {
+            const proc = new FakeProcess()
+            let closed = 0
+            EdgeShutdown.Install({ Close: async () => { closed++ } }, proc as unknown as NodeJS.Process)
+            proc.emit(signal)
+            await new Promise(r => setImmediate(r))
+            assert.equal(closed, 1, signal)
+            assert.equal(proc.Exited, code, signal)
+        }
+    })
+
+    it('still exits when closing the listener fails', async () =>
+    {
+        const proc = new FakeProcess()
+        EdgeShutdown.Install({ Close: async () => { throw new Error('busy') } }, proc as unknown as NodeJS.Process)
+        proc.emit('SIGTERM')
+        await new Promise(r => setImmediate(r))
+        assert.equal(proc.Exited, 143)
     })
 })

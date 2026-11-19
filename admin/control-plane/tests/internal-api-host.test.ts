@@ -134,6 +134,20 @@ describe('InternalApiHost', () =>
         assert.equal((await InternalFixture.Send(host, 'POST', InternalApiRoutes.Discover, credential.Bearer(), { email: 42 })).status, 400)
     })
 
+    it('accepts a 1 MiB hive body that JSON escaping doubles (the edge forwards up to 1 MiB raw)', async () =>
+    {
+        const body = '"'.repeat(1048576)
+        const reply = await InternalFixture.Send(host, 'POST', InternalApiRoutes.Agent, credential.Bearer(), { Operation: AgentChannelOperation.Snapshot, HiveId: InternalFixture.HiveId, Token: token, Body: body })
+        assert.equal(reply.status, 200)
+        assert.deepEqual(reply.body, { Status: 400, Body: { error: 'Request body must be { environments: HiveHealth[] }' } })
+    })
+
+    it('answers an oversized request with a delivered 413', async () =>
+    {
+        const reply = await InternalFixture.Send(host, 'POST', InternalApiRoutes.Agent, credential.Bearer(), 'x'.repeat(8 * 1048576))
+        assert.equal(reply.status, 413)
+    })
+
     it('serves healthz without auth and 404 for anything else', async () =>
     {
         assert.deepEqual(await InternalFixture.Send(host, 'GET', InternalApiRoutes.Healthz, undefined), { status: 200, body: { ok: true } })

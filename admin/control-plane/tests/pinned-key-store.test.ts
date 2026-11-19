@@ -87,14 +87,21 @@ describe('KeyStores.Of', () =>
 {
     it('is the data root key store when no signing key file is set', async () =>
     {
-        assert.ok(KeyStores.Of(PinnedFixture.DataRoot(), {}) instanceof FileKeyStore)
+        assert.ok(KeyStores.Of(PinnedFixture.DataRoot(), {}, PinnedFixture.Ref) instanceof FileKeyStore)
     })
 
     it('pins the file\'s key under the configured ref', async () =>
     {
         const { privatePem } = PinnedFixture.Ed25519()
-        const store = KeyStores.Of(PinnedFixture.DataRoot(), { [PinnedFixture.FileEnvVar]: PinnedFixture.File(privatePem) })
+        const store = KeyStores.Of(PinnedFixture.DataRoot(), { [PinnedFixture.FileEnvVar]: PinnedFixture.File(privatePem) }, PinnedFixture.Ref)
         assert.equal(await store.PrivateKey(PinnedFixture.Ref), privatePem)
+    })
+
+    it('pins the key under the ref it is given (the one SigningKeyRefOf parsed), not a ref of its own', async () =>
+    {
+        const { privatePem } = PinnedFixture.Ed25519()
+        const store = KeyStores.Of(PinnedFixture.DataRoot(), { [PinnedFixture.FileEnvVar]: PinnedFixture.File(privatePem), PRAGMATIC_ADMIN_SIGNING_KEY_REF: 'ignored-here' }, 'operator-key')
+        assert.equal(await store.PrivateKey('operator-key'), privatePem)
     })
 
     it('refuses an RSA key or garbage, naming the setting and never the content', () =>
@@ -102,7 +109,7 @@ describe('KeyStores.Of', () =>
         const rsa = generateKeyPairSync('rsa', { modulusLength: 2048, privateKeyEncoding: { type: 'pkcs8', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } }).privateKey
         for (const content of [rsa, 'GARBAGE-SECRET-MATERIAL'])
         {
-            assert.throws(() => KeyStores.Of(PinnedFixture.DataRoot(), { [PinnedFixture.FileEnvVar]: PinnedFixture.File(content) }), (e: Error) =>
+            assert.throws(() => KeyStores.Of(PinnedFixture.DataRoot(), { [PinnedFixture.FileEnvVar]: PinnedFixture.File(content) }, PinnedFixture.Ref), (e: Error) =>
             {
                 assert.match(e.message, /PRAGMATIC_ADMIN_SIGNING_KEY_FILE/)
                 assert.ok(!e.message.includes('GARBAGE-SECRET-MATERIAL'))
@@ -114,7 +121,7 @@ describe('KeyStores.Of', () =>
 
     it('refuses a missing file, naming the setting', () =>
     {
-        assert.throws(() => KeyStores.Of(PinnedFixture.DataRoot(), { [PinnedFixture.FileEnvVar]: join(PinnedFixture.Root, 'nope.key') }), /PRAGMATIC_ADMIN_SIGNING_KEY_FILE/)
+        assert.throws(() => KeyStores.Of(PinnedFixture.DataRoot(), { [PinnedFixture.FileEnvVar]: join(PinnedFixture.Root, 'nope.key') }, PinnedFixture.Ref), /PRAGMATIC_ADMIN_SIGNING_KEY_FILE/)
     })
 })
 

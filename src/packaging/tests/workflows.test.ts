@@ -308,7 +308,7 @@ test('the release job merges both arches into one tag per platform image before 
 {
     const jobs = MultiArch.Jobs('release.yml')
     const release = jobs.release
-    assert.deepEqual([release.needs].flat(), ['platform-images'])
+    assert.deepEqual([release.needs].flat(), ['siblings', 'platform-images'])
     const runs = MultiArch.Runs(release.steps)
     const merge = runs.findIndex(run => /docker buildx imagetools create/.test(run) && MultiArch.PlatformApps.every(app => run.includes(app)))
     const publish = runs.findIndex(run => /pragmatic-release-publish\.ts publish/.test(run))
@@ -340,4 +340,25 @@ test('bake: the platform images take PLATFORMS; the six other apps form the amd6
     assert.ok(group !== null)
     const members = (group[1].match(/"[^"]+"/g) ?? []).map(m => m.slice(1, -1))
     assert.deepEqual(members.sort(), ['pragmatic-env-gateway', 'pragmatic-env-server', 'pragmatic-hive-agent', 'pragmatic-tenant-admin', 'pragmatic-tenant-idp', 'pragmatic-ui-unpack'])
+})
+
+test('release resolves the sibling commits once; every image build and the descriptor use exactly those', () =>
+{
+    const jobs = MultiArch.Jobs('release.yml')
+    const siblings = jobs.siblings
+    assert.ok(siblings !== undefined, 'a siblings job records the heads')
+    const recordRuns = MultiArch.Runs(siblings.steps)
+    assert.ok(recordRuns.some(run => /git clone/.test(run) && /siblings\.json/.test(run)), 'it clones the heads and records them')
+    assert.ok((siblings.steps ?? []).some(step => (step.uses ?? '').startsWith('actions/upload-artifact@')), 'and hands siblings.json on')
+    for (const name of ['platform-images', 'release'])
+    {
+        const job = jobs[name]
+        assert.ok([job.needs].flat().includes('siblings'), name + ' needs siblings')
+        const runs = MultiArch.Runs(job.steps)
+        assert.ok(!runs.some(run => /git clone/.test(run)), name + ' never clones a moving head')
+        assert.ok(runs.some(run => /git -C "\$dir" fetch [^\n]*"\$sha"/.test(run) && /checkout -q FETCH_HEAD/.test(run)), name + ' checks out the recorded commit')
+        assert.ok((job.steps ?? []).some(step => (step.uses ?? '').startsWith('actions/download-artifact@') && String(step.with?.name ?? '') === 'siblings'), name + ' downloads siblings.json')
+    }
+    const publish = MultiArch.Runs(jobs.release.steps).find(run => /pragmatic-release-publish\.ts publish/.test(run)) ?? ''
+    assert.match(publish, /--siblings-file "\$RUNNER_TEMP\/siblings\/siblings\.json"/)
 })

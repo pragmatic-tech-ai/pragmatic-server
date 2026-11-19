@@ -82,6 +82,10 @@ describe('EdgeClientAddress', () =>
     {
         assert.equal(EdgeClientAddress.Of(req('<script>', '127.0.0.1'), true), '127.0.0.1')
         assert.equal(EdgeClientAddress.Of(req('', '127.0.0.1'), true), '127.0.0.1')
+        for (const junk of ['a', '....', 'ff:ff:ff', '999.1.1.1'])
+        {
+            assert.equal(EdgeClientAddress.Of(req(junk, '127.0.0.1'), true), '127.0.0.1', junk)
+        }
     })
 })
 

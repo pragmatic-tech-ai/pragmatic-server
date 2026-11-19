@@ -2,11 +2,6 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { ControlPlaneRole, ControlPlaneRoleInvalidError, ControlPlaneRoles, ControlPlaneStart, EdgeRoleWithoutChannelError, type IControlPlaneListenerStarts } from '../control-plane-role.js'
 import { AgentChannelHost } from '../agent-channel-host.js'
-import type { ConsoleAdvertRegistry } from '../console-advert-registry.js'
-import type { ConsoleOwnerResets } from '../console-owner-resets.js'
-import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
-import type { PlatformDirectory } from '../platform-directory.js'
-import type { PlatformEmailDomains } from '../platform-email-domains.js'
 import { ControlPlaneServer } from '../server.js'
 
 /** Records which listeners the start sequence asked for, in order. */
@@ -52,8 +47,7 @@ class ChannelParts
 {
     public static ChannelOf(role: ControlPlaneRole): AgentChannelHost | undefined
     {
-        return ControlPlaneServer.AgentChannelOf(role, {} as PlatformDeploymentRegistry, {} as PlatformDirectory, {} as ConsoleAdvertRegistry,
-            {} as ConsoleOwnerResets, {} as PlatformEmailDomains)
+        return ControlPlaneServer.AgentChannelOf(role, { Handle: async () => ({ Status: 204 }), ServesConsole: () => true })
     }
 }
 

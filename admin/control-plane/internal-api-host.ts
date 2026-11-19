@@ -17,7 +17,11 @@ export class InternalApiHost
     private static readonly AuthorizationHeader = 'authorization'
     private static readonly BearerPattern = /^Bearer (\S+)$/
     private static readonly QuerySeparator = '?'
-    private static readonly MaxBodyBytes = 1048576 + 65536
+    /** The edge forwards hive bodies of up to 1 MiB raw inside a JSON string; escaping can grow each byte to a
+     *  six-character escape, so the cap covers the worst case plus the envelope. */
+    private static readonly MaxBodyBytes = 6 * 1048576 + 65536
+    private static readonly ConnectionHeader = 'Connection'
+    private static readonly CloseValue = 'close'
     private static readonly MaxEmailLength = 254
     private static readonly Utf8 = 'utf8'
     private static readonly StatusBadRequest = 400
@@ -133,6 +137,9 @@ export class InternalApiHost
             }
             if (err instanceof BodyTooLargeError)
             {
+                // The rest of the body is read and discarded (the caller is already authenticated and on loopback), so
+                // the 413 reaches it instead of a connection reset; the connection then closes.
+                res.setHeader(I.ConnectionHeader, I.CloseValue)
                 PlaneHttp.WriteJson(res, I.StatusTooLarge, I.TooLargeBody)
                 return
             }
@@ -192,18 +199,30 @@ export class InternalApiHost
         {
             const chunks: Buffer[] = []
             let size = 0
+            let tooLarge = false
             req.on('data', (c: Buffer) =>
             {
+                if (tooLarge)
+                {
+                    return
+                }
                 size += c.length
                 if (size > InternalApiHost.MaxBodyBytes)
                 {
-                    req.destroy()
+                    tooLarge = true
+                    chunks.length = 0
                     reject(new BodyTooLargeError(InternalApiHost.TooLarge))
                     return
                 }
                 chunks.push(c)
             })
-            req.on('end', () => resolveBody(Buffer.concat(chunks).toString(InternalApiHost.Utf8)))
+            req.on('end', () =>
+            {
+                if (!tooLarge)
+                {
+                    resolveBody(Buffer.concat(chunks).toString(InternalApiHost.Utf8))
+                }
+            })
             req.on('error', reject)
         })
     }
