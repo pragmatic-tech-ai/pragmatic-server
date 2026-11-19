@@ -7,6 +7,8 @@ import { AuditThrottle } from './audit-throttle.js'
 import { LocalDesktopDiscoveryBackend } from './desktop-discovery-backend.js'
 import { InternalApiCredential } from './internal-api-credential.js'
 import { InternalApiHost } from './internal-api-host.js'
+import { InfraTargetMode, InfraTargetModes } from './infra-target-mode.js'
+import { NoTargetEnvironmentRuntime, NoTargetHiveOrchestratorFactory, NoTargetIdpDriver } from './no-infra-target.js'
 import type { IAgentChannelBackend } from './agent-channel-backend.js'
 import { EdgeComposition, EdgeShutdown } from './edge-composition.js'
 import { DesktopDiscoveryEndpoint } from './desktop-discovery-endpoint.js'
@@ -272,6 +274,7 @@ export class ControlPlaneServer
     private static readonly MasterKeyEnvVar = 'PRAGMATIC_ADMIN_MASTER_KEY_FILE'
     private static readonly OperatorEmailEnvVar = 'PRAGMATIC_ADMIN_OPERATOR_EMAIL'
     private static readonly OperatorPasswordEnvVar = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD'
+    private static readonly InfraTargetLogPrefix = 'Infrastructure target: '
     private static readonly OperatorPasswordFileEnvVar = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE'
     private static readonly PasswordBothSetMessage = 'Set either PRAGMATIC_ADMIN_OPERATOR_PASSWORD or PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE, not both'
     private static readonly PasswordFileUnreadableMessage = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE must name a readable file'
@@ -337,8 +340,13 @@ export class ControlPlaneServer
         const opts = ControlPlaneServer.ReadOperatorOptions(process.env, dataRoot)
         const operator = await OperatorIdentity.Compose(opts)
         const masterKey = MasterKeyFile.Load(opts.masterKeyFile)
+        // D28 interim: with no Docker/cluster target nothing below ever spawns docker, kind or kubectl.
+        const infra = InfraTargetModes.Parse(process.env)
+        console.log(ControlPlaneServer.InfraTargetLogPrefix + infra)
+        const noTarget = infra === InfraTargetMode.None
         const docker = new DockerEnvAdapter(new DockerEnv())
-        const registry = new EnvironmentRegistry(join(dataRoot, TenantPlaneComposer.RegistryFile), docker)
+        const hostRuntime = noTarget ? new NoTargetEnvironmentRuntime() : undefined
+        const registry = new EnvironmentRegistry(join(dataRoot, TenantPlaneComposer.RegistryFile), hostRuntime ?? docker)
         await registry.Load()
         await registry.Reconcile()
         const directory = new PlatformDirectory(
@@ -356,14 +364,16 @@ export class ControlPlaneServer
         const bundle = new BundleBuilderAdapter()
         const seeder = new UserSeederAdapter(new UserSeeder())
         const proxy = new AdminProxy(new WsAdminConnector())
-        const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), new DockerIdpDriver(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
-        const orchestrators = new PlatformHiveOrchestratorFactory(undefined, dataRoot)
+        const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), noTarget
+            ? new NoTargetIdpDriver()
+            : new DockerIdpDriver(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
+        const orchestrators = noTarget ? new NoTargetHiveOrchestratorFactory() : new PlatformHiveOrchestratorFactory(undefined, dataRoot)
         const placement = new EnvironmentPlacement(directory)
         // In-cluster environments are reached through pooled kubectl port-forwards; every tunnel dies with the process.
         const tunnels = new ClusterTunnelPool()
         ControlPlaneServer.CloseOnShutdown(tunnels)
         const endpoints = new EnvironmentEndpoints(orchestrators, directory, tunnels, new NodeProcessSpawner())
-        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, bundle), new InClusterEnvironmentRuntime(orchestrators, placement, directory, bundle, signing.PlatformSigner), directory, orchestrators), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), ControlPlaneServer.UiDeployerOf(orchestrators, registry, keys), endpoints)
+        const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(hostRuntime ?? new DockerEnvironmentRuntime(docker, bundle), new InClusterEnvironmentRuntime(orchestrators, placement, directory, bundle, signing.PlatformSigner), directory, orchestrators), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), ControlPlaneServer.UiDeployerOf(orchestrators, registry, keys), endpoints)
         const graphService = new GraphService(registry, proxy, service)
         const staticRoot = join(here, TenantPlaneComposer.ParentSegment, ControlPlaneServer.PortalSegment, TenantPlaneComposer.DistSegment)
         const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneServer.ManifestsFile))

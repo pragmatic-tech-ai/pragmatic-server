@@ -10,6 +10,7 @@ import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '
 import { RolloutFixture } from './rollout-fixture.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { KindHiveOrchestrator } from '../kind-hive-orchestrator.js'
+import { NoInfraTargetError } from '../no-infra-target.js'
 import type { IHiveOrchestrator } from '../hive-orchestrator.js'
 import type { IKind } from '../kind.js'
 import type { HiveRecord } from '../platform-records.js'
@@ -234,6 +235,15 @@ describe('ControlPlaneHost platform routes', () =>
         assert.equal((await Harness.Send(host, 'POST', '/api/tenants', body)).status, 400)
         fake.FailWith = new RecordExistsError(RecordKind.Tenant, 't1')
         assert.equal((await Harness.Send(host, 'POST', '/api/tenants', body)).status, 409)
+    })
+
+    it('answers 503 with the plain message when there is no Docker/cluster target (D28 interim)', async () =>
+    {
+        await Harness.Send(host, 'POST', '/api/clients', { id: 'acme', displayName: 'Acme' })
+        fake.FailWith = new NoInfraTargetError()
+        const r = await Harness.Send(host, 'POST', '/api/tenants', { id: 't1', clientId: 'acme', displayName: 'T', ownerEmail: 'o@x.test' })
+        assert.equal(r.status, 503)
+        assert.deepEqual(JSON.parse(r.body), { error: 'no Docker/cluster target configured' })
     })
 
     it('maps a cascade violation to 409 and an unknown parent to 404', async () =>

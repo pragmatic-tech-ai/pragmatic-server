@@ -1,0 +1,32 @@
+/**
+ * Whether this admin drives infrastructure on its own host (`local`: the laptop's Docker and kind) or has no
+ * Docker/cluster target at all (`none`: frontdoor until remote provisioning targets exist, D28).
+ */
+export enum InfraTargetMode
+{
+    Local = 'local',
+    None = 'none'
+}
+
+/** Reads PRAGMATIC_ADMIN_INFRA_TARGET. Unset or blank is `local`, so a development setup is unchanged. */
+export class InfraTargetModes
+{
+    public static readonly EnvVar = 'PRAGMATIC_ADMIN_INFRA_TARGET'
+    private static readonly BadValueMessage = 'PRAGMATIC_ADMIN_INFRA_TARGET must be one of: '
+    private static readonly ListSeparator = ', '
+
+    public static Parse(env: NodeJS.ProcessEnv): InfraTargetMode
+    {
+        const raw = env[InfraTargetModes.EnvVar]?.trim().toLowerCase() ?? ''
+        if (raw === '')
+        {
+            return InfraTargetMode.Local
+        }
+        const mode = Object.values(InfraTargetMode).find(m => m === raw)
+        if (mode === undefined)
+        {
+            throw new Error(InfraTargetModes.BadValueMessage + Object.values(InfraTargetMode).join(InfraTargetModes.ListSeparator))
+        }
+        return mode
+    }
+}

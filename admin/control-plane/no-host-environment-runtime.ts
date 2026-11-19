@@ -34,32 +34,32 @@ export class NoHostEnvironmentRuntime implements IEnvironmentRuntime, IContainer
 
     public EnsureImage(def: EnvDefinition): Promise<boolean>
     {
-        return Promise.reject(new HostRuntimeUnavailableError(def.name))
+        return Promise.reject(this.Refusal(def.name))
     }
 
     public BuildCommand(): string
     {
-        throw new HostRuntimeUnavailableError()
+        throw this.Refusal()
     }
 
     public Prepare(ctx: EnvRuntimeContext): Promise<void>
     {
-        return NoHostEnvironmentRuntime.Refuse(ctx)
+        return this.Refuse(ctx)
     }
 
     public BringUp(ctx: EnvRuntimeContext): Promise<EnvEndpoint>
     {
-        return NoHostEnvironmentRuntime.Refuse(ctx)
+        return this.Refuse(ctx)
     }
 
     public WaitHealthy(ctx: EnvRuntimeContext): Promise<void>
     {
-        return NoHostEnvironmentRuntime.Refuse(ctx)
+        return this.Refuse(ctx)
     }
 
     public Start(ctx: EnvRuntimeContext): Promise<EnvEndpoint>
     {
-        return NoHostEnvironmentRuntime.Refuse(ctx)
+        return this.Refuse(ctx)
     }
 
     public async Stop(_ctx: EnvRuntimeContext): Promise<void>
@@ -76,12 +76,12 @@ export class NoHostEnvironmentRuntime implements IEnvironmentRuntime, IContainer
 
     public Logs(ctx: EnvRuntimeContext): Promise<string>
     {
-        return NoHostEnvironmentRuntime.Refuse(ctx)
+        return this.Refuse(ctx)
     }
 
     public LogStream(ctx: EnvRuntimeContext, _onData: (chunk: string) => void): ILogProcess
     {
-        throw new HostRuntimeUnavailableError(ctx.record.name)
+        throw this.Refusal(ctx.record.name)
     }
 
     public async Probe(_ctx: EnvRuntimeContext): Promise<boolean>
@@ -94,8 +94,14 @@ export class NoHostEnvironmentRuntime implements IEnvironmentRuntime, IContainer
         return false
     }
 
-    private static Refuse<T>(ctx: EnvRuntimeContext): Promise<T>
+    /** The error every refused verb raises; `name` names the environment, when one is in question. */
+    protected Refusal(name?: string): Error
     {
-        return Promise.reject(new HostRuntimeUnavailableError(ctx.record.name))
+        return new HostRuntimeUnavailableError(name)
+    }
+
+    private Refuse<T>(ctx: EnvRuntimeContext): Promise<T>
+    {
+        return Promise.reject(this.Refusal(ctx.record.name))
     }
 }
