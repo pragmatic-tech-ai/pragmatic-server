@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
-import { DockerImageDigest } from './image-digest.js'
+import { DockerImageDigest, type IImageDigest } from './image-digest.js'
 import { CryptoImageVerifier, type IImageVerifier } from './image-verifier.js'
 import { FileKeyStore } from './key-store.js'
 import { KindCli } from './kind.js'
@@ -24,10 +24,10 @@ export class PlatformHiveOrchestratorFactory extends HiveOrchestratorFactory
     public static readonly KeysDirName = 'keys'
 
     /** The control plane's image verifier: local docker digests, the data root's signature store and key store. */
-    public static VerifierFor(dataRoot: string): CryptoImageVerifier
+    public static VerifierFor(dataRoot: string, digests: IImageDigest = new DockerImageDigest()): CryptoImageVerifier
     {
         return new CryptoImageVerifier(
-            new DockerImageDigest(),
+            digests,
             new FileSignatureStore(join(dataRoot, PlatformHiveOrchestratorFactory.SignaturesFileName)),
             new FileKeyStore(join(dataRoot, PlatformHiveOrchestratorFactory.KeysDirName)))
     }

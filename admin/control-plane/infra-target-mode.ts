@@ -12,7 +12,7 @@ export enum InfraTargetMode
 export class InfraTargetModes
 {
     public static readonly EnvVar = 'PRAGMATIC_ADMIN_INFRA_TARGET'
-    private static readonly BadValueMessage = 'PRAGMATIC_ADMIN_INFRA_TARGET must be one of: '
+    private static readonly BadValueSuffix = ' must be one of: '
     private static readonly ListSeparator = ', '
 
     public static Parse(env: NodeJS.ProcessEnv): InfraTargetMode
@@ -25,7 +25,7 @@ export class InfraTargetModes
         const mode = Object.values(InfraTargetMode).find(m => m === raw)
         if (mode === undefined)
         {
-            throw new Error(InfraTargetModes.BadValueMessage + Object.values(InfraTargetMode).join(InfraTargetModes.ListSeparator))
+            throw new Error(InfraTargetModes.EnvVar + InfraTargetModes.BadValueSuffix + Object.values(InfraTargetMode).join(InfraTargetModes.ListSeparator))
         }
         return mode
     }

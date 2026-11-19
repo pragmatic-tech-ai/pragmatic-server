@@ -66,10 +66,10 @@ describe('ControlPlaneServer.ReadOperatorOptions with a password file', () =>
     {
         const lf = SeedFileFixture.File('lf', 'seed-pw-123\n')
         const crlf = SeedFileFixture.File('crlf', 'seed-pw-456\r\n')
-        const bare = SeedFileFixture.File('bare', ' spaced pw \n\n')
+        const bare = SeedFileFixture.File('bare', ' spaced pw \n')
         assert.equal(ControlPlaneServer.ReadOperatorOptions({ [SeedFileFixture.Setting]: lf }, '/data').initialPassword, 'seed-pw-123')
         assert.equal(ControlPlaneServer.ReadOperatorOptions({ [SeedFileFixture.Setting]: crlf }, '/data').initialPassword, 'seed-pw-456')
-        assert.equal(ControlPlaneServer.ReadOperatorOptions({ [SeedFileFixture.Setting]: bare }, '/data').initialPassword, ' spaced pw \n')
+        assert.equal(ControlPlaneServer.ReadOperatorOptions({ [SeedFileFixture.Setting]: bare }, '/data').initialPassword, ' spaced pw ')
     })
 
     it('refuses both the password and the password file, naming both and echoing neither', () =>
@@ -84,9 +84,10 @@ describe('ControlPlaneServer.ReadOperatorOptions with a password file', () =>
         })
     })
 
-    it('refuses a missing or empty password file, naming the setting only', () =>
+    it('refuses a missing, blank or multi-line password file (it could never be typed), naming the setting only', () =>
     {
-        for (const path of [join(SeedFileFixture.Root, 'nope'), SeedFileFixture.File('empty', ''), SeedFileFixture.File('newline', '\n')])
+        for (const path of [join(SeedFileFixture.Root, 'nope'), SeedFileFixture.File('empty', ''), SeedFileFixture.File('newline', '\n'),
+            SeedFileFixture.File('blank', '   \n'), SeedFileFixture.File('double', 'pw\n\n'), SeedFileFixture.File('inner', 'pw\nmore')])
         {
             assert.throws(() => ControlPlaneServer.ReadOperatorOptions({ [SeedFileFixture.Setting]: path }, '/data'), (e: Error) =>
             {

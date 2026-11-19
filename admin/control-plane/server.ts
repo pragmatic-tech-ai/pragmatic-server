@@ -8,7 +8,7 @@ import { LocalDesktopDiscoveryBackend } from './desktop-discovery-backend.js'
 import { InternalApiCredential } from './internal-api-credential.js'
 import { InternalApiHost } from './internal-api-host.js'
 import { InfraTargetMode, InfraTargetModes } from './infra-target-mode.js'
-import { NoTargetEnvironmentRuntime, NoTargetHiveOrchestratorFactory, NoTargetIdpDriver } from './no-infra-target.js'
+import { NoTargetEnvironmentRuntime, NoTargetHiveOrchestratorFactory, NoTargetIdpDriver, NoTargetImageDigest } from './no-infra-target.js'
 import type { IAgentChannelBackend } from './agent-channel-backend.js'
 import { EdgeComposition, EdgeShutdown } from './edge-composition.js'
 import { DesktopDiscoveryEndpoint } from './desktop-discovery-endpoint.js'
@@ -73,7 +73,7 @@ import { PinnedKeyStore } from './pinned-key-store.js'
 import { ManifestSigner, type IManifestSigner } from './manifest-signer.js'
 import { PlatformImageSigner, PlatformSigningKey } from './platform-signing-key.js'
 import type { IImageSigner } from './image-signer.js'
-import { DockerImageDigest } from './image-digest.js'
+import { DockerImageDigest, type IImageDigest } from './image-digest.js'
 import { ImageSigner } from './image-signer.js'
 import { FileSignatureStore } from './signature-store.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
@@ -278,7 +278,8 @@ export class ControlPlaneServer
     private static readonly OperatorPasswordFileEnvVar = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE'
     private static readonly PasswordBothSetMessage = 'Set either PRAGMATIC_ADMIN_OPERATOR_PASSWORD or PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE, not both'
     private static readonly PasswordFileUnreadableMessage = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE must name a readable file'
-    private static readonly PasswordFileEmptyMessage = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE names an empty file'
+    private static readonly PasswordFileNotOneLineMessage = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE must hold one non-blank line (a password that can be typed)'
+    private static readonly LineBreak = /[\r\n]/
     private static readonly Utf8 = 'utf8'
     private static readonly TrailingNewline = /\r?\n$/
     private static readonly SecureCookieEnvVar = 'PRAGMATIC_ADMIN_SECURE_COOKIE'
@@ -340,13 +341,15 @@ export class ControlPlaneServer
         const opts = ControlPlaneServer.ReadOperatorOptions(process.env, dataRoot)
         const operator = await OperatorIdentity.Compose(opts)
         const masterKey = MasterKeyFile.Load(opts.masterKeyFile)
-        // D28 interim: with no Docker/cluster target nothing below ever spawns docker, kind or kubectl.
+        // D28 interim: with no Docker/cluster target, every docker/kind/kubectl seam below is wired to a refusing stand-in
+        // (environments, IdP, orchestrators, image digests), so nothing spawns them whatever records exist.
         const infra = InfraTargetModes.Parse(process.env)
         console.log(ControlPlaneServer.InfraTargetLogPrefix + infra)
         const noTarget = infra === InfraTargetMode.None
         const docker = new DockerEnvAdapter(new DockerEnv())
         const hostRuntime = noTarget ? new NoTargetEnvironmentRuntime() : undefined
         const registry = new EnvironmentRegistry(join(dataRoot, TenantPlaneComposer.RegistryFile), hostRuntime ?? docker)
+        const digests: IImageDigest = noTarget ? new NoTargetImageDigest() : new DockerImageDigest()
         await registry.Load()
         await registry.Reconcile()
         const directory = new PlatformDirectory(
@@ -359,7 +362,7 @@ export class ControlPlaneServer
         // platform key (the trust-root back-fill this runs is idempotent, so a co-deployed edge and admin agree).
         // One key store for every signer: the signing-key file (if any) is read once, here.
         const keys = KeyStores.Of(dataRoot, process.env, ControlPlaneServer.SigningKeyRefOf(process.env))
-        const signing = await ControlPlaneServer.PlatformSigningOf(process.env, dataRoot, directory, keys)
+        const signing = await ControlPlaneServer.PlatformSigningOf(process.env, dataRoot, directory, keys, digests)
         const allocator = new PortAllocator(TenantPlaneComposer.EnvPortFloor, new NetPortProbe())
         const bundle = new BundleBuilderAdapter()
         const seeder = new UserSeederAdapter(new UserSeeder())
@@ -394,7 +397,7 @@ export class ControlPlaneServer
         const ownerResets = new ConsoleOwnerResets(join(dataRoot, ControlPlaneServer.ConsoleOwnerResetsFile))
         await Promise.all([manifests.Load(), audit.Load(), desktopAudit.Load(), graphAudit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load(), accountIndex.Load(), adverts.Load(), approvals.Load(), ownerResets.Load()])
         await accountIndex.BackfillFrom(directory)
-        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(signing.PlatformSigner.KeyRef, dataRoot, signing.ImageSigner), policies, ledger)
+        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(signing.PlatformSigner.KeyRef, dataRoot, signing.ImageSigner, digests), policies, ledger)
         // The release catalogue and its poll are operator-side: composed (and their settings validated) before any listener
         // starts, and never by the edge.
         const releases = ControlPlaneServer.ReleasesOf(role, process.env, join(here, TenantPlaneComposer.ParentSegment, TenantPlaneComposer.ParentSegment), deployments)
@@ -430,7 +433,7 @@ export class ControlPlaneServer
         // Installs a Local hive's tenant console through the same cluster access.
         const consoleInstaller = new TenantConsoleInstaller(directory, orchestrators, new TenantAdminBootstrap(deployments), fingerprintKeys,
             new DevCertificateAuthority(join(dataRoot, DevCertificateAuthority.DirName), sealed), new InHiveIdpAdmin(orchestrators, sealed),
-            new PlatformConsoleImageApproval(signing.PlatformSigner, PlatformHiveOrchestratorFactory.VerifierFor(dataRoot)),
+            new PlatformConsoleImageApproval(signing.PlatformSigner, PlatformHiveOrchestratorFactory.VerifierFor(dataRoot, digests)),
             keys, agentChannelUrl, new SystemInstallClock(), adverts, ownerResets)
         // Daily DNS re-check of verified domains (after approvals.Load; its interval timer is unref'd, so no shutdown hook).
         new DomainVerificationRechecker(approvals, domainVerifier).Start()
@@ -534,7 +537,7 @@ export class ControlPlaneServer
         return ControlPlaneRoles.ServesOperators(role) ? ReleaseCatalogConfig.Compose(env, repoRoot, deployments) : undefined
     }
 
-    /** Pure: derives operator-identity compose options and cookie policy from the environment. */
+    /** Derives operator-identity compose options and cookie policy from the environment (reads the password file, if one is named). */
     public static ReadOperatorOptions(env: NodeJS.ProcessEnv, dataRoot: string): OperatorComposeOptions & { secureCookie: boolean; trustedProxy: boolean; allowedHosts: readonly string[] }
     {
         const password = ControlPlaneServer.InitialPasswordOf(env)
@@ -577,9 +580,10 @@ export class ControlPlaneServer
             throw new Error(ControlPlaneServer.PasswordFileUnreadableMessage)
         }
         const password = content.replace(ControlPlaneServer.TrailingNewline, '')
-        if (password === '')
+        // A blank or multi-line seed could never be typed at the sign-in form: refuse it at start, not at first sign-in.
+        if (password.trim() === '' || ControlPlaneServer.LineBreak.test(password))
         {
-            throw new Error(ControlPlaneServer.PasswordFileEmptyMessage)
+            throw new Error(ControlPlaneServer.PasswordFileNotOneLineMessage)
         }
         return password
     }
@@ -744,7 +748,7 @@ export class ControlPlaneServer
      * the operator later names another one. Returns one shared image signer and the platform signer built over it.
      */
     public static async PlatformSigningOf(env: NodeJS.ProcessEnv, dataRoot: string, directory: PlatformDirectory,
-        keys: IKeyStore = KeyStores.Of(dataRoot, env, ControlPlaneServer.SigningKeyRefOf(env))): Promise<{ ImageSigner: IImageSigner; PlatformSigner: PlatformImageSigner }>
+        keys: IKeyStore = KeyStores.Of(dataRoot, env, ControlPlaneServer.SigningKeyRefOf(env)), digests: IImageDigest = new DockerImageDigest()): Promise<{ ImageSigner: IImageSigner; PlatformSigner: PlatformImageSigner }>
     {
         const C = ControlPlaneServer
         const keysDir = join(dataRoot, C.KeysDirName)
@@ -767,7 +771,7 @@ export class ControlPlaneServer
         {
             console.log(C.TrustAdoptedPrefix + ref + C.TrustAdoptedInfix + adopted.join(C.HiveIdSeparator))
         }
-        const imageSigner = C.ImageSignerOf(dataRoot, keys)
+        const imageSigner = C.ImageSignerOf(dataRoot, keys, digests)
         return { ImageSigner: imageSigner, PlatformSigner: new PlatformImageSigner(imageSigner, ref) }
     }
 
@@ -783,16 +787,15 @@ export class ControlPlaneServer
     }
 
     /** The registry manifest signer: publishes are signed with the platform signing key `ref`, through the shared image signer. */
-    public static ManifestSignerOf(ref: string, dataRoot: string, signer: IImageSigner): IManifestSigner
+    public static ManifestSignerOf(ref: string, dataRoot: string, signer: IImageSigner, digests: IImageDigest = new DockerImageDigest()): IManifestSigner
     {
         const store = new FileSignatureStore(join(dataRoot, ControlPlaneServer.SignaturesFileName))
-        return new ManifestSigner(new DockerImageDigest(), signer, store, ref)
+        return new ManifestSigner(digests, signer, store, ref)
     }
 
     /** Signs images into the same signature store the hive orchestrators verify against, with keys from the key store. */
-    public static ImageSignerOf(dataRoot: string, keys: IKeyStore = new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName))): ImageSigner
+    public static ImageSignerOf(dataRoot: string, keys: IKeyStore = new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)), digests: IImageDigest = new DockerImageDigest()): ImageSigner
     {
-        const digests = new DockerImageDigest()
         const store = new FileSignatureStore(join(dataRoot, ControlPlaneServer.SignaturesFileName))
         return new ImageSigner(digests, store, keys)
     }

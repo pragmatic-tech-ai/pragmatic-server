@@ -9,7 +9,8 @@ import { UnsupportedBackendError } from '../hive-orchestrator.js'
 import { IdpAdminClient } from '../idp-admin-client.js'
 import { IdpRegistry } from '../idp-registry.js'
 import { IdpService } from '../idp-service.js'
-import { NoInfraTarget, NoInfraTargetBackendError, NoInfraTargetError, NoTargetEnvironmentRuntime, NoTargetHiveOrchestratorFactory, NoTargetIdpDriver } from '../no-infra-target.js'
+import { NoInfraTarget, NoInfraTargetBackendError, NoInfraTargetError, NoTargetEnvironmentRuntime, NoTargetHiveOrchestratorFactory, NoTargetIdpDriver, NoTargetImageDigest } from '../no-infra-target.js'
+import { ControlPlaneServer } from '../server.js'
 import { PlatformDirectory } from '../platform-directory.js'
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 import { TenantProvisioningService } from '../tenant-provisioning-service.js'
@@ -79,6 +80,13 @@ describe('No infrastructure target (D28 interim)', () =>
         await runtime.Stop(NoTargetFixture.Context())
         await assert.rejects(runtime.Start(NoTargetFixture.Context()), (e: Error) => e instanceof NoInfraTargetError && e.message === NoTargetFixture.Message)
         assert.throws(() => runtime.BuildCommand(), NoInfraTargetError)
+    })
+
+    it('the image digest refuses, so no signer or verifier ever spawns docker', async () =>
+    {
+        await assert.rejects(new NoTargetImageDigest().Of('img:1'), NoInfraTargetError)
+        const signer = ControlPlaneServer.ImageSignerOf(root, undefined, new NoTargetImageDigest())
+        await assert.rejects(signer.Sign('img:1', 'platform-release'), NoInfraTargetError)
     })
 
     it('creating a tenant fails with the message and leaves no tenant and no IdP record behind', async () =>
