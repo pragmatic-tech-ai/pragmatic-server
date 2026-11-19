@@ -135,6 +135,20 @@ actor changes.
 - **Discovery:** the customer proves ownership of their email domains once. Discovery then points those addresses
   at the hive's console. Verified domains are the only identity-related data we keep for a non-brokered tenant.
 
+## 6b. The console's address (owner, 2026-11-19: the customer's choice)
+
+Chosen at install and changeable later; the guardrails check whichever is chosen (name resolves, certificate valid,
+ingress answers).
+
+| Option | DNS | Certificate | Traffic |
+|---|---|---|---|
+| Their own domain (`pragmatic.acme.com`) | theirs | theirs (their cert-manager or their own certificate) | straight to their ingress |
+| Our subdomain (`acme.hives.pragmatic-tech.ai`) | we publish a record to the ingress address the hive reports | the hive's own cert-manager requests it; the platform answers the DNS challenge for that one name. The private key never leaves their cluster | straight to their ingress |
+| Our subdomain, private cluster (no public ingress) | points at the edge | as above | through the edge relay with TLS passthrough (§7); the edge never sees plaintext |
+
+- Level 1 offers their own domain only.
+- The relay is therefore a shared edge component (bring-your-own private clusters and SaaS hives), not SaaS-only.
+
 ## 6a. Ownership of state, credentials and reports (my calls, from §2)
 
 - **The hive is the source of truth for its environments at every level.** The engine's console creates and changes
@@ -244,8 +258,9 @@ comes before enrolment, because the registration account lives there:
 5. **Tenant sign-in setting:** local accounts, corporate OIDC, and "Sign in with Pragmatic" (with roadmap step 3,
    the central login).
 6. **Website registration** through the edge.
-7. **Host agent, SaaS placement, push management of SaaS hives (reusing today's code) and the edge's
-   TLS-passthrough relay** on our machines.
+7. **Host agent, SaaS placement and push management of SaaS hives** (reusing today's code) on our machines.
+7a. **The edge's TLS-passthrough relay and hive subdomains** (DNS records, DNS-challenge answering): shared by SaaS
+   hives and private bring-your-own clusters.
 8. **Retire the admin's container paths** (§8).
 
 **MVP derivation:** a separate, explicit step after this design is approved. It decides which sub-projects the
