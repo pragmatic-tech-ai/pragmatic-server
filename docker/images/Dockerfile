@@ -19,12 +19,13 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
 COPY todl-runtime/ ./todl-runtime/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-runtime && npm install --no-audit --no-fund && npm run build
-COPY TODL/ ./TODL/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
-    cd TODL && npm install --no-audit --no-fund && npm run build
+# Mural before TODL: TODL's build compiles its .mu modules with the Mural compiler (Mural is TODL's peer).
 COPY Mural/ ./Mural/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd Mural && npm install --no-audit --no-fund && npm run build
+COPY TODL/ ./TODL/
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
+    cd TODL && npm install --no-audit --no-fund && npm run build
 COPY pragmatic-protocol/ ./pragmatic-protocol/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd pragmatic-protocol && npm install --no-audit --no-fund && npm run build

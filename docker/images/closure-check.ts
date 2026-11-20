@@ -393,7 +393,7 @@ export class ClosureCheck
      * so a package added there is a sibling the check knows without a second list to keep in step.
      */
     public static readonly Siblings: readonly string[] = [
-        'pragmatic-graph', 'todl-runtime', 'TODL', 'Mural', 'pragmatic-protocol', 'todl-identity-engine', 'todl-connectors-host',
+        'pragmatic-graph', 'todl-runtime', 'Mural', 'TODL', 'pragmatic-protocol', 'todl-identity-engine', 'todl-connectors-host',
     ]
     /** The pragmatic-shared workspace repo; each of its `workspaces` (`packages/<x>`) is a sibling `pragmatic-shared/packages/<x>`. */
     public static readonly SharedRepo = 'pragmatic-shared'
