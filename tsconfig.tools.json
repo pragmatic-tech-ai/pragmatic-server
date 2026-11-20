@@ -1,6 +1,6 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": { "noEmit": true, "declaration": false, "rootDir": "." },
-  "include": ["src/**/*.ts", "environments/**/*.ts", "admin/control-plane/**/*.ts", "docker/images/**/*.ts"],
+  "include": ["src/**/*.ts", "environments/**/*.ts", "admin/control-plane/**/*.ts", "docker/images/**/*.ts", "tools/split/**/*.ts"],
   "exclude": ["src/**/*.test.ts", "src/**/tests/**"]
 }
