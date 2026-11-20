@@ -21,6 +21,7 @@
  * the Playwright Chromium browser.
  */
 import { spawn, type ChildProcess } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -304,6 +305,27 @@ export class LiveLoopStack
     private static readonly AppendFlag = 'a'
     private static readonly FalseValue = 'false'
     private static readonly HttpScheme = 'http'
+    /** The console's own Postgres for the stack (A5): a throwaway container on host loopback, removed with its volume by down. */
+    private static readonly ConsolePostgresImage = 'postgres:17.12-trixie'
+    private static readonly ConsolePostgresContainer = 'pragmatic-e2e-postgres'
+    private static readonly ConsolePostgresPublish = '127.0.0.1:55434:5432'
+    private static readonly ConsolePostgresUrlPrefix = 'postgres://platform_admin:'
+    private static readonly ConsolePostgresUrlSuffix = '@127.0.0.1:55434/platform_admin\n'
+    private static readonly ConsolePostgresEnv = ['-e', 'POSTGRES_USER=platform_admin', '-e', 'POSTGRES_DB=platform_admin', '-e', 'POSTGRES_PASSWORD_FILE=/run/secrets/password']
+    private static readonly ConsolePostgresPasswordMount = ':/run/secrets/password:ro'
+    private static readonly ExecVerb = 'exec'
+    private static readonly PgIsReady = ['pg_isready', '--host=127.0.0.1', '--quiet']
+    private static readonly ConsolePostgresPasswordFileName = 'postgres-password'
+    private static readonly ConsolePostgresUrlFileName = 'postgres-url'
+    private static readonly ConsolePostgresNotReadyMessage = 'the console Postgres did not become ready in time'
+    private static readonly PasswordBytes = 24
+    private static readonly HexEncoding = 'hex'
+    private static readonly RunVerb = 'run'
+    private static readonly DetachFlag = '-d'
+    private static readonly NameFlag = '--name'
+    private static readonly PublishFlag = '-p'
+    private static readonly VolumeFlag = '-v'
+    private static readonly RemoveVolumesFlag = '-v'
     private static readonly IdpContainerPrefix = 'pragmatic-idp-'
     private static readonly IdpVolumePrefix = 'pragmatic-idp-data-'
     private static readonly DataDirName = 'data'
@@ -338,7 +360,8 @@ export class LiveLoopStack
         Cluster: '[stack] kind cluster pragmatic-e2e (443 + registry node port) and images',
         Ingress: '[stack] ingress-nginx with SSL passthrough',
         Portals: '[stack] admin portals rebuilt (platform admin, tenant admin)',
-        ControlPlane: '[stack] control plane on :7000 / :7100, agent channel :7001 (state in the stack folder)',
+        Postgres: '[stack] the console Postgres on 127.0.0.1:55434 (container pragmatic-e2e-postgres)',
+        ControlPlane: '[stack] control plane on :7000 / :7100, agent channel :7001 (records in its Postgres, files in the stack folder)',
         Seed: '[stack] operator seed: client, tenant e2e (IdP), hive e2e-hive',
         Agent: '[stack] hive agent install; the hive checks in over the agent channel on :7001',
         Owner: '[stack] owner sign-in and short test password',
@@ -441,7 +464,9 @@ export class LiveLoopStack
         const operatorPasswordFile = join(N.StackDir, L.OperatorPasswordFileName)
         writeFileSync(operatorPasswordFile, N.OperatorPassword, { encoding: L.Utf8, mode: L.OwnerOnlyMode })
         await this.RequireFreePorts()
-        await this.WaitForPing(this.StartControlPlane(dataRoot))
+        console.log(L.Steps.Postgres)
+        const databaseUrlFile = await this.StartConsolePostgres()
+        await this.WaitForPing(this.StartControlPlane(dataRoot, databaseUrlFile))
 
         console.log(L.Steps.Seed)
         const api = new OperatorApiClient(N.OperatorBase)
@@ -496,14 +521,54 @@ export class LiveLoopStack
         {
             await this.BestEffort(() => new ProcessTree(this.exec).Kill(Number(readFileSync(pidFile, L.Utf8).trim())))
         }
+        await this.BestEffort(() => this.exec.Run(L.Docker, [L.RmVerb, L.ForceFlag, L.RemoveVolumesFlag, L.ConsolePostgresContainer]))
         await this.BestEffort(() => this.exec.Run(L.Docker, [L.RmVerb, L.ForceFlag, L.IdpContainerPrefix + N.TenantId]))
         await this.BestEffort(() => this.exec.Run(L.Docker, [L.VolumeVerb, L.RmVerb, L.ForceFlag, L.IdpVolumePrefix + N.TenantId]))
         await this.BestEffort(() => this.kind.DeleteCluster(N.ClusterName))
         await this.BestEffort(async () => rmSync(N.StackDir, { recursive: true, force: true }))
     }
 
+    /**
+     * Starts the console's Postgres (a fresh container, its password and URL files in the stack folder, owner-only) and
+     * answers the URL file once the server accepts connections.
+     */
+    private async StartConsolePostgres(): Promise<string>
+    {
+        const L = LiveLoopStack
+        const N = LiveLoopStackNames
+        const password = randomBytes(L.PasswordBytes).toString(L.HexEncoding)
+        this.secrets.push(password)
+        const passwordFile = join(N.StackDir, L.ConsolePostgresPasswordFileName)
+        writeFileSync(passwordFile, password, { encoding: L.Utf8, mode: L.OwnerOnlyMode })
+        await this.EnsureLocalImage(L.ConsolePostgresImage)
+        await this.BestEffort(() => this.exec.Run(L.Docker, [L.RmVerb, L.ForceFlag, L.RemoveVolumesFlag, L.ConsolePostgresContainer]))
+        await this.exec.Run(L.Docker, [L.RunVerb, L.DetachFlag, L.NameFlag, L.ConsolePostgresContainer, L.PublishFlag, L.ConsolePostgresPublish,
+            ...L.ConsolePostgresEnv, L.VolumeFlag, passwordFile + L.ConsolePostgresPasswordMount, L.ConsolePostgresImage])
+        const deadline = Date.now() + L.PingDeadlineMs
+        let ready = false
+        while (!ready && Date.now() < deadline)
+        {
+            try
+            {
+                await this.exec.Run(L.Docker, [L.ExecVerb, L.ConsolePostgresContainer, ...L.PgIsReady])
+                ready = true
+            }
+            catch
+            {
+                await new Promise(res => setTimeout(res, L.PollMs))
+            }
+        }
+        if (!ready)
+        {
+            throw new Error(L.ConsolePostgresNotReadyMessage)
+        }
+        const urlFile = join(N.StackDir, L.ConsolePostgresUrlFileName)
+        writeFileSync(urlFile, L.ConsolePostgresUrlPrefix + password + L.ConsolePostgresUrlSuffix, { encoding: L.Utf8, mode: L.OwnerOnlyMode })
+        return urlFile
+    }
+
     /** Starts `server.ts` detached with the stack's settings; its output goes to the log file in the stack folder. */
-    private StartControlPlane(dataRoot: string): ChildProcess
+    private StartControlPlane(dataRoot: string, databaseUrlFile: string): ChildProcess
     {
         const L = LiveLoopStack
         const N = LiveLoopStackNames
@@ -514,6 +579,7 @@ export class LiveLoopStack
             ...process.env,
             ...L.ReleaseEnv(process.env),
             PRAGMATIC_ADMIN_DATA_ROOT: dataRoot,
+            PRAGMATIC_ADMIN_DATABASE_URL_FILE: databaseUrlFile,
             PRAGMATIC_ADMIN_PORT: String(N.OperatorPort),
             PRAGMATIC_ADMIN_OPERATOR_EMAIL: N.OperatorEmail,
             PRAGMATIC_ADMIN_OPERATOR_PASSWORD: N.OperatorPassword,

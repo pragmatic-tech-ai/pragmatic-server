@@ -22,8 +22,13 @@ admin panel over TLS on a real subdomain, and a seeded tenant with a local hive.
   node cannot reach. Recreate such a hive with `registry.mode` `attach` (re-running `dev-seed.sh` does not
   replace an existing hive).
 
-Durable state lives in `admin/control-plane/data/` (gitignored): tenants, clients, hives, the IdP registry,
-sessions, and the master key. Stop and restart anytime — state (and the IdP container + volume) persists.
+Durable state: every record of the console (tenants, clients, hives, the IdP registry, operators, sessions, the
+activity log) lives in its own Postgres, the container `pragmatic-dev-postgres` (`127.0.0.1:55433`, database
+`platform_admin`, volume `pragmatic-dev-postgres-data`) that `dev-up.sh` starts. `admin/control-plane/data/` (gitignored)
+keeps what stays on files: the master key, public keys, the development CA, environment bundles, and the database
+password and URL file (`data/postgres/`). A `data/` folder from before the database is imported once by `dev-up.sh`
+(`bin/pragmatic-admin-import.ts`; its JSON files are left as they are). Stop and restart anytime — state (and the IdP
+container + volume) persists. To start over, remove the container and `docker volume rm pragmatic-dev-postgres-data`.
 
 ## First-time setup (once)
 

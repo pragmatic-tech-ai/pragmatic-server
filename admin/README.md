@@ -55,7 +55,7 @@ Sign-in. The `/desktop/*` routes on the tenant listener are Host-independent (Pl
 
 Relay. Plexus opens a WebSocket to `/desktop/relay?environment=NAME&action=contribute|publish` on the tenant listener with its desktop bearer (an unchanged `PragmaticClient.ConnectAsync(url, { bearerToken })`). The tenant plane checks the environment with the same rule as the targets list, mints a credential for the action (contribute: the environment's maker token, scope graph-contribute, Development only; publish: a deploy-only token, scope application-deploy, Runtime only), reaches the environment server (a Docker environment's published localhost port, or a kubectl port-forward tunnel into the cluster held for the whole relay), connects with that credential and pipes JSON-RPC text frames. Refusals are plain HTTP answers before the upgrade: 400 a malformed WebSocket handshake, 403 any request carrying an Origin header (desktop only, like the rest of `/desktop/*`), 401 no valid desktop bearer, 400 a missing environment or an action other than contribute/publish, 403 not allowed (no environments capability, another tenant's or an unknown environment, or the wrong type for the action), 409 the environment is not running, 502 the environment could not be reached, its credential could not be minted, or its server refused the connection. Only the action's methods are forwarded (contribute: `graph/list`, `graph/contribute`; publish: `application/deploy`; PragmaticClient sends no handshake of its own); any other request is answered with JSON-RPC error -32601 "This method is not available through the desktop relay." and never forwarded; a request reusing the id of a forwarded request still awaiting its answer is answered -32600, and one beyond 32 requests awaiting answers -32603, neither forwarded; client notifications are dropped (neither flow sends one), and a non-JSON, binary or batch frame closes the relay with 1008. Closing either side closes the other; a desktop sign-out closes the relays opened under that session (one still connecting when it signs out is refused 401), and a password change or Owner reset closes all the user's relays.
 
-Audit. The tenant plane keeps its own activity log of desktop relays in `tenant-desktop-audit.json` under the data root (separate from the operator `audit.json`, capped at 1000 entries the same way). Each forwarded `graph/contribute` or `application/deploy` writes one record when its response returns: actor `TENANT/EMAIL` (the principal id when the session has no email), method `contribute` or `publish`, path the environment name, status 200 (500 for a JSON-RPC error or a deploy that was not applied, 502 when the relay closed before the answer), and the graph or application name as the note. Every refusal writes a record with its HTTP status (unauthenticated ones as `(anonymous)`, under a per-address throttle). The environment credentials sit on the environments' shared maker and deployer principals, so this log is where "who contributed or published" is answered. Neither the desktop token nor an environment credential is ever logged, audited or sent to Plexus.
+Audit. The tenant plane keeps its own activity log of desktop relays (the `records_desktop_audit` table of the console database, separate from the operator activity log, capped at 1000 entries). Each forwarded `graph/contribute` or `application/deploy` writes one record when its response returns: actor `TENANT/EMAIL` (the principal id when the session has no email), method `contribute` or `publish`, path the environment name, status 200 (500 for a JSON-RPC error or a deploy that was not applied, 502 when the relay closed before the answer), and the graph or application name as the note. Every refusal writes a record with its HTTP status (unauthenticated ones as `(anonymous)`, under a per-address throttle). The environment credentials sit on the environments' shared maker and deployer principals, so this log is where "who contributed or published" is answered. Neither the desktop token nor an environment credential is ever logged, audited or sent to Plexus.
 
 ## Start the control plane
 
@@ -64,6 +64,27 @@ npx tsx admin/control-plane/server.ts
 ```
 
 The port comes from PRAGMATIC_ADMIN_PORT (default 7000). The server binds 127.0.0.1 only. Open the portal at http://localhost:7000/ (or your chosen admin port).
+
+## Storage
+
+Every record of the platform admin console (clients, tenants, hives, environments, IdPs, releases and rollout state,
+the activity log, operator accounts and sessions, sealed secrets, signatures) lives in its own Postgres database.
+PRAGMATIC_ADMIN_DATABASE_URL_FILE names a file holding its URL (`postgres://user:password@host:port/database`, TLS
+through `sslmode`/`sslrootcert` in the URL); the console refuses to start without it, and each store creates and
+migrates its table at start. The URL is never logged. What stays on files under the data root (PRAGMATIC_ADMIN_DATA_ROOT):
+public keys (`keys/*.pub`), the development CA's certificates, environment bundles and, when the co-hosted tenant plane is
+on, its own sessions and OIDC client secrets. The master key and signing keys are secret files. `admin/control-plane/dev/dev-up.sh`
+starts a local Postgres for development.
+
+A data root from before the database is moved into it once, without changing the files (they stay as the backup):
+
+```
+PRAGMATIC_ADMIN_DATABASE_URL_FILE=/run/secrets/database_url node dist-tenant-admin/admin/control-plane/bin/pragmatic-admin-import.js --data-root /data
+```
+
+It reads the master key from PRAGMATIC_ADMIN_MASTER_KEY_FILE (default `<data root>/master.key`), prints what it wrote as
+JSON, and refuses (exit 3) a database that already holds records unless `--force` is given; a forced re-run writes the
+same state. Sessions are not moved: operators sign in again.
 
 ## Operator authentication
 
@@ -75,7 +96,14 @@ PRAGMATIC_ADMIN_OPERATOR_PASSWORD seeds the operator on the first run only. It i
 
 PRAGMATIC_ADMIN_MASTER_KEY_FILE is the master key path (default <data>/master.key, generated automatically if absent).
 
-PRAGMATIC_ADMIN_SECURE_COOKIE marks the session cookie Secure (default false; set true for a future TLS deployment).
+PRAGMATIC_ADMIN_SECURE_COOKIE marks the session cookie Secure (default false; set true behind TLS).
+
+An operator session is server-side (the `cp_session` cookie carries an opaque token; the database keeps only its digest)
+and lasts one hour. The operator's role (operator.full or operator.read-only, the console's application roles) is a claim
+of the session, re-read from the operator's account on every request, so a demotion or a disabled account takes effect at
+once. Each route of the console names the role it admits: every read admits both (the operator roster only operator.full),
+every change operator.full, except signing out and changing one's own password. The password sign-in is the console's
+break-glass method; signing in through the realm (OIDC) comes later and uses the same sessions and roles.
 
 First run: set the password variable once, start the server, then log in at http://localhost:7000/ (or your chosen admin port) with the operator email and that password. Later runs do not need the password variable.
 
@@ -85,9 +113,11 @@ PRAGMATIC_ADMIN_OPERATOR_PASSWORD=choose-a-password npx tsx admin/control-plane/
 
 Any signed-in operator, Observers included, changes their own password from the Platform Admin header (Change password: current, new and confirm; the new one at least 12 characters). The API form is `POST /api/session/password` (`{ currentPassword, newPassword, confirmPassword? }`, `Cache-Control: no-store`): the identity is the session's, attempts share login's throttle bucket per email and client address (a failed change counts toward the login lockout from that address and vice versa; a successful change clears the count, as a successful login does), a second change while one runs is 409, a wrong current password is 403 (not 401, which would mean the session is gone) and a short, mismatched or unchanged new password 400. On success every session of the operator ends and the caller gets a fresh session cookie, so the page making the change stays signed in (its live connection carries over, and the periodic connection sweep never closes it mid-change) while every other session and its live connection is cut. If, after the password changed, the old sessions could not be ended or no fresh session could be issued, the reply is still 200 with `otherSessionsEnded` and a `warning` the header shows ("sign in again" when there is no fresh session). While the change is submitting, the portal does not treat a 401 from another request as the session ending; it checks the session once afterwards. A Full operator's reset of an operator's password (Settings, the operator's page) likewise ends all of that operator's sessions and closes their live connections; resetting your own account that way signs you out too, after the new password is shown. Neither password is logged or written to the activity log, which records only the path and outcome.
 
-The operator account and master key persist in the gitignored admin/control-plane/data/identity/ directory plus master.key. If you lose the data directory or the master key you must re-bootstrap: set the password variable again on the next start.
+The operator accounts persist in the console's database, their password secrets sealed under the master key
+(admin/control-plane/data/master.key in development). If you lose the database or the master key you must re-bootstrap:
+set the password variable again on the next start.
 
-The gated smoke below logs in automatically with a built-in test operator composed over its temporary data directory.
+The gated smoke below logs in automatically with a built-in test operator composed over an in-process database.
 
 ## Hive install (agent channel)
 
