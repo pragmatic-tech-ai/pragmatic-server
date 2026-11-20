@@ -2,8 +2,9 @@
  * GATED real-cluster, real-browser smoke for in-cluster split-host IdP federation (SP-HIVE-6c). OPERATOR-RUN ONLY: NOT a
  * *.test.ts, NOT part of `tsx --test` / `npm test`, never executed by CI. Supersedes the retired Docker-era idp-federation-smoke.
  *
- * Requires on PATH: `kind`, `kubectl`, a running Docker daemon, a FRESH `pragmatic-server:dev` image in the local docker image
- * store (loaded onto the kind node), the Playwright Chromium browser, host port 443 free, and public DNS for `*.localtest.me`
+ * Requires on PATH: `kind`, `kubectl`, a running Docker daemon, FRESH `pragmatic-server:dev` and `pragmatic-postgres:local`
+ * images in the local docker image store (both loaded onto the kind node), the Playwright Chromium browser, host port 443
+ * free, and public DNS for `*.localtest.me`
  * (resolves to 127.0.0.1) for the Node-side IdP admin calls. Run with:
  *
  *   npx tsx admin/control-plane/in-cluster-federation-smoke.ts
@@ -203,7 +204,7 @@ export class InClusterFederationSmoke
     private static readonly OverallPass = 'OVERALL PASS'
     private static readonly OverallFail = 'OVERALL FAIL'
     private static readonly Labels = {
-        Cluster: 'kind cluster created with the :443 mapping and the image loaded',
+        Cluster: 'kind cluster created with the :443 mapping and the images loaded',
         Ingress: 'ingress-nginx installed with --enable-ssl-passthrough and ready',
         Idp: 'tenant IdP provisioned in-cluster with a dual-SAN cert and a browser base domain',
         Realm: 'realm + owner account seeded through the IdP Ingress (passthrough)',
@@ -245,6 +246,8 @@ export class InClusterFederationSmoke
             this.tempDir = await mkdtemp(join(tmpdir(), S.TempPrefix))
             await this.kind.CreateCluster(S.ClusterName, { extraPortMappings: [S.HttpsPort] })
             await this.kind.LoadImage(S.Image, S.ClusterName)
+            // The IdP's and the console's database sidecars run the development pragmatic-postgres image.
+            await this.kind.LoadImage(IdpDatabaseSecret.DevImage, S.ClusterName)
             this.Expect(S.Labels.Cluster, true)
 
             await this.InstallIngress()
