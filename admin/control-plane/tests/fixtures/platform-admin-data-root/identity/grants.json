@@ -1,0 +1,32 @@
+{
+  "grants": [
+    {
+      "subject": "admin",
+      "role": 3,
+      "resourceKind": 0,
+      "resourceRealmId": "control-plane",
+      "resourcePath": []
+    },
+    {
+      "subject": "edb61679-9505-46df-af7b-690012a94697",
+      "role": 0,
+      "resourceKind": 0,
+      "resourceRealmId": "control-plane",
+      "resourcePath": []
+    },
+    {
+      "subject": "6d0bfe8a-a479-41af-9d2b-ca7b36902dea",
+      "role": 3,
+      "resourceKind": 0,
+      "resourceRealmId": "control-plane",
+      "resourcePath": []
+    },
+    {
+      "subject": "0b73cca5-01cb-4c51-bd5d-2c882e8effc8",
+      "role": 0,
+      "resourceKind": 0,
+      "resourceRealmId": "control-plane",
+      "resourcePath": []
+    }
+  ]
+}

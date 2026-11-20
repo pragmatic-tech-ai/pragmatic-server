@@ -11,7 +11,7 @@ export type TenantAdminClientRecord = {
 
 export class TenantAdminClientRegistry extends JsonRecordStore<TenantAdminClientRecord>
 {
-    private static readonly RootKey = 'tenant-admin-clients'
+    public static readonly RootKey = 'tenant-admin-clients'
 
     public constructor(location: string | IRecordMap<TenantAdminClientRecord>)
     {

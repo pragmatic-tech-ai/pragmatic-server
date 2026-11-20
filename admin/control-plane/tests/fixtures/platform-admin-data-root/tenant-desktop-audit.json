@@ -1,0 +1,12 @@
+{
+  "audit": {
+    "d1": {
+      "id": "d1",
+      "actor": "dev@acme.test",
+      "method": "POST",
+      "path": "/desktop/relay",
+      "status": 200,
+      "at": "2026-11-01T10:00:00.000Z"
+    }
+  }
+}

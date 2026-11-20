@@ -1,0 +1,13 @@
+{
+  "releasePolicies": {
+    "acme-main": {
+      "id": "acme-main",
+      "tenantId": "acme-main",
+      "channels": [
+        "stable",
+        "early"
+      ],
+      "minVersion": "0.1.0"
+    }
+  }
+}

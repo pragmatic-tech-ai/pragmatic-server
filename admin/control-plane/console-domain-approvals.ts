@@ -37,7 +37,7 @@ export type DomainStanding = { approved: readonly string[]; revoked: readonly st
 export class ConsoleDomainApprovals extends JsonRecordStore<ConsoleDomainApprovalRecord>
 {
     public static readonly FileName = 'console-domain-approvals.json'
-    private static readonly RootKey = 'approvals'
+    public static readonly RootKey = 'approvals'
     private static readonly EffectiveStates: ReadonlySet<DomainApprovalState> = new Set([DomainApprovalState.Approved, DomainApprovalState.Verified])
 
     public constructor(location: string | IRecordMap<ConsoleDomainApprovalRecord>)

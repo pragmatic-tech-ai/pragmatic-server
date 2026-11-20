@@ -1,0 +1,17 @@
+{
+  "hiveObservations": {
+    "acme-hive/1": {
+      "id": "acme-hive/1",
+      "hiveId": "acme-hive",
+      "reportedAt": "2026-11-01T10:00:00.000Z",
+      "environments": [
+        {
+          "environmentName": "acme-dev",
+          "ready": true,
+          "runningImage": "img:1",
+          "detail": "ok"
+        }
+      ]
+    }
+  }
+}

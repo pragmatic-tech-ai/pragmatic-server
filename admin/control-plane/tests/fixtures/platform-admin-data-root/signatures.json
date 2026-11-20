@@ -1,0 +1,7 @@
+{
+  "sha256:legacy": "bGVnYWN5LXNpZw==",
+  "sha256:keyed": {
+    "platform-signing": "a2V5ZWQtc2ln",
+    "acme": "YWNtZS1zaWc="
+  }
+}

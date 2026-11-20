@@ -1,0 +1,309 @@
+{
+  "registries": {
+    "clients": {
+      "acme": {
+        "id": "acme",
+        "displayName": "Acme Corp",
+        "subscriptionRef": "sub-1",
+        "createdAt": "2026-11-01T10:00:00.000Z"
+      },
+      "beta": {
+        "id": "beta",
+        "displayName": "Beta",
+        "createdAt": "2026-11-01T10:00:00.000Z"
+      }
+    },
+    "tenants": {
+      "acme-main": {
+        "id": "acme-main",
+        "clientId": "acme",
+        "displayName": "Acme Main",
+        "createdAt": "2026-11-01T10:00:00.000Z",
+        "ownerEmail": "owner@acme.test",
+        "ownerPrincipalId": "owner-1"
+      }
+    },
+    "hives": {
+      "acme-hive": {
+        "id": "acme-hive",
+        "tenantId": "acme-main",
+        "displayName": "Acme Hive",
+        "cluster": {
+          "backend": "local",
+          "mode": "attach",
+          "configRef": "kind-acme"
+        },
+        "registry": {
+          "mode": "attach",
+          "endpoint": "reg.acme.test"
+        },
+        "trustRootRef": "platform-signing",
+        "createdAt": "2026-11-01T10:00:00.000Z"
+      }
+    },
+    "environments": {
+      "acme-dev": {
+        "name": "acme-dev",
+        "template": "dev-blank",
+        "type": "development",
+        "environmentId": "acme-dev",
+        "hostPort": 8101,
+        "createdAt": "2026-11-01T10:00:00.000Z",
+        "status": "running",
+        "hiveId": "acme-hive",
+        "tenantId": "acme-main"
+      },
+      "legacy": {
+        "name": "legacy",
+        "template": "dev-blank",
+        "environmentId": "legacy",
+        "hostPort": 8102,
+        "createdAt": "2026-11-01T10:00:00.000Z",
+        "status": "stopped"
+      }
+    },
+    "idps": {
+      "acme-main": {
+        "tenantId": "acme-main",
+        "baseUrl": "https://host.docker.internal:12100",
+        "containerName": "idp-acme",
+        "createdAt": "2026-11-01T10:00:00.000Z"
+      }
+    },
+    "manifests": {
+      "0.1.0-early.4": {
+        "id": "0.1.0-early.4",
+        "version": "0.1.0-early.4",
+        "image": "ghcr.io/pragmatic-tech-ai/pragmatic-env-server@sha256:00",
+        "channel": "early",
+        "publishedAt": "2026-11-01T10:00:00.000Z"
+      }
+    },
+    "gating": {
+      "acme-main/0.1.0-early.4": {
+        "id": "acme-main/0.1.0-early.4",
+        "tenantId": "acme-main",
+        "version": "0.1.0-early.4",
+        "gatedAt": "2026-11-01T10:00:00.000Z"
+      }
+    },
+    "selections": {
+      "acme-hive": {
+        "id": "acme-hive",
+        "hiveId": "acme-hive",
+        "version": "0.1.0-early.4",
+        "selectedAt": "2026-11-01T10:00:00.000Z"
+      }
+    },
+    "hive_observations": {
+      "acme-hive/1": {
+        "id": "acme-hive/1",
+        "hiveId": "acme-hive",
+        "reportedAt": "2026-11-01T10:00:00.000Z",
+        "environments": [
+          {
+            "environmentName": "acme-dev",
+            "ready": true,
+            "runningImage": "img:1",
+            "detail": "ok"
+          }
+        ]
+      }
+    },
+    "rollout_registrations": {
+      "acme-hive": {
+        "id": "acme-hive",
+        "hiveId": "acme-hive",
+        "tokenHash": "sha256:agent-token-hash",
+        "registeredAt": "2026-11-01T10:00:00.000Z"
+      }
+    },
+    "release_policies": {
+      "acme-main": {
+        "id": "acme-main",
+        "tenantId": "acme-main",
+        "channels": [
+          "stable",
+          "early"
+        ],
+        "minVersion": "0.1.0"
+      }
+    },
+    "adoption_ledger": {
+      "acme-hive/1": {
+        "id": "acme-hive/1",
+        "hiveId": "acme-hive",
+        "version": "0.1.0-early.4",
+        "at": "2026-11-01T10:00:00.000Z"
+      }
+    },
+    "desktop_audit": {
+      "d1": {
+        "id": "d1",
+        "actor": "dev@acme.test",
+        "method": "POST",
+        "path": "/desktop/relay",
+        "status": 200,
+        "at": "2026-11-01T10:00:00.000Z"
+      }
+    },
+    "graph_audit": {},
+    "tenant_admin_clients": {
+      "acme-main": {
+        "id": "acme-main",
+        "tenantId": "acme-main",
+        "clientId": "tenant-admin-acme",
+        "secretRef": "tenant-admin-oidc/acme-main",
+        "registeredAt": "2026-11-01T10:00:00.000Z"
+      }
+    },
+    "tenant_accounts": {
+      "owner@acme.test": {
+        "id": "owner@acme.test",
+        "tenantIds": [
+          "acme-main"
+        ]
+      }
+    },
+    "console_adverts": {
+      "acme-hive": {
+        "id": "acme-hive",
+        "hiveId": "acme-hive",
+        "tenantId": "acme-main",
+        "url": "https://console.acme.test",
+        "reportedAt": "2026-11-01T10:00:00.000Z"
+      }
+    },
+    "console_domain_approvals": {
+      "acme-main": {
+        "id": "acme-main",
+        "approved": [
+          "acme.test"
+        ],
+        "revoked": [],
+        "tokens": {
+          "acme.test": "verify-token-1"
+        }
+      }
+    },
+    "console_owner_resets": {
+      "acme-main": "2026-11-02T08:00:00.000Z"
+    },
+    "sealed_secrets": {
+      "console-fingerprint/acme-hive": "Rf73rEdleMtX2NqzMrOrvZbRivf6rTqZC0L-QiFI9nBvGwjDZatZjGbZjUqK5p6b68r8zmbiO-aji5C4jsdcDEBTa4W5mVzCOz_-Fz9PCyaZxg87EfM",
+      "dev-ca/acme-main/key": "9D663ZVn5LEN1iHtfyRrLD7PINhRZkik275HJo4MX7kZTxT5c59S9rwbaumWKLmHqV2IaSIsEyVIrW7EBHgJWJYX_rXAWfDI33q6SGOO1fJS"
+    },
+    "signatures": {
+      "sha256:keyed": {
+        "platform-signing": "a2V5ZWQtc2ln",
+        "acme": "YWNtZS1zaWc="
+      },
+      "sha256:legacy": {
+        "": "bGVnYWN5LXNpZw=="
+      }
+    }
+  },
+  "audit": [
+    {
+      "id": "a1",
+      "actor": "ops@pragmatic.test",
+      "action": "POST",
+      "target": "/api/clients",
+      "status": 201,
+      "at": "2026-11-01T10:00:01.000Z",
+      "note": null
+    },
+    {
+      "id": "a2",
+      "actor": "(anonymous)",
+      "action": "POST",
+      "target": "/api/clients",
+      "status": 401,
+      "at": "2026-11-01T10:00:02.000Z",
+      "note": null
+    },
+    {
+      "id": "a3",
+      "actor": "ops@pragmatic.test",
+      "action": "DELETE",
+      "target": "/api/hives/old-hive?force=true",
+      "status": 200,
+      "at": "2026-11-01T10:00:03.000Z",
+      "note": "retained: agent-namespace"
+    }
+  ],
+  "identity": {
+    "accounts": [
+      {
+        "email": "full@pragmatic.test",
+        "principalId": "6d0bfe8a-a479-41af-9d2b-ca7b36902dea",
+        "secretRef": "control-plane/pwhash/6d0bfe8a-a479-41af-9d2b-ca7b36902dea",
+        "disabled": false
+      },
+      {
+        "email": "gone@pragmatic.test",
+        "principalId": "0b73cca5-01cb-4c51-bd5d-2c882e8effc8",
+        "secretRef": "control-plane/pwhash/0b73cca5-01cb-4c51-bd5d-2c882e8effc8",
+        "disabled": true
+      },
+      {
+        "email": "ops@pragmatic.test",
+        "principalId": "admin",
+        "secretRef": "control-plane/pwhash/admin",
+        "disabled": false
+      },
+      {
+        "email": "viewer@pragmatic.test",
+        "principalId": "edb61679-9505-46df-af7b-690012a94697",
+        "secretRef": "control-plane/pwhash/edb61679-9505-46df-af7b-690012a94697",
+        "disabled": false
+      }
+    ],
+    "grants": {
+      "0b73cca5-01cb-4c51-bd5d-2c882e8effc8": [
+        {
+          "Subject": "0b73cca5-01cb-4c51-bd5d-2c882e8effc8",
+          "Role": 0,
+          "Resource": {
+            "Kind": 0,
+            "RealmId": "control-plane",
+            "Path": []
+          }
+        }
+      ],
+      "6d0bfe8a-a479-41af-9d2b-ca7b36902dea": [
+        {
+          "Subject": "6d0bfe8a-a479-41af-9d2b-ca7b36902dea",
+          "Role": 3,
+          "Resource": {
+            "Kind": 0,
+            "RealmId": "control-plane",
+            "Path": []
+          }
+        }
+      ],
+      "admin": [
+        {
+          "Subject": "admin",
+          "Role": 3,
+          "Resource": {
+            "Kind": 0,
+            "RealmId": "control-plane",
+            "Path": []
+          }
+        }
+      ],
+      "edb61679-9505-46df-af7b-690012a94697": [
+        {
+          "Subject": "edb61679-9505-46df-af7b-690012a94697",
+          "Role": 0,
+          "Resource": {
+            "Kind": 0,
+            "RealmId": "control-plane",
+            "Path": []
+          }
+        }
+      ]
+    }
+  }
+}

@@ -15,7 +15,7 @@ export type AuditRecord = {
 
 export class AuditRegistry extends JsonRecordStore<AuditRecord>
 {
-    private static readonly RootKey = 'audit'
+    public static readonly RootKey = 'audit'
     private static readonly MaxEntries = 1000
 
     // Audit-domain sentinel for an unauthenticated / pre-principal actor.

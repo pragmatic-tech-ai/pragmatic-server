@@ -19,7 +19,7 @@ export type TenantAccountRecord = {
  */
 export class TenantAccountIndex extends JsonRecordStore<TenantAccountRecord>
 {
-    private static readonly RootKey = 'accounts'
+    public static readonly RootKey = 'accounts'
     private static readonly IdSeparator = '/'
 
     public constructor(location: string | IRecordMap<TenantAccountRecord>)

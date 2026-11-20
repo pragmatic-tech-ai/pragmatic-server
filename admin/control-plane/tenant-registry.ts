@@ -4,7 +4,7 @@ import type { TenantRecord } from './platform-records.js'
 
 export class TenantRegistry extends JsonRecordStore<TenantRecord>
 {
-    private static readonly RootKey = 'tenants'
+    public static readonly RootKey = 'tenants'
 
     public constructor(location: string | IRecordMap<TenantRecord>)
     {

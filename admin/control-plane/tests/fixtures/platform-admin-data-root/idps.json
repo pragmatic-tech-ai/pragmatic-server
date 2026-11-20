@@ -1,0 +1,10 @@
+{
+  "idps": {
+    "acme-main": {
+      "tenantId": "acme-main",
+      "baseUrl": "https://host.docker.internal:12100",
+      "containerName": "idp-acme",
+      "createdAt": "2026-11-01T10:00:00.000Z"
+    }
+  }
+}

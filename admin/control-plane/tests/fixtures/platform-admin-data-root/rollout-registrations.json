@@ -1,0 +1,10 @@
+{
+  "rolloutRegistrations": {
+    "acme-hive": {
+      "id": "acme-hive",
+      "hiveId": "acme-hive",
+      "tokenHash": "sha256:agent-token-hash",
+      "registeredAt": "2026-11-01T10:00:00.000Z"
+    }
+  }
+}

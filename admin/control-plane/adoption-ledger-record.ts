@@ -16,7 +16,7 @@ export type AdoptionLedgerRecord = {
 /** Append-only version-change timeline emitted by the deployment registry; bounded to the newest MaxEntries. */
 export class AdoptionLedgerRegistry extends JsonRecordStore<AdoptionLedgerRecord>
 {
-    private static readonly RootKey = 'adoptionLedger'
+    public static readonly RootKey = 'adoptionLedger'
     private static readonly MaxEntries = 2000
     private static readonly WithdrawnAction: LedgerAction = 'withdrawn'
     private static readonly RestoredAction: LedgerAction = 'restored'

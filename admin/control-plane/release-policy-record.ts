@@ -13,7 +13,7 @@ export type ReleasePolicyRecord = {
 
 export class ReleasePolicyRegistry extends JsonRecordStore<ReleasePolicyRecord>
 {
-    private static readonly RootKey = 'releasePolicies'
+    public static readonly RootKey = 'releasePolicies'
 
     public constructor(location: string | IRecordMap<ReleasePolicyRecord>)
     {

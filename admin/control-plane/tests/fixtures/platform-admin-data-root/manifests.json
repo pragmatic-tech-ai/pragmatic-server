@@ -1,0 +1,11 @@
+{
+  "manifests": {
+    "0.1.0-early.4": {
+      "id": "0.1.0-early.4",
+      "version": "0.1.0-early.4",
+      "image": "ghcr.io/pragmatic-tech-ai/pragmatic-env-server@sha256:00",
+      "channel": "early",
+      "publishedAt": "2026-11-01T10:00:00.000Z"
+    }
+  }
+}

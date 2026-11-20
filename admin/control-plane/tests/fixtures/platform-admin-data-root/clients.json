@@ -1,0 +1,15 @@
+{
+  "clients": {
+    "acme": {
+      "id": "acme",
+      "displayName": "Acme Corp",
+      "subscriptionRef": "sub-1",
+      "createdAt": "2026-11-01T10:00:00.000Z"
+    },
+    "beta": {
+      "id": "beta",
+      "displayName": "Beta",
+      "createdAt": "2026-11-01T10:00:00.000Z"
+    }
+  }
+}

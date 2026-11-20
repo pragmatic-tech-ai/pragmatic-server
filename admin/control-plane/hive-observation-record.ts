@@ -12,7 +12,7 @@ export type HiveObservationRecord = {
 
 export class HiveObservationRegistry extends JsonRecordStore<HiveObservationRecord>
 {
-    private static readonly RootKey = 'hiveObservations'
+    public static readonly RootKey = 'hiveObservations'
     private static readonly MaxPerHive = 50
 
     public constructor(location: string | IRecordMap<HiveObservationRecord>)

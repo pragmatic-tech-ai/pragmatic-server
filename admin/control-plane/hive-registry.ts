@@ -4,7 +4,7 @@ import type { HiveRecord } from './platform-records.js'
 
 export class HiveRegistry extends JsonRecordStore<HiveRecord>
 {
-    private static readonly RootKey = 'hives'
+    public static readonly RootKey = 'hives'
 
     public constructor(location: string | IRecordMap<HiveRecord>)
     {

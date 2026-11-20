@@ -10,7 +10,7 @@ export type RolloutRegistrationRecord = {
 
 export class RolloutRegistrationRegistry extends JsonRecordStore<RolloutRegistrationRecord>
 {
-    private static readonly RootKey = 'rolloutRegistrations'
+    public static readonly RootKey = 'rolloutRegistrations'
 
     public constructor(location: string | IRecordMap<RolloutRegistrationRecord>)
     {

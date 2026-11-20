@@ -1,0 +1,11 @@
+{
+  "tenant-admin-clients": {
+    "acme-main": {
+      "id": "acme-main",
+      "tenantId": "acme-main",
+      "clientId": "tenant-admin-acme",
+      "secretRef": "tenant-admin-oidc/acme-main",
+      "registeredAt": "2026-11-01T10:00:00.000Z"
+    }
+  }
+}

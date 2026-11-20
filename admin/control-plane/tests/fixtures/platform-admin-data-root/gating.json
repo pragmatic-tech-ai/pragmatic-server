@@ -1,0 +1,10 @@
+{
+  "gating": {
+    "acme-main/0.1.0-early.4": {
+      "id": "acme-main/0.1.0-early.4",
+      "tenantId": "acme-main",
+      "version": "0.1.0-early.4",
+      "gatedAt": "2026-11-01T10:00:00.000Z"
+    }
+  }
+}

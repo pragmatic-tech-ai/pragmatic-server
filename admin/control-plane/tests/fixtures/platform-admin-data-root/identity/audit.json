@@ -1,0 +1,76 @@
+{
+  "events": [
+    {
+      "kind": 2,
+      "realmId": "control-plane",
+      "principalId": "admin",
+      "at": "2026-11-20T12:16:22.067Z",
+      "detail": [
+        [
+          "action",
+          "register"
+        ],
+        [
+          "email",
+          "ops@pragmatic.test"
+        ]
+      ],
+      "hash": "da5f04c13448fa27d568cd4e0d973d418b5544ae25391f6bf145380278d8e1ee",
+      "prevHash": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "kind": 2,
+      "realmId": "control-plane",
+      "principalId": "edb61679-9505-46df-af7b-690012a94697",
+      "at": "2026-11-20T12:16:22.115Z",
+      "detail": [
+        [
+          "action",
+          "register"
+        ],
+        [
+          "email",
+          "viewer@pragmatic.test"
+        ]
+      ],
+      "hash": "c93123fc68003c1d3364bc7ed364aae1c8ba39bf1a016bc7cbc1408be441f01a",
+      "prevHash": "da5f04c13448fa27d568cd4e0d973d418b5544ae25391f6bf145380278d8e1ee"
+    },
+    {
+      "kind": 2,
+      "realmId": "control-plane",
+      "principalId": "6d0bfe8a-a479-41af-9d2b-ca7b36902dea",
+      "at": "2026-11-20T12:16:22.164Z",
+      "detail": [
+        [
+          "action",
+          "register"
+        ],
+        [
+          "email",
+          "full@pragmatic.test"
+        ]
+      ],
+      "hash": "6ed6e3e401f0f701ca2e047c9335431a4bbfdb4a4281b00ec0d0adad2bcf771d",
+      "prevHash": "c93123fc68003c1d3364bc7ed364aae1c8ba39bf1a016bc7cbc1408be441f01a"
+    },
+    {
+      "kind": 2,
+      "realmId": "control-plane",
+      "principalId": "0b73cca5-01cb-4c51-bd5d-2c882e8effc8",
+      "at": "2026-11-20T12:16:22.212Z",
+      "detail": [
+        [
+          "action",
+          "register"
+        ],
+        [
+          "email",
+          "gone@pragmatic.test"
+        ]
+      ],
+      "hash": "c0af3af3602842eb2cc7a47d99067d1aa92495aca0a02ae9cb4feb5fea7d2dca",
+      "prevHash": "6ed6e3e401f0f701ca2e047c9335431a4bbfdb4a4281b00ec0d0adad2bcf771d"
+    }
+  ]
+}

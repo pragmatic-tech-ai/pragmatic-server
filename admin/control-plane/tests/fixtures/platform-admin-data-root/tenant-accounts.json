@@ -1,0 +1,10 @@
+{
+  "accounts": {
+    "owner@acme.test": {
+      "id": "owner@acme.test",
+      "tenantIds": [
+        "acme-main"
+      ]
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "sessions": {
+    "4-cjQTH7yUGCm8fmi4GOIBf3-khp269LhYBQxrDkN1E": {
+      "principalId": "admin",
+      "realmId": "control-plane",
+      "issuedAt": "2026-11-20T12:16:22.260Z",
+      "expiresAt": "2026-11-20T13:16:22.260Z"
+    }
+  }
+}

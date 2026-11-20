@@ -1,0 +1,11 @@
+{
+  "adverts": {
+    "acme-hive": {
+      "id": "acme-hive",
+      "hiveId": "acme-hive",
+      "tenantId": "acme-main",
+      "url": "https://console.acme.test",
+      "reportedAt": "2026-11-01T10:00:00.000Z"
+    }
+  }
+}

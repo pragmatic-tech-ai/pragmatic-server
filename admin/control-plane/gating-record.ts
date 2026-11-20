@@ -10,7 +10,7 @@ export type GatingRecord = {
 
 export class GatingRegistry extends JsonRecordStore<GatingRecord>
 {
-    private static readonly RootKey = 'gating'
+    public static readonly RootKey = 'gating'
 
     public constructor(location: string | IRecordMap<GatingRecord>)
     {

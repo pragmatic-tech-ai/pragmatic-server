@@ -1,0 +1,12 @@
+{
+  "tenants": {
+    "acme-main": {
+      "id": "acme-main",
+      "clientId": "acme",
+      "displayName": "Acme Main",
+      "createdAt": "2026-11-01T10:00:00.000Z",
+      "ownerEmail": "owner@acme.test",
+      "ownerPrincipalId": "owner-1"
+    }
+  }
+}

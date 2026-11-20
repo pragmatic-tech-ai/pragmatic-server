@@ -10,7 +10,7 @@ export type SelectionRecord = {
 
 export class SelectionRegistry extends JsonRecordStore<SelectionRecord>
 {
-    private static readonly RootKey = 'selections'
+    public static readonly RootKey = 'selections'
 
     public constructor(location: string | IRecordMap<SelectionRecord>)
     {

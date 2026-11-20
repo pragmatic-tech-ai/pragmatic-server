@@ -1,0 +1,33 @@
+{
+  "accounts": [
+    {
+      "principalId": "admin",
+      "realmId": "control-plane",
+      "email": "ops@pragmatic.test",
+      "secretRef": "control-plane/pwhash/admin",
+      "disabled": false
+    },
+    {
+      "principalId": "edb61679-9505-46df-af7b-690012a94697",
+      "realmId": "control-plane",
+      "email": "viewer@pragmatic.test",
+      "secretRef": "control-plane/pwhash/edb61679-9505-46df-af7b-690012a94697",
+      "disabled": false
+    },
+    {
+      "principalId": "6d0bfe8a-a479-41af-9d2b-ca7b36902dea",
+      "realmId": "control-plane",
+      "email": "full@pragmatic.test",
+      "secretRef": "control-plane/pwhash/6d0bfe8a-a479-41af-9d2b-ca7b36902dea",
+      "disabled": false
+    },
+    {
+      "principalId": "0b73cca5-01cb-4c51-bd5d-2c882e8effc8",
+      "realmId": "control-plane",
+      "email": "gone@pragmatic.test",
+      "secretRef": "control-plane/pwhash/0b73cca5-01cb-4c51-bd5d-2c882e8effc8",
+      "disabled": true
+    }
+  ],
+  "groups": []
+}

@@ -1,0 +1,10 @@
+{
+  "adoptionLedger": {
+    "acme-hive/1": {
+      "id": "acme-hive/1",
+      "hiveId": "acme-hive",
+      "version": "0.1.0-early.4",
+      "at": "2026-11-01T10:00:00.000Z"
+    }
+  }
+}

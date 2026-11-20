@@ -1,0 +1,10 @@
+{
+  "selections": {
+    "acme-hive": {
+      "id": "acme-hive",
+      "hiveId": "acme-hive",
+      "version": "0.1.0-early.4",
+      "selectedAt": "2026-11-01T10:00:00.000Z"
+    }
+  }
+}

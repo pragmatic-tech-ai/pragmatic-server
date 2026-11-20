@@ -26,7 +26,7 @@ export class ConsoleAdvertRegistry extends JsonRecordStore<ConsoleAdvertRecord> 
 {
     public static readonly FileName = 'console-adverts.json'
     public static readonly StaleAfterMs = 24 * 60 * 60 * 1000
-    private static readonly RootKey = 'adverts'
+    public static readonly RootKey = 'adverts'
 
     private readonly fingerprintSets = new Map<string, ReadonlySet<string>>()
 

@@ -1,0 +1,14 @@
+{
+  "approvals": {
+    "acme-main": {
+      "id": "acme-main",
+      "approved": [
+        "acme.test"
+      ],
+      "revoked": [],
+      "tokens": {
+        "acme.test": "verify-token-1"
+      }
+    }
+  }
+}

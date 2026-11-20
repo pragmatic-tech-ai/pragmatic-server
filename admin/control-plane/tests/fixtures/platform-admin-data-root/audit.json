@@ -1,0 +1,29 @@
+{
+  "audit": {
+    "a1": {
+      "id": "a1",
+      "actor": "ops@pragmatic.test",
+      "method": "POST",
+      "path": "/api/clients",
+      "status": 201,
+      "at": "2026-11-01T10:00:01.000Z"
+    },
+    "a2": {
+      "id": "a2",
+      "actor": "(anonymous)",
+      "method": "POST",
+      "path": "/api/clients",
+      "status": 401,
+      "at": "2026-11-01T10:00:02.000Z"
+    },
+    "a3": {
+      "id": "a3",
+      "actor": "ops@pragmatic.test",
+      "method": "DELETE",
+      "path": "/api/hives/old-hive?force=true",
+      "status": 200,
+      "at": "2026-11-01T10:00:03.000Z",
+      "note": "retained: agent-namespace"
+    }
+  }
+}

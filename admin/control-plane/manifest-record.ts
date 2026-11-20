@@ -44,7 +44,7 @@ export type ManifestRecord = {
 
 export class ManifestRegistry extends JsonRecordStore<ManifestRecord>
 {
-    private static readonly RootKey = 'manifests'
+    public static readonly RootKey = 'manifests'
 
     public constructor(location: string | IRecordMap<ManifestRecord>)
     {
