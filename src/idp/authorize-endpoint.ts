@@ -53,6 +53,12 @@ export class SignInEndpoints
     private static readonly UnknownSource = 'unknown_source';
     private static readonly UnknownRealm = 'unknown_realm';
     private static readonly ParamPrefix = ':';
+    /**
+     * Where Google (through Identity Platform) returns the browser: one path for the whole login domain, the redirect
+     * URI the central login's OAuth client has registered (G4 ruling). It serves the login page and validates nothing:
+     * the page takes its realm and authorize request from its round-trip storage and the answer from its fragment.
+     */
+    public static readonly FederatedHandlerPath = '/__/auth/handler';
     private static readonly MissingFieldsMessage = 'request, method and its credentials are required';
     private static readonly UnknownMethodMessage = 'unknown sign-in method';
     private static readonly HtmlType = 'text/html; charset=utf-8';
@@ -88,7 +94,7 @@ export class SignInEndpoints
         routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.AuthorizePath), Auth: RouteAuth.Public, Handler: ctx => this.Authorize(ctx) });
         routes.Add({ Method: HttpMethod.Post, Pattern: RealmIssuer.Pattern(RealmIssuer.LoginPath), Auth: RouteAuth.Public, Audited: false, BodyLimit: S.LoginBodyLimit, Handler: ctx => this.Login(ctx) });
         routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.LoginConfigPath), Auth: RouteAuth.Public, Handler: ctx => this.LoginConfig(ctx) });
-        routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.LoginContinuePath), Auth: RouteAuth.Public, Handler: ctx => this.LoginContinue(ctx) });
+        routes.Add({ Method: HttpMethod.Get, Pattern: S.FederatedHandlerPath, Auth: RouteAuth.Public, Handler: async ctx => this.WritePage(ctx, false) });
         routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.BrokerSegment + S.ParamPrefix + S.SourceParam + RealmIssuer.BrokerLoginSuffix), Auth: RouteAuth.Public, Handler: ctx => this.BrokerLogin(ctx) });
         routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.BrokerSegment + S.ParamPrefix + S.SourceParam + RealmIssuer.BrokerCallbackSuffix), Auth: RouteAuth.Public, Handler: ctx => this.BrokerCallback(ctx) });
     }
@@ -231,18 +237,6 @@ export class SignInEndpoints
         }
         ctx.Response.setHeader(SignInEndpoints.CacheControlHeader, SignInEndpoints.NoStore);
         ctx.WriteJson(SignInEndpoints.StatusOk, new LoginConfig(realm).ToJson());
-    }
-
-    /** Where a federated provider of Identity Platform returns the browser: the login page, the request not validated
-     *  (the provider's parameters are in the query; the page posts the request it saved before leaving). */
-    private async LoginContinue(ctx: RequestContext): Promise<void>
-    {
-        if (this.RealmOf(ctx) === undefined)
-        {
-            ctx.WriteJson(SignInEndpoints.StatusNotFound, { [SignInEndpoints.ErrorField]: SignInEndpoints.UnknownRealm });
-            return;
-        }
-        this.WritePage(ctx, false);
     }
 
     private async BrokerLogin(ctx: RequestContext): Promise<void>

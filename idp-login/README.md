@@ -25,13 +25,13 @@ The password is never stored or logged by the app: it is dropped from the form a
 
 ## Google through Identity Platform
 
-The shared client has no federated calls, so `src/identity-platform-federation.ts` calls the identitytoolkit v1 REST endpoints itself (same base URL, `?key=<apiKey>` and error parsing as `IdentityPlatformRestClient`):
+The Google button runs the shared client's federated sign-in:
 
-1. `accounts:createAuthUri` with `{ providerId: 'google.com', continueUri, tenantId? }`, where `continueUri` is `<issuer>/login/continue` (the page again, served without validating the request, so the provider's own parameters, such as its `prompt=none`, are never read as the authorize request's). The page saves the returned `sessionId` and the original authorize request in `sessionStorage` (`src/federated-round-trip.ts`) and navigates to `authUri`.
-2. Google sends the browser back to `continueUri` with its answer in the query; the service serves the page.
-3. The page finds the saved round trip, calls `accounts:signInWithIdp` with `{ requestUri: <the URL it came back to>, sessionId, returnSecureToken: true, returnIdpCredential: true, tenantId? }`, and posts the ID token with the ORIGINAL saved authorize request (not the returned URL's query).
+1. `accounts:createAuthUri` with `{ providerId: 'google.com', continueUri, tenantId? }`, where `continueUri` is the login domain's `https://<host>/__/auth/handler` (one path for every realm: the redirect URI the central login's Google OAuth client already has; the service serves the page there without validating anything). The page saves the returned `sessionId`, the original authorize request and the realm's issuer path in `sessionStorage` (`src/federated-round-trip.ts`) and navigates to `authUri`.
+2. Google sends the browser back to `continueUri` with its answer in the fragment (`response_type=id_token`); the page relocates itself under the saved realm (`FederatedRoundTrip.Locate`).
+3. The page finds the saved round trip, calls `accounts:signInWithIdp` with `{ requestUri: <the whole location.href, fragment included>, sessionId, returnSecureToken: true, returnIdpCredential: true, tenantId? }`, and posts the ID token with the ORIGINAL saved authorize request (not the returned URL's query).
 
-For the Google button to work, the owner must add `https://login.pragmatic-tech.ai/realms/central/login/continue` as an authorized redirect URI of the Google OAuth client configured in Identity Platform.
+The federated calls are the shared client's (`IdentityPlatformRestClient.CreateAuthUri` / `SignInWithIdp`, pragmatic-shared 0.15.0). No owner action is needed: `https://login.pragmatic-tech.ai/__/auth/handler` is already an authorized redirect URI of the central login's OAuth client.
 
 ## Building
 

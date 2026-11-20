@@ -6,7 +6,6 @@ import
     IdentityPlatformRestClient,
     IdentityPlatformRestError,
 } from '@pragmatic-tech-ai/pragmatic-identity-source-identity-platform/client'
-import { IdentityPlatformFederation } from './identity-platform-federation.js'
 import { FederatedRoundTrip, PendingFederatedSignIn } from './federated-round-trip.js'
 import { LoginAnswer, type ILoginBackend } from './login-backend.js'
 import type { LoginConfig } from './login-config.js'
@@ -112,7 +111,6 @@ export class IdpLoginViewModel extends Observable
     private config: LoginConfig | undefined
     private page: LoginPageLocation
     private identityPlatform: IdentityPlatformRestClient | undefined
-    private federation: IdentityPlatformFederation | undefined
     // The ID token of a sign-in refused as email_not_verified (or a sign-up whose email was not sent): Resend uses it.
     private unverifiedToken: string | undefined
     private readonly announced = new Map<string, unknown>()
@@ -431,7 +429,6 @@ export class IdpLoginViewModel extends Observable
         if (config.IdentityPlatform !== null)
         {
             this.identityPlatform = IdentityPlatformRestClient.For(config.IdentityPlatform, this.fetchFn)
-            this.federation = IdentityPlatformFederation.For(config.IdentityPlatform, this.fetchFn)
         }
         for (const source of config.Sources)
         {
@@ -450,9 +447,9 @@ export class IdpLoginViewModel extends Observable
             this.errorText = V.NoMethodMessage
         }
         this.Refresh()
-        if (pending !== undefined && this.federation !== undefined)
+        if (pending !== undefined && this.identityPlatform !== undefined)
         {
-            await this.CompleteFederated(pending, this.federation)
+            await this.CompleteFederated(pending, this.identityPlatform)
         }
     }
 
@@ -595,7 +592,7 @@ export class IdpLoginViewModel extends Observable
     public async SignInWithGoogle(): Promise<void>
     {
         const V = IdpLoginViewModel
-        const federation = this.federation
+        const federation = this.identityPlatform
         if (this.isBusy || federation === undefined || !this.ShowsGoogle)
         {
             return
@@ -604,7 +601,7 @@ export class IdpLoginViewModel extends Observable
         try
         {
             const start = await federation.CreateAuthUri(IdentityPlatformProvider.Google, this.page.ContinueUrl)
-            this.roundTrip.Save(new PendingFederatedSignIn(start.SessionId, this.page.Request))
+            this.roundTrip.Save(new PendingFederatedSignIn(start.SessionId, this.page.Request, this.page.IssuerPath))
             this.navigator.Assign(start.AuthUri)
         }
         catch (e)
@@ -624,14 +621,15 @@ export class IdpLoginViewModel extends Observable
 
     // ── Internals ────────────────────────────────────────────────────
 
-    private async CompleteFederated(pending: PendingFederatedSignIn, federation: IdentityPlatformFederation): Promise<void>
+    private async CompleteFederated(pending: PendingFederatedSignIn, federation: IdentityPlatformRestClient): Promise<void>
     {
         const V = IdpLoginViewModel
         this.Begin()
         let idToken: string
         try
         {
-            idToken = await federation.SignInWithIdp(this.location.Href, pending.SessionId)
+            // The provider answers in the fragment: the whole URL, never origin + path + query.
+            idToken = (await federation.SignInWithIdp(this.location.Href, pending.SessionId)).IdToken
         }
         catch (e)
         {

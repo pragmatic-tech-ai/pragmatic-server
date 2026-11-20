@@ -1,8 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { IdentityPlatformProvider, IdentityPlatformRestError } from '@pragmatic-tech-ai/pragmatic-identity-source-identity-platform/client'
+import { IdentityPlatformPageConfig, IdentityPlatformProvider, IdentityPlatformRestClient } from '@pragmatic-tech-ai/pragmatic-identity-source-identity-platform/client'
 import { FederatedRoundTrip, PendingFederatedSignIn } from '../federated-round-trip.js'
-import { IdentityPlatformFederation } from '../identity-platform-federation.js'
 import { BrowserLoginBackend, LoginAnswer } from '../login-backend.js'
 import { LoginBootState } from '../login-boot-state.js'
 import { LoginConfig } from '../login-config.js'
@@ -19,10 +18,12 @@ describe('LoginPageLocation', () =>
         assert.equal(page.ConfigPath, '/realms/central/login/config')
         assert.equal(page.LoginPath, '/realms/central/login')
         assert.equal(page.AuthorizeUrl, 'https://login.test/realms/central/protocol/openid-connect/auth?' + page.Request)
-        assert.equal(page.ContinueUrl, 'https://login.test/realms/central/login/continue')
-        const back = LoginPageLocation.From('https://login.test', '/realms/central/login/continue', '?state=g&code=c')
-        assert.equal(back.IssuerPath, '/realms/central')
-        assert.equal(back.Href, 'https://login.test/realms/central/login/continue?state=g&code=c')
+        assert.equal(page.ContinueUrl, 'https://login.test/__/auth/handler')
+        assert.equal(page.IsFederatedReturn, false)
+        const back = LoginPageLocation.FromHref('https://login.test', '/__/auth/handler', '', 'https://login.test/__/auth/handler#id_token=t&state=g')
+        assert.equal(back.IsFederatedReturn, true)
+        assert.equal(back.Href, 'https://login.test/__/auth/handler#id_token=t&state=g')
+        assert.equal(back.WithIssuer('/realms/central').ConfigPath, '/realms/central/login/config')
         assert.equal(page.PromptsCreate, true)
         assert.equal(page.LoginHint, 'a@b.test')
         const plain = page.WithRequest('client_id=c1')
@@ -105,33 +106,20 @@ describe('BrowserLoginBackend', () =>
     })
 })
 
-describe('IdentityPlatformFederation', () =>
+describe('the shared Identity Platform client (federated calls, 0.15.0)', () =>
 {
-    it('createAuthUri posts the provider, continue URI and tenant with the API key, and returns the auth URI and session', async () =>
+    it('createAuthUri posts the provider, the handler continue URI and the tenant; signInWithIdp the whole URL and session', async () =>
     {
-        const fake = new FakeFetch().Ok('accounts:createAuthUri', { authUri: 'https://accounts.google.com/x', sessionId: 's1', providerId: 'google.com' })
-        const federation = new IdentityPlatformFederation('the-key', 'tenant-a', fake.Fetch)
-        const start = await federation.CreateAuthUri('google.com', 'https://login.test/page?a=1')
+        const fake = new FakeFetch()
+            .Ok('accounts:createAuthUri', { authUri: 'https://accounts.google.com/x', sessionId: 's1', providerId: 'google.com' })
+            .Ok('accounts:signInWithIdp', { localId: 'u1', idToken: 'tok', email: 'a@b.test', providerId: 'google.com' })
+        const client = IdentityPlatformRestClient.For(new IdentityPlatformPageConfig('p', 'the-key', 'p.firebaseapp.com', [IdentityPlatformProvider.Google], 'tenant-a'), fake.Fetch)
+        const start = await client.CreateAuthUri(IdentityPlatformProvider.Google, 'https://login.test/__/auth/handler')
         assert.equal(start.AuthUri, 'https://accounts.google.com/x')
         assert.equal(start.SessionId, 's1')
-        assert.equal(fake.Calls[0]!.url, 'https://identitytoolkit.googleapis.com/v1/accounts:createAuthUri?key=the-key')
-        assert.deepEqual(fake.Calls[0]!.body, { providerId: 'google.com', continueUri: 'https://login.test/page?a=1', tenantId: 'tenant-a' })
-    })
-
-    it('signInWithIdp posts the request URI and session and returns the ID token; no tenant is sent without one', async () =>
-    {
-        const fake = new FakeFetch().Ok('accounts:signInWithIdp', { idToken: 'tok', email: 'a@b.test' })
-        const federation = new IdentityPlatformFederation('the-key', null, fake.Fetch)
-        assert.equal(await federation.SignInWithIdp('https://login.test/page?a=1&code=c', 's1'), 'tok')
-        assert.deepEqual(fake.Calls[0]!.body, { requestUri: 'https://login.test/page?a=1&code=c', sessionId: 's1', returnSecureToken: true, returnIdpCredential: true })
-    })
-
-    it('throws Identity Platform\'s error code, and on a response missing its fields', async () =>
-    {
-        const failing = new IdentityPlatformFederation('k', null, new FakeFetch().Error('accounts:signInWithIdp', 'INVALID_IDP_RESPONSE : bad state').Fetch)
-        await assert.rejects(failing.SignInWithIdp('u', 's'), (e: unknown) => e instanceof IdentityPlatformRestError && e.Code === 'INVALID_IDP_RESPONSE')
-        const empty = new IdentityPlatformFederation('k', null, new FakeFetch().Ok('accounts:createAuthUri', {}).Fetch)
-        await assert.rejects(empty.CreateAuthUri('google.com', 'u'), (e: unknown) => e instanceof IdentityPlatformRestError && e.Code === 'MALFORMED_RESPONSE')
+        assert.equal(fake.Calls[0]!.body.continueUri, 'https://login.test/__/auth/handler')
+        assert.equal((await client.SignInWithIdp('https://login.test/__/auth/handler#id_token=g', 's1')).IdToken, 'tok')
+        assert.equal(fake.Calls[1]!.body.requestUri, 'https://login.test/__/auth/handler#id_token=g')
     })
 })
 
@@ -142,10 +130,10 @@ describe('FederatedRoundTrip', () =>
         const storage = new MemoryStorage()
         const trip = new FederatedRoundTrip(storage)
         assert.equal(trip.Take('a=1'), undefined)
-        trip.Save(new PendingFederatedSignIn('s1', 'a=1'))
-        assert.deepEqual(trip.Take('a=1&code=c'), new PendingFederatedSignIn('s1', 'a=1'))
+        trip.Save(new PendingFederatedSignIn('s1', 'a=1', '/realms/central'))
+        assert.deepEqual(trip.Take('a=1&code=c'), new PendingFederatedSignIn('s1', 'a=1', '/realms/central'))
         assert.equal(trip.Take('a=1&code=c'), undefined)
-        trip.Save(new PendingFederatedSignIn('s1', 'a=1'))
+        trip.Save(new PendingFederatedSignIn('s1', 'a=1', '/realms/central'))
         assert.equal(trip.Take('a=1'), undefined)
         assert.equal(storage.Items.size, 0)
         storage.setItem('pragmatic-login.federated', 'not json')
@@ -161,5 +149,22 @@ describe('LoginBootState', () =>
         assert.equal(LoginBootState.FromContent('ready').Failed, false)
         assert.equal(LoginBootState.FromContent(null).Failed, false)
         assert.equal(LoginBootState.FromContent('FAILED').Failed, false)
+    })
+})
+
+describe('FederatedRoundTrip.Locate', () =>
+{
+    it('puts a page served at the federated handler under the realm its round trip began in, removing nothing', () =>
+    {
+        const storage = new MemoryStorage()
+        const trip = new FederatedRoundTrip(storage)
+        const handler = LoginPageLocation.FromHref('https://login.test', '/__/auth/handler', '', 'https://login.test/__/auth/handler#x')
+        assert.equal(trip.Locate(handler).IssuerPath, '/__/auth/handler', 'nothing saved: left as it is')
+        trip.Save(new PendingFederatedSignIn('s1', 'a=1', '/realms/central'))
+        assert.equal(trip.Locate(handler).IssuerPath, '/realms/central')
+        assert.equal(trip.Locate(handler).Href, 'https://login.test/__/auth/handler#x')
+        const page = LoginPageLocation.From('https://login.test', '/realms/other/protocol/openid-connect/auth', '?a=1')
+        assert.equal(trip.Locate(page).IssuerPath, '/realms/other', 'only the handler page is relocated')
+        assert.notEqual(trip.Take(''), undefined, 'still saved')
     })
 })

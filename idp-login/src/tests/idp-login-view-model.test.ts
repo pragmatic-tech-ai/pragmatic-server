@@ -303,16 +303,16 @@ describe('IdP sign-in page: Identity Platform', () =>
         })
         assert.deepEqual(fixture.Navigator.Visits, ['https://accounts.google.com/o/oauth2/auth?x=1'])
         const pending = new FederatedRoundTrip(fixture.Storage).Take('different')
-        assert.deepEqual(pending, new PendingFederatedSignIn('sess-1', LoginFixture.Request))
+        assert.deepEqual(pending, new PendingFederatedSignIn('sess-1', LoginFixture.Request, '/realms/central'))
     })
 
     it('coming back from Google signs in with signInWithIdp and posts the ORIGINAL authorize request', async () =>
     {
         const storage = new MemoryStorage()
-        new FederatedRoundTrip(storage).Save(new PendingFederatedSignIn('sess-1', LoginFixture.Request))
+        new FederatedRoundTrip(storage).Save(new PendingFederatedSignIn('sess-1', LoginFixture.Request, '/realms/central'))
         const returned = LoginFixture.Request + '&state=g-state&code=g-code&scope=email'
         const fixture = new LoginFixture(LoginFixture.Platform([Google]), returned, storage)
-        fixture.Ip.Ok('accounts:signInWithIdp', { idToken: 'tok-google' })
+        fixture.Ip.Ok('accounts:signInWithIdp', { localId: 'g-1', idToken: 'tok-google' })
         await fixture.Page.Load()
         assert.deepEqual(fixture.Ip.Calls[0]!.body, {
             requestUri: LoginFixture.Origin + LoginFixture.AuthorizePath + '?' + returned,
@@ -328,7 +328,7 @@ describe('IdP sign-in page: Identity Platform', () =>
     it('a failed Google return shows the error; the page then starts again from the original request', async () =>
     {
         const storage = new MemoryStorage()
-        new FederatedRoundTrip(storage).Save(new PendingFederatedSignIn('sess-1', LoginFixture.Request))
+        new FederatedRoundTrip(storage).Save(new PendingFederatedSignIn('sess-1', LoginFixture.Request, '/realms/central'))
         const fixture = new LoginFixture(LoginFixture.Platform([Google]), LoginFixture.Request + '&error=access_denied', storage)
         fixture.Ip.Error('accounts:signInWithIdp', 'INVALID_IDP_RESPONSE')
         fixture.Ip.Ok('accounts:createAuthUri', { authUri: 'https://accounts.google.com/again', sessionId: 'sess-2' })
@@ -342,7 +342,7 @@ describe('IdP sign-in page: Identity Platform', () =>
     it('a plain reload with a saved round trip does not try to complete it', async () =>
     {
         const storage = new MemoryStorage()
-        new FederatedRoundTrip(storage).Save(new PendingFederatedSignIn('sess-1', LoginFixture.Request))
+        new FederatedRoundTrip(storage).Save(new PendingFederatedSignIn('sess-1', LoginFixture.Request, '/realms/central'))
         const fixture = new LoginFixture(LoginFixture.Platform([Google]), LoginFixture.Request, storage)
         await fixture.Page.Load()
         assert.equal(fixture.Ip.Calls.length, 0)

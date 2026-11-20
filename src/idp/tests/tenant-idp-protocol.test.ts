@@ -85,6 +85,9 @@ describe('the realm sign-in service: protocol edges and the admin API', () =>
         assert.equal((await host.Http.Send('GET', flow.Issuer + '/broker/google/login?' + flow.Request().Query)).Json().error, 'unknown_source');
         assert.equal((await host.Http.Send('GET', host.BaseUrl + '/tenant-p/authorize')).Status, 404, 'the pre-realms path is gone');
         assert.equal((await host.Http.Send('GET', host.BaseUrl + '/_login/nothing.js')).Status, 404);
+        const handler = await host.Http.Send('GET', host.BaseUrl + '/__/auth/handler?state=x');
+        assert.equal(handler.Status, 200, 'the federated return handler serves the page, validating nothing');
+        assert.match(handler.Text, /pragmatic-login/);
     });
 
     it('a logout without a redirect clears the cookie and says so', async () =>

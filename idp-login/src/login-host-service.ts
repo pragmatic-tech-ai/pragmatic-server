@@ -17,13 +17,14 @@ export class LoginHostService extends ServiceBase
     public constructor(provider: IServiceProvider)
     {
         super(provider)
-        const location = LoginPageLocation.FromWindow()
+        const roundTrip = new FederatedRoundTrip(window.sessionStorage)
+        const location = roundTrip.Locate(LoginPageLocation.FromWindow())
         const fetchFn = globalThis.fetch.bind(globalThis)
         this.page = new IdpLoginViewModel(
             new BrowserLoginBackend(location, fetchFn),
             new BrowserPageNavigator(),
             location,
-            new FederatedRoundTrip(window.sessionStorage),
+            roundTrip,
             fetchFn,
             LoginBootState.FromDocument(document).Failed)
         // A page restored from the back/forward cache keeps its in-memory state (a

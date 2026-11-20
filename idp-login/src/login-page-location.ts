@@ -6,9 +6,10 @@
 export class LoginPageLocation
 {
     public static readonly AuthorizeSuffix = '/protocol/openid-connect/auth'
-    // Where a federated provider returns the browser: the page again, served without validating the request (the
-    // provider's own parameters would otherwise be read as the authorize request's).
-    public static readonly ContinueSuffix = '/login/continue'
+    // Where a federated provider returns the browser: one path for every realm of the login domain (the redirect URI
+    // registered with the provider's OAuth client), served as this page without validating anything; the realm and the
+    // authorize request come back from the round-trip storage.
+    public static readonly HandlerPath = '/__/auth/handler'
     private static readonly LoginSuffix = '/login'
     private static readonly ConfigSuffix = '/login/config'
     private static readonly QueryMark = '?'
@@ -31,15 +32,33 @@ export class LoginPageLocation
     public static From(origin: string, pathname: string, search: string): LoginPageLocation
     {
         const L = LoginPageLocation
-        const suffix = [L.AuthorizeSuffix, L.ContinueSuffix].find(candidate => pathname.endsWith(candidate))
-        const issuer = suffix === undefined ? pathname : pathname.slice(0, pathname.length - suffix.length)
+        return LoginPageLocation.FromHref(origin, pathname, search, origin + pathname + search)
+    }
+
+    // As From, keeping the full URL the browser shows (a provider's answer may be in its fragment).
+    public static FromHref(origin: string, pathname: string, search: string, href: string): LoginPageLocation
+    {
+        const L = LoginPageLocation
+        const issuer = pathname.endsWith(L.AuthorizeSuffix) ? pathname.slice(0, pathname.length - L.AuthorizeSuffix.length) : pathname
         const request = search.startsWith(L.QueryMark) ? search.slice(1) : search
-        return new LoginPageLocation(origin, issuer, request, origin + pathname + search)
+        return new LoginPageLocation(origin, issuer, request, href)
     }
 
     public static FromWindow(): LoginPageLocation
     {
-        return LoginPageLocation.From(window.location.origin, window.location.pathname, window.location.search)
+        return LoginPageLocation.FromHref(window.location.origin, window.location.pathname, window.location.search, window.location.href)
+    }
+
+    // The page served at the federated return handler (its realm is not in its path).
+    public get IsFederatedReturn(): boolean
+    {
+        return this.IssuerPath === LoginPageLocation.HandlerPath
+    }
+
+    // The same page under the realm the round trip began in.
+    public WithIssuer(issuerPath: string): LoginPageLocation
+    {
+        return new LoginPageLocation(this.Origin, issuerPath, this.Request, this.Href)
     }
 
     // The same page for another authorize request (the original one, restored after a round trip).
@@ -75,7 +94,7 @@ export class LoginPageLocation
     // Where a federated provider sends the browser back (the page, never the authorize endpoint).
     public get ContinueUrl(): string
     {
-        return this.Origin + this.IssuerPath + LoginPageLocation.ContinueSuffix
+        return this.Origin + LoginPageLocation.HandlerPath
     }
 
     // True when the request carries `prompt=create` (OpenID Connect Initiating User Registration).
