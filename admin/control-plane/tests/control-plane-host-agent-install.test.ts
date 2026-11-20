@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 import { FakeProvisioning } from './fake-provisioning.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
+import { TwoTokenOperator } from './two-operator-fixture.js'
+import type { HostSessions } from './host-sessions.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
@@ -28,33 +29,9 @@ import { RegistryRefImageDigest } from '../image-digest.js'
 
 type Reply = { status: number; body: string; cacheControl?: string }
 
-class FakeOperator implements IOperatorIdentity
+/** The Full and ReadOnly operators behind fixed session tokens. */
+class FakeOperator extends TwoTokenOperator
 {
-    public static readonly FullToken = 'full-token'
-    public static readonly ReadOnlyToken = 'readonly-token'
-
-    public async Authenticate(_email: string, _password: string): Promise<OperatorSession | null>
-    {
-        return null
-    }
-
-    public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
-    {
-        if (token === FakeOperator.FullToken)
-        {
-            return { email: 'op@example.com', principalId: 'p1', role: OperatorRole.Full }
-        }
-        return token === FakeOperator.ReadOnlyToken ? { email: 'ro@example.com', principalId: 'p2', role: OperatorRole.ReadOnly } : null
-    }
-
-    public async ListOperators(): Promise<readonly OperatorSummary[]> { return [] }
-    public async SetOperatorRole(_e: string, _r: OperatorRole, _a: string): Promise<void> { }
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
-    public async ResetOperatorPassword(_e: string): Promise<string> { return '' }
-    public async SetOperatorDisabled(_e: string, _d: boolean, _a: string): Promise<void> { }
-    public async RevokeOperatorSessions(_e: string): Promise<void> { }
-    public async CreateOperator(_e: string, _p: string, _r: OperatorRole): Promise<void> { }
-    public async Revoke(_t: string): Promise<void> { }
 }
 
 // Records every kubectl call; the Apply manifests are what kubectl would read on stdin.
@@ -216,16 +193,17 @@ describe('ControlPlaneHost automatic agent install', () =>
     let observations: HiveObservationRegistry
     let orchestrators: FakeOrchestrators
     let kindFactory: GatedKindFactory
+    let sessions: HostSessions
 
     const Make = (installer: HiveAgentInstaller | undefined, images?: IPlatformImages): ControlPlaneHost =>
-        new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
-            new FakeProvisioning(directory).AsService(), observations, undefined, false, undefined, undefined, undefined, [], undefined,
-            undefined, undefined, undefined, Harness.ChannelUrl, installer, undefined, undefined, undefined, undefined, undefined, undefined,
-            undefined, images)
+        new ControlPlaneHost({ Service: {} as IEnvironmentService, Graphs: {} as IGraphService, PortalRoot: root, Operator: new FakeOperator(), Sessions: sessions.Sessions,
+            Directory: directory, Deployments: deployments, Provisioning: new FakeProvisioning(directory).AsService(), Observations: observations,
+            AgentChannelUrl: Harness.ChannelUrl, AgentInstaller: installer, PlatformImages: images })
 
     beforeEach(async () =>
     {
         parent = mkdtempSync(join(tmpdir(), 'cp-agent-install-'))
+        sessions = await FakeOperator.Sessions()
         root = join(parent, 'static')
         mkdirSync(root)
         writeFileSync(join(root, 'index.html'), '<h1>portal</h1>')
@@ -384,12 +362,13 @@ describe('ControlPlaneHost automatic agent install', () =>
         assert.equal((JSON.parse(retried.body) as InstallStatus).state, InstallState.Installing)
     })
 
-    it('GET before any install -> 404; unknown hive -> 404 for both; malformed id -> 400', async () =>
+    it('GET before any install -> 404; unknown hive -> 404 for both; malformed id -> 404', async () =>
     {
         assert.equal((await Harness.Send(host, 'GET', '/api/hives/local1/agent-install')).status, 404)
         assert.equal((await Harness.Send(host, 'GET', '/api/hives/nope/agent-install')).status, 404)
         assert.equal((await Harness.Send(host, 'POST', '/api/hives/nope/agent-install')).status, 404)
-        assert.equal((await Harness.Send(host, 'POST', '/api/hives/%E0%A4%A/agent-install')).status, 400)
+        // Ruling (pipeline behaviour changes): a route parameter that does not percent-decode matches no route (404; was 400).
+        assert.equal((await Harness.Send(host, 'POST', '/api/hives/%E0%A4%A/agent-install')).status, 404)
     })
 
     it('a non-Local hive -> 409 and nothing is applied', async () =>

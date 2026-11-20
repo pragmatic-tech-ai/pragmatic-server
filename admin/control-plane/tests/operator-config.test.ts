@@ -12,7 +12,8 @@ describe('ControlPlaneServer.ReadOperatorOptions', () =>
         const o = ControlPlaneServer.ReadOperatorOptions({}, '/data')
         assert.equal(o.operatorEmail, 'admin@control-plane.test')
         assert.equal(o.masterKeyFile, join('/data', 'master.key'))
-        assert.equal(o.identityRoot, join('/data', 'identity'))
+        // Ruling (storage shape): the operator identity lives in the console's database, so there is no identity folder.
+        assert.ok(!('identityRoot' in o))
         assert.equal(o.secureCookie, false)
         assert.equal(o.initialPassword, undefined)
     })

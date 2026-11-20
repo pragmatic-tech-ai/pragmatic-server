@@ -1,9 +1,9 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { OperatorIdentity, OperatorRole, OperatorNotFoundError, OperatorSelfLockoutError, OperatorProtectedError } from '../operator-identity.js'
+import type { ISqlSession } from '@pragmatic-tech-ai/todl'
+import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
+import { OperatorRole, OperatorNotFoundError, OperatorSelfLockoutError, OperatorProtectedError } from '../operator-identity.js'
+import { OperatorHarness } from './operator-harness.js'
 
 class MutationFixture
 {
@@ -17,334 +17,291 @@ class MutationFixture
     public static readonly MinPasswordLength = 12
     public static readonly ActorSentinel = 'some-actor'
     private static readonly TempPrefix = 'opm-'
-    private static readonly IdentityDir = 'identity'
-    private static readonly KeyFile = 'master.key'
 
-    public static async WithIdentity(body: (id: OperatorIdentity) => Promise<void>): Promise<void>
+    public static async WithIdentity(makeSession: () => Promise<ISqlSession>, body: (id: OperatorHarness) => Promise<void>): Promise<void>
     {
-        const root = mkdtempSync(join(tmpdir(), MutationFixture.TempPrefix))
-        try
+        const session = await makeSession()
+        await OperatorHarness.WithRoot(MutationFixture.TempPrefix, async root =>
         {
-            const id = await OperatorIdentity.Compose({
-                identityRoot: join(root, MutationFixture.IdentityDir),
-                masterKeyFile: join(root, MutationFixture.KeyFile),
-                operatorEmail: MutationFixture.AdminEmail,
-                initialPassword: MutationFixture.AdminPassword
-            })
-            await body(id)
-        }
-        finally
-        {
-            rmSync(root, { recursive: true, force: true })
-        }
+            await body(await OperatorHarness.Compose(root, session, MutationFixture.AdminEmail, MutationFixture.AdminPassword))
+        })
     }
 
-    public static async RoleOf(id: OperatorIdentity, email: string): Promise<OperatorRole | undefined>
+    public static async RoleOf(id: OperatorHarness, email: string): Promise<OperatorRole | undefined>
     {
-        return (await id.ListOperators()).find(o => o.email === email)?.role
-    }
-
-    /** The identity's session manager, so a test can make one of its calls fail. */
-    public static SessionsOf(id: OperatorIdentity): { RevokeAllFor: (...args: unknown[]) => Promise<void>; Issue: (...args: unknown[]) => Promise<unknown> }
-    {
-        return (id as unknown as { pack: { Sessions: { RevokeAllFor: (...args: unknown[]) => Promise<void>; Issue: (...args: unknown[]) => Promise<unknown> } } }).pack.Sessions
+        return (await id.Identity.ListOperators()).find(o => o.email === email)?.role
     }
 
     /** Logs in as the operator and returns its principal id (the actor identity the host would pass). */
-    public static async PrincipalOf(id: OperatorIdentity, email: string, password: string): Promise<string>
+    public static async PrincipalOf(id: OperatorHarness, email: string, password: string): Promise<string>
     {
-        const session = await id.Authenticate(email, password)
+        const session = await id.SignIn(email, password)
         assert.ok(session)
-        const principal = await id.ValidateToken(session.token)
+        const principal = await id.Validate(session.token)
         assert.ok(principal)
         return principal.principalId
     }
 }
 
-describe('OperatorIdentity mutations', () =>
+SqlTestSessions.Describe('OperatorIdentity mutations', (makeSession, backend) =>
 {
-    it('promotes and demotes with no lingering Owner grant, idempotent at target', async () =>
+    describe(`OperatorIdentity mutations ${backend}`, () =>
     {
-        await MutationFixture.WithIdentity(async id =>
+        it('promotes and demotes with no lingering Owner grant, idempotent at target', async () =>
         {
-            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
-            await id.SetOperatorRole(MutationFixture.RoEmail, OperatorRole.Full, MutationFixture.ActorSentinel)
-            assert.equal(await MutationFixture.RoleOf(id, MutationFixture.RoEmail), OperatorRole.Full)
-            await id.SetOperatorRole(MutationFixture.RoEmail, OperatorRole.Full, MutationFixture.ActorSentinel)
-            assert.equal(await MutationFixture.RoleOf(id, MutationFixture.RoEmail), OperatorRole.Full)
-            await id.SetOperatorRole(MutationFixture.RoEmail, OperatorRole.ReadOnly, MutationFixture.ActorSentinel)
-            assert.equal(await MutationFixture.RoleOf(id, MutationFixture.RoEmail), OperatorRole.ReadOnly)
-            await id.SetOperatorRole(MutationFixture.RoEmail, OperatorRole.ReadOnly, MutationFixture.ActorSentinel)
-            assert.equal(await MutationFixture.RoleOf(id, MutationFixture.RoEmail), OperatorRole.ReadOnly)
-            await id.SetOperatorRole(MutationFixture.RoEmail, OperatorRole.Full, MutationFixture.ActorSentinel)
-            assert.equal(await MutationFixture.RoleOf(id, MutationFixture.RoEmail), OperatorRole.Full)
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                await id.Identity.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+                await id.Identity.SetOperatorRole(MutationFixture.RoEmail, OperatorRole.Full, MutationFixture.ActorSentinel)
+                assert.equal(await MutationFixture.RoleOf(id, MutationFixture.RoEmail), OperatorRole.Full)
+                await id.Identity.SetOperatorRole(MutationFixture.RoEmail, OperatorRole.Full, MutationFixture.ActorSentinel)
+                assert.equal(await MutationFixture.RoleOf(id, MutationFixture.RoEmail), OperatorRole.Full)
+                await id.Identity.SetOperatorRole(MutationFixture.RoEmail, OperatorRole.ReadOnly, MutationFixture.ActorSentinel)
+                assert.equal(await MutationFixture.RoleOf(id, MutationFixture.RoEmail), OperatorRole.ReadOnly)
+                await id.Identity.SetOperatorRole(MutationFixture.RoEmail, OperatorRole.ReadOnly, MutationFixture.ActorSentinel)
+                assert.equal(await MutationFixture.RoleOf(id, MutationFixture.RoEmail), OperatorRole.ReadOnly)
+                await id.Identity.SetOperatorRole(MutationFixture.RoEmail, OperatorRole.Full, MutationFixture.ActorSentinel)
+                assert.equal(await MutationFixture.RoleOf(id, MutationFixture.RoEmail), OperatorRole.Full)
+            })
         })
-    })
 
-    it('demoted operator is ReadOnly on a live token', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('demoted operator is ReadOnly on a live token', async () =>
         {
-            await id.CreateOperator(MutationFixture.FullEmail, MutationFixture.OperatorPassword, OperatorRole.Full)
-            await id.SetOperatorRole(MutationFixture.FullEmail, OperatorRole.ReadOnly, MutationFixture.ActorSentinel)
-            const session = await id.Authenticate(MutationFixture.FullEmail, MutationFixture.OperatorPassword)
-            assert.ok(session)
-            assert.equal((await id.ValidateToken(session.token))?.role, OperatorRole.ReadOnly)
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                await id.Identity.CreateOperator(MutationFixture.FullEmail, MutationFixture.OperatorPassword, OperatorRole.Full)
+                await id.Identity.SetOperatorRole(MutationFixture.FullEmail, OperatorRole.ReadOnly, MutationFixture.ActorSentinel)
+                const session = await id.SignIn(MutationFixture.FullEmail, MutationFixture.OperatorPassword)
+                assert.ok(session)
+                assert.equal((await id.Validate(session.token))?.role, OperatorRole.ReadOnly)
+            })
         })
-    })
 
-    it('reset password returns a strong new password; old fails, new works', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('reset password returns a strong new password; old fails, new works', async () =>
         {
-            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
-            const pw = await id.ResetOperatorPassword(MutationFixture.RoEmail)
-            assert.ok(pw.length >= MutationFixture.MinPasswordLength)
-            assert.equal(await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword), null)
-            assert.ok(await id.Authenticate(MutationFixture.RoEmail, pw))
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                await id.Identity.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+                const pw = await id.Identity.ResetOperatorPassword(MutationFixture.RoEmail)
+                assert.ok(pw.length >= MutationFixture.MinPasswordLength)
+                assert.equal(await id.SignIn(MutationFixture.RoEmail, MutationFixture.OperatorPassword), null)
+                assert.ok(await id.SignIn(MutationFixture.RoEmail, pw))
+            })
         })
-    })
 
-    it('reset password ends every live session of the operator', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('reset password ends every live session of the operator', async () =>
         {
-            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
-            const a = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
-            const b = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
-            const admin = await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.AdminPassword)
-            assert.ok(a && b && admin)
-            await id.ResetOperatorPassword(MutationFixture.RoEmail)
-            assert.equal(await id.ValidateToken(a.token), null)
-            assert.equal(await id.ValidateToken(b.token), null)
-            assert.ok(await id.ValidateToken(admin.token), 'another operator keeps their session')
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                await id.Identity.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+                const a = await id.SignIn(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+                const b = await id.SignIn(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+                const admin = await id.SignIn(MutationFixture.AdminEmail, MutationFixture.AdminPassword)
+                assert.ok(a && b && admin)
+                await id.Identity.ResetOperatorPassword(MutationFixture.RoEmail)
+                assert.equal(await id.Validate(a.token), null)
+                assert.equal(await id.Validate(b.token), null)
+                assert.ok(await id.Validate(admin.token), 'another operator keeps their session')
+            })
         })
-    })
 
-    it('a reset of oneself ends the caller own sessions too (documented: the reset is not self-exempt)', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('a reset of oneself ends the caller own sessions too (documented: the reset is not self-exempt)', async () =>
         {
-            const own = await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.AdminPassword)
-            assert.ok(own)
-            await id.ResetOperatorPassword(MutationFixture.AdminEmail)
-            assert.equal(await id.ValidateToken(own.token), null)
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                const own = await id.SignIn(MutationFixture.AdminEmail, MutationFixture.AdminPassword)
+                assert.ok(own)
+                await id.Identity.ResetOperatorPassword(MutationFixture.AdminEmail)
+                assert.equal(await id.Validate(own.token), null)
+            })
         })
-    })
 
-    it('change own password: verifies the current one, rotates, ends every old session and issues a fresh one', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('change own password: verifies the current one and rotates it; the session rotate then ends every old session and issues a fresh one', async () =>
         {
-            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
-            const mine = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
-            const elsewhere = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
-            const admin = await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.AdminPassword)
-            assert.ok(mine && elsewhere && admin)
-            const principalId = (await id.ValidateToken(mine.token))!.principalId
-            const change = await id.ChangeOwnPassword(principalId, MutationFixture.OperatorPassword, MutationFixture.ChangedPassword)
-            assert.ok(change?.session)
-            assert.equal(change.otherSessionsEnded, true)
-            const fresh = change.session
-            assert.equal((await id.ValidateToken(fresh.token))?.principalId, principalId)
-            assert.equal(await id.ValidateToken(mine.token), null)
-            assert.equal(await id.ValidateToken(elsewhere.token), null)
-            assert.ok(await id.ValidateToken(admin.token))
-            assert.equal(await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword), null)
-            assert.ok(await id.Authenticate(MutationFixture.RoEmail, MutationFixture.ChangedPassword))
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                await id.Identity.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+                const mine = await id.SignIn(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+                const elsewhere = await id.SignIn(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+                const admin = await id.SignIn(MutationFixture.AdminEmail, MutationFixture.AdminPassword)
+                assert.ok(mine && elsewhere && admin)
+                const principalId = (await id.Validate(mine.token))!.principalId
+                assert.equal(await id.Identity.ChangeOwnPassword(principalId, MutationFixture.OperatorPassword, MutationFixture.ChangedPassword), true)
+                // The console then rotates the caller's sessions: every old one ends, the caller gets one fresh session.
+                const rotated = await id.Sessions.Store.Rotate(mine.token)
+                assert.ok(rotated)
+                const fresh = { token: rotated.Token }
+                assert.equal((await id.Validate(fresh.token))?.principalId, principalId)
+                assert.equal(await id.Validate(mine.token), null)
+                assert.equal(await id.Validate(elsewhere.token), null)
+                assert.ok(await id.Validate(admin.token))
+                assert.equal(await id.SignIn(MutationFixture.RoEmail, MutationFixture.OperatorPassword), null)
+                assert.ok(await id.SignIn(MutationFixture.RoEmail, MutationFixture.ChangedPassword))
+            })
         })
-    })
 
-    it('change own password with a wrong current password changes nothing and ends no session', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('change own password with a wrong current password changes nothing and ends no session', async () =>
         {
-            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
-            const mine = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
-            assert.ok(mine)
-            const principalId = (await id.ValidateToken(mine.token))!.principalId
-            assert.equal(await id.ChangeOwnPassword(principalId, 'not-the-password', MutationFixture.ChangedPassword), null)
-            assert.ok(await id.ValidateToken(mine.token))
-            assert.ok(await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword))
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                await id.Identity.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+                const mine = await id.SignIn(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+                assert.ok(mine)
+                const principalId = (await id.Validate(mine.token))!.principalId
+                assert.equal(await id.Identity.ChangeOwnPassword(principalId, 'not-the-password', MutationFixture.ChangedPassword), false)
+                assert.ok(await id.Validate(mine.token))
+                assert.ok(await id.SignIn(MutationFixture.RoEmail, MutationFixture.OperatorPassword))
+            })
         })
-    })
 
-    it('change own password checks the current password of the session principal, not anyone else', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('change own password checks the current password of the session principal, not anyone else', async () =>
         {
-            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
-            const admin = await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.AdminPassword)
-            assert.ok(admin)
-            const adminId = (await id.ValidateToken(admin.token))!.principalId
-            assert.equal(await id.ChangeOwnPassword(adminId, MutationFixture.OperatorPassword, MutationFixture.ChangedPassword), null)
-            assert.equal(await id.ChangeOwnPassword('no-such-principal', MutationFixture.OperatorPassword, MutationFixture.ChangedPassword), null)
-            assert.ok(await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword))
-            assert.ok(await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.AdminPassword))
-            assert.ok(await id.ValidateToken(admin.token))
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                await id.Identity.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+                const admin = await id.SignIn(MutationFixture.AdminEmail, MutationFixture.AdminPassword)
+                assert.ok(admin)
+                const adminId = (await id.Validate(admin.token))!.principalId
+                assert.equal(await id.Identity.ChangeOwnPassword(adminId, MutationFixture.OperatorPassword, MutationFixture.ChangedPassword), false)
+                assert.equal(await id.Identity.ChangeOwnPassword('no-such-principal', MutationFixture.OperatorPassword, MutationFixture.ChangedPassword), false)
+                assert.ok(await id.SignIn(MutationFixture.RoEmail, MutationFixture.OperatorPassword))
+                assert.ok(await id.SignIn(MutationFixture.AdminEmail, MutationFixture.AdminPassword))
+                assert.ok(await id.Validate(admin.token))
+            })
         })
-    })
 
-    it('a failure to end the old sessions after the rotate is reported, not thrown: the password is changed and a fresh session issued', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+
+
+        it('the bootstrap admin can change their own password', async () =>
         {
-            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
-            const mine = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
-            assert.ok(mine)
-            const principalId = (await id.ValidateToken(mine.token))!.principalId
-            MutationFixture.SessionsOf(id).RevokeAllFor = async () => { throw new Error('disk full') }
-            const change = await id.ChangeOwnPassword(principalId, MutationFixture.OperatorPassword, MutationFixture.ChangedPassword)
-            assert.equal(change?.otherSessionsEnded, false)
-            assert.ok(change?.session)
-            assert.ok(await id.Authenticate(MutationFixture.RoEmail, MutationFixture.ChangedPassword))
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                const admin = await id.SignIn(MutationFixture.AdminEmail, MutationFixture.AdminPassword)
+                assert.ok(admin)
+                const adminId = (await id.Validate(admin.token))!.principalId
+                assert.ok(await id.Identity.ChangeOwnPassword(adminId, MutationFixture.AdminPassword, MutationFixture.ChangedPassword))
+                assert.ok(await id.SignIn(MutationFixture.AdminEmail, MutationFixture.ChangedPassword))
+            })
         })
-    })
 
-    it('a failure to issue the fresh session after the rotate is reported as no session: the password is changed, sign in again', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('an invited operator session reports the email they sign in with, not their principal id', async () =>
         {
-            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
-            const mine = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
-            assert.ok(mine)
-            const principalId = (await id.ValidateToken(mine.token))!.principalId
-            MutationFixture.SessionsOf(id).Issue = async () => { throw new Error('disk full') }
-            const change = await id.ChangeOwnPassword(principalId, MutationFixture.OperatorPassword, MutationFixture.ChangedPassword)
-            assert.deepEqual(change, { session: null, otherSessionsEnded: true })
-            assert.equal(await id.ValidateToken(mine.token), null)
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                await id.Identity.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+                const session = await id.SignIn(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+                assert.ok(session)
+                assert.equal((await id.Validate(session.token))?.email, MutationFixture.RoEmail)
+            })
         })
-    })
 
-    it('the bootstrap admin can change their own password', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('reset password is allowed for the bootstrap admin', async () =>
         {
-            const admin = await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.AdminPassword)
-            assert.ok(admin)
-            const adminId = (await id.ValidateToken(admin.token))!.principalId
-            assert.ok(await id.ChangeOwnPassword(adminId, MutationFixture.AdminPassword, MutationFixture.ChangedPassword))
-            assert.ok(await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.ChangedPassword))
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                const pw = await id.Identity.ResetOperatorPassword(MutationFixture.AdminEmail)
+                assert.equal(await id.SignIn(MutationFixture.AdminEmail, MutationFixture.AdminPassword), null)
+                assert.ok(await id.SignIn(MutationFixture.AdminEmail, pw))
+            })
         })
-    })
 
-    it('an invited operator session reports the email they sign in with, not their principal id', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('disable blocks authentication, enable restores it, roster shows disabled', async () =>
         {
-            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
-            const session = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
-            assert.ok(session)
-            assert.equal((await id.ValidateToken(session.token))?.email, MutationFixture.RoEmail)
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                await id.Identity.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+                await id.Identity.SetOperatorDisabled(MutationFixture.RoEmail, true, MutationFixture.ActorSentinel)
+                assert.equal(await id.SignIn(MutationFixture.RoEmail, MutationFixture.OperatorPassword), null)
+                const row = (await id.Identity.ListOperators()).find(o => o.email === MutationFixture.RoEmail)
+                assert.ok(row)
+                assert.equal(row.disabled, true)
+                await id.Identity.SetOperatorDisabled(MutationFixture.RoEmail, false, MutationFixture.ActorSentinel)
+                assert.ok(await id.SignIn(MutationFixture.RoEmail, MutationFixture.OperatorPassword))
+                const row2 = (await id.Identity.ListOperators()).find(o => o.email === MutationFixture.RoEmail)
+                assert.equal(row2?.disabled, false)
+            })
         })
-    })
 
-    it('reset password is allowed for the bootstrap admin', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('disabling an operator drops their live session', async () =>
         {
-            const pw = await id.ResetOperatorPassword(MutationFixture.AdminEmail)
-            assert.equal(await id.Authenticate(MutationFixture.AdminEmail, MutationFixture.AdminPassword), null)
-            assert.ok(await id.Authenticate(MutationFixture.AdminEmail, pw))
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                await id.Identity.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+                const session = await id.SignIn(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+                assert.ok(session)
+                assert.ok(await id.Validate(session.token))
+                await id.Identity.SetOperatorDisabled(MutationFixture.RoEmail, true, MutationFixture.ActorSentinel)
+                assert.equal(await id.Validate(session.token), null)
+            })
         })
-    })
 
-    it('disable blocks authentication, enable restores it, roster shows disabled', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('demoting an already-ReadOnly self is a no-op, not a lockout', async () =>
         {
-            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
-            await id.SetOperatorDisabled(MutationFixture.RoEmail, true, MutationFixture.ActorSentinel)
-            assert.equal(await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword), null)
-            const row = (await id.ListOperators()).find(o => o.email === MutationFixture.RoEmail)
-            assert.ok(row)
-            assert.equal(row.disabled, true)
-            await id.SetOperatorDisabled(MutationFixture.RoEmail, false, MutationFixture.ActorSentinel)
-            assert.ok(await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword))
-            const row2 = (await id.ListOperators()).find(o => o.email === MutationFixture.RoEmail)
-            assert.equal(row2?.disabled, false)
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                await id.Identity.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+                const self = await MutationFixture.PrincipalOf(id, MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+                await id.Identity.SetOperatorRole(MutationFixture.RoEmail, OperatorRole.ReadOnly, self)
+                assert.equal(await MutationFixture.RoleOf(id, MutationFixture.RoEmail), OperatorRole.ReadOnly)
+            })
         })
-    })
 
-    it('disabling an operator drops their live session', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('revoke sessions invalidates previously issued tokens', async () =>
         {
-            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
-            const session = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
-            assert.ok(session)
-            assert.ok(await id.ValidateToken(session.token))
-            await id.SetOperatorDisabled(MutationFixture.RoEmail, true, MutationFixture.ActorSentinel)
-            assert.equal(await id.ValidateToken(session.token), null)
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                await id.Identity.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
+                const session = await id.SignIn(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
+                assert.ok(session)
+                assert.ok(await id.Validate(session.token))
+                await id.Identity.RevokeOperatorSessions(MutationFixture.RoEmail)
+                assert.equal(await id.Validate(session.token), null)
+            })
         })
-    })
 
-    it('demoting an already-ReadOnly self is a no-op, not a lockout', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('guards: bootstrap admin is protected for role and disable', async () =>
         {
-            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
-            const self = await MutationFixture.PrincipalOf(id, MutationFixture.RoEmail, MutationFixture.OperatorPassword)
-            await id.SetOperatorRole(MutationFixture.RoEmail, OperatorRole.ReadOnly, self)
-            assert.equal(await MutationFixture.RoleOf(id, MutationFixture.RoEmail), OperatorRole.ReadOnly)
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                await assert.rejects(id.Identity.SetOperatorRole(MutationFixture.AdminEmail, OperatorRole.ReadOnly, MutationFixture.ActorSentinel), OperatorProtectedError)
+                await assert.rejects(id.Identity.SetOperatorDisabled(MutationFixture.AdminEmail, true, MutationFixture.ActorSentinel), OperatorProtectedError)
+            })
         })
-    })
 
-    it('revoke sessions invalidates previously issued tokens', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('guards: self-lockout on demote and disable', async () =>
         {
-            await id.CreateOperator(MutationFixture.RoEmail, MutationFixture.OperatorPassword, OperatorRole.ReadOnly)
-            const session = await id.Authenticate(MutationFixture.RoEmail, MutationFixture.OperatorPassword)
-            assert.ok(session)
-            assert.ok(await id.ValidateToken(session.token))
-            await id.RevokeOperatorSessions(MutationFixture.RoEmail)
-            assert.equal(await id.ValidateToken(session.token), null)
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                await id.Identity.CreateOperator(MutationFixture.FullEmail, MutationFixture.OperatorPassword, OperatorRole.Full)
+                const self = await MutationFixture.PrincipalOf(id, MutationFixture.FullEmail, MutationFixture.OperatorPassword)
+                await assert.rejects(id.Identity.SetOperatorRole(MutationFixture.FullEmail, OperatorRole.ReadOnly, self), OperatorSelfLockoutError)
+                await assert.rejects(id.Identity.SetOperatorDisabled(MutationFixture.FullEmail, true, self), OperatorSelfLockoutError)
+                assert.equal(await MutationFixture.RoleOf(id, MutationFixture.FullEmail), OperatorRole.Full)
+            })
         })
-    })
 
-    it('guards: bootstrap admin is protected for role and disable', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('last-Full guard is defense in depth: the protected bootstrap admin always keeps one Full operator', async () =>
         {
-            await assert.rejects(id.SetOperatorRole(MutationFixture.AdminEmail, OperatorRole.ReadOnly, MutationFixture.ActorSentinel), OperatorProtectedError)
-            await assert.rejects(id.SetOperatorDisabled(MutationFixture.AdminEmail, true, MutationFixture.ActorSentinel), OperatorProtectedError)
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                await id.Identity.CreateOperator(MutationFixture.FullEmail, MutationFixture.OperatorPassword, OperatorRole.Full)
+                await id.Identity.SetOperatorRole(MutationFixture.FullEmail, OperatorRole.ReadOnly, MutationFixture.ActorSentinel)
+                await id.Identity.SetOperatorDisabled(MutationFixture.FullEmail, true, MutationFixture.ActorSentinel)
+                assert.equal(await MutationFixture.RoleOf(id, MutationFixture.AdminEmail), OperatorRole.Full)
+                assert.ok((await id.Identity.ListOperators()).some(o => o.role === OperatorRole.Full && !o.disabled))
+            })
         })
-    })
 
-    it('guards: self-lockout on demote and disable', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
+        it('unknown email throws OperatorNotFoundError on every mutation', async () =>
         {
-            await id.CreateOperator(MutationFixture.FullEmail, MutationFixture.OperatorPassword, OperatorRole.Full)
-            const self = await MutationFixture.PrincipalOf(id, MutationFixture.FullEmail, MutationFixture.OperatorPassword)
-            await assert.rejects(id.SetOperatorRole(MutationFixture.FullEmail, OperatorRole.ReadOnly, self), OperatorSelfLockoutError)
-            await assert.rejects(id.SetOperatorDisabled(MutationFixture.FullEmail, true, self), OperatorSelfLockoutError)
-            assert.equal(await MutationFixture.RoleOf(id, MutationFixture.FullEmail), OperatorRole.Full)
-        })
-    })
-
-    it('last-Full guard is defense in depth: the protected bootstrap admin always keeps one Full operator', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
-        {
-            await id.CreateOperator(MutationFixture.FullEmail, MutationFixture.OperatorPassword, OperatorRole.Full)
-            await id.SetOperatorRole(MutationFixture.FullEmail, OperatorRole.ReadOnly, MutationFixture.ActorSentinel)
-            await id.SetOperatorDisabled(MutationFixture.FullEmail, true, MutationFixture.ActorSentinel)
-            assert.equal(await MutationFixture.RoleOf(id, MutationFixture.AdminEmail), OperatorRole.Full)
-            assert.ok((await id.ListOperators()).some(o => o.role === OperatorRole.Full && !o.disabled))
-        })
-    })
-
-    it('unknown email throws OperatorNotFoundError on every mutation', async () =>
-    {
-        await MutationFixture.WithIdentity(async id =>
-        {
-            const u = MutationFixture.UnknownEmail
-            await assert.rejects(id.SetOperatorRole(u, OperatorRole.Full, MutationFixture.ActorSentinel), OperatorNotFoundError)
-            await assert.rejects(id.ResetOperatorPassword(u), OperatorNotFoundError)
-            await assert.rejects(id.SetOperatorDisabled(u, true, MutationFixture.ActorSentinel), OperatorNotFoundError)
-            await assert.rejects(id.RevokeOperatorSessions(u), OperatorNotFoundError)
+            await MutationFixture.WithIdentity(makeSession, async id =>
+            {
+                const u = MutationFixture.UnknownEmail
+                await assert.rejects(id.Identity.SetOperatorRole(u, OperatorRole.Full, MutationFixture.ActorSentinel), OperatorNotFoundError)
+                await assert.rejects(id.Identity.ResetOperatorPassword(u), OperatorNotFoundError)
+                await assert.rejects(id.Identity.SetOperatorDisabled(u, true, MutationFixture.ActorSentinel), OperatorNotFoundError)
+                await assert.rejects(id.Identity.RevokeOperatorSessions(u), OperatorNotFoundError)
+            })
         })
     })
 })

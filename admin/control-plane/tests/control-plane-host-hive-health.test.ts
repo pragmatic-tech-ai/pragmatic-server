@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { FakeProvisioning } from './fake-provisioning.js'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSummary } from '../operator-identity.js'
+import { HostSessions } from './host-sessions.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
@@ -28,15 +29,23 @@ type Reply = { status: number; body: string }
 class FakeOperator implements IOperatorIdentity
 {
     public static readonly Token = 'valid-token'
+    public static readonly Email = 'op@example.com'
+    public static readonly PrincipalId = 'p1'
 
-    public async Authenticate(_email: string, _password: string): Promise<OperatorSession | null>
+    /** The operator the planted session names. */
+    public static Principal(): OperatorPrincipal
     {
-        return { token: FakeOperator.Token, expiresAt: new Date(Date.now() + 3600000) }
+        return { email: FakeOperator.Email, principalId: FakeOperator.PrincipalId, role: OperatorRole.Full }
     }
 
-    public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
+    public async Verify(email: string, password: string): Promise<OperatorPrincipal | null>
     {
-        return token === FakeOperator.Token ? { email: 'op@example.com', principalId: 'p1', role: OperatorRole.Full } : null
+        return null
+    }
+
+    public async PrincipalOf(principalId: string): Promise<OperatorPrincipal | null>
+    {
+        return { email: FakeOperator.Email, principalId, role: OperatorRole.Full }
     }
 
     public async ListOperators(): Promise<readonly OperatorSummary[]>
@@ -48,7 +57,7 @@ class FakeOperator implements IOperatorIdentity
     {
     }
 
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
+    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<boolean> { return false }
     public async ResetOperatorPassword(_email: string): Promise<string>
     {
         return ''
@@ -63,10 +72,6 @@ class FakeOperator implements IOperatorIdentity
     }
 
     public async CreateOperator(_email: string, _password: string, _role: OperatorRole): Promise<void>
-    {
-    }
-
-    public async Revoke(_token: string): Promise<void>
     {
     }
 }
@@ -187,7 +192,9 @@ describe('ControlPlaneHost hive health route', () =>
         await observations.Load()
         const factory = new FakeFactory()
         deployments = await RolloutFixture.Create(parent, directory, factory)
-        host = new ControlPlaneHost(new FakeService() as unknown as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments, new FakeProvisioning(directory).AsService(), observations)
+        const sessions = await HostSessions.With(FakeOperator.Token, FakeOperator.Principal())
+        host = new ControlPlaneHost({ Service: new FakeService() as unknown as IEnvironmentService, Graphs: {} as IGraphService, PortalRoot: root, Operator: new FakeOperator(),
+            Sessions: sessions.Sessions, Directory: directory, Deployments: deployments, Provisioning: new FakeProvisioning(directory).AsService(), Observations: observations })
         await host.Listen(0, '127.0.0.1')
     })
 

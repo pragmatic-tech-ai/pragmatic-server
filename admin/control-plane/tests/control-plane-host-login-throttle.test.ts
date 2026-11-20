@@ -6,9 +6,9 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { ControlPlaneHost } from '../control-plane-host.js'
 import type { IEnvironmentService, IGraphService } from '../control-plane-host.js'
-import { LoginThrottle } from '../login-throttle.js'
-import type { LoginThrottleDecision } from '../login-throttle.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
+import { InMemoryThrottleRepository, InMemorySessionRepository, InMemoryTicketRepository, type ThrottleState } from '@pragmatic-tech-ai/pragmatic-app-host'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSummary } from '../operator-identity.js'
+import { OperatorSessions } from '../operator-sessions.js'
 import type { PlatformDirectory } from '../platform-directory.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import type { TenantProvisioningService } from '../tenant-provisioning-service.js'
@@ -21,13 +21,13 @@ class CountingOperator implements IOperatorIdentity
     public Calls = 0
     public Succeed = false
 
-    public async Authenticate(_email: string, _password: string): Promise<OperatorSession | null>
+    public async Verify(email: string, _password: string): Promise<OperatorPrincipal | null>
     {
         this.Calls++
-        return this.Succeed ? { token: 't', expiresAt: new Date(Date.now() + Fixture.CookieMs) } : null
+        return this.Succeed ? { email, principalId: Fixture.PrincipalId, role: OperatorRole.Full } : null
     }
 
-    public async ValidateToken(_token: string): Promise<OperatorPrincipal | null>
+    public async PrincipalOf(_principalId: string): Promise<OperatorPrincipal | null>
     {
         return null
     }
@@ -41,7 +41,7 @@ class CountingOperator implements IOperatorIdentity
     {
     }
 
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
+    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<boolean> { return false }
     public async ResetOperatorPassword(_email: string): Promise<string>
     {
         return ''
@@ -58,20 +58,18 @@ class CountingOperator implements IOperatorIdentity
     public async CreateOperator(_email: string, _password: string, _role: OperatorRole): Promise<void>
     {
     }
-
-    public async Revoke(_token: string): Promise<void>
-    {
-    }
 }
 
-class SpyThrottle extends LoginThrottle
+/** The sign-in throttle's state, recording the client address of every attempt it counts (the key's last part). */
+class SpyThrottle extends InMemoryThrottleRepository
 {
+    private static readonly KeySeparator = '\u001f'
     public readonly Ips: string[] = []
 
-    public override CheckAllowed(email: string, ip: string): LoginThrottleDecision
+    public override Update(key: string, change: (prior: ThrottleState | undefined) => ThrottleState): Promise<ThrottleState>
     {
-        this.Ips.push(ip)
-        return super.CheckAllowed(email, ip)
+        this.Ips.push(key.split(SpyThrottle.KeySeparator).pop() as string)
+        return super.Update(key, change)
     }
 }
 
@@ -87,7 +85,7 @@ class Fixture
     public static readonly TooMany = 429
     public static readonly Ok = 200
     public static readonly BurstFactor = 3
-    public static readonly CookieMs = 3600000
+    public static readonly PrincipalId = 'p1'
 
     public static Login(host: ControlPlaneHost, headers: Record<string, string> = {}): Promise<Reply>
     {
@@ -114,8 +112,9 @@ describe('ControlPlaneHost login throttling', () =>
 
     async function Start(trustedProxy: boolean): Promise<void>
     {
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, operator, false,
-            {} as PlatformDirectory, {} as PlatformDeploymentRegistry, {} as TenantProvisioningService, {} as HiveObservationRegistry, throttle, trustedProxy)
+        const sessions = new OperatorSessions({ Sessions: new InMemorySessionRepository(), Tickets: new InMemoryTicketRepository(), Throttles: throttle }, false, { Login: { MaxAttempts: Fixture.Max } })
+        host = new ControlPlaneHost({ Service: {} as IEnvironmentService, Graphs: {} as IGraphService, PortalRoot: root, Operator: operator, Sessions: sessions,
+            Directory: {} as PlatformDirectory, Deployments: {} as PlatformDeploymentRegistry, Provisioning: {} as TenantProvisioningService, Observations: {} as HiveObservationRegistry, TrustedProxy: trustedProxy })
         await host.Listen(0, Fixture.Loopback)
     }
 
@@ -123,7 +122,7 @@ describe('ControlPlaneHost login throttling', () =>
     {
         root = mkdtempSync(join(tmpdir(), 'cp-throttle-'))
         operator = new CountingOperator()
-        throttle = new SpyThrottle({ maxAttempts: Fixture.Max })
+        throttle = new SpyThrottle()
     })
 
     afterEach(async () =>
@@ -132,7 +131,7 @@ describe('ControlPlaneHost login throttling', () =>
         rmSync(root, { recursive: true, force: true })
     })
 
-    it('answers 429 with a numeric Retry-After and never calls Authenticate once locked', async () =>
+    it('answers 429 with a numeric Retry-After and never calls Verify once locked', async () =>
     {
         await Start(false)
         for (let i = 0; i < Fixture.Max; i++)
@@ -146,7 +145,7 @@ describe('ControlPlaneHost login throttling', () =>
         assert.equal(operator.Calls, calls)
     })
 
-    it('lets only maxAttempts of a parallel burst reach Authenticate', async () =>
+    it('lets only maxAttempts of a parallel burst reach Verify', async () =>
     {
         await Start(false)
         const replies = await Promise.all(Array.from({ length: Fixture.Max * Fixture.BurstFactor }, () => Fixture.Login(host)))

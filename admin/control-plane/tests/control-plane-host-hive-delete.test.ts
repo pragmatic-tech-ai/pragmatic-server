@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 import { FakeProvisioning } from './fake-provisioning.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSummary } from '../operator-identity.js'
+import { HostSessions } from './host-sessions.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
@@ -23,7 +24,7 @@ import { HiveBootstrapBundle } from '../hive-bootstrap-bundle.js'
 import { KubectlError, type IKubectl } from '../kubectl.js'
 import type { EnvironmentWorkload } from '../environment-workload.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
-import { AuditRegistry } from '../audit-record.js'
+import { InMemoryAuditRepository } from '@pragmatic-tech-ai/pragmatic-app-host'
 import { HiveNotRegisteredError } from '../rollout-errors.js'
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 
@@ -33,22 +34,29 @@ type DeleteBody = { ok?: boolean; retained?: string[]; notice?: string; error?: 
 class FakeOperator implements IOperatorIdentity
 {
     public static readonly Token = 'full-token'
+    public static readonly Email = 'op@example.com'
+    public static readonly PrincipalId = 'p1'
 
-    public async Authenticate(_email: string, _password: string): Promise<OperatorSession | null> { return null }
-
-    public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
+    /** The operator the planted session names. */
+    public static Principal(): OperatorPrincipal
     {
-        return token === FakeOperator.Token ? { email: 'op@example.com', principalId: 'p1', role: OperatorRole.Full } : null
+        return { email: FakeOperator.Email, principalId: FakeOperator.PrincipalId, role: OperatorRole.Full }
+    }
+
+    public async Verify(_email: string, _password: string): Promise<OperatorPrincipal | null> { return null }
+
+    public async PrincipalOf(principalId: string): Promise<OperatorPrincipal | null>
+    {
+        return { email: FakeOperator.Email, principalId, role: OperatorRole.Full }
     }
 
     public async ListOperators(): Promise<readonly OperatorSummary[]> { return [] }
     public async SetOperatorRole(_e: string, _r: OperatorRole, _a: string): Promise<void> { }
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
+    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<boolean> { return false }
     public async ResetOperatorPassword(_e: string): Promise<string> { return '' }
     public async SetOperatorDisabled(_e: string, _d: boolean, _a: string): Promise<void> { }
     public async RevokeOperatorSessions(_e: string): Promise<void> { }
     public async CreateOperator(_e: string, _p: string, _r: OperatorRole): Promise<void> { }
-    public async Revoke(_t: string): Promise<void> { }
 }
 
 // Records the uninstall's kubectl calls into the shared event log.
@@ -187,16 +195,17 @@ describe('ControlPlaneHost hive delete uninstalls the agent', () =>
     let root: string
     let directory: PlatformDirectory
     let deployments: PlatformDeploymentRegistry
-    let audit: AuditRegistry
+    let audit: InMemoryAuditRepository
+    let sessions: HostSessions
     let events: string[]
     let orchestrators: FakeOrchestrators
     let kindFactory: RecordingKindFactory
     let tokens: Map<string, string>
 
     const Make = (uninstaller: HiveAgentUninstaller | undefined): ControlPlaneHost =>
-        new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
-            new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent), undefined, false, undefined, undefined, undefined, [], undefined,
-            audit, undefined, undefined, 'http://host.docker.internal:7001', undefined, uninstaller)
+        new ControlPlaneHost({ Service: {} as IEnvironmentService, Graphs: {} as IGraphService, PortalRoot: root, Operator: new FakeOperator(), Sessions: sessions.Sessions,
+            Directory: directory, Deployments: deployments, Provisioning: new FakeProvisioning(directory).AsService(), Observations: RolloutFixture.Observations(parent),
+            Audit: audit, AgentChannelUrl: 'http://host.docker.internal:7001', AgentUninstaller: uninstaller })
 
     beforeEach(async () =>
     {
@@ -231,8 +240,8 @@ describe('ControlPlaneHost hive delete uninstalls the agent', () =>
         deployments.DeregisterHive = async (id: string) => { events.push('DeregisterHive'); await deregister(id) }
         const remove = directory.DeleteHive.bind(directory)
         directory.DeleteHive = async (id: string) => { events.push('DeleteHive'); await remove(id) }
-        audit = new AuditRegistry(join(parent, 'audit.json'))
-        await audit.Load()
+        audit = new InMemoryAuditRepository()
+        sessions = await HostSessions.With(FakeOperator.Token, FakeOperator.Principal())
         orchestrators = new FakeOrchestrators(events)
         host = Make(new HiveAgentUninstaller(orchestrators))
         await host.Listen(0, '127.0.0.1')
@@ -266,9 +275,9 @@ describe('ControlPlaneHost hive delete uninstalls the agent', () =>
         orchestrators.Kubectl.Objects.set('secret/' + retained[1], '{}')
         const r = await Harness.Send(host, 'DELETE', '/api/hives/local1')
         assert.deepEqual((JSON.parse(r.body) as DeleteBody).retained, retained)
-        const entry = audit.Recent(10).find(e => e.method === 'DELETE')
-        assert.equal(entry?.path, '/api/hives/local1')
-        assert.equal(entry?.note, 'retained: ' + retained.join(', '))
+        const entry = (await audit.Recent(10)).find(e => e.Action === 'DELETE')
+        assert.equal(entry?.Target, '/api/hives/local1')
+        assert.equal(entry?.Note, 'retained: ' + retained.join(', '))
     })
 
     it('an uninstall failure: 409 with the code and guidance, record and registration intact, later steps never run', async () =>
@@ -306,9 +315,11 @@ describe('ControlPlaneHost hive delete uninstalls the agent', () =>
         const body = JSON.parse(r.body) as DeleteBody
         assert.deepEqual(body.retained, [])
         assert.match(body.notice ?? '', /agent may remain in the cluster/)
-        const entry = audit.Recent(10).find(e => e.method === 'DELETE')
-        assert.equal(entry?.path, '/api/hives/local1?force=true')
-        assert.equal(entry?.status, 200)
+        const entry = (await audit.Recent(10)).find(e => e.Action === 'DELETE')
+        // Ruling (pipeline behaviour changes): the audit target is the path, never the query; a delete anyway says so in the note.
+        assert.equal(entry?.Target, '/api/hives/local1')
+        assert.equal(entry?.Note, 'deleted anyway (force=true)')
+        assert.equal(entry?.Status, 200)
     })
 
     it('a provisioned (kind) hive skips the uninstall: destroying its cluster removes the agent; still deregistered', async () =>
@@ -377,7 +388,7 @@ describe('ControlPlaneHost hive delete uninstalls the agent', () =>
     {
         const r = await Harness.Send(host, 'DELETE', '/api/hives/local1')
         assert.deepEqual((JSON.parse(r.body) as DeleteBody).retained, [])
-        assert.equal(audit.Recent(10).find(e => e.method === 'DELETE')?.note, undefined)
+        assert.equal((await audit.Recent(10)).find(e => e.Action === 'DELETE')?.Note, undefined)
     })
 
     it('two hives of one tenant on one context: deleting the non-owner leaves the owner\'s tenant-admin credential copies', async () =>

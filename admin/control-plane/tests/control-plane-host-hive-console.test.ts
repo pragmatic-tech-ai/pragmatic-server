@@ -7,13 +7,11 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 import { FakeProvisioning } from './fake-provisioning.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
+import { TwoTokenOperator, ActivityLog } from './two-operator-fixture.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
-import { OperatorAuthorization } from '../operator-authorization.js'
-import { AuditRegistry } from '../audit-record.js'
 import { PlatformDirectory } from '../platform-directory.js'
 import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 import { HiveAgentInstaller } from '../hive-agent-installer.js'
@@ -31,33 +29,9 @@ import { ConsoleInstallFixture, FakeInHiveIdpAdmin } from './console-install-fak
 
 type Reply = { status: number; body: string }
 
-class FakeOperator implements IOperatorIdentity
+/** The Full and ReadOnly operators behind fixed session tokens. */
+class FakeOperator extends TwoTokenOperator
 {
-    public static readonly FullToken = 'full-token'
-    public static readonly ReadOnlyToken = 'readonly-token'
-
-    public async Authenticate(_email: string, _password: string): Promise<OperatorSession | null>
-    {
-        return null
-    }
-
-    public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
-    {
-        if (token === FakeOperator.FullToken)
-        {
-            return { email: 'op@example.com', principalId: 'p1', role: OperatorRole.Full }
-        }
-        return token === FakeOperator.ReadOnlyToken ? { email: 'ro@example.com', principalId: 'p2', role: OperatorRole.ReadOnly } : null
-    }
-
-    public async ListOperators(): Promise<readonly OperatorSummary[]> { return [] }
-    public async SetOperatorRole(_e: string, _r: OperatorRole, _a: string): Promise<void> { }
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
-    public async ResetOperatorPassword(_e: string): Promise<string> { return '' }
-    public async SetOperatorDisabled(_e: string, _d: boolean, _a: string): Promise<void> { }
-    public async RevokeOperatorSessions(_e: string): Promise<void> { }
-    public async CreateOperator(_e: string, _p: string, _r: OperatorRole): Promise<void> { }
-    public async Revoke(_t: string): Promise<void> { }
 }
 
 class Harness
@@ -92,7 +66,7 @@ describe('ControlPlaneHost hive console settings', () =>
     let host: ControlPlaneHost
     let parent: string
     let directory: PlatformDirectory
-    let audit: AuditRegistry
+    let audit: ActivityLog
 
     beforeEach(async () =>
     {
@@ -111,12 +85,11 @@ describe('ControlPlaneHost hive console settings', () =>
         const spec = { cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } }
         await directory.CreateHive({ id: 'h1', tenantId: 't1', displayName: 'H1', ...spec })
         await directory.CreateHive({ id: 'h2', tenantId: 't1', displayName: 'H2', ...spec })
-        audit = new AuditRegistry(join(parent, 'audit.json'))
-        await audit.Load()
+        audit = new ActivityLog()
         const deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
-            new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent),
-            undefined, undefined, undefined, undefined, undefined, undefined, new OperatorAuthorization(), audit)
+        host = new ControlPlaneHost({ Service: {} as IEnvironmentService, Graphs: {} as IGraphService, PortalRoot: root, Operator: new FakeOperator(), Sessions: (await FakeOperator.Sessions()).Sessions,
+            Directory: directory, Deployments: deployments, Provisioning: new FakeProvisioning(directory).AsService(), Observations: RolloutFixture.Observations(parent),
+            Audit: audit.Repository })
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -212,7 +185,7 @@ describe('ControlPlaneHost hive console settings', () =>
     {
         await Harness.Put(host, '/api/hives/h1/console', Harness.Good)
         await Harness.Put(host, '/api/hives/h2/console', Harness.Good)
-        const entries = audit.Recent(10).filter(e => e.path.endsWith('/console'))
+        const entries = (await audit.Recent(10)).filter(e => e.path.endsWith('/console'))
         assert.deepEqual(entries.map(e => [e.actor, e.method, e.path, e.status]).sort(),
             [['op@example.com', 'PUT', '/api/hives/h1/console', 200], ['op@example.com', 'PUT', '/api/hives/h2/console', 409]])
     })
@@ -373,7 +346,7 @@ describe('ControlPlaneHost in-hive console install', () =>
     let host: ControlPlaneHost
     let parent: string
     let directory: PlatformDirectory
-    let audit: AuditRegistry
+    let audit: ActivityLog
     let fx: ConsoleInstallFixture
     let installer: TenantConsoleInstaller
     let agentInstaller: HiveAgentInstaller
@@ -403,8 +376,7 @@ describe('ControlPlaneHost in-hive console install', () =>
         await directory.CreateProvisionedTenant({ id: 't1', clientId: 'acme', displayName: 'T', ownerEmail: 'owner@t1.test', ownerPrincipalId: 'owner', idpBaseUrl: 'https://idp.test' })
         await directory.CreateHive({ id: 'h1', tenantId: 't1', displayName: 'H1', cluster: { backend: HiveBackend.Local, mode: InfraMode.Attach }, registry: { mode: InfraMode.Provision } })
         await directory.SetHiveConsole('h1', { baseDomain: 'localtest.me', tls: { source: IngressTlsSource.Development } })
-        audit = new AuditRegistry(join(parent, 'audit.json'))
-        await audit.Load()
+        audit = new ActivityLog()
         fx = await ConsoleInstallFixture.Create()
         fx.SeedRunningIdp('t1')
         adverts = new SwitchableAdverts(join(parent, 'console-adverts.json'))
@@ -417,10 +389,10 @@ describe('ControlPlaneHost in-hive console install', () =>
         await deployments.RegisterHive('h1')
         checkIns = new HeldCheckIns()
         agentInstaller = new HiveAgentInstaller(directory, fx.Orchestrators, deployments, checkIns, ConsoleInstallFixture.ChannelUrl, undefined, { pollIntervalMs: 20, timeoutMs: 60000 })
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
-            new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent),
-            undefined, undefined, undefined, undefined, undefined, undefined, new OperatorAuthorization(), audit, undefined, undefined,
-            ConsoleInstallFixture.ChannelUrl, agentInstaller, new HiveAgentUninstaller(fx.Orchestrators), undefined, installer, adverts, approvals)
+        host = new ControlPlaneHost({ Service: {} as IEnvironmentService, Graphs: {} as IGraphService, PortalRoot: root, Operator: new FakeOperator(), Sessions: (await FakeOperator.Sessions()).Sessions,
+            Directory: directory, Deployments: deployments, Provisioning: new FakeProvisioning(directory).AsService(), Observations: RolloutFixture.Observations(parent),
+            Audit: audit.Repository, AgentChannelUrl: ConsoleInstallFixture.ChannelUrl, AgentInstaller: agentInstaller, AgentUninstaller: new HiveAgentUninstaller(fx.Orchestrators),
+            ConsoleInstaller: installer, Adverts: adverts, Approvals: approvals })
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -466,9 +438,9 @@ describe('ControlPlaneHost in-hive console install', () =>
         assert.equal(r.status, 200)
         assert.equal(r.headers['cache-control'], 'no-store')
         assert.deepEqual(JSON.parse(r.body), { ownerEmail: 'owner@t1.test', ownerPassword: FakeInHiveIdpAdmin.Password })
-        const entries = audit.Recent(10).filter(e => e.path.includes('owner-password'))
+        const entries = (await audit.Recent(10)).filter(e => e.path.includes('owner-password'))
         assert.deepEqual(entries.map(e => [e.method, e.path, e.status]), [['POST', '/api/hives/h1/console/owner-password', 200]])
-        assert.ok(!JSON.stringify(audit.Recent(50)).includes(FakeInHiveIdpAdmin.Password))
+        assert.ok(!JSON.stringify(await audit.Recent(50)).includes(FakeInHiveIdpAdmin.Password))
     })
 
     it('owner-password and console-install refuse a read-only operator', async () =>
@@ -568,7 +540,7 @@ describe('ControlPlaneHost in-hive console install', () =>
         assert.deepEqual(body.retained, [InClusterIdpSeedSource.TlsSecretNameOf('t1'), InClusterIdpSeedSource.AdminSecretNameOf('t1'), 'pragmatic-env-console-dev'])
         assert.ok(fx.Kubectl.Namespaces.has('pragmatic-env-console-dev'))
         assert.ok(!fx.Kubectl.Calls.some(c => c[0] === 'DeleteNamespacesBySelector'))
-        const note = audit.Recent(10).find(e => e.method === 'DELETE' && e.path === '/api/hives/h1/console')?.note ?? ''
+        const note = (await audit.Recent(10)).find(e => e.method === 'DELETE' && e.path === '/api/hives/h1/console')?.note ?? ''
         assert.match(note, /^retained: .*pragmatic-env-console-dev$/)
     })
 
@@ -581,7 +553,7 @@ describe('ControlPlaneHost in-hive console install', () =>
         assert.deepEqual(body.retained, [])
         assert.match(body.notice ?? '', /could not be listed/)
         assert.equal(directory.GetHive('h1')?.console, undefined)
-        assert.match(audit.Recent(10).find(e => e.method === 'DELETE' && e.path === '/api/hives/h1/console')?.note ?? '', /kept objects not listed/)
+        assert.match((await audit.Recent(10)).find(e => e.method === 'DELETE' && e.path === '/api/hives/h1/console')?.note ?? '', /kept objects not listed/)
     })
 
     it('hive delete stops the in-hive IdP and reports its kept data volume and Secrets in retained', async () =>
@@ -635,7 +607,7 @@ describe('ControlPlaneHost in-hive console install', () =>
         assert.deepEqual(body.failed, ['pragmatic-env-stuck'])
         assert.ok(!body.retained.includes('pragmatic-env-stuck'))
         assert.match(body.notice ?? '', /pragmatic-env-stuck/)
-        assert.match(audit.Recent(10).find(e => e.method === 'DELETE')?.note ?? '', /failed: pragmatic-env-stuck/)
+        assert.match((await audit.Recent(10)).find(e => e.method === 'DELETE')?.note ?? '', /failed: pragmatic-env-stuck/)
     })
 
     it('GET console-install answers reported from the advert', async () =>

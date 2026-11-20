@@ -1,9 +1,8 @@
-import { mkdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { isIP } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { AuditRegistry } from './audit-record.js'
-import { AuditThrottle } from './audit-throttle.js'
 import { LocalDesktopDiscoveryBackend } from './desktop-discovery-backend.js'
 import { InternalApiCredential } from './internal-api-credential.js'
 import { InternalApiHost } from './internal-api-host.js'
@@ -17,13 +16,11 @@ import type { IAgentChannelBackend } from './agent-channel-backend.js'
 import { EdgeComposition, EdgeShutdown } from './edge-composition.js'
 import { DesktopDiscoveryEndpoint } from './desktop-discovery-endpoint.js'
 import { TenantAccountIndex } from './tenant-account-index.js'
-import { OperatorAuthorization } from './operator-authorization.js'
 import { fileURLToPath } from 'node:url'
 import { DockerEnv } from '../../environments/seed/docker.js'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
 import { ControlPlaneHost } from './control-plane-host.js'
-import { LoginThrottle } from './login-throttle.js'
 import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
 import { constants as osConstants } from 'node:os'
@@ -79,11 +76,13 @@ import { PlatformImageSigner, PlatformSigningKey } from './platform-signing-key.
 import type { IImageSigner } from './image-signer.js'
 import { DockerImageDigest, RegistryRefImageDigest, type IImageDigest } from './image-digest.js'
 import { ImageSigner } from './image-signer.js'
-import { FileSignatureStore } from './signature-store.js'
+import { FileSignatureStore, type ISignatureStore } from './signature-store.js'
+import { PlatformAdminDatabase, PlatformAdminRegistry } from './platform-admin-database.js'
+import { OperatorSessions } from './operator-sessions.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { EnvironmentService } from './environment-service.js'
 import { GraphService } from './graph-service.js'
-import { OperatorIdentity, type OperatorComposeOptions } from './operator-identity.js'
+import { OperatorIdentity } from './operator-identity.js'
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
 import { ExecFileDockerExec, IdpContainerEnv } from './idp-container-env.js'
 import { IdpRegistry } from './idp-registry.js'
@@ -249,7 +248,6 @@ export class ControlPlaneServer
     private static readonly SignalExitBase = 128
     private static readonly DefaultPort = 7000
     public static readonly IdpPortFloor = 12100
-    public static readonly IdpsFile = 'idps.json'
     private static readonly MaxPort = TenantPlaneComposer.MaxPort
     private static readonly BadPortPrefix = 'Invalid PRAGMATIC_ADMIN_PORT: '
     private static readonly DataDir = 'data'
@@ -263,19 +261,11 @@ export class ControlPlaneServer
     private static readonly TrustAdoptedInfix = ' set as the trust root of hives: '
     private static readonly HiveIdSeparator = ', '
     private static readonly HttpScheme = 'http://'
-    private static readonly ClientsFile = 'clients.json'
-    private static readonly TenantsFile = 'tenants.json'
-    private static readonly HivesFile = 'hives.json'
-    private static readonly ManifestsFile = 'manifests.json'
-    private static readonly AuditFile = 'audit.json'
-    private static readonly GatingFile = 'gating.json'
-    private static readonly SelectionsFile = 'selections.json'
-    private static readonly HiveObservationsFile = 'hive-observations.json'
-    private static readonly RegistrationsFile = 'rollout-registrations.json'
-    private static readonly ReleasePoliciesFile = 'release-policies.json'
-    private static readonly AdoptionLedgerFile = 'adoption-ledger.json'
-    /** The operator portal SPA is served from `<compiled control plane>/../portal/dist`. */
+    /** The operator portal SPA is served from PRAGMATIC_ADMIN_PORTAL_DIR, by default `<compiled control plane>/../portal/dist`. */
     public static readonly PortalSegment = 'portal'
+    private static readonly PortalDirEnvVar = 'PRAGMATIC_ADMIN_PORTAL_DIR'
+    private static readonly PortalIndexFile = 'index.html'
+    private static readonly PortalMissingWarning = '[control-plane] no operator portal bundle (index.html) in the portal folder; the console serves its API only: '
     private static readonly MasterKeyEnvVar = 'PRAGMATIC_ADMIN_MASTER_KEY_FILE'
     private static readonly OperatorEmailEnvVar = 'PRAGMATIC_ADMIN_OPERATOR_EMAIL'
     private static readonly OperatorPasswordEnvVar = 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD'
@@ -289,7 +279,6 @@ export class ControlPlaneServer
     private static readonly TrailingNewline = /\r?\n$/
     private static readonly SecureCookieEnvVar = 'PRAGMATIC_ADMIN_SECURE_COOKIE'
     private static readonly DefaultOperatorEmail = 'admin@control-plane.test'
-    private static readonly IdentitySegment = 'identity'
     private static readonly TrustedProxyEnvVar = 'PRAGMATIC_ADMIN_TRUSTED_PROXY'
     private static readonly AllowedHostsEnvVar = 'PRAGMATIC_ADMIN_ALLOWED_HOSTS'
     private static readonly ListSeparator = ','
@@ -314,10 +303,6 @@ export class ControlPlaneServer
     private static readonly SecretTtlEnvVar = 'PRAGMATIC_TENANT_ADMIN_SECRET_TTL_HOURS'
     private static readonly HealthProbeMsEnvVar = 'PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_MS'
     private static readonly HealthProbeTimeoutMsEnvVar = 'PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_TIMEOUT_MS'
-    public static readonly TenantAccountsFile = 'tenant-accounts.json'
-    public static readonly ConsoleAdvertsFile = ConsoleAdvertRegistry.FileName
-    public static readonly ConsoleDomainApprovalsFile = ConsoleDomainApprovals.FileName
-    public static readonly ConsoleOwnerResetsFile = ConsoleOwnerResets.FileName
     public static readonly DesktopTenantPlaneUrlEnvVar = 'PRAGMATIC_DESKTOP_TENANT_PLANE_URL'
     private static readonly LoopbackHttpPrefix = 'http://127.0.0.1:'
 
@@ -344,8 +329,12 @@ export class ControlPlaneServer
         const dataRoot = ControlPlaneServer.DataRootOf(process.env, here)
         mkdirSync(dataRoot, { recursive: true })
         const opts = ControlPlaneServer.ReadOperatorOptions(process.env, dataRoot)
-        const operator = await OperatorIdentity.Compose(opts)
+        // Every record of the console lives in its own Postgres database (A5); only keys and public material stay on files.
+        const database = await PlatformAdminDatabase.Open(process.env)
+        const sessions = new OperatorSessions(await database.SessionRepositories(), opts.secureCookie)
+        const operator = await OperatorIdentity.Compose({ session: database.Session, masterKeyFile: opts.masterKeyFile, operatorEmail: opts.operatorEmail, initialPassword: opts.initialPassword, sessions: sessions.Store })
         const masterKey = MasterKeyFile.Load(opts.masterKeyFile)
+        const signatures = await database.Signatures()
         // Only `local` has a Docker engine. `none` (no target) and `hosted` (registered clusters on our machines, pushed over
         // the mesh) wire every docker/kind seam to a refusing stand-in (environments, IdP), read image digests from registry
         // references only, and keep tenants as records whose sign-in lives in their home hive.
@@ -361,29 +350,29 @@ export class ControlPlaneServer
         const tenantIdpMode = noDocker ? TenantIdpMode.InHive : TenantIdpMode.Central
         const docker = new DockerEnvAdapter(new DockerEnv())
         const hostRuntime = noDocker ? new NoTargetEnvironmentRuntime() : undefined
-        const registry = new EnvironmentRegistry(join(dataRoot, TenantPlaneComposer.RegistryFile), hostRuntime ?? docker)
+        const registry = new EnvironmentRegistry(await database.Map(PlatformAdminRegistry.Environments), hostRuntime ?? docker)
         const digests: IImageDigest = noDocker ? new RegistryRefImageDigest() : new DockerImageDigest()
         await registry.Load()
         await registry.Reconcile()
         const directory = new PlatformDirectory(
-            new ClientRegistry(join(dataRoot, ControlPlaneServer.ClientsFile)),
-            new TenantRegistry(join(dataRoot, ControlPlaneServer.TenantsFile)),
-            new HiveRegistry(join(dataRoot, ControlPlaneServer.HivesFile)),
+            new ClientRegistry(await database.Map(PlatformAdminRegistry.Clients)),
+            new TenantRegistry(await database.Map(PlatformAdminRegistry.Tenants)),
+            new HiveRegistry(await database.Map(PlatformAdminRegistry.Hives)),
             registry)
         await directory.Load()
         // Every role: the deployment registry the agent channel serves is built over the manifest signer, which needs the
         // platform key (the trust-root back-fill this runs is idempotent, so a co-deployed edge and admin agree).
         // One key store for every signer: the signing-key file (if any) is read once, here.
         const keys = KeyStores.Of(dataRoot, process.env, ControlPlaneServer.SigningKeyRefOf(process.env))
-        const signing = await ControlPlaneServer.PlatformSigningOf(process.env, dataRoot, directory, keys, digests)
+        const signing = await ControlPlaneServer.PlatformSigningOf(process.env, dataRoot, directory, keys, digests, signatures)
         const allocator = new PortAllocator(TenantPlaneComposer.EnvPortFloor, new NetPortProbe())
         const bundle = new BundleBuilderAdapter()
         const seeder = new UserSeederAdapter(new UserSeeder())
         const proxy = new AdminProxy(new WsAdminConnector())
-        const idpService = new IdpService(new IdpRegistry(join(dataRoot, ControlPlaneServer.IdpsFile)), noDocker
+        const idpService = new IdpService(new IdpRegistry(await database.Map(PlatformAdminRegistry.Idps)), noDocker
             ? new NoTargetIdpDriver()
             : new DockerIdpDriver(new PortAllocator(ControlPlaneServer.IdpPortFloor, new NetPortProbe()), new IdpContainerEnv(new ExecFileDockerExec()), dataRoot, DockerEnv.ImageName))
-        const orchestrators = ControlPlaneServer.OrchestratorsOf(infra, dataRoot, digests)
+        const orchestrators = ControlPlaneServer.OrchestratorsOf(infra, dataRoot, digests, signatures)
         const placement = new EnvironmentPlacement(directory)
         // In-cluster environments are reached through pooled kubectl port-forwards; every tunnel dies with the process.
         const tunnels = new ClusterTunnelPool()
@@ -391,32 +380,31 @@ export class ControlPlaneServer
         const endpoints = new EnvironmentEndpoints(orchestrators, directory, tunnels, new NodeProcessSpawner())
         const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(hostRuntime ?? new DockerEnvironmentRuntime(docker, bundle), new InClusterEnvironmentRuntime(orchestrators, placement, directory, bundle, signing.PlatformSigner), directory, orchestrators), seeder, dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), ControlPlaneServer.UiDeployerOf(orchestrators, registry, keys), endpoints, tenantIdpMode)
         const graphService = new GraphService(registry, proxy, service)
-        const staticRoot = join(here, TenantPlaneComposer.ParentSegment, ControlPlaneServer.PortalSegment, TenantPlaneComposer.DistSegment)
-        const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneServer.ManifestsFile))
+        const portalRoot = ControlPlaneServer.PortalRootOf(process.env, here)
+        const manifests = new ManifestRegistry(await database.Map(PlatformAdminRegistry.Manifests))
         const platformImages = ControlPlaneServer.PlatformImagesOf(infra, manifests, process.env)
-        const audit = new AuditRegistry(join(dataRoot, ControlPlaneServer.AuditFile))
-        const desktopAudit = new AuditRegistry(join(dataRoot, TenantPlaneComposer.DesktopAuditFile))
-        const graphAudit = new AuditRegistry(join(dataRoot, TenantPlaneComposer.TenantGraphAuditFile))
-        const gating = new GatingRegistry(join(dataRoot, ControlPlaneServer.GatingFile))
-        const selections = new SelectionRegistry(join(dataRoot, ControlPlaneServer.SelectionsFile))
-        const observations = new HiveObservationRegistry(join(dataRoot, ControlPlaneServer.HiveObservationsFile))
-        const registrations = new RolloutRegistrationRegistry(join(dataRoot, ControlPlaneServer.RegistrationsFile))
-        const policies = new ReleasePolicyRegistry(join(dataRoot, ControlPlaneServer.ReleasePoliciesFile))
-        const ledger = new AdoptionLedgerRegistry(join(dataRoot, ControlPlaneServer.AdoptionLedgerFile))
-        const adminClientRegistry = new TenantAdminClientRegistry(join(dataRoot, TenantPlaneComposer.TenantAdminClientsFile))
-        const accountIndex = new TenantAccountIndex(join(dataRoot, ControlPlaneServer.TenantAccountsFile))
-        const adverts = new ConsoleAdvertRegistry(join(dataRoot, ControlPlaneServer.ConsoleAdvertsFile))
-        const approvals = new ConsoleDomainApprovals(join(dataRoot, ControlPlaneServer.ConsoleDomainApprovalsFile))
+        const audit = await database.Audit()
+        const desktopAudit = new AuditRegistry(await database.Map(PlatformAdminRegistry.DesktopAudit))
+        const graphAudit = new AuditRegistry(await database.Map(PlatformAdminRegistry.GraphAudit))
+        const gating = new GatingRegistry(await database.Map(PlatformAdminRegistry.Gating))
+        const selections = new SelectionRegistry(await database.Map(PlatformAdminRegistry.Selections))
+        const observations = new HiveObservationRegistry(await database.Map(PlatformAdminRegistry.HiveObservations))
+        const registrations = new RolloutRegistrationRegistry(await database.Map(PlatformAdminRegistry.RolloutRegistrations))
+        const policies = new ReleasePolicyRegistry(await database.Map(PlatformAdminRegistry.ReleasePolicies))
+        const ledger = new AdoptionLedgerRegistry(await database.Map(PlatformAdminRegistry.AdoptionLedger))
+        const adminClientRegistry = new TenantAdminClientRegistry(await database.Map(PlatformAdminRegistry.TenantAdminClients))
+        const accountIndex = new TenantAccountIndex(await database.Map(PlatformAdminRegistry.TenantAccounts))
+        const adverts = new ConsoleAdvertRegistry(await database.Map(PlatformAdminRegistry.ConsoleAdverts))
+        const approvals = new ConsoleDomainApprovals(await database.Map(PlatformAdminRegistry.ConsoleDomainApprovals))
         // Operator Owner resets of in-hive consoles: recorded by the console installer, answered to the console in its advert.
-        const ownerResets = new ConsoleOwnerResets(join(dataRoot, ControlPlaneServer.ConsoleOwnerResetsFile))
-        await Promise.all([manifests.Load(), audit.Load(), desktopAudit.Load(), graphAudit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load(), accountIndex.Load(), adverts.Load(), approvals.Load(), ownerResets.Load()])
+        const ownerResets = new ConsoleOwnerResets(await database.Map(PlatformAdminRegistry.ConsoleOwnerResets))
+        await Promise.all([manifests.Load(), desktopAudit.Load(), graphAudit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load(), accountIndex.Load(), adverts.Load(), approvals.Load(), ownerResets.Load()])
         await accountIndex.BackfillFrom(directory)
-        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(signing.PlatformSigner.KeyRef, dataRoot, signing.ImageSigner, digests), policies, ledger)
+        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(signing.PlatformSigner.KeyRef, dataRoot, signing.ImageSigner, digests, signatures), policies, ledger)
         // The release catalogue and its poll are operator-side: composed (and their settings validated) before any listener
         // starts, and never by the edge.
         // Release images are countersigned by their registry digest (never a local docker id), into the same signature store.
-        const countersigner = new PlatformReleaseCountersigner(ControlPlaneServer.ImageSignerOf(dataRoot, keys, new RegistryRefImageDigest()), signing.PlatformSigner.KeyRef,
-            new FileSignatureStore(join(dataRoot, ControlPlaneServer.SignaturesFileName)))
+        const countersigner = new PlatformReleaseCountersigner(ControlPlaneServer.ImageSignerOf(dataRoot, keys, new RegistryRefImageDigest(), signatures), signing.PlatformSigner.KeyRef, signatures)
         const releases = ControlPlaneServer.ReleasesOf(role, process.env, join(here, TenantPlaneComposer.ParentSegment, TenantPlaneComposer.ParentSegment), deployments, countersigner)
         const agentChannelUrlRaw = process.env[ControlPlaneServer.AgentChannelUrlEnvVar]
         const agentChannelUrl = ControlPlaneServer.AgentChannelUrl(agentChannelPort, agentChannelUrlRaw)
@@ -440,7 +428,7 @@ export class ControlPlaneServer
         // Installs a Local hive's agent through the same cluster access the orchestrators already hold; off with the channel.
         const agentInstaller = new HiveAgentInstaller(directory, orchestrators, deployments, observations, agentChannelUrl, new SystemInstallClock(), HiveAgentInstaller.DefaultTiming, platformImages)
         // Console keys and the dev CA are sealed under the master key; discovery and the console installer share one fingerprint-key source.
-        const sealed = await SealedSecretStore.Open(join(dataRoot, SealedSecretStore.FileName), masterKey)
+        const sealed = await SealedSecretStore.Open(await database.Map(PlatformAdminRegistry.SealedSecrets), masterKey)
         const fingerprintKeys = new ConsoleFingerprintKeys(sealed)
         const discoveryBackend = new LocalDesktopDiscoveryBackend(accountIndex, directory, ControlPlaneServer.DesktopTenantPlaneUrlOf(process.env),
             adverts, fingerprintKeys, approvals, registry)
@@ -451,11 +439,17 @@ export class ControlPlaneServer
         // Installs a Local hive's tenant console through the same cluster access.
         const consoleInstaller = new TenantConsoleInstaller(directory, orchestrators, new TenantAdminBootstrap(deployments), fingerprintKeys,
             new DevCertificateAuthority(join(dataRoot, DevCertificateAuthority.DirName), sealed), new InHiveIdpAdmin(orchestrators, sealed),
-            new PlatformConsoleImageApproval(signing.PlatformSigner, PlatformHiveOrchestratorFactory.VerifierFor(dataRoot, digests)),
+            new PlatformConsoleImageApproval(signing.PlatformSigner, PlatformHiveOrchestratorFactory.VerifierFor(dataRoot, digests, signatures)),
             keys, agentChannelUrl, new SystemInstallClock(), adverts, ownerResets, platformImages)
         // Daily DNS re-check of verified domains (after approvals.Load; its interval timer is unref'd, so no shutdown hook).
         new DomainVerificationRechecker(approvals, domainVerifier).Start()
-        const host = new ControlPlaneHost(service, graphService, staticRoot, operator, opts.secureCookie, directory, deployments, provisioning, observations, new LoginThrottle(), opts.trustedProxy, undefined, undefined, undefined, opts.allowedHosts, new OperatorAuthorization(), audit, new AuditThrottle(), idpService, agentChannelUrl, agentInstaller, new HiveAgentUninstaller(orchestrators), discovery, consoleInstaller, adverts, approvals, emailDomains, releases?.Refresher, platformImages)
+        const host = new ControlPlaneHost({
+            Service: service, Graphs: graphService, PortalRoot: portalRoot, Operator: operator, Sessions: sessions,
+            Directory: directory, Deployments: deployments, Provisioning: provisioning, Observations: observations,
+            TrustedProxy: opts.trustedProxy, AllowedHosts: opts.allowedHosts, Audit: audit, Idp: idpService, AgentChannelUrl: agentChannelUrl,
+            AgentInstaller: agentInstaller, AgentUninstaller: new HiveAgentUninstaller(orchestrators), Discovery: discovery, ConsoleInstaller: consoleInstaller,
+            Adverts: adverts, Approvals: approvals, EmailDomains: emailDomains, Releases: releases?.Refresher, PlatformImages: platformImages,
+        })
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
         const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
             masterKey, adminClientRegistry, TenantPlaneComposer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]), tenantSessions, principalSessions,
@@ -547,7 +541,7 @@ export class ControlPlaneServer
     }
 
     /** The hive drivers for the infra mode: none drives nothing, hosted drives registered clusters by context, local adds kind. */
-    public static OrchestratorsOf(infra: InfraTargetMode, dataRoot: string, digests: IImageDigest): HiveOrchestratorFactory
+    public static OrchestratorsOf(infra: InfraTargetMode, dataRoot: string, digests: IImageDigest, signatures?: ISignatureStore): HiveOrchestratorFactory
     {
         if (infra === InfraTargetMode.None)
         {
@@ -555,9 +549,9 @@ export class ControlPlaneServer
         }
         if (infra === InfraTargetMode.Hosted)
         {
-            return new HostedHiveOrchestratorFactory(undefined, dataRoot, digests)
+            return new HostedHiveOrchestratorFactory(undefined, dataRoot, digests, signatures)
         }
-        return new PlatformHiveOrchestratorFactory(undefined, dataRoot, digests)
+        return new PlatformHiveOrchestratorFactory(undefined, dataRoot, digests, signatures)
     }
 
     /**
@@ -579,15 +573,14 @@ export class ControlPlaneServer
         return ControlPlaneRoles.ServesOperators(role) ? ReleaseCatalogConfig.Compose(env, repoRoot, deployments, undefined, countersigner) : undefined
     }
 
-    /** Derives operator-identity compose options and cookie policy from the environment (reads the password file, if one is named). */
-    public static ReadOperatorOptions(env: NodeJS.ProcessEnv, dataRoot: string): OperatorComposeOptions & { secureCookie: boolean; trustedProxy: boolean; allowedHosts: readonly string[] }
+    /** Derives the operator bootstrap settings and cookie policy from the environment (reads the password file, if one is named). */
+    public static ReadOperatorOptions(env: NodeJS.ProcessEnv, dataRoot: string): { masterKeyFile: string; operatorEmail: string; initialPassword?: string; secureCookie: boolean; trustedProxy: boolean; allowedHosts: readonly string[] }
     {
         const password = ControlPlaneServer.InitialPasswordOf(env)
         const secure = env[ControlPlaneServer.SecureCookieEnvVar]
         const proxied = env[ControlPlaneServer.TrustedProxyEnvVar]
         return {
             masterKeyFile: env[ControlPlaneServer.MasterKeyEnvVar] ?? join(dataRoot, TenantPlaneComposer.MasterKeyFileName),
-            identityRoot: join(dataRoot, ControlPlaneServer.IdentitySegment),
             operatorEmail: env[ControlPlaneServer.OperatorEmailEnvVar] ?? ControlPlaneServer.DefaultOperatorEmail,
             initialPassword: password === undefined || password === '' ? undefined : password,
             secureCookie: TenantPlaneComposer.ReadsTrue(secure),
@@ -685,6 +678,23 @@ export class ControlPlaneServer
             throw new Error(ControlPlaneServer.BadAdminBindPrefix + raw)
         }
         return raw
+    }
+
+    /**
+     * The operator portal bundle folder: PRAGMATIC_ADMIN_PORTAL_DIR (resolved) when set, else the shipped
+     * `<compiled control plane>/../portal/dist`. A folder without an index.html is reported once: the console then serves
+     * its API only.
+     */
+    public static PortalRootOf(env: NodeJS.ProcessEnv, here: string): string
+    {
+        const C = ControlPlaneServer
+        const raw = env[C.PortalDirEnvVar]?.trim() ?? ''
+        const root = raw !== '' ? resolve(raw) : join(here, TenantPlaneComposer.ParentSegment, C.PortalSegment, TenantPlaneComposer.DistSegment)
+        if (!existsSync(join(root, C.PortalIndexFile)))
+        {
+            console.warn(C.PortalMissingWarning + root)
+        }
+        return root
     }
 
     /** Pure: the state folder; PRAGMATIC_ADMIN_DATA_ROOT (resolved) when set, so a test stack never shares the developer's `data` folder beside the server. */
@@ -791,7 +801,7 @@ export class ControlPlaneServer
      * the operator later names another one. Returns one shared image signer and the platform signer built over it.
      */
     public static async PlatformSigningOf(env: NodeJS.ProcessEnv, dataRoot: string, directory: PlatformDirectory,
-        keys: IKeyStore = KeyStores.Of(dataRoot, env, ControlPlaneServer.SigningKeyRefOf(env)), digests: IImageDigest = new DockerImageDigest()): Promise<{ ImageSigner: IImageSigner; PlatformSigner: PlatformImageSigner }>
+        keys: IKeyStore = KeyStores.Of(dataRoot, env, ControlPlaneServer.SigningKeyRefOf(env)), digests: IImageDigest = new DockerImageDigest(), signatures?: ISignatureStore): Promise<{ ImageSigner: IImageSigner; PlatformSigner: PlatformImageSigner }>
     {
         const C = ControlPlaneServer
         const keysDir = join(dataRoot, C.KeysDirName)
@@ -814,7 +824,7 @@ export class ControlPlaneServer
         {
             console.log(C.TrustAdoptedPrefix + ref + C.TrustAdoptedInfix + adopted.join(C.HiveIdSeparator))
         }
-        const imageSigner = C.ImageSignerOf(dataRoot, keys, digests)
+        const imageSigner = C.ImageSignerOf(dataRoot, keys, digests, signatures)
         return { ImageSigner: imageSigner, PlatformSigner: new PlatformImageSigner(imageSigner, ref) }
     }
 
@@ -829,18 +839,23 @@ export class ControlPlaneServer
         await rename(temp, path)
     }
 
-    /** The registry manifest signer: publishes are signed with the platform signing key `ref`, through the shared image signer. */
-    public static ManifestSignerOf(ref: string, dataRoot: string, signer: IImageSigner, digests: IImageDigest = new DockerImageDigest()): IManifestSigner
+    /** The registry manifest signer: publishes are signed with the platform signing key `ref`, through the shared image signer,
+     *  into `signatures` (the console's Postgres store; the data root's file when none is given: development tools). */
+    public static ManifestSignerOf(ref: string, dataRoot: string, signer: IImageSigner, digests: IImageDigest = new DockerImageDigest(), signatures?: ISignatureStore): IManifestSigner
     {
-        const store = new FileSignatureStore(join(dataRoot, ControlPlaneServer.SignaturesFileName))
-        return new ManifestSigner(digests, signer, store, ref)
+        return new ManifestSigner(digests, signer, signatures ?? ControlPlaneServer.FileSignaturesOf(dataRoot), ref)
     }
 
     /** Signs images into the same signature store the hive orchestrators verify against, with keys from the key store. */
-    public static ImageSignerOf(dataRoot: string, keys: IKeyStore = new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)), digests: IImageDigest = new DockerImageDigest()): ImageSigner
+    public static ImageSignerOf(dataRoot: string, keys: IKeyStore = new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)), digests: IImageDigest = new DockerImageDigest(), signatures?: ISignatureStore): ImageSigner
     {
-        const store = new FileSignatureStore(join(dataRoot, ControlPlaneServer.SignaturesFileName))
-        return new ImageSigner(digests, store, keys)
+        return new ImageSigner(digests, signatures ?? ControlPlaneServer.FileSignaturesOf(dataRoot), keys)
+    }
+
+    /** The data root's signature file (development tools and tests that keep no database). */
+    private static FileSignaturesOf(dataRoot: string): FileSignatureStore
+    {
+        return new FileSignatureStore(join(dataRoot, ControlPlaneServer.SignaturesFileName))
     }
 
     private static ResolvePort(raw: string | undefined): number

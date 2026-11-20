@@ -24,11 +24,25 @@
           "description": "PRAGMATIC_ADMIN_BIND: Address of the operator listener (an IP address or localhost)."
         },
         {
+          "name": "databaseUrl",
+          "type": "string",
+          "required": true,
+          "secret": true,
+          "description": "PRAGMATIC_ADMIN_DATABASE_URL_FILE: The URL of the own Postgres database of the console, where every record lives (a mounted secret file)."
+        },
+        {
           "name": "dataRoot",
           "type": "string",
           "required": false,
           "secret": false,
-          "description": "PRAGMATIC_ADMIN_DATA_ROOT: The state folder (defaults to data beside the control plane)."
+          "description": "PRAGMATIC_ADMIN_DATA_ROOT: The state folder of what stays on files: public keys, the development CA, environment bundles (defaults to data beside the control plane)."
+        },
+        {
+          "name": "portalDir",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_ADMIN_PORTAL_DIR: The operator portal bundle (defaults to the shipped admin/portal/dist)."
         },
         {
           "name": "allowedHosts",
@@ -73,7 +87,7 @@
           "type": "string",
           "required": false,
           "secret": true,
-          "description": "PRAGMATIC_ADMIN_MASTER_KEY_FILE: The 32-byte master key of the operator identity store (a mounted secret file; defaults to master.key in the state folder)."
+          "description": "PRAGMATIC_ADMIN_MASTER_KEY_FILE: The 32-byte master key sealing the secrets the console keeps in its database (a mounted secret file; defaults to master.key in the state folder)."
         },
         {
           "name": "signingKeyRef",

@@ -129,18 +129,20 @@ RUN node pragmatic-server/dist-tenant-admin/admin/control-plane/bin/pragmatic-co
 # closure of those workspaces.
 FROM build AS pragmatic-platform-admin-shared-modules
 RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
-    --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
+    --workspace=packages/pragmatic-app-host --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
     --workspace=packages/pragmatic-identity-source-entra --workspace=packages/pragmatic-identity-source-google \
     --workspace=packages/pragmatic-identity-source-local --workspace=packages/pragmatic-identity-source-oidc \
-    --workspace=packages/pragmatic-identity-store \
+    --workspace=packages/pragmatic-identity-store --workspace=packages/pragmatic-realm-adapters \
+    --workspace=packages/pragmatic-realm-custom \
     && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
 
 FROM build AS pragmatic-platform-edge-shared-modules
 RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
-    --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
+    --workspace=packages/pragmatic-app-host --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
     --workspace=packages/pragmatic-identity-source-entra --workspace=packages/pragmatic-identity-source-google \
     --workspace=packages/pragmatic-identity-source-local --workspace=packages/pragmatic-identity-source-oidc \
-    --workspace=packages/pragmatic-identity-store \
+    --workspace=packages/pragmatic-identity-store --workspace=packages/pragmatic-realm-adapters \
+    --workspace=packages/pragmatic-realm-custom \
     && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
 
 FROM build AS pragmatic-env-server-shared-modules
@@ -223,6 +225,7 @@ COPY --from=platform-admin-tools /tools/docker-cli /usr/local/bin/docker
 COPY --from=build --chown=10001:10001 /workspace/Mural /workspace/Mural
 COPY --from=build --chown=10001:10001 /workspace/TODL /workspace/TODL
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-protocol /workspace/pragmatic-protocol
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host /workspace/pragmatic-shared/packages/pragmatic-app-host
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity /workspace/pragmatic-shared/packages/pragmatic-identity
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm /workspace/pragmatic-shared/packages/pragmatic-identity-realm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra
@@ -230,6 +233,8 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local /workspace/pragmatic-shared/packages/pragmatic-identity-source-local
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store /workspace/pragmatic-shared/packages/pragmatic-identity-store
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom /workspace/pragmatic-shared/packages/pragmatic-realm-custom
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-platform-admin-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
@@ -257,6 +262,7 @@ FROM runtime AS pragmatic-platform-edge
 COPY --from=build --chown=10001:10001 /workspace/Mural /workspace/Mural
 COPY --from=build --chown=10001:10001 /workspace/TODL /workspace/TODL
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-protocol /workspace/pragmatic-protocol
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host /workspace/pragmatic-shared/packages/pragmatic-app-host
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity /workspace/pragmatic-shared/packages/pragmatic-identity
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm /workspace/pragmatic-shared/packages/pragmatic-identity-realm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra
@@ -264,6 +270,8 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local /workspace/pragmatic-shared/packages/pragmatic-identity-source-local
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store /workspace/pragmatic-shared/packages/pragmatic-identity-store
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom /workspace/pragmatic-shared/packages/pragmatic-realm-custom
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-platform-edge-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json

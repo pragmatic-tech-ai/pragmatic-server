@@ -7,13 +7,11 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 import { FakeProvisioning } from './fake-provisioning.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
+import { TwoTokenOperator, ActivityLog } from './two-operator-fixture.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
-import { OperatorAuthorization } from '../operator-authorization.js'
-import { AuditRegistry } from '../audit-record.js'
 import { PlatformDirectory } from '../platform-directory.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import { IngressTlsSource } from '../ingress-tls.js'
@@ -44,33 +42,9 @@ class FakeTxtResolver implements ITxtResolver
     }
 }
 
-class FakeOperator implements IOperatorIdentity
+/** The Full and ReadOnly operators behind fixed session tokens. */
+class FakeOperator extends TwoTokenOperator
 {
-    public static readonly FullToken = 'full-token'
-    public static readonly ReadOnlyToken = 'readonly-token'
-
-    public async Authenticate(_email: string, _password: string): Promise<OperatorSession | null>
-    {
-        return null
-    }
-
-    public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
-    {
-        if (token === FakeOperator.FullToken)
-        {
-            return { email: 'op@example.com', principalId: 'p1', role: OperatorRole.Full }
-        }
-        return token === FakeOperator.ReadOnlyToken ? { email: 'ro@example.com', principalId: 'p2', role: OperatorRole.ReadOnly } : null
-    }
-
-    public async ListOperators(): Promise<readonly OperatorSummary[]> { return [] }
-    public async SetOperatorRole(_e: string, _r: OperatorRole, _a: string): Promise<void> { }
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
-    public async ResetOperatorPassword(_e: string): Promise<string> { return '' }
-    public async SetOperatorDisabled(_e: string, _d: boolean, _a: string): Promise<void> { }
-    public async RevokeOperatorSessions(_e: string): Promise<void> { }
-    public async CreateOperator(_e: string, _p: string, _r: OperatorRole): Promise<void> { }
-    public async Revoke(_t: string): Promise<void> { }
 }
 
 class Send
@@ -139,7 +113,7 @@ describe('ControlPlaneHost tenant email domains', () =>
     let directory: PlatformDirectory
     let adverts: ConsoleAdvertRegistry
     let approvals: ConsoleDomainApprovals
-    let audit: AuditRegistry
+    let audit: ActivityLog
     let domains: PlatformEmailDomains
     let resolver: FakeTxtResolver
 
@@ -165,15 +139,13 @@ describe('ControlPlaneHost tenant email domains', () =>
         approvals = new ConsoleDomainApprovals(join(parent, ConsoleDomainApprovals.FileName))
         await approvals.Load()
         await adverts.Report({ tenantId: 'acme', hiveId: 'acme-hive', consoleUrl: 'https://console-acme.localtest.me', fingerprints: [], emailDomains: ['acme.test', 'shared.test'], reportedAt: '2026-11-04T10:00:00.000Z' })
-        audit = new AuditRegistry(join(parent, 'audit.json'))
-        await audit.Load()
+        audit = new ActivityLog()
         resolver = new FakeTxtResolver()
         domains = new PlatformEmailDomains(directory, adverts, approvals, new DomainTxtVerifier(resolver))
         const deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
-            new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent),
-            undefined, undefined, undefined, undefined, undefined, undefined, new OperatorAuthorization(), audit,
-            undefined, undefined, undefined, undefined, undefined, undefined, undefined, adverts, approvals, domains)
+        host = new ControlPlaneHost({ Service: {} as IEnvironmentService, Graphs: {} as IGraphService, PortalRoot: root, Operator: new FakeOperator(), Sessions: (await FakeOperator.Sessions()).Sessions,
+            Directory: directory, Deployments: deployments, Provisioning: new FakeProvisioning(directory).AsService(), Observations: RolloutFixture.Observations(parent),
+            Audit: audit.Repository, Adverts: adverts, Approvals: approvals, EmailDomains: domains })
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -215,7 +187,7 @@ describe('ControlPlaneHost tenant email domains', () =>
         assert.deepEqual(approvals.ApprovedFor('beta'), ['beta.test'])
         const again = await Send.Request(host, 'PUT', BetaPath, { domains: ['victim.test', 'beta.test'] })
         assert.equal(again.status, 200)
-        const notes = audit.Recent(10).filter(e => e.method === 'PUT' && e.path === BetaPath).map(e => e.note)
+        const notes = (await audit.Recent(10)).filter(e => e.method === 'PUT' && e.path === BetaPath).map(e => e.note)
         assert.deepEqual(notes.sort(), ['approved on save: beta.test', undefined].sort())
     })
 
@@ -237,7 +209,7 @@ describe('ControlPlaneHost tenant email domains', () =>
             const r = await Send.Request(host, 'POST', AcmePath + '/revoke', { domain })
             assert.equal(r.status, 400)
         }
-        const entries = audit.Recent(10).filter(e => e.path.endsWith('/revoke'))
+        const entries = (await audit.Recent(10)).filter(e => e.path.endsWith('/revoke'))
         assert.equal(entries.length, 2)
         assert.ok(entries.every(e => e.status === 400 && e.note === undefined))
     })
@@ -360,7 +332,8 @@ describe('ControlPlaneHost tenant email domains', () =>
             assert.equal(Send.Error(r), 'domain (an email domain name) is required')
         }
         assert.equal((await Send.Request(host, 'POST', AcmePath + '/approve', { domain: 'gmail.com' })).status, 400)
-        assert.equal((await Send.Request(host, 'GET', AcmePath + '/approve')).status, 404)
+        // Ruling (pipeline behaviour changes): a known path under another method is 405 with Allow (was 404).
+        assert.equal((await Send.Request(host, 'GET', AcmePath + '/approve')).status, 405)
     })
 
     it('approvals, revokes and edits are audited with the operator, the status and the domain', async () =>
@@ -369,7 +342,7 @@ describe('ControlPlaneHost tenant email domains', () =>
         await Send.Request(host, 'POST', AcmePath + '/approve', { domain: 'other.test' })
         await Send.Request(host, 'POST', AcmePath + '/revoke', { domain: 'acme.test' })
         await Send.Request(host, 'PUT', BetaPath, { domains: ['beta.test'] })
-        const entries = audit.Recent(10).filter(e => e.path.includes('/email-domains'))
+        const entries = (await audit.Recent(10)).filter(e => e.path.includes('/email-domains'))
         assert.deepEqual(entries.map(e => [e.actor, e.method, e.path, e.status, e.note]).sort(), [
             ['op@example.com', 'POST', AcmePath + '/approve', 200, 'domain: acme.test'],
             ['op@example.com', 'POST', AcmePath + '/approve', 409, undefined],
@@ -389,7 +362,7 @@ describe('ControlPlaneHost tenant email domains', () =>
         assert.equal(row.recordName, DomainVerificationRecord.NamePrefix + 'acme.test')
         assert.equal(row.recordValue, DomainVerificationRecord.ValueFor(approvals.VerificationOf('acme', 'acme.test')?.token as string))
         assert.deepEqual(resolver.Names, [DomainVerificationRecord.NameFor('acme.test')])
-        const entries = audit.Recent(10).filter(e => e.path === AcmePath + '/verify')
+        const entries = (await audit.Recent(10)).filter(e => e.path === AcmePath + '/verify')
         assert.deepEqual(entries.map(e => [e.actor, e.method, e.status, e.note]), [['op@example.com', 'POST', 200, 'domain: acme.test']])
     })
 
@@ -499,8 +472,8 @@ describe('ControlPlaneHost without an email-domain service', () =>
         await directory.CreateClient({ id: 'c1', displayName: 'C1' })
         await directory.CreateTenant({ id: 'beta', clientId: 'c1', displayName: 'Beta' })
         const deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
-        const host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
-            new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent))
+        const host = new ControlPlaneHost({ Service: {} as IEnvironmentService, Graphs: {} as IGraphService, PortalRoot: root, Operator: new FakeOperator(), Sessions: (await FakeOperator.Sessions()).Sessions,
+            Directory: directory, Deployments: deployments, Provisioning: new FakeProvisioning(directory).AsService(), Observations: RolloutFixture.Observations(parent) })
         await host.Listen(0, '127.0.0.1')
         try
         {

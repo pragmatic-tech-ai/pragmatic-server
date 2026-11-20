@@ -12,7 +12,8 @@ import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { PlatformDirectory } from '../platform-directory.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSummary } from '../operator-identity.js'
+import { HostSessions } from './host-sessions.js'
 
 /**
  * The operator listener's structural isolation: with the tenant plane split onto its own `TenantPlaneHost`, the
@@ -32,17 +33,24 @@ class FakeOperator implements IOperatorIdentity
     public static readonly Email = 'op@example.com'
     public static readonly Password = 'correct-horse'
     public static readonly Token = 'valid-token'
+    public static readonly PrincipalId = 'p1'
 
-    public async Authenticate(email: string, password: string): Promise<OperatorSession | null>
+    /** The operator the planted session names. */
+    public static Principal(): OperatorPrincipal
+    {
+        return { email: FakeOperator.Email, principalId: FakeOperator.PrincipalId, role: OperatorRole.Full }
+    }
+
+    public async Verify(email: string, password: string): Promise<OperatorPrincipal | null>
     {
         return email === FakeOperator.Email && password === FakeOperator.Password
-            ? { token: FakeOperator.Token, expiresAt: new Date(Date.now() + 3600000) }
+            ? { email, principalId: FakeOperator.PrincipalId, role: OperatorRole.Full }
             : null
     }
 
-    public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
+    public async PrincipalOf(principalId: string): Promise<OperatorPrincipal | null>
     {
-        return token === FakeOperator.Token ? { email: FakeOperator.Email, principalId: 'p1', role: OperatorRole.Full } : null
+        return { email: FakeOperator.Email, principalId, role: OperatorRole.Full }
     }
 
     public async ListOperators(): Promise<readonly OperatorSummary[]>
@@ -54,7 +62,7 @@ class FakeOperator implements IOperatorIdentity
     {
     }
 
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
+    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<boolean> { return false }
     public async ResetOperatorPassword(_email: string): Promise<string>
     {
         return ''
@@ -69,10 +77,6 @@ class FakeOperator implements IOperatorIdentity
     }
 
     public async CreateOperator(_email: string, _password: string, _role: OperatorRole): Promise<void>
-    {
-    }
-
-    public async Revoke(): Promise<void>
     {
     }
 }
@@ -115,16 +119,18 @@ class Harness
     {
         const directory = await Harness.BuildDirectory(parent)
         const factory = new HiveOrchestratorFactory()
-        const host = new ControlPlaneHost(
-            new StubEnvironments() as unknown as IEnvironmentService,
-            {} as unknown as IGraphService,
-            staticRoot,
-            new FakeOperator(),
-            false,
-            directory,
-            await RolloutFixture.Create(parent, directory, factory),
-            new FakeProvisioning(directory).AsService(),
-            RolloutFixture.Observations(parent))
+        const sessions = await HostSessions.With(FakeOperator.Token, FakeOperator.Principal())
+        const host = new ControlPlaneHost({
+            Service: new StubEnvironments() as unknown as IEnvironmentService,
+            Graphs: {} as unknown as IGraphService,
+            PortalRoot: staticRoot,
+            Operator: new FakeOperator(),
+            Sessions: sessions.Sessions,
+            Directory: directory,
+            Deployments: await RolloutFixture.Create(parent, directory, factory),
+            Provisioning: new FakeProvisioning(directory).AsService(),
+            Observations: RolloutFixture.Observations(parent),
+        })
         await host.Listen(0, '127.0.0.1')
         return host
     }
@@ -181,7 +187,8 @@ describe('ControlPlaneHost operator-only surface', () =>
     {
         const r = await Harness.Raw(host, HttpMethod.Get, Harness.ApiHivesPath, { [Harness.HostHeader]: 'acme.admin.example.com' })
         assert.equal(r.status, 403)
-        assert.equal(JSON.parse(r.body).error, 'Host not allowed')
+        // Ruling (pipeline behaviour changes): refusal messages are the host's (status unchanged).
+        assert.equal(JSON.parse(r.body).error, 'Forbidden host')
     })
 })
 

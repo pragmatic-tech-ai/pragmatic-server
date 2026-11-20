@@ -6,34 +6,34 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { FakeProvisioning } from './fake-provisioning.js'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
-import { OperatorAuthorization } from '../operator-authorization.js'
-import { AuditRegistry, type AuditRecord } from '../audit-record.js'
-import { AuditThrottle } from '../audit-throttle.js'
+import { AuditEntry, InMemoryAuditRepository, InMemoryThrottleRepository, RateLimiter, type IAuditRepository } from '@pragmatic-tech-ai/pragmatic-app-host'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSummary } from '../operator-identity.js'
+import type { ActivityDto } from '../control-plane-host.js'
+import { HostSessions } from './host-sessions.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { PlatformDirectory } from '../platform-directory.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import { RolloutFixture } from './rollout-fixture.js'
-import { HeldAudit } from './held-audit.js'
 
 type Reply = { status: number; body: string; headers: Record<string, string | string[] | undefined> }
 
 class FakeOperator implements IOperatorIdentity
 {
     public static readonly Token = 'valid-token'
+    public static readonly Principal: OperatorPrincipal = { email: 'op@example.com', principalId: 'p1', role: OperatorRole.Full }
 
     public Role: OperatorRole = OperatorRole.Full
 
-    public async Authenticate(_email: string, _password: string): Promise<OperatorSession | null>
+    public async Verify(_email: string, _password: string): Promise<OperatorPrincipal | null>
     {
-        return { token: FakeOperator.Token, expiresAt: new Date(Date.now() + 3600000) }
+        return null
     }
 
-    public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
+    public async PrincipalOf(principalId: string): Promise<OperatorPrincipal | null>
     {
-        return token === FakeOperator.Token ? { email: 'op@example.com', principalId: 'p1', role: this.Role } : null
+        return principalId === FakeOperator.Principal.principalId ? { ...FakeOperator.Principal, role: this.Role } : null
     }
 
     public async ListOperators(): Promise<readonly OperatorSummary[]>
@@ -45,7 +45,7 @@ class FakeOperator implements IOperatorIdentity
     {
     }
 
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
+    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<boolean> { return false }
     public async ResetOperatorPassword(_email: string): Promise<string>
     {
         return ''
@@ -62,17 +62,61 @@ class FakeOperator implements IOperatorIdentity
     public async CreateOperator(_email: string, _password: string, _role: OperatorRole): Promise<void>
     {
     }
+}
 
-    public async Revoke(_token: string): Promise<void>
+class ThrowingAudit implements IAuditRepository
+{
+    public async Append(_entry: AuditEntry): Promise<void>
     {
+        throw new Error('disk full')
+    }
+
+    public async Recent(_limit: number): Promise<readonly AuditEntry[]>
+    {
+        return []
     }
 }
 
-class ThrowingAudit extends AuditRegistry
+/** An audit trail whose write is held inside Append until Release runs; Entered resolves once a write gets there. */
+class HeldAudit extends InMemoryAuditRepository
 {
-    public override async Append(_entry: Omit<AuditRecord, 'id'>): Promise<void>
+    public Written = false
+    public readonly Entered: Promise<void>
+    private readonly gate: Promise<void>
+    private enter: () => void = () => undefined
+    private release: () => void = () => undefined
+
+    public constructor()
     {
-        throw new Error('disk full')
+        super()
+        this.Entered = new Promise<void>(res => { this.enter = res })
+        this.gate = new Promise<void>(res => { this.release = res })
+    }
+
+    public Release(): void
+    {
+        this.release()
+    }
+
+    public override async Append(entry: AuditEntry): Promise<void>
+    {
+        this.enter()
+        await this.gate
+        await super.Append(entry)
+        this.Written = true
+    }
+}
+
+/** The host's denial limiter. Ruling (pipeline behaviour changes): MaxHits now counts the hits allowed (A4 ledger 8), so the
+ *  old AuditThrottle({ maxHits: 1 }), which let two refusals through, is a limiter of two. */
+class Denials
+{
+    private static readonly Name = 'denials'
+    private static readonly WindowMs = 60_000
+
+    public static Allowing(hits: number): RateLimiter
+    {
+        return new RateLimiter(new InMemoryThrottleRepository(), { Name: Denials.Name, MaxHits: hits, WindowMs: Denials.WindowMs, LockoutMs: Denials.WindowMs })
     }
 }
 
@@ -99,7 +143,7 @@ class Harness
         })
     }
 
-    public static async Build(parent: string, operator: FakeOperator, audit: AuditRegistry | undefined, auditThrottle?: AuditThrottle): Promise<ControlPlaneHost>
+    public static async Build(parent: string, operator: FakeOperator, audit: IAuditRepository | undefined, denials?: RateLimiter): Promise<ControlPlaneHost>
     {
         const root = join(parent, 'static')
         mkdirSync(root, { recursive: true })
@@ -111,8 +155,9 @@ class Harness
             { List: () => [] })
         await directory.Load()
         const deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
-        const host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, operator, false, directory, deployments, new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent),
-            undefined, undefined, undefined, undefined, undefined, undefined, new OperatorAuthorization(), audit, auditThrottle)
+        const sessions = await HostSessions.With(FakeOperator.Token, FakeOperator.Principal)
+        const host = new ControlPlaneHost({ Service: {} as IEnvironmentService, Graphs: {} as IGraphService, PortalRoot: root, Operator: operator, Sessions: sessions.Sessions,
+            Directory: directory, Deployments: deployments, Provisioning: new FakeProvisioning(directory).AsService(), Observations: RolloutFixture.Observations(parent), Audit: audit, DenialLimiter: denials })
         await host.Listen(0, '127.0.0.1')
         return host
     }
@@ -146,7 +191,7 @@ describe('ControlPlaneHost audit edge cases', () =>
 
     it('rejects an unauthenticated GET /api/activity with 401', async () =>
     {
-        host = await Harness.Build(parent, operator, new AuditRegistry(join(parent, 'audit.json')))
+        host = await Harness.Build(parent, operator, new InMemoryAuditRepository())
         const res = await Harness.Send(host, 'GET', '/api/activity', undefined, false)
         assert.equal(res.status, 401)
     })
@@ -154,14 +199,14 @@ describe('ControlPlaneHost audit edge cases', () =>
     it('still returns 403 when the audit throws on a denied mutation', async () =>
     {
         operator.Role = OperatorRole.ReadOnly
-        host = await Harness.Build(parent, operator, new ThrowingAudit(join(parent, 'audit-throw.json')))
+        host = await Harness.Build(parent, operator, new ThrowingAudit())
         const res = await Harness.Send(host, 'POST', '/api/clients', { id: 'c1', displayName: 'C1' })
         assert.equal(res.status, 403)
     })
 
     it('Close resolves only after an audit write still running behind a sent response has finished', async () =>
     {
-        const audit = new HeldAudit(join(parent, 'audit.json'))
+        const audit = new HeldAudit()
         host = await Harness.Build(parent, operator, audit)
         const res = await Harness.Send(host, 'POST', '/api/clients', { id: 'c1', displayName: 'C1' })
         assert.equal(res.status, 201)
@@ -169,7 +214,7 @@ describe('ControlPlaneHost audit edge cases', () =>
         const closed = host.Close().then(() => audit.Written)
         // The release comes later than an undrained Close would resolve; a draining Close waits for it either way.
         setTimeout(() => audit.Release(), 100)
-        assert.equal(await closed, true, 'the audit file write finished before Close resolved (teardown cannot race it)')
+        assert.equal(await closed, true, 'the audit write finished before Close resolved (teardown cannot race it)')
     })
 })
 
@@ -178,14 +223,13 @@ describe('ControlPlaneHost operator action audit', () =>
     let host: ControlPlaneHost
     let parent: string
     let operator: FakeOperator
-    let audit: AuditRegistry
+    let audit: InMemoryAuditRepository
 
     beforeEach(async () =>
     {
         parent = mkdtempSync(join(tmpdir(), 'cp-activity-'))
         operator = new FakeOperator()
-        audit = new AuditRegistry(join(parent, 'audit.json'))
-        await audit.Load()
+        audit = new InMemoryAuditRepository()
         host = await Harness.Build(parent, operator, audit)
     })
 
@@ -199,28 +243,28 @@ describe('ControlPlaneHost operator action audit', () =>
     {
         const res = await Harness.Send(host, 'POST', '/api/clients', { id: 'c1', displayName: 'C1' })
         assert.equal(res.status, 201)
-        const recent = audit.Recent(10)
+        const recent = (await audit.Recent(10))
         assert.equal(recent.length, 1)
-        assert.equal(recent[0]!.actor, 'op@example.com')
-        assert.equal(recent[0]!.method, 'POST')
-        assert.equal(recent[0]!.path, '/api/clients')
-        assert.equal(recent[0]!.status, 201)
+        assert.equal(recent[0]!.Actor, 'op@example.com')
+        assert.equal(recent[0]!.Action, 'POST')
+        assert.equal(recent[0]!.Target, '/api/clients')
+        assert.equal(recent[0]!.Status, 201)
     })
 
     it('records the handler rejection status', async () =>
     {
         const res = await Harness.Send(host, 'POST', '/api/clients', {})
         assert.equal(res.status, 400)
-        const recent = audit.Recent(10)
+        const recent = (await audit.Recent(10))
         assert.equal(recent.length, 1)
-        assert.equal(recent[0]!.status, 400)
+        assert.equal(recent[0]!.Status, 400)
     })
 
     it('does not audit GET reads', async () =>
     {
         const res = await Harness.Send(host, 'GET', '/api/manifests')
         assert.equal(res.status, 200)
-        assert.equal(audit.Recent(10).length, 0)
+        assert.equal((await audit.Recent(10)).length, 0)
     })
 
     it('records a 403 for a ReadOnly-denied mutation', async () =>
@@ -228,49 +272,49 @@ describe('ControlPlaneHost operator action audit', () =>
         operator.Role = OperatorRole.ReadOnly
         const res = await Harness.Send(host, 'POST', '/api/clients', { id: 'c1', displayName: 'C1' })
         assert.equal(res.status, 403)
-        const recent = audit.Recent(10)
+        const recent = (await audit.Recent(10))
         assert.equal(recent.length, 1)
-        assert.equal(recent[0]!.actor, 'op@example.com')
-        assert.equal(recent[0]!.status, 403)
+        assert.equal(recent[0]!.Actor, 'op@example.com')
+        assert.equal(recent[0]!.Status, 403)
     })
 
     it('records a 401 as (anonymous) for an unauthenticated mutation', async () =>
     {
         const res = await Harness.Send(host, 'POST', '/api/clients', { id: 'c1', displayName: 'C1' }, false)
         assert.equal(res.status, 401)
-        const recent = audit.Recent(10)
+        const recent = (await audit.Recent(10))
         assert.equal(recent.length, 1)
-        assert.equal(recent[0]!.actor, AuditRegistry.AnonymousActor)
-        assert.equal(recent[0]!.status, 401)
+        assert.equal(recent[0]!.Actor, AuditEntry.AnonymousActor)
+        assert.equal(recent[0]!.Status, 401)
     })
 
     it('audits a handler throw as a 500 with the real actor, exactly once', async () =>
     {
         const res = await Harness.Send(host, 'POST', '/api/environments/e1/graphs', { name: 'g', description: 'd' })
         assert.equal(res.status, 500)
-        const recent = audit.Recent(10)
+        const recent = (await audit.Recent(10))
         assert.equal(recent.length, 1)
-        assert.equal(recent[0]!.status, 500)
-        assert.equal(recent[0]!.actor, 'op@example.com')
-        assert.equal(recent[0]!.method, 'POST')
-        assert.equal(recent[0]!.path, '/api/environments/e1/graphs')
+        assert.equal(recent[0]!.Status, 500)
+        assert.equal(recent[0]!.Actor, 'op@example.com')
+        assert.equal(recent[0]!.Action, 'POST')
+        assert.equal(recent[0]!.Target, '/api/environments/e1/graphs')
     })
 
     it('audits a successful mutation exactly once', async () =>
     {
         const res = await Harness.Send(host, 'POST', '/api/clients', { id: 'c3', displayName: 'C3' })
         assert.equal(res.status, 201)
-        assert.equal(audit.Recent(10).length, 1)
+        assert.equal((await audit.Recent(10)).length, 1)
     })
 
     it('audits a bad-origin 403 as (anonymous)', async () =>
     {
         const res = await Harness.Send(host, 'POST', '/api/clients', { id: 'c1', displayName: 'C1' }, true, { origin: 'http://evil.example' })
         assert.equal(res.status, 403)
-        const recent = audit.Recent(10)
+        const recent = (await audit.Recent(10))
         assert.equal(recent.length, 1)
-        assert.equal(recent[0]!.actor, AuditRegistry.AnonymousActor)
-        assert.equal(recent[0]!.status, 403)
+        assert.equal(recent[0]!.Actor, AuditEntry.AnonymousActor)
+        assert.equal(recent[0]!.Status, 403)
     })
 
     it('serves GET /api/activity newest-first and honors limit', async () =>
@@ -282,7 +326,7 @@ describe('ControlPlaneHost operator action audit', () =>
         await Harness.Send(host, 'POST', '/api/clients', {})
         const res = await Harness.Send(host, 'GET', '/api/activity?limit=2')
         assert.equal(res.status, 200)
-        const rows = JSON.parse(res.body) as AuditRecord[]
+        const rows = JSON.parse(res.body) as ActivityDto[]
         assert.equal(rows.length, 2)
         assert.equal(rows[0]!.status, 400)
         assert.equal(rows[1]!.status, 201)
@@ -292,22 +336,24 @@ describe('ControlPlaneHost operator action audit', () =>
     it('stores no query string and no body field', async () =>
     {
         await Harness.Send(host, 'POST', '/api/clients?token=s3cret', { id: 'c1', displayName: 'hunter2' })
-        const entry = audit.Recent(1)[0]!
+        // The stored entry as the activity log serves it (the trail's AuditEntry, in the portal's wire shape).
+        const entry = (JSON.parse((await Harness.Send(host, 'GET', '/api/activity?limit=1')).body) as ActivityDto[])[0]!
         assert.deepEqual(Object.keys(entry).sort(), ['actor', 'at', 'id', 'method', 'path', 'status'])
         assert.ok(!entry.path.includes('?'))
         assert.ok(!JSON.stringify(entry).includes('hunter2'))
+        assert.ok(!JSON.stringify(await audit.Recent(10)).includes('hunter2'))
     })
 
     it('a non-hive write sent with force=true is audited without any query (the marker is for hive deletes only)', async () =>
     {
         await Harness.Send(host, 'POST', '/api/clients?force=true&token=s3cret', { id: 'c1', displayName: 'C1' })
-        assert.equal(audit.Recent(1)[0]!.path, '/api/clients')
+        assert.equal((await audit.Recent(1))[0]!.Target, '/api/clients')
     })
 
     it('swallows an audit failure without changing the response', async () =>
     {
         await host.Close()
-        const throwing = new ThrowingAudit(join(parent, 'audit-throw.json'))
+        const throwing = new ThrowingAudit()
         host = await Harness.Build(join(parent, 'b'), operator, throwing)
         const res = await Harness.Send(host, 'POST', '/api/clients', { id: 'c1', displayName: 'C1' })
         assert.equal(res.status, 201)
@@ -318,13 +364,12 @@ describe('ControlPlaneHost pre-auth audit throttle', () =>
 {
     let host: ControlPlaneHost
     let parent: string
-    let audit: AuditRegistry
+    let audit: InMemoryAuditRepository
 
     beforeEach(async () =>
     {
         parent = mkdtempSync(join(tmpdir(), 'cp-activity-throttle-'))
-        audit = new AuditRegistry(join(parent, 'audit.json'))
-        await audit.Load()
+        audit = new InMemoryAuditRepository()
     })
 
     afterEach(async () =>
@@ -335,7 +380,7 @@ describe('ControlPlaneHost pre-auth audit throttle', () =>
 
     it('trips to 429 with Retry-After after maxHits anonymous mutations', async () =>
     {
-        host = await Harness.Build(parent, new FakeOperator(), audit, new AuditThrottle({ maxHits: 1 }))
+        host = await Harness.Build(parent, new FakeOperator(), audit, Denials.Allowing(2))
         const body = { id: 'c1', displayName: 'C1' }
         const first = await Harness.Send(host, 'POST', '/api/clients', body, false)
         const second = await Harness.Send(host, 'POST', '/api/clients', body, false)
@@ -344,13 +389,13 @@ describe('ControlPlaneHost pre-auth audit throttle', () =>
         assert.equal(second.status, 401)
         assert.equal(third.status, 429)
         assert.ok(Number(third.headers['retry-after']) > 0)
-        const anonymous = audit.Recent(10).filter(r => r.actor === AuditRegistry.AnonymousActor && r.path === '/api/clients')
+        const anonymous = (await audit.Recent(10)).filter(r => r.Actor === AuditEntry.AnonymousActor && r.Target === '/api/clients')
         assert.equal(anonymous.length, 2)
     })
 
     it('never throttles an authorized operator', async () =>
     {
-        host = await Harness.Build(parent, new FakeOperator(), audit, new AuditThrottle({ maxHits: 1 }))
+        host = await Harness.Build(parent, new FakeOperator(), audit, Denials.Allowing(2))
         await Harness.Send(host, 'POST', '/api/clients', {}, false)
         const res = await Harness.Send(host, 'POST', '/api/clients', {})
         assert.equal(res.status, 400)
@@ -358,7 +403,7 @@ describe('ControlPlaneHost pre-auth audit throttle', () =>
 
     it('does not throttle an anonymous GET', async () =>
     {
-        host = await Harness.Build(parent, new FakeOperator(), audit, new AuditThrottle({ maxHits: 1 }))
+        host = await Harness.Build(parent, new FakeOperator(), audit, Denials.Allowing(2))
         for (let i = 0; i < 3; i++)
         {
             const res = await Harness.Send(host, 'GET', '/api/manifests', undefined, false)

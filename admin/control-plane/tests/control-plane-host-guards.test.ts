@@ -7,7 +7,8 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 import { ControlPlaneHost } from '../control-plane-host.js'
 import type { IEnvironmentService, IGraphService } from '../control-plane-host.js'
 import { ControlPlaneServer } from '../server.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSummary } from '../operator-identity.js'
+import { HostSessions } from './host-sessions.js'
 import type { PlatformDirectory } from '../platform-directory.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import type { TenantProvisioningService } from '../tenant-provisioning-service.js'
@@ -15,12 +16,12 @@ import type { HiveObservationRegistry } from '../hive-observation-record.js'
 
 class NullOperator implements IOperatorIdentity
 {
-    public async Authenticate(_email: string, _password: string): Promise<OperatorSession | null>
+    public async Verify(_email: string, _password: string): Promise<OperatorPrincipal | null>
     {
         return null
     }
 
-    public async ValidateToken(_token: string): Promise<OperatorPrincipal | null>
+    public async PrincipalOf(_principalId: string): Promise<OperatorPrincipal | null>
     {
         return null
     }
@@ -34,7 +35,7 @@ class NullOperator implements IOperatorIdentity
     {
     }
 
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
+    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<boolean> { return false }
     public async ResetOperatorPassword(_email: string): Promise<string>
     {
         return ''
@@ -51,10 +52,6 @@ class NullOperator implements IOperatorIdentity
     public async CreateOperator(_email: string, _password: string, _role: OperatorRole): Promise<void>
     {
     }
-
-    public async Revoke(_token: string): Promise<void>
-    {
-    }
 }
 
 class Fixture
@@ -69,6 +66,9 @@ class Fixture
     public static readonly HttpPrefix = 'http://'
     public static readonly LoginPath = '/api/login'
     public static readonly StatePath = '/api/environments'
+    /** An existing mutation route: Ruling (pipeline behaviour changes) answers another method on a known path 405 before
+     *  authentication, so the Origin-then-401 cases post to a route that takes POST. */
+    public static readonly MutationPath = '/api/clients'
     public static readonly Post = 'POST'
     public static readonly Get = 'GET'
     public static readonly JsonType = 'application/json'
@@ -127,9 +127,9 @@ describe('ControlPlaneHost host guards', () =>
 
     async function Start(allowedHosts?: readonly string[], trustedProxy?: boolean): Promise<void>
     {
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new NullOperator(), false,
-            {} as PlatformDirectory, {} as PlatformDeploymentRegistry, {} as TenantProvisioningService, {} as HiveObservationRegistry,
-            undefined, trustedProxy, undefined, undefined, undefined, allowedHosts)
+        host = new ControlPlaneHost({ Service: {} as IEnvironmentService, Graphs: {} as IGraphService, PortalRoot: root, Operator: new NullOperator(),
+            Sessions: new HostSessions().Sessions, Directory: {} as PlatformDirectory, Deployments: {} as PlatformDeploymentRegistry,
+            Provisioning: {} as TenantProvisioningService, Observations: {} as HiveObservationRegistry, TrustedProxy: trustedProxy, AllowedHosts: allowedHosts })
         await host.Listen(0, Fixture.Loopback)
     }
 
@@ -181,7 +181,7 @@ describe('ControlPlaneHost host guards', () =>
     {
         await Start()
         const headers = { [Fixture.OriginHeader]: Fixture.HttpPrefix + Fixture.Attacker, [Fixture.ContentType]: Fixture.JsonType }
-        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.StatePath, headers), Fixture.Forbidden)
+        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.MutationPath, headers), Fixture.Forbidden)
     })
 
     it('parses the comma-separated allowed-host env list', () =>
@@ -197,22 +197,22 @@ describe('ControlPlaneHost host guards', () =>
         const base = { [Fixture.HostHeader]: Fixture.ProxyHost, [Fixture.ForwardedProtoHeader]: Fixture.Https, [Fixture.ContentType]: Fixture.JsonType }
         const ok = { ...base, [Fixture.OriginHeader]: Fixture.HttpsPrefix + Fixture.ProxyHost }
         const evil = { ...base, [Fixture.OriginHeader]: Fixture.EvilHttpsOrigin }
-        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.StatePath, ok), Fixture.Unauthorized)
-        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.StatePath, evil), Fixture.Forbidden)
+        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.MutationPath, ok), Fixture.Unauthorized)
+        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.MutationPath, evil), Fixture.Forbidden)
     })
 
     it('keeps http Origins working without a proxy and rejects an https Origin (scheme mismatch)', async () =>
     {
         await Start([Fixture.ProxyHost])
         const base = { [Fixture.HostHeader]: Fixture.ProxyHost, [Fixture.ContentType]: Fixture.JsonType }
-        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.StatePath, { ...base, [Fixture.OriginHeader]: Fixture.HttpPrefix + Fixture.ProxyHost }), Fixture.Unauthorized)
-        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.StatePath, { ...base, [Fixture.OriginHeader]: Fixture.HttpsPrefix + Fixture.ProxyHost }), Fixture.Forbidden)
+        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.MutationPath, { ...base, [Fixture.OriginHeader]: Fixture.HttpPrefix + Fixture.ProxyHost }), Fixture.Unauthorized)
+        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.MutationPath, { ...base, [Fixture.OriginHeader]: Fixture.HttpsPrefix + Fixture.ProxyHost }), Fixture.Forbidden)
     })
 
     it('ignores x-forwarded-proto when the proxy is not trusted', async () =>
     {
         await Start([Fixture.ProxyHost], false)
         const headers = { [Fixture.HostHeader]: Fixture.ProxyHost, [Fixture.ForwardedProtoHeader]: Fixture.Https, [Fixture.ContentType]: Fixture.JsonType, [Fixture.OriginHeader]: Fixture.HttpsPrefix + Fixture.ProxyHost }
-        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.StatePath, headers), Fixture.Forbidden)
+        assert.equal(await Fixture.Send(host, Fixture.Post, Fixture.MutationPath, headers), Fixture.Forbidden)
     })
 })

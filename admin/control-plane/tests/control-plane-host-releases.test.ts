@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { FakeProvisioning } from './fake-provisioning.js'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSummary } from '../operator-identity.js'
+import { HostSessions } from './host-sessions.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
@@ -27,17 +28,18 @@ type Reply = { status: number; body: string }
 class FakeOperator implements IOperatorIdentity
 {
     public static readonly Token = 'valid-token'
+    public static readonly Principal: OperatorPrincipal = { email: 'op@example.com', principalId: 'p1', role: OperatorRole.Full }
 
     public Role: OperatorRole = OperatorRole.Full
 
-    public async Authenticate(_email: string, _password: string): Promise<OperatorSession | null>
+    public async Verify(_email: string, _password: string): Promise<OperatorPrincipal | null>
     {
-        return { token: FakeOperator.Token, expiresAt: new Date(Date.now() + 3600000) }
+        return null
     }
 
-    public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
+    public async PrincipalOf(principalId: string): Promise<OperatorPrincipal | null>
     {
-        return token === FakeOperator.Token ? { email: 'op@example.com', principalId: 'p1', role: this.Role } : null
+        return principalId === FakeOperator.Principal.principalId ? { ...FakeOperator.Principal, role: this.Role } : null
     }
 
     public async ListOperators(): Promise<readonly OperatorSummary[]>
@@ -49,7 +51,7 @@ class FakeOperator implements IOperatorIdentity
     {
     }
 
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
+    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<boolean> { return false }
     public async ResetOperatorPassword(_email: string): Promise<string>
     {
         return ''
@@ -64,10 +66,6 @@ class FakeOperator implements IOperatorIdentity
     }
 
     public async CreateOperator(_email: string, _password: string, _role: OperatorRole): Promise<void>
-    {
-    }
-
-    public async Revoke(_token: string): Promise<void>
     {
     }
 }
@@ -198,8 +196,9 @@ class HostFixture
     /** Starts the host with the given refresher (undefined: no registry configured). */
     public async Start(releases: ReleaseRefresher | undefined): Promise<ControlPlaneHost>
     {
-        const h = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, this.root, this.Operator, false, this.directory, this.Deployments, new FakeProvisioning(this.directory).AsService(), RolloutFixture.Observations(this.parent),
-            undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, releases)
+        const sessions = await HostSessions.With(FakeOperator.Token, FakeOperator.Principal)
+        const h = new ControlPlaneHost({ Service: {} as IEnvironmentService, Graphs: {} as IGraphService, PortalRoot: this.root, Operator: this.Operator, Sessions: sessions.Sessions,
+            Directory: this.directory, Deployments: this.Deployments, Provisioning: new FakeProvisioning(this.directory).AsService(), Observations: RolloutFixture.Observations(this.parent), Releases: releases })
         await h.Listen(0, '127.0.0.1')
         this.host = h
         return h
@@ -291,11 +290,12 @@ describe('ControlPlaneHost release routes', () =>
         assert.ok(!logged.join().includes(Fx.InnerPath))
     })
 
-    it('no longer publishes on POST /api/manifests (an unknown route), and stores nothing', async () =>
+    it('no longer publishes on POST /api/manifests (the path is a read only), and stores nothing', async () =>
     {
         const h = await fx.Start(undefined)
         const reply = await Fx.Send(h, Fx.Post, Fx.ManifestsPath, { version: '1.0.0', image: 'img:1' })
-        assert.equal(reply.status, 404)
+        // Ruling (pipeline behaviour changes): a known path under another method is 405, not 404.
+        assert.equal(reply.status, 405)
         assert.deepEqual(fx.Deployments.AllManifests(), [])
     })
 

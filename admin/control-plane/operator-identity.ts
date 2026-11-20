@@ -1,18 +1,20 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
-import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
-import { FileIdentityStores, ServerIdentityPack } from '@pragmatic-tech-ai/pragmatic-identity-store'
-import { Realm, RealmKind, DelegationDepth, AuthMethod, Credential, PresentedSecret, AuthenticatedResult, Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { ISqlSession } from '@pragmatic-tech-ai/todl'
+import { ServerIdentityPack } from '@pragmatic-tech-ai/pragmatic-identity-store'
+import { Realm, RealmKind, DelegationDepth, AuthMethod, Credential, PresentedSecret, AuthenticatedResult, Grant, Role, ResourceRef, ResourceKind, type IdentityStoreSet } from '@pragmatic-tech-ai/pragmatic-identity'
+import { SqlAuditStore, SqlIdpDirectoryStore, SqlLocalAccountStore, SqlRoleGrantStore, SqlSecretKeyRing, SqlSecretStore, SqlServiceTokenStore, SqlSessionStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { ServerBootstrap } from '../../src/identity/server-bootstrap.js'
+import { MasterKeyError } from './master-key-file.js'
 
-export type OperatorSession = { token: string; expiresAt: Date }
+export { MasterKeyError }
 
-/**
- * A completed own-password change. The password IS changed; `session` is the caller's fresh session (null when none could
- * be issued: the caller must sign in again) and `otherSessionsEnded` is false when the old sessions could not be ended.
- */
-export type OwnPasswordChange = { session: OperatorSession | null; otherSessionsEnded: boolean }
+/** Where operator sessions end: the console's session store (every session of a subject at once). */
+export interface IOperatorSessionEnder
+{
+    RevokeSubject(subject: string): Promise<number>
+}
 
 /** Operator authority: Full may mutate (Owner grant on the control-plane realm); ReadOnly may only observe (Viewer grant, or no Owner grant). */
 export enum OperatorRole
@@ -26,21 +28,33 @@ export type OperatorSummary = { email: string; role: OperatorRole; disabled: boo
 
 export type OperatorPrincipal = { email: string; principalId: string; role: OperatorRole }
 
+/**
+ * The platform admin console's operator accounts (the break-glass local sign-in). Sessions are not kept here: the console's
+ * session store issues them; this identity checks passwords, answers who a session's subject is now (its live role, or
+ * null once the account is gone or disabled) and ends a subject's sessions when its credential or access changes.
+ */
 export interface IOperatorIdentity
 {
-    Authenticate(email: string, password: string): Promise<OperatorSession | null>
-    ValidateToken(token: string): Promise<OperatorPrincipal | null>
-    Revoke(token: string): Promise<void>
+    /** The operator when the password is right (and the account enabled), else null. Never throws for a wrong password. */
+    Verify(email: string, password: string): Promise<OperatorPrincipal | null>
+    /** The operator as of now (email, current role), or null when the principal is unknown or its account disabled. */
+    PrincipalOf(principalId: string): Promise<OperatorPrincipal | null>
     CreateOperator(email: string, password: string, role: OperatorRole): Promise<void>
     ListOperators(): Promise<readonly OperatorSummary[]>
     SetOperatorRole(email: string, role: OperatorRole, actorPrincipalId: string): Promise<void>
     ResetOperatorPassword(email: string): Promise<string>
-    ChangeOwnPassword(principalId: string, currentPassword: string, newPassword: string): Promise<OwnPasswordChange | null>
+    /** Verifies the current password and sets the new one; false (nothing changed) when the current one is wrong. The
+     *  caller rotates its sessions (the session store's Rotate ends every other session of the operator). */
+    ChangeOwnPassword(principalId: string, currentPassword: string, newPassword: string): Promise<boolean>
     SetOperatorDisabled(email: string, disabled: boolean, actorPrincipalId: string): Promise<void>
     RevokeOperatorSessions(email: string): Promise<void>
 }
 
-export type OperatorComposeOptions = { identityRoot: string; masterKeyFile: string; operatorEmail: string; initialPassword?: string }
+/**
+ * `session`: the console's database (the SQL identity stores; their secrets sealed under the master key in
+ * `secrets_sealed`, scope `control-plane`). `sessions`: where operator sessions end (the console's session store).
+ */
+export type OperatorComposeOptions = { session: ISqlSession; masterKeyFile: string; operatorEmail: string; initialPassword?: string; sessions: IOperatorSessionEnder }
 
 export class OperatorBootstrapError extends Error
 {
@@ -114,17 +128,6 @@ export class OperatorProtectedError extends Error
     }
 }
 
-export class MasterKeyError extends Error
-{
-    private static readonly ErrorName = 'MasterKeyError'
-
-    public constructor(message: string)
-    {
-        super(message)
-        this.name = MasterKeyError.ErrorName
-    }
-}
-
 export class OperatorIdentity implements IOperatorIdentity
 {
     private static readonly OperatorRealmId = 'control-plane'
@@ -138,21 +141,48 @@ export class OperatorIdentity implements IOperatorIdentity
     private static readonly KeyFileMode = 0o600
     private static readonly SecretDirMode = 0o700
     private static readonly BadMasterKeyMessage = 'Master key file must contain exactly 32 bytes'
+    /** The key id the identity secrets are sealed under (the master key; a rotation adds the next id). */
+    public static readonly SecretKeyId = 'master'
+    /** The secret-store scope of the operator realm's secrets. */
+    public static readonly SecretScope = OperatorIdentity.OperatorRealmId
+    /** The bootstrap administrator's principal and password reference (the importer copies them). */
+    public static readonly BootstrapPrincipalId = OperatorIdentity.AdminPrincipalId
+    public static readonly BootstrapPasswordRef = OperatorIdentity.AdminPasswordRef
 
     private constructor(
         private readonly pack: ServerIdentityPack,
         private readonly realm: Realm,
-        private readonly operatorEmail: string)
+        private readonly operatorEmail: string,
+        private readonly sessions: IOperatorSessionEnder)
     {
+    }
+
+    /** The operator realm (the importer copies its records). */
+    public static Realm(): Realm
+    {
+        return new Realm(OperatorIdentity.OperatorRealmId, RealmKind.SelfHosted, OperatorIdentity.OperatorRealmDisplay)
+    }
+
+    /** The SQL identity stores of the operator realm, over the console's database (secrets sealed under `masterKey`). */
+    public static async OpenStores(session: ISqlSession, masterKey: Buffer): Promise<IdentityStoreSet>
+    {
+        return {
+            Secrets: await SqlSecretStore.Open(session, SqlSecretKeyRing.Single(OperatorIdentity.SecretKeyId, masterKey), OperatorIdentity.SecretScope),
+            Accounts: await SqlLocalAccountStore.Open(session),
+            Tokens: await SqlServiceTokenStore.Open(session),
+            Sessions: await SqlSessionStore.Open(session),
+            Grants: await SqlRoleGrantStore.Open(session),
+            Audit: await SqlAuditStore.Open(session),
+            IdpDirectory: await SqlIdpDirectoryStore.Open(session),
+        }
     }
 
     public static async Compose(options: OperatorComposeOptions): Promise<OperatorIdentity>
     {
         mkdirSync(dirname(options.masterKeyFile), { recursive: true, mode: OperatorIdentity.SecretDirMode })
-        mkdirSync(options.identityRoot, { recursive: true, mode: OperatorIdentity.SecretDirMode })
         const key = OperatorIdentity.LoadOrCreateKey(options.masterKeyFile)
-        const realm = new Realm(OperatorIdentity.OperatorRealmId, RealmKind.SelfHosted, OperatorIdentity.OperatorRealmDisplay)
-        const stores = await FileIdentityStores.Open(new NodeFsStorage(options.identityRoot), key)
+        const realm = OperatorIdentity.Realm()
+        const stores = await OperatorIdentity.OpenStores(options.session, key)
         const pack = ServerIdentityPack.OpenWith(stores, { DelegationDepth: DelegationDepth.FullAuthz })
         const existing = await pack.Directory.Lookup(OperatorIdentity.AdminPrincipalId, realm)
         if (existing === null)
@@ -170,10 +200,10 @@ export class OperatorIdentity implements IOperatorIdentity
             adminPasswordRef: OperatorIdentity.AdminPasswordRef,
             ownerGrant: true
         })
-        return new OperatorIdentity(pack, realm, options.operatorEmail)
+        return new OperatorIdentity(pack, realm, options.operatorEmail, options.sessions)
     }
 
-    public async Authenticate(email: string, password: string): Promise<OperatorSession | null>
+    public async Verify(email: string, password: string): Promise<OperatorPrincipal | null>
     {
         const auth = this.pack.AuthenticatorFor(AuthMethod.Local)
         if (auth === undefined)
@@ -188,8 +218,7 @@ export class OperatorIdentity implements IOperatorIdentity
             {
                 return null
             }
-            const session = await this.pack.Sessions.Issue(result.Principal)
-            return { token: session.Id, expiresAt: session.ExpiresAt }
+            return await this.PrincipalOf(result.Principal.Id)
         }
         finally
         {
@@ -197,15 +226,15 @@ export class OperatorIdentity implements IOperatorIdentity
         }
     }
 
-    public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
+    public async PrincipalOf(principalId: string): Promise<OperatorPrincipal | null>
     {
-        const session = await this.pack.Sessions.Validate(token)
-        if (session === null)
+        const principal = await this.pack.Directory.Lookup(principalId, this.realm)
+        if (principal === null)
         {
             return null
         }
-        const principal = await this.pack.Directory.Lookup(session.PrincipalId, this.realm)
-        if (principal === null)
+        const account = await this.pack.Accounts.FindByPrincipalId(this.realm, principalId)
+        if (account !== null && account.Disabled !== false)
         {
             return null
         }
@@ -308,40 +337,38 @@ export class OperatorIdentity implements IOperatorIdentity
         {
             presented.Clear()
         }
-        await this.pack.Sessions.RevokeAllFor(this.realm, principalId)
+        await this.sessions.RevokeSubject(principalId)
         return password
     }
 
     /**
      * Self-service change: verifies the CURRENT password of the signed-in operator (`principalId`, against the email its
-     * account signs in with), sets the new one, ends every session of the operator and issues a fresh one for the caller, which the caller must
-     * adopt (its old token is among those ended). Null when the current password does not verify for that principal;
-     * nothing changes then. Once the password is rotated the change has happened: a failure to end the old sessions or to
-     * issue the fresh one is reported in the result (never thrown), so the caller is told the truth. Neither password is
-     * ever logged or kept.
+     * account signs in with) and sets the new one. False when the current password does not verify for that principal;
+     * nothing changes then. The caller ends the operator's other sessions (and gets its own fresh one) through the session
+     * store's Rotate. Neither password is ever logged or kept.
      */
-    public async ChangeOwnPassword(principalId: string, currentPassword: string, newPassword: string): Promise<OwnPasswordChange | null>
+    public async ChangeOwnPassword(principalId: string, currentPassword: string, newPassword: string): Promise<boolean>
     {
         const auth = this.pack.AuthenticatorFor(AuthMethod.Local)
         const account = await this.pack.Accounts.FindByPrincipalId(this.realm, principalId)
         if (auth === undefined || account === null)
         {
-            return null
+            return false
         }
         const current = new PresentedSecret(currentPassword)
-        let verified: AuthenticatedResult | null = null
+        let verified = false
         try
         {
             const result = await auth.Authenticate(new Credential(AuthMethod.Local, account.Email), current, this.realm)
-            verified = result instanceof AuthenticatedResult && result.Principal.Id === principalId ? result : null
+            verified = result instanceof AuthenticatedResult && result.Principal.Id === principalId
         }
         finally
         {
             current.Clear()
         }
-        if (verified === null)
+        if (!verified)
         {
-            return null
+            return false
         }
         const next = new PresentedSecret(newPassword)
         try
@@ -352,26 +379,7 @@ export class OperatorIdentity implements IOperatorIdentity
         {
             next.Clear()
         }
-        let otherSessionsEnded = true
-        try
-        {
-            await this.pack.Sessions.RevokeAllFor(this.realm, principalId)
-        }
-        catch
-        {
-            otherSessionsEnded = false
-        }
-        let session: OperatorSession | null = null
-        try
-        {
-            const issued = await this.pack.Sessions.Issue(verified.Principal)
-            session = { token: issued.Id, expiresAt: issued.ExpiresAt }
-        }
-        catch
-        {
-            session = null
-        }
-        return { session, otherSessionsEnded }
+        return true
     }
 
     /** Disables or re-enables an operator. Disabling also drops the operator's live sessions. Guards run before any state change. */
@@ -387,7 +395,7 @@ export class OperatorIdentity implements IOperatorIdentity
             }
             await this.RejectIfLastFull(principalId)
             await this.pack.Accounts.Disable(this.realm, principalId)
-            await this.pack.Sessions.RevokeAllFor(this.realm, principalId)
+            await this.sessions.RevokeSubject(principalId)
         }
         else
         {
@@ -399,7 +407,7 @@ export class OperatorIdentity implements IOperatorIdentity
     public async RevokeOperatorSessions(email: string): Promise<void>
     {
         const principalId = await this.ResolvePrincipal(email)
-        await this.pack.Sessions.RevokeAllFor(this.realm, principalId)
+        await this.sessions.RevokeSubject(principalId)
     }
 
     /**
@@ -465,15 +473,6 @@ export class OperatorIdentity implements IOperatorIdentity
         const grants = await this.pack.Grants.GrantsFor(principalId, this.realm)
         const isOwner = grants.some(g => g.Role === Role.Owner && g.Resource.Kind === ResourceKind.Realm && g.Resource.RealmId === this.realm.Id)
         return isOwner ? OperatorRole.Full : OperatorRole.ReadOnly
-    }
-
-    public async Revoke(token: string): Promise<void>
-    {
-        const session = await this.pack.Sessions.Validate(token)
-        if (session !== null)
-        {
-            await this.pack.Sessions.Revoke(session.Id)
-        }
     }
 
     private static LoadOrCreateKey(file: string): Buffer

@@ -9,6 +9,7 @@ import type { IEnvironmentService, IGraphService } from '../control-plane-host.j
 import { LocalDesktopDiscoveryBackend } from '../desktop-discovery-backend.js'
 import { DesktopDiscoveryEndpoint } from '../desktop-discovery-endpoint.js'
 import type { IOperatorIdentity } from '../operator-identity.js'
+import { HostSessions } from './host-sessions.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import type { PlatformDirectory } from '../platform-directory.js'
 import type { TenantRecord } from '../platform-records.js'
@@ -79,9 +80,9 @@ describe('ControlPlaneHost desktop discovery route', () =>
         const tenant: TenantRecord = { id: 'acme', clientId: 'c1', displayName: 'Acme', createdAt: '2026-01-01T00:00:00.000Z' }
         const directory = { GetTenant: (id: string) => id === 'acme' ? tenant : undefined, ListTenants: () => [tenant], ListHives: () => [] } as unknown as PlatformDirectory
         const endpoint = new DesktopDiscoveryEndpoint(new LocalDesktopDiscoveryBackend(index, directory, ComposeFixture.Plane), DesktopDiscoveryEndpoint.NewThrottle())
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, dir, {} as IOperatorIdentity, false,
-            directory, {} as PlatformDeploymentRegistry, {} as TenantProvisioningService, {} as HiveObservationRegistry,
-            undefined, trustedProxy, undefined, undefined, undefined, [], undefined, undefined, undefined, undefined, undefined, undefined, undefined, endpoint)
+        host = new ControlPlaneHost({ Service: {} as IEnvironmentService, Graphs: {} as IGraphService, PortalRoot: dir, Operator: {} as IOperatorIdentity,
+            Sessions: new HostSessions().Sessions, Directory: directory, Deployments: {} as PlatformDeploymentRegistry, Provisioning: {} as TenantProvisioningService,
+            Observations: {} as HiveObservationRegistry, TrustedProxy: trustedProxy, Discovery: endpoint })
         await host.Listen(0, ComposeFixture.Loopback)
     }
 

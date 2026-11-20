@@ -14,7 +14,8 @@ import { NoInfraTargetError } from '../no-infra-target.js'
 import type { IHiveOrchestrator } from '../hive-orchestrator.js'
 import type { IKind } from '../kind.js'
 import type { HiveRecord } from '../platform-records.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSummary } from '../operator-identity.js'
+import { HostSessions } from './host-sessions.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
@@ -27,15 +28,23 @@ type Reply = { status: number; body: string; cacheControl?: string }
 class FakeOperator implements IOperatorIdentity
 {
     public static readonly Token = 'valid-token'
+    public static readonly Email = 'op@example.com'
+    public static readonly PrincipalId = 'p1'
 
-    public async Authenticate(_email: string, _password: string): Promise<OperatorSession | null>
+    /** The operator the planted session names. */
+    public static Principal(): OperatorPrincipal
     {
-        return { token: FakeOperator.Token, expiresAt: new Date(Date.now() + 3600000) }
+        return { email: FakeOperator.Email, principalId: FakeOperator.PrincipalId, role: OperatorRole.Full }
     }
 
-    public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
+    public async Verify(email: string, password: string): Promise<OperatorPrincipal | null>
     {
-        return token === FakeOperator.Token ? { email: 'op@example.com', principalId: 'p1', role: OperatorRole.Full } : null
+        return null
+    }
+
+    public async PrincipalOf(principalId: string): Promise<OperatorPrincipal | null>
+    {
+        return { email: FakeOperator.Email, principalId, role: OperatorRole.Full }
     }
 
     public async ListOperators(): Promise<readonly OperatorSummary[]>
@@ -47,7 +56,7 @@ class FakeOperator implements IOperatorIdentity
     {
     }
 
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
+    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<boolean> { return false }
     public async ResetOperatorPassword(_email: string): Promise<string>
     {
         return ''
@@ -62,10 +71,6 @@ class FakeOperator implements IOperatorIdentity
     }
 
     public async CreateOperator(_email: string, _password: string, _role: OperatorRole): Promise<void>
-    {
-    }
-
-    public async Revoke(_token: string): Promise<void>
     {
     }
 }
@@ -180,7 +185,10 @@ describe('ControlPlaneHost platform routes', () =>
         await directory.Load()
         factory = new FakeKindFactory()
         deployments = await RolloutFixture.Create(parent, directory, factory)
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments, (fake = new FakeProvisioning(directory)).AsService(), RolloutFixture.Observations(parent), undefined, false, undefined, undefined, undefined, [], undefined, undefined, undefined, (idp = new FakeIdpService()))
+        const sessions = await HostSessions.With(FakeOperator.Token, FakeOperator.Principal())
+        host = new ControlPlaneHost({ Service: {} as IEnvironmentService, Graphs: {} as IGraphService, PortalRoot: root, Operator: new FakeOperator(), Sessions: sessions.Sessions,
+            Directory: directory, Deployments: deployments, Provisioning: (fake = new FakeProvisioning(directory)).AsService(), Observations: RolloutFixture.Observations(parent),
+            Idp: (idp = new FakeIdpService()) })
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -439,7 +447,10 @@ describe('ControlPlaneHost hive bootstrap with the agent channel on', () =>
             new HiveRegistry(join(parent, 'hives.json')),
             { List: () => [] })
         await directory.Load()
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, await RolloutFixture.Create(parent, directory, new FakeKindFactory()), new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent), undefined, false, undefined, undefined, undefined, [], undefined, undefined, undefined, new FakeIdpService(), 'http://host.docker.internal:7001')
+        const sessions = await HostSessions.With(FakeOperator.Token, FakeOperator.Principal())
+        host = new ControlPlaneHost({ Service: {} as IEnvironmentService, Graphs: {} as IGraphService, PortalRoot: root, Operator: new FakeOperator(), Sessions: sessions.Sessions,
+            Directory: directory, Deployments: await RolloutFixture.Create(parent, directory, new FakeKindFactory()), Provisioning: new FakeProvisioning(directory).AsService(),
+            Observations: RolloutFixture.Observations(parent), Idp: new FakeIdpService(), AgentChannelUrl: 'http://host.docker.internal:7001' })
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -462,9 +473,10 @@ describe('ControlPlaneHost hive bootstrap with the agent channel on', () =>
         assert.ok(!r.body.includes(provisioned.secrets.agentToken))
     })
 
-    it('GET /api/hives/ID/bootstrap for an unknown hive -> 404, for a malformed id -> 400', async () =>
+    it('GET /api/hives/ID/bootstrap for an unknown hive -> 404, for a malformed id -> 404 (no route matches)', async () =>
     {
         assert.equal((await Harness.Send(host, 'GET', '/api/hives/nope/bootstrap')).status, 404)
-        assert.equal((await Harness.Send(host, 'GET', '/api/hives/%E0%A4%A/bootstrap')).status, 400)
+        // Ruling (pipeline behaviour changes): a route parameter that does not percent-decode matches no route (404; was 400).
+        assert.equal((await Harness.Send(host, 'GET', '/api/hives/%E0%A4%A/bootstrap')).status, 404)
     })
 })

@@ -58,6 +58,9 @@ import { IdpService } from './idp-service.js'
 import { IdpAdminClient } from './idp-admin-client.js'
 import { GraphService } from './graph-service.js'
 import { OperatorIdentity } from './operator-identity.js'
+import { OperatorSessions } from './operator-sessions.js'
+import { PgSession } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
+import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
 import { NetPortProbe, PortAllocator } from './port-allocator.js'
 
 type HttpResult = { status: number; json: unknown; setCookie: string[] }
@@ -108,7 +111,6 @@ export class ControlPlaneSmoke
     private static readonly DemoPrincipals: readonly string[] = ['rep-boston', 'rep-atlanta', 'manager-north', 'finance']
     private static readonly OperatorEmail = 'smoke-operator@control-plane.test'
     private static readonly OperatorPassword = 'smoke-operator-test-password'
-    private static readonly IdentityDir = 'identity'
     private static readonly MasterKeyFile = 'master.key'
     private static readonly LoginPath = '/api/login'
     private static readonly SessionCookieName = 'cp_session'
@@ -246,11 +248,15 @@ export class ControlPlaneSmoke
         const orchestrators = new PlatformHiveOrchestratorFactory()
         const placement = new EnvironmentPlacement(directory)
         const service = new EnvironmentService(registry, allocator, new EnvironmentRuntimeResolver(new DockerEnvironmentRuntime(docker, new BundleBuilderAdapter()), new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn))
+        // The smoke keeps nothing: the operator accounts and sessions live in an in-process Postgres (pg-mem).
+        const database = new PgSession(SqlTestSessions.MemPool())
+        const sessions = new OperatorSessions(OperatorSessions.InMemory(), false)
         const operator = await OperatorIdentity.Compose({
-            identityRoot: join(dataRoot, ControlPlaneSmoke.IdentityDir),
+            session: database,
             masterKeyFile: join(dataRoot, ControlPlaneSmoke.MasterKeyFile),
             operatorEmail: ControlPlaneSmoke.OperatorEmail,
-            initialPassword: ControlPlaneSmoke.OperatorPassword
+            initialPassword: ControlPlaneSmoke.OperatorPassword,
+            sessions: sessions.Store,
         })
         const manifests = new ManifestRegistry(join(dataRoot, ControlPlaneSmoke.ManifestsFile))
         const gating = new GatingRegistry(join(dataRoot, ControlPlaneSmoke.GatingFile))
@@ -260,7 +266,8 @@ export class ControlPlaneSmoke
         await Promise.all([manifests.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load()])
         const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations)
         this.service = service
-        const host = new ControlPlaneHost(service, new GraphService(registry, proxy, service), staticRoot, operator, false, directory, deployments, {} as TenantProvisioningService, observations)
+        const host = new ControlPlaneHost({ Service: service, Graphs: new GraphService(registry, proxy, service), PortalRoot: staticRoot, Operator: operator, Sessions: sessions,
+            Directory: directory, Deployments: deployments, Provisioning: {} as TenantProvisioningService, Observations: observations })
         try
         {
             await host.Listen(0, ControlPlaneSmoke.LoopbackHost)

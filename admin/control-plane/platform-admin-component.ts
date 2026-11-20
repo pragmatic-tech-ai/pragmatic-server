@@ -1,5 +1,6 @@
 import { SettingType, type ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component'
 import { ComponentDeclarations, type ComponentDeclaration } from '../../src/component/component-declaration.js'
+import { OperatorRoleClaims } from './operator-sessions.js'
 
 /**
  * The component descriptor of the platform admin image (ControlPlaneServer in the admin role): what `ControlPlaneServer.Main`
@@ -19,13 +20,15 @@ export class PlatformAdminComponent
                 settings: [
                     { name: 'port', type: SettingType.Integer, source: 'PRAGMATIC_ADMIN_PORT', default: 7000, description: 'Port of the operator listener.' },
                     { name: 'bind', type: SettingType.String, source: 'PRAGMATIC_ADMIN_BIND', default: '127.0.0.1', description: 'Address of the operator listener (an IP address or localhost).' },
-                    { name: 'dataRoot', type: SettingType.String, source: 'PRAGMATIC_ADMIN_DATA_ROOT', description: 'The state folder (defaults to data beside the control plane).' },
+                    { name: 'databaseUrl', type: SettingType.String, source: 'PRAGMATIC_ADMIN_DATABASE_URL_FILE', required: true, secret: true, description: 'The URL of the own Postgres database of the console, where every record lives (a mounted secret file).' },
+                    { name: 'dataRoot', type: SettingType.String, source: 'PRAGMATIC_ADMIN_DATA_ROOT', description: 'The state folder of what stays on files: public keys, the development CA, environment bundles (defaults to data beside the control plane).' },
+                    { name: 'portalDir', type: SettingType.String, source: 'PRAGMATIC_ADMIN_PORTAL_DIR', description: 'The operator portal bundle (defaults to the shipped admin/portal/dist).' },
                     { name: 'allowedHosts', type: SettingType.List, source: 'PRAGMATIC_ADMIN_ALLOWED_HOSTS', description: 'Host names the operator listener answers (comma-separated).' },
                     { name: 'secureCookie', type: SettingType.Boolean, source: 'PRAGMATIC_ADMIN_SECURE_COOKIE', default: false, description: 'Whether operator session cookies are Secure.' },
                     { name: 'trustedProxy', type: SettingType.Boolean, source: 'PRAGMATIC_ADMIN_TRUSTED_PROXY', default: false, description: 'Whether the operator listener sits behind a trusted proxy (x-forwarded-for is then the client).' },
                     { name: 'operatorEmail', type: SettingType.String, source: 'PRAGMATIC_ADMIN_OPERATOR_EMAIL', default: 'admin@control-plane.test', description: 'Email of the first operator, created on a fresh start.' },
                     { name: 'operatorPassword', type: SettingType.String, source: 'PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE', secret: true, description: 'Password of the first operator (a mounted secret file; PRAGMATIC_ADMIN_OPERATOR_PASSWORD may hold it instead, never both).' },
-                    { name: 'masterKey', type: SettingType.String, source: 'PRAGMATIC_ADMIN_MASTER_KEY_FILE', secret: true, description: 'The 32-byte master key of the operator identity store (a mounted secret file; defaults to master.key in the state folder).' },
+                    { name: 'masterKey', type: SettingType.String, source: 'PRAGMATIC_ADMIN_MASTER_KEY_FILE', secret: true, description: 'The 32-byte master key sealing the secrets the console keeps in its database (a mounted secret file; defaults to master.key in the state folder).' },
                     { name: 'signingKeyRef', type: SettingType.String, source: 'PRAGMATIC_ADMIN_SIGNING_KEY_REF', description: 'The platform image signing key reference (the generated platform key when unset).' },
                     { name: 'signingKey', type: SettingType.String, source: 'PRAGMATIC_ADMIN_SIGNING_KEY_FILE', secret: true, description: 'The platform signing key (a mounted secret file; the key store in the state folder when unset).' },
                     { name: 'infraTarget', type: SettingType.String, source: 'PRAGMATIC_ADMIN_INFRA_TARGET', default: 'local', description: 'local (this host\'s Docker and kind), none, or hosted (registered clusters over the mesh).' },
@@ -71,8 +74,8 @@ export class PlatformAdminComponent
             },
         ],
         roles: [
-            { name: 'operator.full', description: 'A platform operator who may change the platform (Owner grant on the control-plane realm).' },
-            { name: 'operator.read-only', description: 'A platform operator who may only observe (Viewer grant, or no Owner grant).' },
+            { name: OperatorRoleClaims.Full, description: 'A platform operator who may change the platform (Owner grant on the control-plane realm).' },
+            { name: OperatorRoleClaims.ReadOnly, description: 'A platform operator who may only observe (Viewer grant, or no Owner grant).' },
         ],
         postgres: true,
         ports: [{ name: 'http', number: 7000 }, { name: 'internal', number: 7001 }],

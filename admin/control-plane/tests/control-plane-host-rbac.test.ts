@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { ControlPlaneHost } from '../control-plane-host.js'
 import type { IEnvironmentService, IGraphService } from '../control-plane-host.js'
-import { LastOperatorError, OperatorExistsError, OperatorNotFoundError, OperatorProtectedError, OperatorRole, OperatorSelfLockoutError, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
+import { LastOperatorError, OperatorExistsError, OperatorNotFoundError, OperatorProtectedError, OperatorRole, OperatorSelfLockoutError, type IOperatorIdentity, type OperatorPrincipal, type OperatorSummary } from '../operator-identity.js'
+import { HostSessions } from './host-sessions.js'
 import type { PlatformDirectory } from '../platform-directory.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import type { TenantProvisioningService } from '../tenant-provisioning-service.js'
@@ -16,25 +17,22 @@ class RoleOperator implements IOperatorIdentity
 {
     public static readonly FullToken = 'full-token'
     public static readonly ReadToken = 'read-token'
+    public static readonly Full: OperatorPrincipal = { email: 'f@x.test', principalId: 'f', role: OperatorRole.Full }
+    public static readonly Read: OperatorPrincipal = { email: 'r@x.test', principalId: 'r', role: OperatorRole.ReadOnly }
     public Created: Array<{ email: string; role: OperatorRole }> = []
-    public Revoked: string[] = []
     public Calls: Array<Record<string, unknown>> = []
     public ThrowNext: Error | undefined
     public Roster: readonly OperatorSummary[] = []
     public static readonly ResetPassword = 'fresh-reset-pw-1'
 
-    public async Authenticate(_email: string, _password: string): Promise<OperatorSession | null>
+    public async Verify(_email: string, _password: string): Promise<OperatorPrincipal | null>
     {
         return null
     }
 
-    public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
+    public async PrincipalOf(principalId: string): Promise<OperatorPrincipal | null>
     {
-        if (token === RoleOperator.FullToken)
-        {
-            return { email: 'f@x.test', principalId: 'f', role: OperatorRole.Full }
-        }
-        return token === RoleOperator.ReadToken ? { email: 'r@x.test', principalId: 'r', role: OperatorRole.ReadOnly } : null
+        return [RoleOperator.Full, RoleOperator.Read].find(p => p.principalId === principalId) ?? null
     }
 
     public async ListOperators(): Promise<readonly OperatorSummary[]>
@@ -48,7 +46,7 @@ class RoleOperator implements IOperatorIdentity
         this.ThrowIfSet()
     }
 
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
+    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<boolean> { return false }
     public async ResetOperatorPassword(email: string): Promise<string>
     {
         this.Calls.push({ op: 'reset', email })
@@ -83,11 +81,6 @@ class RoleOperator implements IOperatorIdentity
             throw new OperatorExistsError()
         }
         this.Created.push({ email, role })
-    }
-
-    public async Revoke(token: string): Promise<void>
-    {
-        this.Revoked.push(token)
     }
 }
 
@@ -159,14 +152,17 @@ describe('ControlPlaneHost operator RBAC', () =>
     let root: string
     let host: ControlPlaneHost
     let operator: RoleOperator
+    let sessions: HostSessions
 
     beforeEach(async () =>
     {
         root = mkdtempSync(join(tmpdir(), RbacFixture.TempPrefix))
         operator = new RoleOperator()
         const service = { ListReconciled: async () => [] } as unknown as IEnvironmentService
-        host = new ControlPlaneHost(service, {} as IGraphService, root, operator, false,
-            {} as PlatformDirectory, {} as PlatformDeploymentRegistry, {} as TenantProvisioningService, {} as HiveObservationRegistry)
+        sessions = await HostSessions.With(RoleOperator.FullToken, RoleOperator.Full)
+        await sessions.Seed(RoleOperator.ReadToken, RoleOperator.Read)
+        host = new ControlPlaneHost({ Service: service, Graphs: {} as IGraphService, PortalRoot: root, Operator: operator, Sessions: sessions.Sessions,
+            Directory: {} as PlatformDirectory, Deployments: {} as PlatformDeploymentRegistry, Provisioning: {} as TenantProvisioningService, Observations: {} as HiveObservationRegistry })
         await host.Listen(0, RbacFixture.Loopback)
     })
 
@@ -221,7 +217,8 @@ describe('ControlPlaneHost operator RBAC', () =>
     {
         assert.equal((await RbacFixture.Send(host, 'GET', RbacFixture.Environments, RoleOperator.ReadToken, '')).status, RbacFixture.Ok)
         assert.equal((await RbacFixture.Send(host, 'POST', RbacFixture.Logout, RoleOperator.ReadToken, '{}')).status, RbacFixture.Ok)
-        assert.deepEqual(operator.Revoked, [RoleOperator.ReadToken])
+        assert.equal(await sessions.IsLive(RoleOperator.ReadToken), false)
+        assert.equal(await sessions.IsLive(RoleOperator.FullToken), true)
     })
 
     it('lets a Full operator create an operator without echoing the password', async () =>

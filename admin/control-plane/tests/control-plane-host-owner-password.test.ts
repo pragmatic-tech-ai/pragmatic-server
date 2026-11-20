@@ -7,13 +7,14 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 import { FakeProvisioning } from './fake-provisioning.js'
 import { RolloutFixture } from './rollout-fixture.js'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSummary } from '../operator-identity.js'
+import { InMemoryAuditRepository } from '@pragmatic-tech-ai/pragmatic-app-host'
+import { HostSessions } from './host-sessions.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { PlatformDirectory } from '../platform-directory.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
-import { AuditRegistry } from '../audit-record.js'
 import { IdpAdminError, IdpAdminTransportError } from '../idp-admin-client.js'
 import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, OwnerResetInProgressError, TenantIdpMissingError } from '../tenant-provisioning-service.js'
 
@@ -23,26 +24,23 @@ class FakeOperator implements IOperatorIdentity
 {
     public static readonly FullToken = 'full-token'
     public static readonly ReadOnlyToken = 'readonly-token'
+    public static readonly Full: OperatorPrincipal = { email: 'op@example.com', principalId: 'p1', role: OperatorRole.Full }
+    public static readonly ReadOnly: OperatorPrincipal = { email: 'ro@example.com', principalId: 'p2', role: OperatorRole.ReadOnly }
 
-    public async Authenticate(_email: string, _password: string): Promise<OperatorSession | null> { return null }
+    public async Verify(_email: string, _password: string): Promise<OperatorPrincipal | null> { return null }
 
-    public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
+    public async PrincipalOf(principalId: string): Promise<OperatorPrincipal | null>
     {
-        if (token === FakeOperator.FullToken)
-        {
-            return { email: 'op@example.com', principalId: 'p1', role: OperatorRole.Full }
-        }
-        return token === FakeOperator.ReadOnlyToken ? { email: 'ro@example.com', principalId: 'p2', role: OperatorRole.ReadOnly } : null
+        return [FakeOperator.Full, FakeOperator.ReadOnly].find(p => p.principalId === principalId) ?? null
     }
 
     public async ListOperators(): Promise<readonly OperatorSummary[]> { return [] }
     public async SetOperatorRole(_e: string, _r: OperatorRole, _a: string): Promise<void> { }
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
+    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<boolean> { return false }
     public async ResetOperatorPassword(_e: string): Promise<string> { return '' }
     public async SetOperatorDisabled(_e: string, _d: boolean, _a: string): Promise<void> { }
     public async RevokeOperatorSessions(_e: string): Promise<void> { }
     public async CreateOperator(_e: string, _p: string, _r: OperatorRole): Promise<void> { }
-    public async Revoke(_t: string): Promise<void> { }
 }
 
 class Harness
@@ -71,7 +69,7 @@ describe('ControlPlaneHost tenant Owner password reset', () =>
     let host: ControlPlaneHost
     let parent: string
     let provisioning: FakeProvisioning
-    let audit: AuditRegistry
+    let audit: InMemoryAuditRepository
     let logged: string[]
     let originalError: typeof console.error
 
@@ -90,11 +88,12 @@ describe('ControlPlaneHost tenant Owner password reset', () =>
         await directory.CreateClient({ id: 'acme', displayName: 'Acme' })
         provisioning = new FakeProvisioning(directory)
         await provisioning.Provision({ id: 't1', clientId: 'acme', displayName: 'T1', ownerEmail: 'owner@acme.test' })
-        audit = new AuditRegistry(join(parent, 'audit.json'))
-        await audit.Load()
+        audit = new InMemoryAuditRepository()
         const deployments = await RolloutFixture.Create(parent, directory, new HiveOrchestratorFactory())
-        host = new ControlPlaneHost({} as IEnvironmentService, {} as IGraphService, root, new FakeOperator(), false, directory, deployments,
-            provisioning.AsService(), RolloutFixture.Observations(parent), undefined, false, undefined, undefined, undefined, [], undefined, audit)
+        const sessions = await HostSessions.With(FakeOperator.FullToken, FakeOperator.Full)
+        await sessions.Seed(FakeOperator.ReadOnlyToken, FakeOperator.ReadOnly)
+        host = new ControlPlaneHost({ Service: {} as IEnvironmentService, Graphs: {} as IGraphService, PortalRoot: root, Operator: new FakeOperator(), Sessions: sessions.Sessions,
+            Directory: directory, Deployments: deployments, Provisioning: provisioning.AsService(), Observations: RolloutFixture.Observations(parent), Audit: audit })
         await host.Listen(0, '127.0.0.1')
         logged = []
         originalError = console.error
@@ -117,10 +116,11 @@ describe('ControlPlaneHost tenant Owner password reset', () =>
         assert.equal(body.ownerEmail, 'owner@acme.test')
         assert.equal(body.ownerPassword, FakeProvisioning.ResetPassword)
         assert.deepEqual(provisioning.Resets, ['t1'])
-        const entry = audit.Recent(10).find(e => e.path === ResetPath)
-        assert.equal(entry?.method, 'POST')
-        assert.equal(entry?.status, 200)
-        assert.ok(!JSON.stringify(audit.Recent(100)).includes(FakeProvisioning.ResetPassword))
+        // The activity log is the host's audit trail now: an entry's Target is the path, its Action the method.
+        const entry = (await audit.Recent(10)).find(e => e.Target === ResetPath)
+        assert.equal(entry?.Action, 'POST')
+        assert.equal(entry?.Status, 200)
+        assert.ok(!JSON.stringify(await audit.Recent(100)).includes(FakeProvisioning.ResetPassword))
         assert.ok(!logged.join('\n').includes(FakeProvisioning.ResetPassword))
     })
 

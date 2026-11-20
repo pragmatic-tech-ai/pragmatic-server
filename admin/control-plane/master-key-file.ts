@@ -1,5 +1,16 @@
 import { readFileSync } from 'node:fs'
-import { MasterKeyError } from './operator-identity.js'
+
+/** The master key file does not hold exactly 32 bytes. */
+export class MasterKeyError extends Error
+{
+    private static readonly ErrorName = 'MasterKeyError'
+
+    public constructor(message: string)
+    {
+        super(message)
+        this.name = MasterKeyError.ErrorName
+    }
+}
 
 export class MasterKeyFile
 {

@@ -25,10 +25,9 @@ import { HiveBackend, InfraMode } from '../platform-records.js'
 
 import { EnvironmentNotDevelopmentError, EnvironmentNotRuntimeError } from '../environment-service.js'
 import { GraphExistsError, GraphNotFoundError } from '../graph-service.js'
-import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary } from '../operator-identity.js'
-import { EventsTicketStore } from '../events-ticket-store.js'
+import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSummary } from '../operator-identity.js'
 import { OperatorSocketRegistry } from '../operator-socket-registry.js'
-import { LoginThrottle } from '../login-throttle.js'
+import { HostSessions } from './host-sessions.js'
 
 type Reply = { status: number; body: string; setCookie?: string[] | undefined }
 
@@ -37,38 +36,38 @@ class FakeOperator implements IOperatorIdentity
     public static readonly Email = 'op@example.com'
     public static readonly Password = 'correct-horse'
     public static readonly Token = 'valid-token'
-    public Revoked: string[] = []
-    public readonly Extra = new Set<string>()
-    public readonly Dead = new Set<string>()
+    public static readonly PrincipalId = 'p1'
+    /** Principals whose lookup throws (the identity store is down for them). */
     public readonly Throwing = new Set<string>()
+    /** How many times the console asked who a session's operator is now (once per authenticated request or socket check). */
     public ValidateCalls = 0
     public Role: OperatorRole = OperatorRole.Full
-    public PrincipalId = 'p1'
     public HoldCall = -1
     public Release: (() => void) | undefined
 
-    public async Authenticate(email: string, password: string): Promise<OperatorSession | null>
+    /** The operator a planted session names. */
+    public static Principal(principalId: string = FakeOperator.PrincipalId, role: OperatorRole = OperatorRole.Full): OperatorPrincipal
     {
-        if (email === FakeOperator.Email && password === FakeOperator.Password)
-        {
-            return { token: FakeOperator.Token, expiresAt: new Date(Date.now() + 3600000) }
-        }
-        return null
+        return { email: FakeOperator.Email, principalId, role }
     }
 
-    public async ValidateToken(token: string): Promise<OperatorPrincipal | null>
+    public async Verify(email: string, password: string): Promise<OperatorPrincipal | null>
+    {
+        return email === FakeOperator.Email && password === FakeOperator.Password ? { email, principalId: FakeOperator.PrincipalId, role: this.Role } : null
+    }
+
+    public async PrincipalOf(principalId: string): Promise<OperatorPrincipal | null>
     {
         this.ValidateCalls++
         if (this.ValidateCalls === this.HoldCall)
         {
             await new Promise<void>(res => { this.Release = res })
         }
-        if (this.Throwing.has(token))
+        if (this.Throwing.has(principalId))
         {
             throw new Error('validator down')
         }
-        const known = token === FakeOperator.Token || this.Extra.has(token)
-        return known && !this.Dead.has(token) ? { email: FakeOperator.Email, principalId: this.PrincipalId, role: this.Role } : null
+        return { email: FakeOperator.Email, principalId, role: this.Role }
     }
 
     public Roster: readonly OperatorSummary[] = []
@@ -82,7 +81,7 @@ class FakeOperator implements IOperatorIdentity
     {
     }
 
-    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<null> { return null }
+    public async ChangeOwnPassword(_p: string, _c: string, _n: string): Promise<boolean> { return false }
     public async ResetOperatorPassword(_email: string): Promise<string>
     {
         return ''
@@ -98,11 +97,6 @@ class FakeOperator implements IOperatorIdentity
 
     public async CreateOperator(_email: string, _password: string, _role: OperatorRole): Promise<void>
     {
-    }
-
-    public async Revoke(token: string): Promise<void>
-    {
-        this.Revoked.push(token)
     }
 }
 
@@ -493,6 +487,7 @@ describe('ControlPlaneHost', () =>
     let fake: FakeService
     let fakeGraph: FakeGraphService
     let operator: FakeOperator
+    let sessions: HostSessions
     let host: ControlPlaneHost
     let root: string
     let parent: string
@@ -511,7 +506,9 @@ describe('ControlPlaneHost', () =>
         operator = new FakeOperator()
         const directory = new PlatformDirectory(new ClientRegistry(join(parent, 'clients.json')), new TenantRegistry(join(parent, 'tenants.json')), new HiveRegistry(join(parent, 'hives.json')), { List: () => [] })
         const factory = new HiveOrchestratorFactory()
-        host = new ControlPlaneHost(fake, fakeGraph, root, operator, false, directory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent))
+        sessions = await HostSessions.With(FakeOperator.Token, FakeOperator.Principal())
+        host = new ControlPlaneHost({ Service: fake, Graphs: fakeGraph, PortalRoot: root, Operator: operator, Sessions: sessions.Sessions, Directory: directory,
+            Deployments: await RolloutFixture.Create(parent, directory, factory), Provisioning: new FakeProvisioning(directory).AsService(), Observations: RolloutFixture.Observations(parent) })
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -535,7 +532,8 @@ describe('ControlPlaneHost', () =>
     it('no longer serves the environment lifecycle routes (the tenant plane owns them)', async () =>
     {
         const create = JSON.stringify({ name: 'e1', template: 'dev-blank', type: 'development' })
-        assert.equal((await Harness.Send(host, 'POST', '/api/environments', create)).status, 404)
+        // The collection is still served for GET, so another method is 405 (with Allow), not 404.
+        assert.equal((await Harness.Send(host, 'POST', '/api/environments', create)).status, 405)
         assert.equal((await Harness.Send(host, 'POST', '/api/environments/x/start')).status, 404)
         assert.equal((await Harness.Send(host, 'POST', '/api/environments/x/stop')).status, 404)
         assert.equal((await Harness.Send(host, 'GET', '/api/environments/x/logs')).status, 404)
@@ -573,10 +571,10 @@ describe('ControlPlaneHost', () =>
         assert.equal(JSON.parse(list.body)[0].type, 'development')
     })
 
-    it('no longer recognises the retired hive agent routes (session gate applies, then 404)', async () =>
+    it('no longer recognises the retired hive agent routes (an unknown API path is 404, before the session gate)', async () =>
     {
         const target = '/api/hives/h1/agent/target'
-        assert.equal((await Harness.Anon(host, 'GET', target, undefined, { authorization: 'Bearer anything' })).status, 401)
+        assert.equal((await Harness.Anon(host, 'GET', target, undefined, { authorization: 'Bearer anything' })).status, 404)
         assert.equal((await Harness.Send(host, 'GET', target)).status, 404)
         assert.equal((await Harness.Send(host, 'POST', '/api/hives/h1/agent/report', JSON.stringify({ ready: true }))).status, 404)
     })
@@ -656,9 +654,9 @@ describe('ControlPlaneHost', () =>
         assert.equal(fake.Calls.length, 0)
     })
 
-    it('returns 400 for a malformed percent-encoded name', async () =>
+    it('a malformed percent-encoded name matches no route (404)', async () =>
     {
-        assert.equal((await Harness.Send(host, 'GET', '/api/environments/%zz/loaded-graph')).status, 400)
+        assert.equal((await Harness.Send(host, 'GET', '/api/environments/%zz/loaded-graph')).status, 404)
     })
 
     it('broadcasts environments-changed to ws clients', async () =>
@@ -714,7 +712,7 @@ describe('ControlPlaneHost', () =>
     {
         const r = await Harness.Anon(host, 'POST', '/api/login', JSON.stringify({ email: FakeOperator.Email, password: FakeOperator.Password }))
         assert.equal(r.status, 200)
-        assert.deepEqual(JSON.parse(r.body), { email: FakeOperator.Email })
+        assert.deepEqual(JSON.parse(r.body), { subject: FakeOperator.PrincipalId })
         const cookie = (r.setCookie ?? []).join('|')
         assert.ok(cookie.includes('cp_session='))
         assert.ok(cookie.includes('HttpOnly'))
@@ -743,7 +741,7 @@ describe('ControlPlaneHost', () =>
     it('reports a read-only operator role and leaks nothing else', async () =>
     {
         operator.Role = OperatorRole.ReadOnly
-        operator.PrincipalId = 'p2'
+        await sessions.Seed(FakeOperator.Token, FakeOperator.Principal('p2'))
         const ok = await Harness.Anon(host, 'GET', '/api/session', undefined, { cookie: Harness.AuthCookie })
         assert.equal(ok.status, 200)
         const body = JSON.parse(ok.body)
@@ -793,7 +791,7 @@ describe('ControlPlaneHost', () =>
     {
         const r = await Harness.Send(host, 'POST', '/api/logout')
         assert.equal(r.status, 200)
-        assert.deepEqual(operator.Revoked, ['valid-token'])
+        assert.equal(await sessions.IsLive(FakeOperator.Token), false)
         assert.ok((r.setCookie ?? []).join('|').includes('Max-Age=0'))
     })
 
@@ -907,7 +905,7 @@ describe('ControlPlaneHost', () =>
         assert.equal(noName.status, 400)
         const noDesc = await Harness.Send(host, 'POST', '/api/environments/dev1/graphs', JSON.stringify({ name: 'g1' }))
         assert.equal(noDesc.status, 400)
-        assert.equal((await Harness.Send(host, 'GET', '/api/environments/%zz/graphs')).status, 400)
+        assert.equal((await Harness.Send(host, 'GET', '/api/environments/%zz/graphs')).status, 404)
         assert.equal((await Harness.Anon(host, 'GET', '/api/environments/dev1/graphs')).status, 401)
         assert.equal((await Harness.Anon(host, 'POST', '/api/environments/dev1/graphs', JSON.stringify({ name: 'g1', description: 'd' }))).status, 401)
         assert.deepEqual(fakeGraph.Calls, [])
@@ -921,10 +919,10 @@ describe('ControlPlaneHost', () =>
         assert.deepEqual(JSON.parse(r.body), { graphName: 'g1', packageCount: 2, targetEnv: 'rt1' })
     })
 
-    it('a non-POST on the promote path is not handled (404)', async () =>
+    it('a non-POST on the promote path is not handled (405, Allow: POST)', async () =>
     {
         const get = await Harness.Send(host, 'GET', '/api/environments/dev1/graphs/g1/promote')
-        assert.equal(get.status, 404)
+        assert.equal(get.status, 405)
         assert.deepEqual(fakeGraph.Calls, [])
     })
 
@@ -960,7 +958,10 @@ describe('ControlPlaneHost operator socket lifecycle', () =>
     const SweepMs = 20
     const TicketTtlMs = 50
     let parent: string
+    const OtherToken = 'other-token'
+    const OtherPrincipal = 'p-other'
     let operator: FakeOperator
+    let sessions: HostSessions
     let host: ControlPlaneHost
     let clock: { T: number }
     let registry: OperatorSocketRegistry<WebSocket>
@@ -972,14 +973,16 @@ describe('ControlPlaneHost operator socket lifecycle', () =>
         const root = join(parent, 'static')
         mkdirSync(root)
         operator = new FakeOperator()
-        operator.Extra.add('other-token')
         clock = { T: 1000 }
         const directory = new PlatformDirectory(new ClientRegistry(join(parent, 'clients.json')), new TenantRegistry(join(parent, 'tenants.json')), new HiveRegistry(join(parent, 'hives.json')), { List: () => [] })
         const factory = new HiveOrchestratorFactory()
         registry = new OperatorSocketRegistry<WebSocket>()
         service = new FakeService()
-        const tickets = new EventsTicketStore({ ttlMs: TicketTtlMs, now: () => clock.T })
-        host = new ControlPlaneHost(service, new FakeGraphService(), root, operator, false, directory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService(), RolloutFixture.Observations(parent), new LoginThrottle(), false, tickets, registry, SweepMs)
+        sessions = await HostSessions.With(FakeOperator.Token, FakeOperator.Principal(), false, { Tickets: { TtlMs: TicketTtlMs, Now: () => clock.T } })
+        await sessions.Seed(OtherToken, FakeOperator.Principal(OtherPrincipal))
+        host = new ControlPlaneHost({ Service: service, Graphs: new FakeGraphService(), PortalRoot: root, Operator: operator, Sessions: sessions.Sessions, Directory: directory,
+            Deployments: await RolloutFixture.Create(parent, directory, factory), Provisioning: new FakeProvisioning(directory).AsService(), Observations: RolloutFixture.Observations(parent),
+            Sockets: registry, RevalidateIntervalMs: SweepMs })
         await host.Listen(0, '127.0.0.1')
     })
 
@@ -992,9 +995,9 @@ describe('ControlPlaneHost operator socket lifecycle', () =>
     it('sweep closes sockets of an invalid token, keeps valid ones, and survives a throwing validator', async () =>
     {
         const dead = await Harness.OpenAs(host, FakeOperator.Token)
-        const alive = await Harness.OpenAs(host, 'other-token')
-        operator.Throwing.add('other-token')
-        operator.Dead.add(FakeOperator.Token)
+        const alive = await Harness.OpenAs(host, OtherToken)
+        operator.Throwing.add(OtherPrincipal)
+        await sessions.Revoke(FakeOperator.Token)
         await Harness.WaitFor(() => dead.readyState === WebSocket.CLOSED)
         assert.equal(dead.readyState, WebSocket.CLOSED)
         assert.equal(alive.readyState, WebSocket.OPEN)
@@ -1024,18 +1027,19 @@ describe('ControlPlaneHost operator socket lifecycle', () =>
     it('closes a socket whose session was revoked between redeem and admission', async () =>
     {
         const ticket = await Harness.TicketFor(host, FakeOperator.Token)
-        operator.Dead.add(FakeOperator.Token)
+        await sessions.Revoke(FakeOperator.Token)
         const ws = new WebSocket(`ws://127.0.0.1:${host.Address().port}/api/events`, [ticket])
         const opened = await new Promise<boolean>(res => { ws.once('open', () => res(true)); ws.once('error', () => res(false)); ws.once('close', () => res(false)) })
         assert.equal(opened, false)
         ws.terminate()
     })
 
-    // Opens a socket whose admission ValidateToken is held, runs `during` while it is pending, then releases it.
+    // Opens a socket whose admission check (the operator lookup after the handshake) is held, runs `during` while it is
+    // pending, then releases it.
     async function HeldAdmission(during: (ws: WebSocket) => Promise<void>): Promise<void>
     {
         const ticket = await Harness.TicketFor(host, FakeOperator.Token)
-        operator.HoldCall = operator.ValidateCalls + 2
+        operator.HoldCall = operator.ValidateCalls + 1
         const ws = new WebSocket(`ws://127.0.0.1:${host.Address().port}/api/events`, [ticket])
         await new Promise<void>((res, rej) => { ws.once('open', () => res()); ws.once('error', rej) })
         await Harness.WaitFor(() => operator.Release !== undefined)
@@ -1094,7 +1098,9 @@ describe('ControlPlaneHost GET /api/fleet', () =>
         const observations = RolloutFixture.Observations(parent)
         await observations.RecordSnapshot('h-seen', [{ environmentName: 'prod', ready: true, runningImage: 'img:1', detail: 'ok' }])
         const factory = new HiveOrchestratorFactory()
-        host = new ControlPlaneHost(new FakeService(), new FakeGraphService(), root, new FakeOperator(), false, directory, await RolloutFixture.Create(parent, directory, factory), new FakeProvisioning(directory).AsService(), observations)
+        const sessions = await HostSessions.With(FakeOperator.Token, FakeOperator.Principal())
+        host = new ControlPlaneHost({ Service: new FakeService(), Graphs: new FakeGraphService(), PortalRoot: root, Operator: new FakeOperator(), Sessions: sessions.Sessions, Directory: directory,
+            Deployments: await RolloutFixture.Create(parent, directory, factory), Provisioning: new FakeProvisioning(directory).AsService(), Observations: observations })
         await host.Listen(0, '127.0.0.1')
     })
 

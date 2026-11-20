@@ -6,9 +6,12 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { WebSocket } from 'ws'
 import { ControlPlaneHost, type IEnvironmentService, type IGraphService } from '../control-plane-host.js'
-import { OperatorIdentity, OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type OperatorSession, type OperatorSummary, type OwnPasswordChange } from '../operator-identity.js'
-import { LoginThrottle } from '../login-throttle.js'
-import { AuditRegistry } from '../audit-record.js'
+import { InMemoryAuditRepository, InMemorySessionRepository, InMemoryThrottleRepository, InMemoryTicketRepository, type SessionRecord } from '@pragmatic-tech-ai/pragmatic-app-host'
+import { PgSession } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
+import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
+import { OperatorRole, type IOperatorIdentity } from '../operator-identity.js'
+import { OperatorSessions } from '../operator-sessions.js'
+import { OperatorHarness } from './operator-harness.js'
 import type { PlatformDirectory } from '../platform-directory.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import type { TenantProvisioningService } from '../tenant-provisioning-service.js'
@@ -99,39 +102,48 @@ class OwnPasswordFixture
     }
 }
 
-/** The real identity, with its own-password change held for `DelayMs` after it completed (the window the races live in). */
-class DelayingOperator implements IOperatorIdentity
+/**
+ * The console's sessions in memory, with the session rotate of an own-password change held for `DelayMs` after it
+ * landed (the window between the rotate and the sockets' move to the fresh session the races live in), and failures to
+ * inject: the atomic rotate (ReplaceSubject) and the fallback that ends every session of the subject (DeleteSubject).
+ */
+class ControllableSessions extends InMemorySessionRepository
 {
-    public DelayMs = 300
+    private static readonly Failure = 'disk full'
 
-    public constructor(private readonly inner: OperatorIdentity)
-    {
-    }
+    public DelayMs = 0
+    public FailRotate = false
+    public FailEndAll = false
 
-    public async ChangeOwnPassword(principalId: string, currentPassword: string, newPassword: string): Promise<OwnPasswordChange | null>
+    public override async ReplaceSubject(subject: string, fresh: SessionRecord): Promise<number>
     {
-        const change = await this.inner.ChangeOwnPassword(principalId, currentPassword, newPassword)
+        if (this.FailRotate)
+        {
+            throw new Error(ControllableSessions.Failure)
+        }
+        const ended = await super.ReplaceSubject(subject, fresh)
         await new Promise(res => setTimeout(res, this.DelayMs))
-        return change
+        return ended
     }
 
-    public Authenticate(email: string, password: string): Promise<OperatorSession | null> { return this.inner.Authenticate(email, password) }
-    public ValidateToken(token: string): Promise<OperatorPrincipal | null> { return this.inner.ValidateToken(token) }
-    public Revoke(token: string): Promise<void> { return this.inner.Revoke(token) }
-    public CreateOperator(email: string, password: string, role: OperatorRole): Promise<void> { return this.inner.CreateOperator(email, password, role) }
-    public ListOperators(): Promise<readonly OperatorSummary[]> { return this.inner.ListOperators() }
-    public SetOperatorRole(email: string, role: OperatorRole, actor: string): Promise<void> { return this.inner.SetOperatorRole(email, role, actor) }
-    public ResetOperatorPassword(email: string): Promise<string> { return this.inner.ResetOperatorPassword(email) }
-    public SetOperatorDisabled(email: string, disabled: boolean, actor: string): Promise<void> { return this.inner.SetOperatorDisabled(email, disabled, actor) }
-    public RevokeOperatorSessions(email: string): Promise<void> { return this.inner.RevokeOperatorSessions(email) }
+    public override async DeleteSubject(subject: string): Promise<number>
+    {
+        if (this.FailEndAll)
+        {
+            throw new Error(ControllableSessions.Failure)
+        }
+        return await super.DeleteSubject(subject)
+    }
 }
 
 describe('ControlPlaneHost own password change + operator reset session cut', () =>
 {
+    const RotateDelayMs = 300
     let root: string
     let host: ControlPlaneHost
-    let identity: OperatorIdentity
-    let audit: AuditRegistry
+    let identity: OperatorHarness
+    let repository: ControllableSessions
+    let audit: InMemoryAuditRepository
     let logged: string[]
     let originalError: typeof console.error
     let originalLog: typeof console.log
@@ -141,25 +153,21 @@ describe('ControlPlaneHost own password change + operator reset session cut', ()
     {
         await host?.Close()
         const service = { OnChanged: () => () => undefined } as unknown as IEnvironmentService
-        host = new ControlPlaneHost(service, {} as IGraphService, root, operator, false,
-            {} as PlatformDirectory, {} as PlatformDeploymentRegistry, {} as TenantProvisioningService, {} as HiveObservationRegistry,
-            new LoginThrottle({ maxAttempts: OwnPasswordFixture.MaxAttempts }), false, undefined, undefined, sweepMs, [], undefined, audit)
+        host = new ControlPlaneHost({ Service: service, Graphs: {} as IGraphService, PortalRoot: root, Operator: operator, Sessions: identity.Sessions,
+            Directory: {} as PlatformDirectory, Deployments: {} as PlatformDeploymentRegistry, Provisioning: {} as TenantProvisioningService, Observations: {} as HiveObservationRegistry,
+            RevalidateIntervalMs: sweepMs, AllowedHosts: [], Audit: audit })
         await host.Listen(0, '127.0.0.1')
-    }
-
-    function SessionsOf(id: OperatorIdentity): { RevokeAllFor: (...args: unknown[]) => Promise<void>; Issue: (...args: unknown[]) => Promise<unknown> }
-    {
-        return (id as unknown as { pack: { Sessions: { RevokeAllFor: (...args: unknown[]) => Promise<void>; Issue: (...args: unknown[]) => Promise<unknown> } } }).pack.Sessions
     }
 
     beforeEach(async () =>
     {
         root = mkdtempSync(join(tmpdir(), 'cp-own-pw-'))
-        identity = await OperatorIdentity.Compose({ identityRoot: join(root, 'identity'), masterKeyFile: join(root, 'master.key'), operatorEmail: OwnPasswordFixture.AdminEmail, initialPassword: OwnPasswordFixture.AdminPassword })
-        await identity.CreateOperator(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword, OperatorRole.ReadOnly)
-        audit = new AuditRegistry(join(root, 'audit.json'))
-        await audit.Load()
-        await Start(identity)
+        repository = new ControllableSessions()
+        const sessions = new OperatorSessions({ Sessions: repository, Tickets: new InMemoryTicketRepository(), Throttles: new InMemoryThrottleRepository() }, false, { Login: { MaxAttempts: OwnPasswordFixture.MaxAttempts } })
+        identity = await OperatorHarness.Compose(root, new PgSession(SqlTestSessions.MemPool()), OwnPasswordFixture.AdminEmail, OwnPasswordFixture.AdminPassword, sessions)
+        await identity.Identity.CreateOperator(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword, OperatorRole.ReadOnly)
+        audit = new InMemoryAuditRepository()
+        await Start(identity.Identity)
         logged = []
         originalError = console.error
         originalLog = console.log
@@ -177,9 +185,9 @@ describe('ControlPlaneHost own password change + operator reset session cut', ()
 
     it('a read-only operator changes their own password: the caller stays signed in on a fresh cookie, every other session and socket of theirs ends', async () =>
     {
-        const mine = (await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
-        const elsewhere = (await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
-        const admin = (await identity.Authenticate(OwnPasswordFixture.AdminEmail, OwnPasswordFixture.AdminPassword))!.token
+        const mine = (await identity.SignIn(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
+        const elsewhere = (await identity.SignIn(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
+        const admin = (await identity.SignIn(OwnPasswordFixture.AdminEmail, OwnPasswordFixture.AdminPassword))!.token
         const mySocket = await OwnPasswordFixture.Open(host, mine)
         const elsewhereSocket = await OwnPasswordFixture.Open(host, elsewhere)
         const adminSocket = await OwnPasswordFixture.Open(host, admin)
@@ -198,13 +206,13 @@ describe('ControlPlaneHost own password change + operator reset session cut', ()
         assert.equal(mySocket.readyState, WebSocket.OPEN, 'the caller socket stays open')
         assert.equal(adminSocket.readyState, WebSocket.OPEN, 'another operator socket stays open')
 
-        assert.equal(await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword), null)
-        assert.ok(await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.NewPassword))
+        assert.equal(await identity.Identity.Verify(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword), null)
+        assert.ok(await identity.Identity.Verify(OwnPasswordFixture.RoEmail, OwnPasswordFixture.NewPassword))
 
-        const entry = audit.Recent(10).find(e => e.path === OwnPasswordFixture.Path)
-        assert.equal(entry?.status, 200)
-        assert.equal(entry?.actor, OwnPasswordFixture.RoEmail)
-        const everything = JSON.stringify(audit.Recent(100)) + r.body + logged.join('\n')
+        const entry = (await audit.Recent(10)).find(e => e.Target === OwnPasswordFixture.Path)
+        assert.equal(entry?.Status, 200)
+        assert.equal(entry?.Actor, OwnPasswordFixture.RoEmail)
+        const everything = JSON.stringify(await audit.Recent(100)) + r.body + logged.join('\n')
         assert.ok(!everything.includes(OwnPasswordFixture.NewPassword))
         assert.ok(!everything.includes(OwnPasswordFixture.RoPassword))
 
@@ -214,11 +222,11 @@ describe('ControlPlaneHost own password change + operator reset session cut', ()
 
     it('the revalidation sweep never closes the caller socket: not after the change, nor while the change is mid-flight', async () =>
     {
-        const delaying = new DelayingOperator(identity)
-        await Start(delaying, 20)
-        const mine = (await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
+        repository.DelayMs = RotateDelayMs
+        await Start(identity.Identity, 20)
+        const mine = (await identity.SignIn(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
         const mySocket = await OwnPasswordFixture.Open(host, mine)
-        // While the change is held after its revoke, the sweep runs ~15 times with the old token already ended.
+        // While the change is held after its session rotate, the sweep runs ~15 times with the old session already ended.
         const r = await OwnPasswordFixture.Change(host, mine, OwnPasswordFixture.RoPassword, OwnPasswordFixture.NewPassword)
         assert.equal(r.status, 200, r.body)
         await new Promise(res => setTimeout(res, 200))
@@ -229,8 +237,8 @@ describe('ControlPlaneHost own password change + operator reset session cut', ()
 
     it('a second change while one is running is a 409 and does not sign the operator out', async () =>
     {
-        await Start(new DelayingOperator(identity))
-        const mine = (await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
+        repository.DelayMs = RotateDelayMs
+        const mine = (await identity.SignIn(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
         const first = OwnPasswordFixture.Change(host, mine, OwnPasswordFixture.RoPassword, OwnPasswordFixture.NewPassword)
         await new Promise(res => setTimeout(res, 50))
         const second = await OwnPasswordFixture.Change(host, mine, OwnPasswordFixture.RoPassword, 'yet-another-password-2')
@@ -239,56 +247,58 @@ describe('ControlPlaneHost own password change + operator reset session cut', ()
         const r = await first
         assert.equal(r.status, 200)
         assert.equal(await OwnPasswordFixture.SessionStatus(host, OwnPasswordFixture.TokenFrom(r)), 200)
-        assert.ok(await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.NewPassword))
+        assert.ok(await identity.Identity.Verify(OwnPasswordFixture.RoEmail, OwnPasswordFixture.NewPassword))
     })
 
-    it('when the old sessions cannot be ended after the rotate: 200 with otherSessionsEnded false, a warning, and the fresh cookie', async () =>
+    it('when neither the session rotate nor ending the old sessions can be written: 200 with otherSessionsEnded false, a warning, and no cookie', async () =>
     {
-        const mine = (await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
-        SessionsOf(identity).RevokeAllFor = async () => { throw new Error('disk full') }
+        const mine = (await identity.SignIn(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
+        // Ruling (operator sessions): the rotate is atomic, so a failed one issues no fresh session; the fallback that ends
+        // every session failing too leaves them refused in this process, and the answer says the others were not signed out.
+        repository.FailRotate = true
+        repository.FailEndAll = true
         const r = await OwnPasswordFixture.Change(host, mine, OwnPasswordFixture.RoPassword, OwnPasswordFixture.NewPassword)
         assert.equal(r.status, 200, r.body)
         const body = JSON.parse(r.body) as { ok: boolean; otherSessionsEnded: boolean; warning?: string }
         assert.equal(body.otherSessionsEnded, false)
         assert.match(body.warning ?? '', /could not be signed out/)
-        assert.equal(await OwnPasswordFixture.SessionStatus(host, OwnPasswordFixture.TokenFrom(r)), 200)
-        assert.ok(await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.NewPassword))
+        assert.equal((r.setCookie ?? []).some(c => c.startsWith(OwnPasswordFixture.CookieName)), false)
+        assert.equal(await OwnPasswordFixture.SessionStatus(host, mine), 401)
+        assert.ok(await identity.Identity.Verify(OwnPasswordFixture.RoEmail, OwnPasswordFixture.NewPassword))
     })
 
-    it('when no fresh session can be issued after the rotate: 200 with a sign-in-again warning and no cookie', async () =>
+    it('when the session rotate cannot be written: every session of the operator ends, 200 with a sign-in-again warning and no cookie', async () =>
     {
-        const mine = (await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
-        const sessions = SessionsOf(identity)
-        const issue = sessions.Issue
-        sessions.Issue = async () => { throw new Error('disk full') }
+        const mine = (await identity.SignIn(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
+        // Ruling (operator sessions): a failed rotate falls back to ending every session of the operator.
+        repository.FailRotate = true
         const r = await OwnPasswordFixture.Change(host, mine, OwnPasswordFixture.RoPassword, OwnPasswordFixture.NewPassword)
-        sessions.Issue = issue
         assert.equal(r.status, 200, r.body)
         const body = JSON.parse(r.body) as { ok: boolean; otherSessionsEnded: boolean; warning?: string }
         assert.equal(body.otherSessionsEnded, true)
         assert.equal(body.warning, 'Your password is changed. Sign in again with the new password.')
         assert.equal((r.setCookie ?? []).some(c => c.startsWith(OwnPasswordFixture.CookieName)), false)
         assert.equal(await OwnPasswordFixture.SessionStatus(host, mine), 401)
-        assert.ok(await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.NewPassword))
+        assert.ok(await identity.Identity.Verify(OwnPasswordFixture.RoEmail, OwnPasswordFixture.NewPassword))
     })
 
     it('a wrong current password is a 403 with a generic message; nothing changes and no session ends', async () =>
     {
-        const mine = (await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
+        const mine = (await identity.SignIn(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
         const r = await OwnPasswordFixture.Change(host, mine, OwnPasswordFixture.WrongPassword, OwnPasswordFixture.NewPassword)
         assert.equal(r.status, 403)
         assert.equal(r.cacheControl, 'no-store')
         assert.equal((JSON.parse(r.body) as { error: string }).error, 'The current password is not correct.')
         assert.equal(r.setCookie, undefined)
         assert.equal(await OwnPasswordFixture.SessionStatus(host, mine), 200)
-        assert.ok(await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))
+        assert.ok(await identity.Identity.Verify(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))
         assert.ok(!r.body.includes(OwnPasswordFixture.WrongPassword))
-        assert.equal(audit.Recent(10).find(e => e.path === OwnPasswordFixture.Path)?.status, 403)
+        assert.equal((await audit.Recent(10)).find(e => e.Target === OwnPasswordFixture.Path)?.Status, 403)
     })
 
     it('a short, mismatched, unchanged or missing new password is a 400 and nothing changes', async () =>
     {
-        const mine = (await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
+        const mine = (await identity.SignIn(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
         const shortReply = await OwnPasswordFixture.Change(host, mine, OwnPasswordFixture.RoPassword, 'too-short')
         assert.equal(shortReply.status, 400)
         assert.match(shortReply.body, /at least 12 characters/)
@@ -302,12 +312,12 @@ describe('ControlPlaneHost own password change + operator reset session cut', ()
         const missing = await OwnPasswordFixture.Send(host, 'POST', OwnPasswordFixture.Path, mine, { newPassword: OwnPasswordFixture.NewPassword })
         assert.equal(missing.status, 400)
         assert.equal(await OwnPasswordFixture.SessionStatus(host, mine), 200)
-        assert.ok(await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))
+        assert.ok(await identity.Identity.Verify(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))
     })
 
     it('wrong current passwords are throttled like login: 429 with Retry-After, even for the right password, once locked', async () =>
     {
-        const mine = (await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
+        const mine = (await identity.SignIn(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
         for (let i = 0; i < OwnPasswordFixture.MaxAttempts; i++)
         {
             assert.equal((await OwnPasswordFixture.Change(host, mine, OwnPasswordFixture.WrongPassword, OwnPasswordFixture.NewPassword)).status, 403)
@@ -316,7 +326,7 @@ describe('ControlPlaneHost own password change + operator reset session cut', ()
         assert.equal(locked.status, 429)
         assert.match(locked.retryAfter ?? '', /^\d+$/)
         assert.equal(locked.cacheControl, 'no-store')
-        assert.ok(await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))
+        assert.ok(await identity.Identity.Verify(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))
     })
 
     it('without a session the change is a 401', async () =>
@@ -325,15 +335,15 @@ describe('ControlPlaneHost own password change + operator reset session cut', ()
         assert.equal(r.status, 401)
         const forged = await OwnPasswordFixture.Change(host, 'not-a-session', OwnPasswordFixture.RoPassword, OwnPasswordFixture.NewPassword)
         assert.equal(forged.status, 401)
-        assert.ok(await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))
+        assert.ok(await identity.Identity.Verify(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))
         // The anonymous attempts are audited after the reply; let those appends land before the data dir is removed.
         await new Promise(res => setTimeout(res, 100))
     })
 
     it('an operator reset of another operator ends all of their sessions and closes their sockets; the resetting operator stays signed in', async () =>
     {
-        const target = (await identity.Authenticate(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
-        const admin = (await identity.Authenticate(OwnPasswordFixture.AdminEmail, OwnPasswordFixture.AdminPassword))!.token
+        const target = (await identity.SignIn(OwnPasswordFixture.RoEmail, OwnPasswordFixture.RoPassword))!.token
+        const admin = (await identity.SignIn(OwnPasswordFixture.AdminEmail, OwnPasswordFixture.AdminPassword))!.token
         const targetSocket = await OwnPasswordFixture.Open(host, target)
         const adminSocket = await OwnPasswordFixture.Open(host, admin)
         const r = await OwnPasswordFixture.Send(host, 'POST', '/api/operators/password-reset', admin, { email: OwnPasswordFixture.RoEmail })
@@ -348,12 +358,12 @@ describe('ControlPlaneHost own password change + operator reset session cut', ()
 
     it('an operator who resets their OWN password through the operator reset is signed out too (the reset is not self-exempt; the new password is still returned once)', async () =>
     {
-        const admin = (await identity.Authenticate(OwnPasswordFixture.AdminEmail, OwnPasswordFixture.AdminPassword))!.token
+        const admin = (await identity.SignIn(OwnPasswordFixture.AdminEmail, OwnPasswordFixture.AdminPassword))!.token
         const r = await OwnPasswordFixture.Send(host, 'POST', '/api/operators/password-reset', admin, { email: OwnPasswordFixture.AdminEmail })
         assert.equal(r.status, 200)
         const password = (JSON.parse(r.body) as { password: string }).password
         assert.ok(password.length >= 12)
         assert.equal(await OwnPasswordFixture.SessionStatus(host, admin), 401)
-        assert.ok(await identity.Authenticate(OwnPasswordFixture.AdminEmail, password))
+        assert.ok(await identity.Identity.Verify(OwnPasswordFixture.AdminEmail, password))
     })
 })
