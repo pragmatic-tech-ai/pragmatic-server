@@ -11,7 +11,7 @@ class FixtureWorkspace
     public static readonly App = 'app'
     public static readonly Siblings: readonly string[] = ['a', 'b', 'c']
     public static readonly SharedDir = 'pragmatic-shared'
-    public static readonly SharedSiblings: readonly string[] = ['a', 'b', 'c', 'pragmatic-shared/packages/s', 'pragmatic-shared/packages/cloud']
+    public static readonly SharedWorkspaces: readonly string[] = ['packages/s', 'packages/cloud']
     public static readonly SharedS = 'pragmatic-shared/packages/s'
     public static readonly SharedModules = 'pragmatic-shared/node_modules'
     private static readonly ImportsShared = "import { Value } from 's'\nconsole.log(Value)\n"
@@ -62,9 +62,11 @@ class FixtureWorkspace
      * `dep`, a second workspace package `cloud` with its own hoisted `sdk`, and a lock whose `packages/s` entry declares the
      * given dependencies.
      */
-    public static AddShared(root: string, lockEntry: Record<string, unknown>): void
+    public static AddShared(root: string, lockEntry: Record<string, unknown>, workspaces: readonly string[] = FixtureWorkspace.SharedWorkspaces): void
     {
         const shared = join(root, FixtureWorkspace.SharedDir)
+        mkdirSync(shared, { recursive: true })
+        writeFileSync(join(shared, 'package.json'), JSON.stringify({ name: 'pragmatic-shared', private: true, workspaces }))
         FixtureWorkspace.Package(join(shared, 'packages', 's'), 's', "export { Dep as Value } from 'dep'\n")
         FixtureWorkspace.Package(join(shared, 'packages', 'cloud'), 'cloud', "export { Sdk } from 'sdk'\n")
         FixtureWorkspace.Package(join(shared, 'node_modules', 'dep'), 'dep', 'export const Dep = 4\n')
@@ -89,7 +91,27 @@ class FixtureWorkspace
         const F = FixtureWorkspace
         const root = F.Make([F.SharedS], [F.SharedModules, Dist, Modules], F.ImportsShared, dockerfile)
         F.AddShared(root, lockEntry)
-        return ClosureCheck.Run(root, { Siblings: F.SharedSiblings, Apps: [F.App] })
+        return ClosureCheck.Run(root, { Siblings: F.Siblings, Apps: [F.App] })
+    }
+
+    /**
+     * The report for an app listing only shared package `s`, whose source also imports `extra`: a further package under
+     * pragmatic-shared/packages, a workspace (linked into the shared node_modules, as npm links workspaces) or a stray folder.
+     */
+    public static ExtraSharedReport(extraIsWorkspace: boolean): ClosureReport
+    {
+        const F = FixtureWorkspace
+        const root = F.Make([F.SharedS], [F.SharedModules, Dist, Modules], F.ImportsShared)
+        F.AddShared(root, { dependencies: { dep: '^1.0.0' } }, extraIsWorkspace ? [...F.SharedWorkspaces, 'packages/extra'] : F.SharedWorkspaces)
+        const shared = join(root, F.SharedDir)
+        F.Package(join(shared, 'packages', 'extra'), 'extra', 'export const Extra = 6\n')
+        const importer = extraIsWorkspace ? "import { Extra } from 'extra'" : "import { Extra } from '../extra/index.js'"
+        writeFileSync(join(shared, 'packages', 's', 'index.js'), importer + "\nexport { Dep as Value } from 'dep'\nconsole.log(Extra)\n")
+        if (extraIsWorkspace)
+        {
+            symlinkSync(join(shared, 'packages', 'extra'), join(shared, 'node_modules', 'extra'), 'junction')
+        }
+        return ClosureCheck.Run(root, { Siblings: F.Siblings, Apps: [F.App] })
     }
 
     /** The app's Dockerfile: its shared modules stage runs `install`, and the app copies `modulesFrom`'s pragmatic-shared/node_modules. */
@@ -118,7 +140,7 @@ class FixtureWorkspace
         }
     }
 
-    private static Package(dir: string, name: string, source: string): void
+    public static Package(dir: string, name: string, source: string): void
     {
         mkdirSync(dir, { recursive: true })
         writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, type: 'module', main: 'index.js' }))
@@ -235,6 +257,29 @@ describe('ClosureCheck: pragmatic-shared dependencies', () =>
         const undeclared = ['not a production dependency of the listed shared packages: pragmatic-shared/node_modules/dep']
         assert.deepEqual(FixtureWorkspace.SharedReport({}).Apps[0].Missing, undeclared)
         assert.deepEqual(FixtureWorkspace.SharedReport({ devDependencies: { dep: '^1.0.0' } }).Apps[0].Missing, undeclared, 'a dev dependency is not installed')
+    })
+
+    it('knows every pragmatic-shared workspace package as a sibling: one the entry reaches but closure.json omits is missing', () =>
+    {
+        const report = FixtureWorkspace.ExtraSharedReport(true)
+        assert.deepEqual(report.Apps[0].Reached, ['pragmatic-shared/packages/extra', 'pragmatic-shared/packages/s'])
+        assert.deepEqual(report.Apps[0].Missing, ['pragmatic-shared/packages/extra'])
+        assert.equal(report.Ok, false)
+    })
+
+    it('reports a reached file under pragmatic-shared/packages that belongs to no workspace package as missing', () =>
+    {
+        const report = FixtureWorkspace.ExtraSharedReport(false)
+        assert.deepEqual(report.Apps[0].Missing, ['pragmatic-shared/packages/extra'])
+        assert.equal(report.Ok, false)
+    })
+
+    it('reads the shared siblings from the pragmatic-shared workspaces', () =>
+    {
+        const root = FixtureWorkspace.Make([], [], ImportsNothing)
+        assert.deepEqual(ClosureCheck.SharedSiblings(root), [])
+        FixtureWorkspace.AddShared(root, {})
+        assert.deepEqual(ClosureCheck.SharedSiblings(root), ['pragmatic-shared/packages/s', 'pragmatic-shared/packages/cloud'])
     })
 
     it('requires the image to copy pragmatic-shared/node_modules from its own install, filtered to exactly its shared packages', () =>

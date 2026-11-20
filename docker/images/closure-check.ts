@@ -387,17 +387,16 @@ export class ClosureManifestError extends Error
  */
 export class ClosureCheck
 {
-    /** The sibling dirs docker/images/Dockerfile copies and builds, in build order. */
+    /**
+     * The sibling repos docker/images/Dockerfile copies and builds, besides pragmatic-shared, in build order. The
+     * pragmatic-shared packages are not listed here: they are read from that workspace's package.json (SharedSiblings),
+     * so a package added there is a sibling the check knows without a second list to keep in step.
+     */
     public static readonly Siblings: readonly string[] = [
-        'pragmatic-graph', 'todl-runtime', 'TODL', 'Mural', 'pragmatic-protocol',
-        'pragmatic-shared/packages/pragmatic-identity', 'pragmatic-shared/packages/pragmatic-identity-source-local',
-        'pragmatic-shared/packages/pragmatic-identity-realm', 'pragmatic-shared/packages/pragmatic-identity-store',
-        'pragmatic-shared/packages/pragmatic-identity-source-oidc', 'pragmatic-shared/packages/pragmatic-identity-source-entra',
-        'pragmatic-shared/packages/pragmatic-identity-source-google', 'pragmatic-shared/packages/pragmatic-realm-adapters',
-        'pragmatic-shared/packages/pragmatic-realm-custom', 'pragmatic-shared/packages/pragmatic-realm-gcp',
-        'pragmatic-shared/packages/pragmatic-realm-aws', 'pragmatic-shared/packages/pragmatic-realm-azure',
-        'todl-identity-engine', 'todl-connectors-host',
+        'pragmatic-graph', 'todl-runtime', 'TODL', 'Mural', 'pragmatic-protocol', 'todl-identity-engine', 'todl-connectors-host',
     ]
+    /** The pragmatic-shared workspace repo; each of its `workspaces` (`packages/<x>`) is a sibling `pragmatic-shared/packages/<x>`. */
+    public static readonly SharedRepo = 'pragmatic-shared'
     public static readonly ServerModules = 'pragmatic-server/node_modules'
     /** The pragmatic-shared workspace: its packages' third-party dependencies and sibling links are hoisted into its root node_modules. */
     public static readonly SharedModules = 'pragmatic-shared/node_modules'
@@ -407,7 +406,8 @@ export class ClosureCheck
      */
     public static readonly SharedModulesStageSuffix = '-shared-modules'
     public static readonly BuildStage = 'build'
-    private static readonly SharedDir = 'pragmatic-shared'
+    private static readonly SharedDir = ClosureCheck.SharedRepo
+    private static readonly SharedPackagesPrefix = 'packages/'
     private static readonly SharedPrefix = 'pragmatic-shared/'
     private static readonly SharedLock = 'pragmatic-shared/package-lock.json'
     private static readonly UndeclaredSharedPrefix = 'not a production dependency of the listed shared packages: '
@@ -448,6 +448,8 @@ export class ClosureCheck
     private static readonly MissingAppPrefix = 'closure.json has no entry for '
     private static readonly UnknownAppPrefix = 'closure.json names an unknown app: '
     private static readonly MissingSiblingPrefix = 'Sibling checkout is missing or has no package name: '
+    private static readonly UnreadableSharedWorkspace = 'pragmatic-shared/package.json cannot be read: '
+    private static readonly WorkspacesNotList = '"workspaces" is not a list of paths'
     private static readonly BadEntrypointPrefix = 'closure.json entrypoint is not a compiled dist path: '
     private static readonly FailedSummary = 'Image closures differ from closure.json'
 
@@ -464,7 +466,7 @@ export class ClosureCheck
                 throw new ClosureManifestError(C.UnknownAppPrefix + app)
             }
         }
-        const siblingByName = C.SiblingNames(root, options.Siblings ?? C.Siblings)
+        const siblingByName = C.SiblingNames(root, [...(options.Siblings ?? C.Siblings), ...C.SharedSiblings(root)])
         const esbuild = EsbuildLocator.Load(C.ServerRoot)
         const owners = new Map<string, string | undefined>()
         const dockerfile = join(root, C.ServerDir, C.DockerfilePath)
@@ -523,6 +525,7 @@ export class ClosureCheck
         let serverModules = false
         let sharedModules = false
         const sharedThirdParty = new Set<string>()
+        const unknownShared = new Set<string>()
         const sharedRoot = join(root, C.SharedDir)
         const serverModulesDir = join(server, C.NodeModules) + sep
         const sharedModulesDir = join(root, ...C.SharedModules.split(C.Slash)) + sep
@@ -552,7 +555,13 @@ export class ClosureCheck
             }
             else if (file.startsWith(sharedRoot + sep))
             {
-                C.NoteSharedPackage(relative(sharedRoot, file), sharedThirdParty)
+                // A file of the shared workspace that lies in no node_modules belongs to a package that is no workspace
+                // sibling: the image would not build or copy it, so it is missing however closure.json lists the rest.
+                const unknown = C.NoteSharedPackage(relative(sharedRoot, file), sharedThirdParty)
+                if (unknown !== undefined)
+                {
+                    unknownShared.add(unknown)
+                }
             }
             else if (file.startsWith(serverDir) && C.TsSourceExtension.test(file))
             {
@@ -561,6 +570,7 @@ export class ClosureCheck
         }
         const listed = new Set(entry.packages)
         const missing = [...reached].filter(p => !listed.has(p)).sort()
+        missing.push(...[...unknownShared].sort())
         const extra = [...listed].filter(p => !reached.has(p)).sort()
         // The server resolves its siblings through the file: links in its own node_modules, so reaching any sibling needs it too.
         serverModules = serverModules || reached.size > 0
@@ -660,14 +670,51 @@ export class ClosureCheck
         return entry.packages.filter(p => p.startsWith(C.SharedPrefix)).map(p => p.slice(C.SharedPrefix.length))
     }
 
-    /** Records the third-party package dir (a pragmatic-shared lock key) a reached file lies in. */
-    private static NoteSharedPackage(relativePath: string, packages: Set<string>): void
+    /**
+     * Records the third-party package dir (a pragmatic-shared lock key) a reached file lies in. A file in no node_modules
+     * is not third-party: returns the workspace path it stands for (`pragmatic-shared/packages/<x>`, or the file itself
+     * outside packages/) so the caller can report it.
+     */
+    private static NoteSharedPackage(relativePath: string, packages: Set<string>): string | undefined
     {
-        const dir = SharedLockClosure.PackageDirOf(relativePath.split(sep).join(ClosureCheck.Slash))
+        const C = ClosureCheck
+        const path = relativePath.split(sep).join(C.Slash)
+        const dir = SharedLockClosure.PackageDirOf(path)
         if (dir !== undefined)
         {
             packages.add(dir)
+            return undefined
         }
+        if (!path.startsWith(C.SharedPackagesPrefix))
+        {
+            return C.SharedPrefix + path
+        }
+        return C.SharedPrefix + C.SharedPackagesPrefix + path.slice(C.SharedPackagesPrefix.length).split(C.Slash)[0]
+    }
+
+    /** The pragmatic-shared packages as sibling dirs (`pragmatic-shared/packages/<x>`), from that workspace's package.json; none without the checkout. */
+    public static SharedSiblings(root: string): string[]
+    {
+        const C = ClosureCheck
+        const manifest = join(root, C.SharedDir, C.PackageJson)
+        if (!existsSync(manifest))
+        {
+            return []
+        }
+        let workspaces: unknown
+        try
+        {
+            workspaces = (JSON.parse(readFileSync(manifest, C.Utf8)) as { workspaces?: unknown }).workspaces
+        }
+        catch (err)
+        {
+            throw new ClosureManifestError(C.UnreadableSharedWorkspace + (err as Error).message)
+        }
+        if (!Array.isArray(workspaces) || !workspaces.every(w => typeof w === 'string'))
+        {
+            throw new ClosureManifestError(C.UnreadableSharedWorkspace + C.WorkspacesNotList)
+        }
+        return (workspaces as string[]).map(w => C.SharedPrefix + w)
     }
 
     /** The reached pragmatic-shared third-party packages a production install of the entry's shared packages does not place. */

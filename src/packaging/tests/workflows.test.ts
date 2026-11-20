@@ -123,7 +123,7 @@ test('ci and release workflows clone exactly the siblings the Dockerfiles copy',
 {
     const copied = SiblingLists.Copied('images', 'Dockerfile')
     assert.deepEqual(SiblingLists.Copied('Dockerfile'), copied, 'the per-app images and the legacy dev image build the same siblings')
-    assert.deepEqual(SiblingLists.Repos(ClosureCheck.Siblings), copied, 'the closure check knows every sibling the image build copies')
+    assert.deepEqual(SiblingLists.Repos([...ClosureCheck.Siblings, ClosureCheck.SharedRepo]), copied, 'the closure check knows every sibling repo the image build copies (the shared packages come from the pragmatic-shared workspaces)')
     assert.deepEqual(SiblingLists.Cloned('ci.yml'), copied)
     assert.deepEqual(SiblingLists.Cloned('release.yml'), copied)
 })
