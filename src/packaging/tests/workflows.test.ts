@@ -90,7 +90,7 @@ test('ci workflow builds TODL like every other sibling (no DOM workaround)', () 
     assert.doesNotMatch(text, /--lib/, 'the TODL --lib workaround must be gone')
     assert.doesNotMatch(text, /if /, 'no shell conditional - TODL builds like every other sibling')
     assert.doesNotMatch(text, /gen:prelude/, 'the inlined TODL generator mirror must be gone')
-    assert.match(text, /for pkg in pragmatic-graph todl-runtime TODL Mural pragmatic-protocol/, 'the engine first, then TODL (then Mural, which the IdP sign-in app needs) stay in the common sibling build loop')
+    assert.match(text, /for pkg in pragmatic-graph todl-runtime Mural TODL pragmatic-protocol/, 'the engine first, then Mural (TODL compiles its .mu modules with it), then TODL stay in the common sibling build loop')
 })
 
 class SiblingLists
