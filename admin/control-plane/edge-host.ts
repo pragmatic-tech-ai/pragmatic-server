@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import type { AddressInfo } from 'node:net'
 import { AgentChannelHost } from './agent-channel-host.js'
 import type { IAgentChannelBackend } from './agent-channel-backend.js'
-import type { IDesktopDiscoveryBackend } from './desktop-discovery-backend.js'
+import type { IDesktopDiscoveryBackend } from './desktop-discovery-contract.js'
 import { DesktopDiscoveryEndpoint } from './desktop-discovery-endpoint.js'
 import { EdgeClientAddress } from './edge-client-address.js'
 import { PlaneHttp } from './plane-http.js'

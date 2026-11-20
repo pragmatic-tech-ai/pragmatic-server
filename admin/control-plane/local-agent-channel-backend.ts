@@ -5,7 +5,7 @@ import { DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerify
 import { InvalidEmailDomainError } from './email-domain-policy.js'
 import type { DomainVerificationAnswer } from './domain-verification-record.js'
 import type { HiveHealthDto } from './hive-health-producer.js'
-import { AgentChannelOperation, type AgentChannelReply, type AgentChannelRequest, type IAgentChannelBackend } from './agent-channel-backend.js'
+import { AgentChannelOperation, AgentChannelReplies, type AgentChannelReply, type AgentChannelRequest, type IAgentChannelBackend } from './agent-channel-backend.js'
 import { PlaneHttp } from './plane-http.js'
 import { AgentUnauthorizedError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestNotGatedError, ManifestWithdrawnError, ReleaseNotRunnableYetError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from './rollout-errors.js'
 
@@ -14,7 +14,7 @@ import { AgentUnauthorizedError, ChannelNotSubscribedError, HiveNotRegisteredErr
  *  no inner-error text reaches the reply or the log). */
 export class LocalAgentChannelBackend implements IAgentChannelBackend
 {
-    public static readonly UnauthorizedReply: AgentChannelReply = { Status: 401, Body: { error: 'Unauthorized' } }
+    public static readonly UnauthorizedReply: AgentChannelReply = AgentChannelReplies.Unauthorized
     private static readonly NotFoundReply: AgentChannelReply = { Status: PlaneHttp.StatusNotFound, Body: { error: PlaneHttp.NotFoundMessage } }
     private static readonly LimitParam = 'limit'
     private static readonly DefaultLedgerLimit = 200

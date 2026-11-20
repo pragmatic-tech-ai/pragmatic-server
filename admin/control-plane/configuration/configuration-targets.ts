@@ -1,7 +1,7 @@
 import { ApplyTarget } from '@pragmatic-tech-ai/pragmatic-configuration'
 import type { EnvironmentRecord } from '../environment-record.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
-import { EnvServerComponent } from '../../../src/bin/env-server-component.js'
+import { ReleaseApp } from '../release/release-tag.js'
 
 /** One deployment a component's configuration can be applied to: the environment it serves and its place in the hive. */
 export type ConfigurationTargetDto = { environment: string; hive: string; namespace: string; deployment: string }
@@ -29,7 +29,7 @@ export class ConfigurationTargets
     /** The targets of `component` in `tenantId`'s environments, by environment name. */
     public For(component: string, tenantId: string): { environment: string; target: ApplyTarget }[]
     {
-        if (component !== EnvServerComponent.Name)
+        if (component !== ReleaseApp.EnvServer)
         {
             return []
         }

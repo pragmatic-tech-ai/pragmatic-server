@@ -1,6 +1,6 @@
 import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import type { InternalApiCredential } from './internal-api-credential.js'
+import type { InternalApiCredential } from '@pragmatic-tech-ai/pragmatic-app-host'
 
 /** Admin's internal API could not be used: unreachable, timed out, refused, or answered something malformed. Carries
  *  no response text from admin. */

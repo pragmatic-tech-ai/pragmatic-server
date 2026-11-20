@@ -8,11 +8,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-/** The platform edge shares the console's entry (server.ts) but is stateless: it must start with no database setting. */
+/** The platform edge (its own entry, bin/pragmatic-platform-edged) is stateless: it must start with no database setting. */
 class EdgeProcessFixture
 {
     public static readonly Here = dirname(fileURLToPath(import.meta.url))
-    public static readonly Server = join(EdgeProcessFixture.Here, '..', 'server.ts')
+    public static readonly Server = join(EdgeProcessFixture.Here, '..', 'bin', 'pragmatic-platform-edged.ts')
     public static readonly TsxCli = join(EdgeProcessFixture.Here, '..', '..', '..', 'node_modules', 'tsx', 'dist', 'cli.mjs')
     public static readonly ListeningLine = 'Edge listening on '
     public static readonly StartTimeoutMs = 60_000
@@ -53,7 +53,7 @@ describe('the platform edge without a database', () =>
         const secret = join(dir, 'secret')
         writeFileSync(secret, 'e'.repeat(48))
         const port = await F.FreePort()
-        const env: NodeJS.ProcessEnv = { ...process.env, PRAGMATIC_CONTROL_PLANE_ROLE: 'edge', PRAGMATIC_AGENT_CHANNEL_PORT: String(port), PRAGMATIC_AGENT_CHANNEL_BIND: '127.0.0.1',
+        const env: NodeJS.ProcessEnv = { ...process.env, PRAGMATIC_AGENT_CHANNEL_PORT: String(port), PRAGMATIC_AGENT_CHANNEL_BIND: '127.0.0.1',
             PRAGMATIC_EDGE_ADMIN_URL: 'http://127.0.0.1:1', PRAGMATIC_INTERNAL_API_SECRET_FILE: secret }
         delete env.PRAGMATIC_ADMIN_DATABASE_URL_FILE
         const child = spawn(process.execPath, [F.TsxCli, F.Server], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })

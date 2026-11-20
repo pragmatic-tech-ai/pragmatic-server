@@ -1,4 +1,4 @@
-import type { DiscoveryReply, IDesktopDiscoveryBackend } from './desktop-discovery-backend.js'
+import type { DiscoveryReply, IDesktopDiscoveryBackend } from './desktop-discovery-contract.js'
 import type { InternalApiClient } from './internal-api-client.js'
 import { InternalApiRoutes } from './internal-api-routes.js'
 import { RemoteAgentChannelBackend } from './remote-agent-channel-backend.js'

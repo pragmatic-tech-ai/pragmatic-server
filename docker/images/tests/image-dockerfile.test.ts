@@ -342,11 +342,12 @@ describe('image contents', () =>
         }
     })
 
-    it('the platform images start in their control-plane role', () =>
+    it('the console image starts in role admin; the edge image runs its own entry and reads no role', () =>
     {
         const env = (stage: string) => ImageFiles.Stage(stage).filter(line => line.startsWith('ENV '))
         assert.ok(env(ImageFiles.PlatformAdmin).includes(`ENV ${ControlPlaneRoles.EnvVar}=${ControlPlaneRole.Admin}`))
-        assert.ok(env(ImageFiles.PlatformEdge).includes(`ENV ${ControlPlaneRoles.EnvVar}=${ControlPlaneRole.Edge}`))
+        assert.ok(!env(ImageFiles.PlatformEdge).some(line => line.includes(ControlPlaneRoles.EnvVar)))
+        assert.ok(ImageFiles.Stage(ImageFiles.PlatformEdge).includes('ENTRYPOINT ["node", "dist-tenant-admin/admin/control-plane/bin/pragmatic-platform-edged.js"]'))
     })
 
     it('names lmdb as the native addon the toolchain is for, not argon2 or bcrypt', () =>

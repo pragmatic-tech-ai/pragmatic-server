@@ -3,25 +3,12 @@ import { DesktopTenantMatcher } from './desktop-tenant-matcher.js'
 import type { IDiscoveryDirectory, IDomainApprovalSource, IFingerprintKeySource } from './desktop-tenant-matcher.js'
 import { PlaneHttp } from './plane-http.js'
 import type { TenantAccountIndex } from './tenant-account-index.js'
+import type { DiscoveryReply, IDesktopDiscoveryBackend } from './desktop-discovery-contract.js'
 
 /** Whether the platform manages environments for a tenant (EnvironmentRegistry satisfies it). */
 export interface IPlatformEnvironmentSource
 {
     HasEnvironmentsOf(tenantId: string): boolean
-}
-
-/** A discovery answer: HTTP status plus JSON body. */
-export interface DiscoveryReply
-{
-    Status: number
-    Body: unknown
-}
-
-/** Answers "which tenant(s) does this email belong to": in-process over the platform records (all, admin), or remote
- *  over admin's internal API (edge). Origin, size and throttle checks happen before, in DesktopDiscoveryEndpoint. */
-export interface IDesktopDiscoveryBackend
-{
-    Discover(email: string): Promise<DiscoveryReply>
 }
 
 /**

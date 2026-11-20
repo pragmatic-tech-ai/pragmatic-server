@@ -4,7 +4,7 @@ import { isIP } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { AuditRegistry } from './audit-record.js'
 import { LocalDesktopDiscoveryBackend } from './desktop-discovery-backend.js'
-import { InternalApiCredential } from './internal-api-credential.js'
+import { InternalApiRoutes } from './internal-api-routes.js'
 import { InternalApiHost } from './internal-api-host.js'
 import { InfraTargetMode, InfraTargetModes } from './infra-target-mode.js'
 import { TenantIdpMode } from './tenant-idp-mode.js'
@@ -13,7 +13,6 @@ import { HostedHiveOrchestratorFactory } from './hosted-hive-orchestrator-factor
 import { HostedKubeconfig } from './hosted-kubeconfig.js'
 import { DevPlatformImages, ReleasePlatformImages, type IPlatformImages } from './platform-images.js'
 import type { IAgentChannelBackend } from './agent-channel-backend.js'
-import { EdgeComposition, EdgeShutdown } from './edge-composition.js'
 import { DesktopDiscoveryEndpoint } from './desktop-discovery-endpoint.js'
 import { TenantAccountIndex } from './tenant-account-index.js'
 import { fileURLToPath } from 'node:url'
@@ -233,9 +232,6 @@ export class ControlPlaneServer
 {
     private static readonly PortEnvVar = 'PRAGMATIC_ADMIN_PORT'
     private static readonly AdminBindEnvVar = 'PRAGMATIC_ADMIN_BIND'
-    private static readonly EdgeListeningPrefix = 'Edge listening on '
-    private static readonly EdgeTrustedProxySuffix = ' (client addresses from the trusted proxy)'
-    private static readonly HostPortText = ':'
     private static readonly InternalPortEnvVar = 'PRAGMATIC_ADMIN_INTERNAL_PORT'
     private static readonly InternalBindEnvVar = 'PRAGMATIC_ADMIN_INTERNAL_BIND'
     private static readonly DisabledPortText = '0'
@@ -253,6 +249,7 @@ export class ControlPlaneServer
     private static readonly MaxPort = TenantPlaneComposer.MaxPort
     private static readonly BadPortPrefix = 'Invalid PRAGMATIC_ADMIN_PORT: '
     private static readonly DataDir = 'data'
+    private static readonly EdgeHasOwnEntry = 'PRAGMATIC_CONTROL_PLANE_ROLE=edge: the platform edge runs bin/pragmatic-platform-edged, not the console'
     private static readonly DataRootEnvVar = 'PRAGMATIC_ADMIN_DATA_ROOT'
     private static readonly KeysDirName = PlatformHiveOrchestratorFactory.KeysDirName
     private static readonly SigningKeyRefEnvVar = 'PRAGMATIC_ADMIN_SIGNING_KEY_REF'
@@ -318,13 +315,8 @@ export class ControlPlaneServer
         ControlPlaneRoles.RequireListener(role, agentChannelPort !== ControlPlaneServer.AgentChannelDisabled)
         if (role === ControlPlaneRole.Edge)
         {
-            // The keyless edge: no data root, key, registry or master key is ever opened; admin answers over the internal API.
-            const edge = EdgeComposition.Compose(process.env)
-            await edge.Host.Listen(edge.Port, edge.Bind)
-            EdgeShutdown.Install(edge.Host)
-            console.log(ControlPlaneServer.EdgeListeningPrefix + edge.Bind + ControlPlaneServer.HostPortText + String(edge.Port)
-                + (edge.TrustedProxy ? ControlPlaneServer.EdgeTrustedProxySuffix : ''))
-            return
+            // The keyless edge has its own entry (bin/pragmatic-platform-edged); the console no longer composes it.
+            throw new Error(ControlPlaneServer.EdgeHasOwnEntry)
         }
         // From here on the role is `all` or `admin`: both open the operator-side state.
         const here = dirname(fileURLToPath(import.meta.url))
@@ -439,7 +431,7 @@ export class ControlPlaneServer
         const discovery = new DesktopDiscoveryEndpoint(discoveryBackend, DesktopDiscoveryEndpoint.NewThrottle())
         const internalSettings = ControlPlaneServer.InternalApiSettingsOf(process.env)
         const internalStart: IInternalApiStart | undefined = internalSettings === undefined ? undefined
-            : { host: new InternalApiHost(InternalApiCredential.FromFile(internalSettings.SecretFile), agentBackend, discoveryBackend), settings: internalSettings }
+            : { host: new InternalApiHost(InternalApiRoutes.Credential(internalSettings.SecretFile), agentBackend, discoveryBackend), settings: internalSettings }
         // Installs a Local hive's tenant console through the same cluster access.
         const consoleInstaller = new TenantConsoleInstaller(directory, orchestrators, new TenantAdminBootstrap(deployments), fingerprintKeys,
             new DevCertificateAuthority(join(dataRoot, DevCertificateAuthority.DirName), sealed), new InHiveIdpAdmin(orchestrators, sealed),
@@ -515,7 +507,7 @@ export class ControlPlaneServer
         {
             throw new Error(C.BadInternalBindPrefix + rawBind)
         }
-        const secretFile = env[InternalApiCredential.SecretFileEnvVar]?.trim() ?? ''
+        const secretFile = env[InternalApiRoutes.SecretFileEnvVar]?.trim() ?? ''
         if (secretFile === '')
         {
             throw new Error(C.InternalSecretRequired)

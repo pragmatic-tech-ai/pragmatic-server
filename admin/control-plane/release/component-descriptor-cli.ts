@@ -19,11 +19,16 @@ class ComponentCliUsageError extends Error
  *   override that hands each image target its COMPONENT_APP and COMPONENT_DIGEST (the label value).
  * - `emit --app <app> --digest <sha256:...> --out <file>`: one app's descriptor, refused unless its digest is the one given,
  *   so the label an image is built with and the descriptor it carries are the same.
+ * - `vendor --out <dir>`: the digest-pinned set the consoles read other containers' descriptors from
+ *   (ComponentDescriptorSet): `<dir>/<app>.json` and `<dir>/digests.json`. Its test fails while the vendored set
+ *   (`admin/control-plane/descriptors`) differs from the declarations; rerun this to refresh it.
  */
 export class ComponentDescriptorCli
 {
     private static readonly CommandEmitAll = 'emit-all'
     private static readonly CommandEmit = 'emit'
+    private static readonly CommandVendor = 'vendor'
+    private static readonly JsonExtension = '.json'
     private static readonly FlagPrefix = '--'
     private static readonly FlagOut = 'out'
     private static readonly FlagApp = 'app'
@@ -31,6 +36,7 @@ export class ComponentDescriptorCli
     private static readonly CommandFlags: ReadonlyMap<string, readonly string[]> = new Map([
         [ComponentDescriptorCli.CommandEmitAll, [ComponentDescriptorCli.FlagOut]],
         [ComponentDescriptorCli.CommandEmit, [ComponentDescriptorCli.FlagApp, ComponentDescriptorCli.FlagDigest, ComponentDescriptorCli.FlagOut]],
+        [ComponentDescriptorCli.CommandVendor, [ComponentDescriptorCli.FlagOut]],
     ])
     /** The descriptor file name in every per-app folder and in the image (`ComponentImageLabel.InImagePath`). */
     public static readonly DescriptorFile = 'component.json'
@@ -47,7 +53,7 @@ export class ComponentDescriptorCli
     private static readonly OkExitCode = 0
     private static readonly FailExitCode = 1
     private static readonly UsageExitCode = 2
-    private static readonly UsageMessage = 'Usage: pragmatic-component-descriptors emit-all --out <dir> | emit --app <app> --digest <sha256:...> --out <file>'
+    private static readonly UsageMessage = 'Usage: pragmatic-component-descriptors emit-all --out <dir> | emit --app <app> --digest <sha256:...> --out <file> | vendor --out <dir>'
     private static readonly UnknownFlagPrefix = 'Unknown option: --'
     private static readonly DuplicateFlagPrefix = 'Option given more than once: --'
     private static readonly MissingFlagPrefix = 'Missing required option: --'
@@ -73,6 +79,10 @@ export class ComponentDescriptorCli
             if (command === S.CommandEmitAll)
             {
                 S.EmitAll(S.Flag(flags, S.FlagOut), output)
+            }
+            else if (command === S.CommandVendor)
+            {
+                S.Vendor(S.Flag(flags, S.FlagOut), output)
             }
             else
             {
@@ -111,6 +121,19 @@ export class ComponentDescriptorCli
         }
         S.Write(join(out, S.DigestsFile), JSON.stringify(Object.fromEntries(digests), null, S.JsonIndent) + S.Newline)
         S.Write(join(out, S.BakeFile), JSON.stringify(S.BakeOverride(digests), null, S.JsonIndent) + S.Newline)
+    }
+
+    private static Vendor(out: string, output: ComponentCliOutput): void
+    {
+        const S = ComponentDescriptorCli
+        const digests: Record<string, string> = {}
+        for (const [app, descriptor] of ReleaseComponents.All())
+        {
+            S.Write(join(out, app + S.JsonExtension), descriptor.ToCanonicalJson())
+            digests[app] = descriptor.ContentDigest()
+            output.Out(app + S.AppDigestSeparator + digests[app])
+        }
+        S.Write(join(out, S.DigestsFile), JSON.stringify(digests, null, S.JsonIndent) + S.Newline)
     }
 
     private static EmitOne(app: ReleaseApp, expected: string, out: string, output: ComponentCliOutput): void

@@ -2,7 +2,7 @@ import { strict as assert } from 'node:assert'
 import { request } from 'node:http'
 import { afterEach, describe, it } from 'node:test'
 import type { AgentChannelReply, AgentChannelRequest, IAgentChannelBackend } from '../agent-channel-backend.js'
-import type { DiscoveryReply, IDesktopDiscoveryBackend } from '../desktop-discovery-backend.js'
+import type { DiscoveryReply, IDesktopDiscoveryBackend } from '../desktop-discovery-contract.js'
 import { EdgeClientAddress } from '../edge-client-address.js'
 import { EdgeHost } from '../edge-host.js'
 

@@ -37,3 +37,13 @@ export interface IAgentChannelBackend
     /** Whether the console routes (console, console/verify-domain) are served at all. */
     ServesConsole(): boolean
 }
+
+/** Replies every side of the agent channel gives alike (the in-process backend, the edge's host). */
+export class AgentChannelReplies
+{
+    private static readonly StatusUnauthorized = 401
+    private static readonly UnauthorizedMessage = 'Unauthorized'
+    private static readonly ErrorField = 'error'
+
+    public static readonly Unauthorized: AgentChannelReply = { Status: AgentChannelReplies.StatusUnauthorized, Body: { [AgentChannelReplies.ErrorField]: AgentChannelReplies.UnauthorizedMessage } }
+}

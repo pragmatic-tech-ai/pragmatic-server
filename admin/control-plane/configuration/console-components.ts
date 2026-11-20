@@ -1,14 +1,13 @@
 import type { ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component'
-import { EnvGatewayComponent } from '../../../src/bin/env-gateway-component.js'
-import { EnvServerComponent } from '../../../src/bin/env-server-component.js'
-import { HiveAgentComponent } from '../../../src/agent/hive-agent-component.js'
-import { TenantIdpComponent } from '../../../src/idp/tenant-idp-component.js'
+import { ComponentDescriptorSet } from '../release/component-descriptor-set.js'
+import { ReleaseApp } from '../release/release-tag.js'
 import { TenantAdminComponent } from '../tenant-admin-component.js'
 
 /**
  * The component descriptors the tenant admin console validates configurations against: the components that run in a
- * hive (the environment server and gateway, the realm sign-in service, the hive agent, the console itself), each as
- * declared in this console's own code. The console ships in the same release as the images of its hive (one release
+ * hive (the environment server and gateway, the realm sign-in service, the hive agent, the console itself): the others'
+ * from the digest-pinned set vendored with the console (ComponentDescriptorSet: no container imports another's
+ * declaration class), its own from its declaration. The console ships in the same release as the images of its hive (one release
  * carries every image, each labelled with the digest of exactly this descriptor), so these are the descriptors of the
  * container versions it manages; a container of another release refuses a mismatched configuration at start (its
  * runtime reader checks the digest). Reading other releases' descriptors arrives with pull-only management (stage C
@@ -23,16 +22,24 @@ export class ConsoleComponents
         this.descriptors = new Map(descriptors.map(d => [d.Name, d]))
     }
 
+    /** The hive components the console configures besides itself, read from the vendored set. */
+    private static readonly Vendored: readonly ReleaseApp[] = [ReleaseApp.EnvServer, ReleaseApp.EnvGateway, ReleaseApp.TenantIdp, ReleaseApp.HiveAgent]
+    private static readonly MissingPrefix = 'the vendored descriptor set lacks '
+
     /** The catalogue of this console's release. */
-    public static Release(): ConsoleComponents
+    public static Release(set: ComponentDescriptorSet = ComponentDescriptorSet.FromDirectory(ComponentDescriptorSet.VendoredDirectory())): ConsoleComponents
     {
-        return new ConsoleComponents([
-            EnvServerComponent.Descriptor(),
-            EnvGatewayComponent.Descriptor(),
-            TenantIdpComponent.Descriptor(),
-            HiveAgentComponent.Descriptor(),
-            TenantAdminComponent.Descriptor(),
-        ])
+        const C = ConsoleComponents
+        const others = C.Vendored.map(app =>
+        {
+            const descriptor = set.Get(app)
+            if (descriptor === undefined)
+            {
+                throw new Error(C.MissingPrefix + app)
+            }
+            return descriptor
+        })
+        return new ConsoleComponents([...others, TenantAdminComponent.Descriptor()])
     }
 
     /** The component names, sorted. */

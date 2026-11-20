@@ -1,7 +1,7 @@
 import { isIP } from 'node:net'
 import { EdgeHost } from './edge-host.js'
 import { InternalApiClient } from './internal-api-client.js'
-import { InternalApiCredential } from './internal-api-credential.js'
+import { InternalApiRoutes } from './internal-api-routes.js'
 import { RemoteAgentChannelBackend } from './remote-agent-channel-backend.js'
 import { RemoteDesktopDiscoveryBackend } from './remote-desktop-discovery-backend.js'
 
@@ -47,12 +47,12 @@ export class EdgeComposition
             throw new Error(E.BadBind)
         }
         const adminUrl = E.AdminUrlOf(env[E.AdminUrlEnvVar])
-        const secretFile = env[InternalApiCredential.SecretFileEnvVar]?.trim() ?? ''
+        const secretFile = env[InternalApiRoutes.SecretFileEnvVar]?.trim() ?? ''
         if (secretFile === '')
         {
             throw new Error(E.MissingSecret)
         }
-        const client = new InternalApiClient(adminUrl, InternalApiCredential.FromFile(secretFile))
+        const client = new InternalApiClient(adminUrl, InternalApiRoutes.Credential(secretFile))
         const trustedProxy = E.TrueValues.has(env[E.TrustedProxyEnvVar]?.trim().toLowerCase() ?? '')
         const host = new EdgeHost(new RemoteAgentChannelBackend(client), new RemoteDesktopDiscoveryBackend(client), trustedProxy)
         return { Host: host, Port: port, Bind: bind, TrustedProxy: trustedProxy }

@@ -60,6 +60,8 @@ RUN cd pragmatic-server && npx tsx docker/images/closure-check.ts
 #   dist-tenant-admin/environments/sample-apps  NorthwindApp.Compile), read when an environment is made   tenant-admin
 #   dist-tenant-admin/admin/control-plane/templates  environment templates (TemplateCatalog): inside the compiled
 #                                               control plane, which every control-plane image copies whole
+#   dist-tenant-admin/admin/control-plane/descriptors  the digest-pinned component descriptors the tenant console
+#                                               configures (ComponentDescriptorSet), same tree
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd pragmatic-server && npm run build:tenant-admin && npm run build:ui-unpack \
     && cd admin/tenant-portal && npm install --no-audit --no-fund && npm run build \
@@ -76,6 +78,7 @@ RUN cd pragmatic-server \
     && cp -r environments/demo/seed dist-tenant-admin/environments/demo/seed \
     && cp -r environments/sample-apps dist-tenant-admin/environments/sample-apps \
     && cp -r admin/control-plane/templates dist-tenant-admin/admin/control-plane/templates \
+    && cp -r admin/control-plane/descriptors dist-tenant-admin/admin/control-plane/descriptors \
     && cp -r release-keys dist-tenant-admin/release-keys
 
 # IdP sign-in app: the IdP daemon (dist/bin/pragmatic-idpd.js) serves idp-login/dist (the path IdpLoginPage resolves
@@ -138,10 +141,9 @@ RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline -
 
 FROM build AS pragmatic-platform-edge-shared-modules
 RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
-    --workspace=packages/pragmatic-app-host --workspace=packages/pragmatic-component --workspace=packages/pragmatic-configuration \
+    --workspace=packages/pragmatic-app-host \
     --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm --workspace=packages/pragmatic-identity-source-local \
-    --workspace=packages/pragmatic-identity-source-oidc --workspace=packages/pragmatic-identity-store --workspace=packages/pragmatic-realm-adapters \
-    --workspace=packages/pragmatic-realm-custom \
+    --workspace=packages/pragmatic-identity-source-oidc --workspace=packages/pragmatic-realm-adapters \
     && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
 
 FROM build AS pragmatic-env-server-shared-modules
@@ -262,19 +264,12 @@ ENTRYPOINT ["node", "dist-tenant-admin/admin/control-plane/server.js"]
 # The keyless public edge (PRAGMATIC_CONTROL_PLANE_ROLE=edge): agent channel + desktop discovery + /healthz on 7100, all
 # answered by admin over the internal API. The compiled code alone: no SPA, seed, trust key, data root or tool.
 FROM runtime AS pragmatic-platform-edge
-COPY --from=build --chown=10001:10001 /workspace/Mural /workspace/Mural
-COPY --from=build --chown=10001:10001 /workspace/TODL /workspace/TODL
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-protocol /workspace/pragmatic-protocol
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host /workspace/pragmatic-shared/packages/pragmatic-app-host
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component /workspace/pragmatic-shared/packages/pragmatic-component
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-configuration /workspace/pragmatic-shared/packages/pragmatic-configuration
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity /workspace/pragmatic-shared/packages/pragmatic-identity
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm /workspace/pragmatic-shared/packages/pragmatic-identity-realm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local /workspace/pragmatic-shared/packages/pragmatic-identity-source-local
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store /workspace/pragmatic-shared/packages/pragmatic-identity-store
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom /workspace/pragmatic-shared/packages/pragmatic-realm-custom
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-platform-edge-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
@@ -282,7 +277,6 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/seed /workspace/pragmatic-server/dist-tenant-admin/environments/seed
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/src /workspace/pragmatic-server/dist-tenant-admin/src
-ENV PRAGMATIC_CONTROL_PLANE_ROLE=edge
 ENV PRAGMATIC_AGENT_CHANNEL_PORT=7100
 ENV PRAGMATIC_AGENT_CHANNEL_BIND=0.0.0.0
 ARG COMPONENT_DIGEST
@@ -292,7 +286,7 @@ USER 10001
 EXPOSE 7100
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD node -e "const r=require('node:http').request({host:'127.0.0.1',port:process.env.PRAGMATIC_AGENT_CHANNEL_PORT||7100,path:'/healthz'},x=>process.exit(x.statusCode===200?0:1));r.on('error',()=>process.exit(1));r.end()"
-ENTRYPOINT ["node", "dist-tenant-admin/admin/control-plane/server.js"]
+ENTRYPOINT ["node", "dist-tenant-admin/admin/control-plane/bin/pragmatic-platform-edged.js"]
 
 # The env server; the worker runs from the same image with: node dist/bin/pragmatic-workerd.js
 FROM runtime AS pragmatic-env-server

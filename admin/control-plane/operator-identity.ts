@@ -5,7 +5,6 @@ import type { ISqlSession } from '@pragmatic-tech-ai/todl'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/pragmatic-identity-store'
 import { Realm, RealmKind, DelegationDepth, AuthMethod, Credential, PresentedSecret, AuthenticatedResult, Grant, Role, ResourceRef, ResourceKind, type IdentityStoreSet } from '@pragmatic-tech-ai/pragmatic-identity'
 import { SqlAuditStore, SqlIdpDirectoryStore, SqlLocalAccountStore, SqlRoleGrantStore, SqlSecretKeyRing, SqlSecretStore, SqlServiceTokenStore, SqlSessionStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
-import { ServerBootstrap } from '../../src/identity/server-bootstrap.js'
 import { MasterKeyError } from './master-key-file.js'
 
 export { MasterKeyError }
@@ -205,13 +204,40 @@ export class OperatorIdentity implements IOperatorIdentity
             await pack.Secrets.Put(OperatorIdentity.AdminPasswordRef, options.initialPassword)
         }
         // Idempotent: for an existing account this only re-ensures the Owner grant (no password change).
-        await ServerBootstrap.SeedAsync(pack, realm, {
-            adminEmail: options.operatorEmail,
-            adminPrincipalId: OperatorIdentity.AdminPrincipalId,
-            adminPasswordRef: OperatorIdentity.AdminPasswordRef,
-            ownerGrant: true
-        })
+        await OperatorIdentity.SeedOwnerAsync(pack, realm, options.operatorEmail)
         return new OperatorIdentity(pack, realm, options.operatorEmail, options.sessions)
+    }
+
+    /**
+     * First-run seed of the bootstrap operator: registers the account from the stored password reference when it does
+     * not exist yet (no password stored: nothing is registered), then ensures its Owner grant on the realm (Register and
+     * Grants.Save are not atomic: a crash between them is repaired here). The password is never inlined or logged.
+     */
+    private static async SeedOwnerAsync(pack: ServerIdentityPack, realm: Realm, email: string): Promise<void>
+    {
+        const O = OperatorIdentity
+        if (await pack.Directory.Lookup(O.AdminPrincipalId, realm) === null)
+        {
+            const password = await pack.Secrets.Get(O.AdminPasswordRef)
+            if (password === null)
+            {
+                return
+            }
+            const presented = new PresentedSecret(password)
+            try
+            {
+                await pack.Registrar.Register(realm, email, O.AdminPrincipalId, presented)
+            }
+            finally
+            {
+                presented.Clear()
+            }
+        }
+        const grants = await pack.Grants.GrantsFor(O.AdminPrincipalId, realm)
+        if (!grants.some(g => g.Role === Role.Owner && g.Resource.Kind === ResourceKind.Realm && g.Resource.RealmId === realm.Id))
+        {
+            await pack.Grants.Save(new Grant(O.AdminPrincipalId, Role.Owner, new ResourceRef(ResourceKind.Realm, realm.Id, [])))
+        }
     }
 
     public async Verify(email: string, password: string): Promise<OperatorPrincipal | null>

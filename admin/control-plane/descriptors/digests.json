@@ -1,0 +1,11 @@
+{
+  "pragmatic-platform-admin": "sha256:bc19deb009e41d7d5dc0b19547410345dc451d11e800499f74ae9f507461898f",
+  "pragmatic-platform-edge": "sha256:f8e6ed26594d13a07d6a35f48ad93bcdbede400637a431f9c16a8a3305a4ad8c",
+  "pragmatic-env-server": "sha256:3b6641cc6cfb1cefcbb400532f33916049ced3c2ff8acf729669ef68fc03bf69",
+  "pragmatic-env-gateway": "sha256:027f1f68e9b00164131f0aae8012b1ca6c926f94f6adbae331bf2f0b539e1ebe",
+  "pragmatic-hive-agent": "sha256:8a59fe48b0e4d9f3fe7445a637d176d31a2b2009822de18dc1f17d4227267eff",
+  "pragmatic-tenant-admin": "sha256:98bddb2de6fe2fe034b21e75550028708eac6e4d98b63fcd10d633e47c699577",
+  "pragmatic-tenant-idp": "sha256:95021d7f98dcf5820ba1fe8a860cb76485a3d618fb77bff464174c4840227a67",
+  "pragmatic-ui-unpack": "sha256:771920a2ca35e083cf0b4be2ee2e99f885d9ced7d31db4070d58be7d0a9e9c3f",
+  "pragmatic-postgres": "sha256:b7f5b0d2ded8135d805d4c30e0f257ae0c6f3eb50511c4e4e4c0024903729ae0"
+}

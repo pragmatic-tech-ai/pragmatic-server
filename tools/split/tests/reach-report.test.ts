@@ -1,5 +1,4 @@
 import { strict as assert } from 'node:assert'
-import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import { before, describe, it } from 'node:test'
 import { ReleaseApp } from '../../../admin/control-plane/release/release-tag.js'
@@ -14,7 +13,7 @@ class Measured
 
     public static Tracked(): string[]
     {
-        return execFileSync('git', ['-C', Measured.Root, 'ls-files', ...SplitAssignment.Roots], { encoding: 'utf8' }).split('\n').filter(line => line.length > 0)
+        return SplitAssignment.Files(Measured.Root)
     }
 }
 

@@ -1,9 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { AuditThrottle } from './audit-throttle.js'
-import type { IDesktopDiscoveryBackend } from './desktop-discovery-backend.js'
+import type { IDesktopDiscoveryBackend } from './desktop-discovery-contract.js'
 import { PlaneHttp } from './plane-http.js'
-
-export type { IPlatformEnvironmentSource } from './desktop-discovery-backend.js'
 
 /**
  * Public `POST /api/desktop/discover`, the HTTP layer: tells the desktop app which tenant(s) an email belongs to. The

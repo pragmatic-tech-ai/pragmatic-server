@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
 import { AgentChannelOperation } from '../agent-channel-backend.js'
 import { InternalApiClient } from '../internal-api-client.js'
-import { InternalApiCredential } from '../internal-api-credential.js'
+import { InternalApiCredential } from '@pragmatic-tech-ai/pragmatic-app-host'
 import { RemoteAgentChannelBackend } from '../remote-agent-channel-backend.js'
 import { RemoteDesktopDiscoveryBackend } from '../remote-desktop-discovery-backend.js'
 

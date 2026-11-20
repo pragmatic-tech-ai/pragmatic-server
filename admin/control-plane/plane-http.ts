@@ -1,7 +1,12 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { extname, resolve, sep } from 'node:path'
-import type { HealthEndpoint } from '../../src/host/health-endpoint.js'
+
+/** The liveness / readiness probe routing a plane answers before anything else (the env-server's HealthEndpoint fits). */
+export interface IHealthProbe
+{
+    Handle(method: string, path: string, ready: boolean): { status: number; body: string } | null
+}
 
 /** Stateless HTTP primitives shared by the control-plane host and any other plane host (host/origin checks, JSON + static responses). */
 export class PlaneHttp
@@ -144,7 +149,7 @@ export class PlaneHttp
      * Answers the unauthenticated liveness / readiness probes (`/healthz`, `/readyz`) when `path` is one of them, before
      * any Host, Origin, session or SPA handling, as the gateway and worker do; false for every other request.
      */
-    public static WriteHealthIfProbe(health: HealthEndpoint, req: IncomingMessage, res: ServerResponse, path: string, ready: boolean): boolean
+    public static WriteHealthIfProbe(health: IHealthProbe, req: IncomingMessage, res: ServerResponse, path: string, ready: boolean): boolean
     {
         const answer = health.Handle(req.method ?? PlaneHttp.MethodGet, path, ready)
         if (answer === null)

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { writeFileSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -12,9 +12,20 @@ export class SplitAssignment
 {
     /** The folders the split assigns (every tracked file under them). */
     public static readonly Roots: readonly string[] = ['src', 'admin', 'docker', 'environments', 'idp-login', 'helm', 'release-keys', 'tools']
+    private static readonly Git = 'git'
+    private static readonly Utf8 = 'utf8'
+    private static readonly Newline = '\n'
 
     public constructor(public readonly Homes: Readonly<Record<string, string>>, public readonly CrossHomeTests: readonly string[])
     {
+    }
+
+    /** Every file under the roots git knows or would add (tracked and untracked, not ignored) that exists. */
+    public static Files(root: string): string[]
+    {
+        const S = SplitAssignment
+        const listed = execFileSync(S.Git, ['-C', root, 'ls-files', '--cached', '--others', '--exclude-standard', ...S.Roots], { encoding: S.Utf8 })
+        return [...new Set(listed.split(S.Newline).filter(line => line.length > 0))].filter(file => existsSync(join(root, file))).sort()
     }
 
     /** Files per home, for the Ledger. */
@@ -61,8 +72,6 @@ export class ReachReport
     private static readonly Format = 'esm'
     private static readonly LogLevel = 'silent'
     private static readonly External = 'external'
-    private static readonly Git = 'git'
-    private static readonly Utf8 = 'utf8'
     private static readonly ParentSegment = '..'
     private static readonly NodeModules = 'node_modules'
     private static readonly Slash = '/'
@@ -70,10 +79,10 @@ export class ReachReport
     /** The area a subject is looked for in: the first two segments (`admin/control-plane`, `src/host`). */
     private static readonly AreaDepth = 2
 
-    /** Each image's entry points (sources); the edge shares the console's until Task 2 gives it its own. */
+    /** Each image's entry points (sources). */
     public static readonly Entries: ReadonlyMap<ReleaseApp, readonly string[]> = new Map<ReleaseApp, readonly string[]>([
         [ReleaseApp.PlatformAdmin, ['admin/control-plane/server.ts']],
-        [ReleaseApp.PlatformEdge, ['admin/control-plane/server.ts']],
+        [ReleaseApp.PlatformEdge, ['admin/control-plane/bin/pragmatic-platform-edged.ts']],
         [ReleaseApp.EnvServer, ['src/bin/pragmatic-serverd.ts', 'src/bin/pragmatic-workerd.ts']],
         [ReleaseApp.EnvGateway, ['src/bin/pragmatic-gatewayd.ts']],
         [ReleaseApp.HiveAgent, ['src/bin/pragmatic-agentd.ts']],
@@ -110,7 +119,8 @@ export class ReachReport
     public async ForEach(entries: readonly string[]): Promise<ReadonlyMap<string, ReadonlySet<string>>>
     {
         const R = ReachReport
-        const result = await this.esbuild.build({
+        // buildSync, as the image closure check: no esbuild service outlives the call.
+        const result = this.esbuild.buildSync({
             entryPoints: entries.map(entry => join(this.root, entry)),
             absWorkingDir: this.root,
             bundle: true,
@@ -147,7 +157,7 @@ export class ReachReport
     public async Assignment(): Promise<SplitAssignment>
     {
         const R = ReachReport
-        const tracked = execFileSync(R.Git, ['-C', this.root, 'ls-files', ...SplitAssignment.Roots], { encoding: R.Utf8 }).split('\n').filter(line => line.length > 0)
+        const tracked = SplitAssignment.Files(this.root)
         const reachedBy = await this.ReachedBy()
         const homes: Record<string, string> = {}
         for (const file of tracked.filter(f => !R.InTestsFolder(f)))

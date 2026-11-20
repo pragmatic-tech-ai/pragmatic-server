@@ -103,6 +103,14 @@ export class AssignmentRules
         ['admin/control-plane/internal-api-routes.ts', SplitHome.PlatformLink],
         ['admin/control-plane/internal-api-client.ts', SplitHome.PlatformLink],
         ['admin/control-plane/agent-channel-backend.ts', SplitHome.PlatformLink],
+        ['admin/control-plane/desktop-discovery-contract.ts', SplitHome.PlatformLink],
+        // the edge's hosts, which the console's single dev process (role `all`, the default) also serves, and the
+        // helpers the edge borrows (plan Task 2 Step 3: into the link bucket)
+        ['admin/control-plane/agent-channel-host.ts', SplitHome.PlatformLink],
+        ['admin/control-plane/desktop-discovery-endpoint.ts', SplitHome.PlatformLink],
+        ['admin/control-plane/plane-http.ts', SplitHome.PlatformLink],
+        ['admin/control-plane/rollout-errors.ts', SplitHome.PlatformLink],
+        ['admin/control-plane/audit-throttle.ts', SplitHome.PlatformLink],
         // pragmatic-observability
         ['src/observability/logger.ts', SplitHome.Observability],
         // additions to existing shared packages
@@ -110,20 +118,26 @@ export class AssignmentRules
         ['src/idp/realm-issuer.ts', SplitHome.Identity],
         ['src/host/token-scope.ts', SplitHome.Identity],
         ['src/idp/dev-ca.ts', SplitHome.IdentitySourceOidc],
-        // the edge's own files (it shares the console's entry until Task 2 gives it pragmatic-platform-edged)
+        // the edge's own files
         ['admin/control-plane/edge-composition.ts', SplitHome.PlatformEdge],
         ['admin/control-plane/edge-host.ts', SplitHome.PlatformEdge],
-        ['admin/control-plane/agent-channel-host.ts', SplitHome.PlatformEdge],
         ['admin/control-plane/remote-agent-channel-backend.ts', SplitHome.PlatformEdge],
         ['admin/control-plane/remote-desktop-discovery-backend.ts', SplitHome.PlatformEdge],
-        ['admin/control-plane/desktop-discovery-endpoint.ts', SplitHome.PlatformEdge],
-        ['admin/control-plane/edge-shutdown.ts', SplitHome.PlatformEdge],
+        ['admin/control-plane/edge-client-address.ts', SplitHome.PlatformEdge],
+        ['admin/control-plane/bin/pragmatic-platform-edged.ts', SplitHome.PlatformEdge],
         ['admin/control-plane/platform-edge-component.ts', SplitHome.PlatformEdge],
         // a container's own descriptor class (its consoles read vendored descriptors after Task 2)
         ['src/idp/tenant-idp-component.ts', SplitHome.TenantIdp],
         ['src/idp/tenant-idp-options.ts', SplitHome.TenantIdp],
         ['admin/control-plane/ui-unpack-component.ts', SplitHome.UiUnpack],
         ['admin/control-plane/platform-admin-component.ts', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tenant-admin-component.ts', SplitHome.TenantAdmin],
+        ['src/bin/env-server-component.ts', SplitHome.EnvServer],
+        ['src/bin/env-gateway-component.ts', SplitHome.EnvGateway],
+        ['src/agent/hive-agent-component.ts', SplitHome.HiveAgent],
+        ['docker/postgres/pragmatic-postgres-component.ts', SplitHome.Postgres],
+        // the vendored descriptor set: the consoles read it (ComponentDescriptorSet goes to the release toolkit)
+        ['admin/control-plane/release/component-descriptor-set.ts', SplitHome.ReleaseToolkit],
         // the env-server's operator bootstrap, which the platform console reaches until Task 2 untangles it
         ['src/identity/server-bootstrap.ts', SplitHome.EnvServer],
         ['release-keys/release-2026-11.pub.pem', SplitHome.PlatformRelease],

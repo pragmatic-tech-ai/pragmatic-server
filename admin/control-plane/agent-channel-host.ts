@@ -1,8 +1,7 @@
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { PlaneHttp } from './plane-http.js'
-import { AgentChannelOperation, type AgentChannelReply, type IAgentChannelBackend } from './agent-channel-backend.js'
-import { LocalAgentChannelBackend } from './local-agent-channel-backend.js'
+import { AgentChannelOperation, AgentChannelReplies, type AgentChannelReply, type IAgentChannelBackend } from './agent-channel-backend.js'
 import { BodyTooLargeError } from './rollout-errors.js'
 
 /** The dedicated public listener for the hive agent channel: eight bearer-authenticated routes (target, snapshot,
@@ -128,7 +127,7 @@ export class AgentChannelHost
         if (bearer === undefined)
         {
             req.resume()
-            A.WriteReply(res, LocalAgentChannelBackend.UnauthorizedReply)
+            A.WriteReply(res, AgentChannelReplies.Unauthorized)
             return
         }
         let body: string | undefined
