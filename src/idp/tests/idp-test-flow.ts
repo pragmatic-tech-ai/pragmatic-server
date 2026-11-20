@@ -97,9 +97,14 @@ export class IdpTestFlow
         return this.host.Http.Send('POST', this.Issuer + RealmIssuer.RevocationPath, { Form: { token, client_id: this.ClientId, client_secret: this.Secret } });
     }
 
-    public Logout(cookie: string | undefined, query: string = ''): Promise<IdpTestReply>
+    public Logout(cookie: string | undefined, query: string = '', method: string = 'GET'): Promise<IdpTestReply>
     {
-        return this.host.Http.Send('GET', this.Issuer + RealmIssuer.LogoutPath + (query === '' ? '' : '?' + query), { Headers: cookie === undefined ? {} : { cookie } });
+        const headers: Record<string, string> = cookie === undefined ? {} : { cookie };
+        if (method === 'POST')
+        {
+            headers.origin = this.host.BaseUrl;
+        }
+        return this.host.Http.Send(method, this.Issuer + RealmIssuer.LogoutPath + (query === '' ? '' : '?' + query), { Headers: headers });
     }
 
     /** Signs in with a password and exchanges the code: the token answer and the SSO cookie. */

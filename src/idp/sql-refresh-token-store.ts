@@ -43,13 +43,15 @@ export enum RefreshOutcome
 export class SqlRefreshTokenStore
 {
     private static readonly Columns = 'family_id, realm_id, client_id, sso_id_hash, sign_in, family_expires_at';
-    private static readonly InsertSql = 'INSERT INTO tenant_idp_refresh_tokens (token_hash, family_id, realm_id, client_id, account_id, sso_id_hash, sign_in, issued_at, expires_at, family_expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)';
+    /** Inserts the next token of a family unless the family is revoked (a reuse detected while this refresh ran). */
+    private static readonly InsertSql = 'INSERT INTO tenant_idp_refresh_tokens (token_hash, family_id, realm_id, client_id, account_id, sso_id_hash, sign_in, issued_at, expires_at, family_expires_at) SELECT $1::text, $2::text, $3::text, $4::text, $5::text, $6::text, $7::jsonb, $8::timestamptz, $9::timestamptz, $10::timestamptz WHERE NOT EXISTS (SELECT 1 FROM tenant_idp_refresh_tokens WHERE family_id = $2 AND revoked_at IS NOT NULL)';
     private static readonly UseSql = `UPDATE tenant_idp_refresh_tokens SET used_at = $2 WHERE token_hash = $1 AND realm_id = $3 AND client_id = $4 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > $2 AND family_expires_at > $2 RETURNING ${SqlRefreshTokenStore.Columns}`;
     private static readonly FindSql = 'SELECT family_id, realm_id, client_id, used_at, revoked_at FROM tenant_idp_refresh_tokens WHERE token_hash = $1';
     private static readonly RevokeFamilySql = 'UPDATE tenant_idp_refresh_tokens SET revoked_at = $2 WHERE family_id = $1 AND revoked_at IS NULL';
     private static readonly RevokeSsoSql = 'UPDATE tenant_idp_refresh_tokens SET revoked_at = $2 WHERE sso_id_hash = $1 AND revoked_at IS NULL';
     private static readonly RevokeAccountSql = 'UPDATE tenant_idp_refresh_tokens SET revoked_at = $3 WHERE realm_id = $1 AND account_id = $2 AND revoked_at IS NULL';
     private static readonly RevokeClientSql = 'UPDATE tenant_idp_refresh_tokens SET revoked_at = $3 WHERE realm_id = $1 AND client_id = $2 AND revoked_at IS NULL';
+    private static readonly NoToken = '';
     private static readonly SweepSql = 'DELETE FROM tenant_idp_refresh_tokens WHERE family_expires_at <= $1';
 
     private constructor(private readonly session: ISqlSession, private readonly now: () => Date)
@@ -62,17 +64,20 @@ export class SqlRefreshTokenStore
         return new SqlRefreshTokenStore(session, now);
     }
 
-    /** The first token of a new family, for a sign-in just exchanged at the token endpoint. */
-    public async IssueFamily(realmId: string, clientId: string, signIn: RealmSignIn, ssoIdHash: string | undefined, policy: TokenPolicy): Promise<string>
+    /** The first token of a new family, for a sign-in just exchanged at the token endpoint; the family lives at most
+     *  `familyMs` from now. */
+    public async IssueFamily(realmId: string, clientId: string, signIn: RealmSignIn, ssoIdHash: string | undefined, policy: TokenPolicy, familyMs: number): Promise<{ Token: string; FamilyId: string }>
     {
         const now = this.now();
         await this.session.Execute(SqlRefreshTokenStore.SweepSql, [now]);
-        const familyExpiresAt = new Date(now.getTime() + policy.RefreshMaxMs);
-        return await this.Insert(randomUUID(), realmId, clientId, signIn, ssoIdHash, familyExpiresAt, policy, now);
+        const familyId = randomUUID();
+        const token = await this.Insert(familyId, realmId, clientId, signIn, ssoIdHash, new Date(now.getTime() + familyMs), policy, now);
+        return { Token: token ?? SqlRefreshTokenStore.NoToken, FamilyId: familyId };
     }
 
-    /** The next token of a redeemed one's family (never past the family's end). */
-    public async Rotate(grant: RefreshGrant, signIn: RealmSignIn, policy: TokenPolicy): Promise<string>
+    /** The next token of a redeemed one's family (never past the family's end); undefined when the family was revoked
+     *  meanwhile (a reuse detected while this refresh ran). */
+    public async Rotate(grant: RefreshGrant, signIn: RealmSignIn, policy: TokenPolicy): Promise<string | undefined>
     {
         return await this.Insert(grant.FamilyId, grant.RealmId, grant.ClientId, signIn, grant.SsoIdHash, grant.FamilyExpiresAt, policy, this.now());
     }
@@ -81,7 +86,7 @@ export class SqlRefreshTokenStore
     public async Redeem(token: string, realmId: string, clientId: string): Promise<{ Outcome: RefreshOutcome; Grant?: RefreshGrant }>
     {
         const S = SqlRefreshTokenStore;
-        if (token === '')
+        if (token === S.NoToken)
         {
             return { Outcome: RefreshOutcome.Invalid };
         }
@@ -106,7 +111,7 @@ export class SqlRefreshTokenStore
     /** RFC 7009: revokes the family of the client's token; true when the token was the client's. */
     public async RevokeToken(token: string, realmId: string, clientId: string): Promise<boolean>
     {
-        if (token === '')
+        if (token === SqlRefreshTokenStore.NoToken)
         {
             return false;
         }
@@ -142,12 +147,12 @@ export class SqlRefreshTokenStore
         await this.session.Execute(SqlRefreshTokenStore.RevokeClientSql, [realmId, clientId, this.now()]);
     }
 
-    private async Insert(familyId: string, realmId: string, clientId: string, signIn: RealmSignIn, ssoIdHash: string | undefined, familyExpiresAt: Date, policy: TokenPolicy, now: Date): Promise<string>
+    private async Insert(familyId: string, realmId: string, clientId: string, signIn: RealmSignIn, ssoIdHash: string | undefined, familyExpiresAt: Date, policy: TokenPolicy, now: Date): Promise<string | undefined>
     {
         const token = OpaqueToken.New();
         const expiresAt = new Date(Math.min(now.getTime() + policy.RefreshIdleMs, familyExpiresAt.getTime()));
-        await this.session.Execute(SqlRefreshTokenStore.InsertSql, [OpaqueToken.Hash(token), familyId, realmId, clientId, signIn.AccountId, ssoIdHash ?? null, SqlJson.Write(signIn.ToJson()), now, expiresAt, familyExpiresAt]);
-        return token;
+        const inserted = await this.session.Execute(SqlRefreshTokenStore.InsertSql, [OpaqueToken.Hash(token), familyId, realmId, clientId, signIn.AccountId, ssoIdHash ?? null, SqlJson.Write(signIn.ToJson()), now, expiresAt, familyExpiresAt]);
+        return inserted > 0 ? token : undefined;
     }
 
     private static ToGrant(row: SqlRow): RefreshGrant | undefined

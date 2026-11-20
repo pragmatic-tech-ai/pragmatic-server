@@ -106,15 +106,46 @@ describe('the realm sign-in service: identity sources', () =>
         assert.equal(upstreamAuthorize.searchParams.get('redirect_uri'), flow.Issuer + '/broker/oidc/callback');
         const idToken = await upstream.MintIdToken({ sub: 'up-42', aud: 'upstream-client', nonce: upstreamAuthorize.searchParams.get('nonce'), email: 'up@example.com', name: 'Up Stream', groups: ['tenant-admins'] });
         upstreamHttp.NextTokenResponse = upstream.TokenResponse(idToken);
-        const callback = await host.Http.Send('GET', flow.Issuer + '/broker/oidc/callback?' + new URLSearchParams({ code: 'upstream-code', state: upstreamAuthorize.searchParams.get('state')! }).toString());
+        const binding = begin.Cookie();
+        assert.match(begin.Header('set-cookie') ?? '', /idp_broker=.+; HttpOnly; SameSite=Lax; Path=\/realms\/tenant-9\/broker\//);
+        const callback = await host.Http.Send('GET', flow.Issuer + '/broker/oidc/callback?' + new URLSearchParams({ code: 'upstream-code', state: upstreamAuthorize.searchParams.get('state')! }).toString(), { Headers: { cookie: binding! } });
         assert.equal(callback.Status, 302);
         assert.match(callback.Header('set-cookie') ?? '', /idp_sso=/);
+        assert.match(callback.Header('set-cookie') ?? '', /idp_broker=; /, 'the binding is cleared');
         const tokens = (await flow.Exchange(IdpTestFlow.CodeOf(callback.Header('location')!, request), request)).Json();
         const claims = IdpTestFlow.Claims(tokens.id_token);
         assert.equal(claims.email, 'up@example.com');
         assert.deepEqual(claims.roles, ['admin']);
-        const replay = await host.Http.Send('GET', flow.Issuer + '/broker/oidc/callback?' + new URLSearchParams({ code: 'upstream-code', state: upstreamAuthorize.searchParams.get('state')! }).toString());
+        const replay = await host.Http.Send('GET', flow.Issuer + '/broker/oidc/callback?' + new URLSearchParams({ code: 'upstream-code', state: upstreamAuthorize.searchParams.get('state')! }).toString(), { Headers: { cookie: binding! } });
         assert.equal(replay.Status, 401, 'a flow state works once');
+    });
+
+    it('refuses an upstream callback in a browser that did not begin the sign-in (login CSRF)', async () =>
+    {
+        const flow = new IdpTestFlow(host, F.Tenant, F.ClientId, F.Secret, F.Redirect);
+        const request = flow.Request();
+        const begin = await host.Http.Send('GET', flow.Issuer + '/broker/oidc/login?' + request.Query);
+        const authorize = new URL(begin.Header('location')!);
+        upstreamHttp.NextTokenResponse = upstream.TokenResponse(await upstream.MintIdToken({ sub: 'attacker', aud: 'upstream-client', nonce: authorize.searchParams.get('nonce'), email: 'evil@example.com' }));
+        const victim = await host.Http.Send('GET', flow.Issuer + '/broker/oidc/callback?' + new URLSearchParams({ code: 'c', state: authorize.searchParams.get('state')! }).toString());
+        assert.equal(victim.Status, 401);
+        assert.doesNotMatch(victim.Header('set-cookie') ?? '', /idp_sso=[^;]/);
+    });
+
+    it('a disabled federated account signs in no more', async () =>
+    {
+        const flow = new IdpTestFlow(host, F.Central, F.ClientId, F.Secret, F.Redirect);
+        const config = IdentityPlatformPageConfig.FromJson((await host.Http.Send('GET', flow.Issuer + RealmIssuer.LoginConfigPath)).Json().identityPlatform);
+        const rest = new FakeIdentityPlatformRest(platform);
+        const client = IdentityPlatformRestClient.For(config, rest.Fetch);
+        await client.SignUp('off@example.com', 'off password 1');
+        rest.VerifyEmail('off@example.com');
+        const request = flow.Request();
+        const login = await flow.Login(request, { method: 'identityPlatform', idToken: (await client.SignInWithPassword('off@example.com', 'off password 1')).IdToken });
+        const accountId = IdpTestFlow.Claims((await flow.Exchange(IdpTestFlow.CodeOf(login.Json().redirect, request), request)).Json().id_token).sub as string;
+        assert.equal((await host.Admin('POST', F.Central + '/accounts/' + accountId + '/disable')).Status, 200);
+        const refused = await flow.Login(flow.Request(), { method: 'identityPlatform', idToken: (await client.SignInWithPassword('off@example.com', 'off password 1')).IdToken });
+        assert.equal(refused.Status, 401);
     });
 
     it('grants nothing from a mapping naming a source the realm does not have', async () =>

@@ -6,6 +6,8 @@ import type { RealmTokenIssuer } from './realm-token-issuer.js';
 import type { OidcClient, SqlIdpClientStore } from './sql-idp-client-store.js';
 import type { SqlAuthorizationCodeStore } from './sql-authorization-code-store.js';
 import { RefreshOutcome, type SqlRefreshTokenStore } from './sql-refresh-token-store.js';
+import type { SqlSsoSessionStore } from './sql-sso-session-store.js';
+import { RealmSourceKind } from './tenant-idp-options.js';
 
 /** The answer of a form-bodied protocol endpoint (token, revocation): a status and a JSON body. */
 export class ProtocolReply
@@ -100,6 +102,7 @@ export class TokenEndpoint
         private readonly clients: SqlIdpClientStore,
         private readonly codes: SqlAuthorizationCodeStore,
         private readonly refreshTokens: SqlRefreshTokenStore,
+        private readonly sso: SqlSsoSessionStore,
         private readonly issuer: RealmTokenIssuer)
     {
     }
@@ -130,20 +133,40 @@ export class TokenEndpoint
     {
         const T = TokenEndpoint;
         const verifier = form.get(T.VerifierField) ?? T.NoValue;
-        const grant = await this.codes.Take(form.get(T.CodeField) ?? T.NoValue);
+        const code = form.get(T.CodeField) ?? T.NoValue;
+        const redemption = await this.codes.Take(code);
+        if (redemption.Replayed && redemption.ReplayedFamily !== undefined)
+        {
+            // RFC 6749 §4.1.2: a code used twice revokes what its first use issued.
+            await this.refreshTokens.RevokeFamily(redemption.ReplayedFamily);
+        }
+        const grant = redemption.Grant;
         if (grant === undefined
             || grant.RealmId !== realm.Id
             || grant.ClientId !== client.ClientId
             || grant.RedirectUri !== (form.get(T.RedirectField) ?? T.NoValue)
             || verifier === T.NoValue
             || createHash(T.HashAlgorithm).update(verifier).digest(T.Base64Url) !== grant.CodeChallenge
-            || !(await this.StillValid(realm, grant.SignIn)))
+            || !(await this.StillValid(realm, grant.SignIn))
+            || (grant.SsoIdHash !== undefined && !(await this.sso.Exists(grant.SsoIdHash))))
         {
             return T.Fail(T.StatusBadRequest, T.InvalidGrant);
         }
         const tokens = await this.issuer.Issue(realm, client.ClientId, grant.SignIn, grant.Nonce);
-        const refresh = await this.refreshTokens.IssueFamily(realm.Id, client.ClientId, grant.SignIn, grant.SsoIdHash, realm.Settings.Tokens);
-        return T.Tokens(tokens.IdToken, tokens.AccessToken, tokens.ExpiresIn, refresh);
+        const refresh = await this.refreshTokens.IssueFamily(realm.Id, client.ClientId, grant.SignIn, grant.SsoIdHash, realm.Settings.Tokens, T.FamilyLifetimeOf(realm, grant.SignIn));
+        await this.codes.RecordFamily(code, refresh.FamilyId);
+        return T.Tokens(tokens.IdToken, tokens.AccessToken, tokens.ExpiresIn, refresh.Token);
+    }
+
+    /**
+     * How long a sign-in's refresh family may live. A local account is checked at every refresh, so it gets the realm's
+     * maximum; an upstream account is checked by its source only when the person signs in there again, so its family
+     * ends with the SSO session lifetime (a person removed upstream loses access within it).
+     */
+    private static FamilyLifetimeOf(realm: IdpRealm, signIn: RealmSignIn): number
+    {
+        const tokens = realm.Settings.Tokens;
+        return signIn.Source === RealmSourceKind.Local ? tokens.RefreshMaxMs : Math.min(tokens.RefreshMaxMs, tokens.SsoSessionMs);
     }
 
     private async Refresh(realm: IdpRealm, client: OidcClient, form: URLSearchParams): Promise<ProtocolReply>
@@ -165,6 +188,10 @@ export class TokenEndpoint
         const signIn = new RealmSignIn(old.AccountId, old.Source, old.Subject, old.Groups, profile.Email, profile.Name, old.EmailVerified, old.AuthenticatedAt);
         const tokens = await this.issuer.Issue(realm, client.ClientId, signIn, undefined);
         const next = await this.refreshTokens.Rotate(grant, signIn, realm.Settings.Tokens);
+        if (next === undefined)
+        {
+            return T.Fail(T.StatusBadRequest, T.InvalidGrant);
+        }
         return T.Tokens(tokens.IdToken, tokens.AccessToken, tokens.ExpiresIn, next);
     }
 

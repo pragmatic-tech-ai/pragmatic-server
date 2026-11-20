@@ -15,6 +15,7 @@ export class RealmIssuer
     public static readonly LogoutPath = '/protocol/openid-connect/logout';
     public static readonly LoginPath = '/login';
     public static readonly LoginConfigPath = '/login/config';
+    public static readonly LoginContinuePath = '/login/continue';
     public static readonly BrokerSegment = '/broker/';
     public static readonly BrokerLoginSuffix = '/login';
     public static readonly BrokerCallbackSuffix = '/callback';

@@ -86,6 +86,8 @@ export class SqlIdpClientStore
     private static readonly DummySecret = 'idp-client-store-dummy-secret';
     private static readonly Columns = 'realm_id, client_id, redirect_uris, post_logout_redirect_uris, secret_hash';
     private static readonly UpsertSql = `INSERT INTO tenant_idp_clients (${SqlIdpClientStore.Columns}, updated_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (realm_id, client_id) DO UPDATE SET redirect_uris = EXCLUDED.redirect_uris, post_logout_redirect_uris = EXCLUDED.post_logout_redirect_uris, secret_hash = EXCLUDED.secret_hash, updated_at = EXCLUDED.updated_at`;
+    /** The importer never replaces a client registered since. */
+    private static readonly RestoreSql = `INSERT INTO tenant_idp_clients (${SqlIdpClientStore.Columns}, updated_at) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (realm_id, client_id) DO NOTHING`;
     private static readonly FindSql = `SELECT ${SqlIdpClientStore.Columns} FROM tenant_idp_clients WHERE realm_id = $1 AND client_id = $2`;
     private static readonly ListSql = `SELECT ${SqlIdpClientStore.Columns} FROM tenant_idp_clients WHERE realm_id = $1 ORDER BY client_id`;
     private static readonly DeleteSql = 'DELETE FROM tenant_idp_clients WHERE realm_id = $1 AND client_id = $2';
@@ -104,16 +106,21 @@ export class SqlIdpClientStore
         return new SqlIdpClientStore(session);
     }
 
-    public async Register(realmId: string, clientId: string, redirectUris: readonly string[], secret: string, postLogoutRedirectUris: readonly string[] = []): Promise<void>
+    /** Registers (or replaces) the client; true when it replaced one whose secret was different (a rotation, after
+     *  which what was issued under the old secret should end). */
+    public async Register(realmId: string, clientId: string, redirectUris: readonly string[], secret: string, postLogoutRedirectUris: readonly string[] = []): Promise<boolean>
     {
+        const existing = await this.Find(realmId, clientId);
+        const rotated = existing !== undefined && !(await this.hasher.Verify(secret, existing.SecretHash));
         const hash = await this.hasher.Hash(secret);
         await this.session.Execute(SqlIdpClientStore.UpsertSql, [realmId, clientId, SqlJson.Write([...redirectUris]), SqlJson.Write([...postLogoutRedirectUris]), hash, new Date()]);
+        return rotated;
     }
 
     /** Writes a client with an existing secret hash (the importer of pre-A5 registrations). */
     public async Restore(realmId: string, clientId: string, redirectUris: readonly string[], secretHash: string): Promise<void>
     {
-        await this.session.Execute(SqlIdpClientStore.UpsertSql, [realmId, clientId, SqlJson.Write([...redirectUris]), SqlJson.Write([]), secretHash, new Date()]);
+        await this.session.Execute(SqlIdpClientStore.RestoreSql, [realmId, clientId, SqlJson.Write([...redirectUris]), SqlJson.Write([]), secretHash, new Date()]);
     }
 
     public async Find(realmId: string, clientId: string): Promise<OidcClient | undefined>

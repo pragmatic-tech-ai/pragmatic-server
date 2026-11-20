@@ -1,4 +1,3 @@
-import { decodeJwt } from 'jose';
 import { HttpMethod, RouteAuth, type RequestContext, type RouteTable } from '@pragmatic-tech-ai/pragmatic-app-host';
 import { AuthorizeRequest } from './authorize-request.js';
 import type { IdpRealm } from './idp-realm.js';
@@ -59,6 +58,12 @@ export class ProtocolEndpoints
     private static readonly StatusFound = 302;
     private static readonly StatusBadRequest = 400;
     private static readonly StatusNotFound = 404;
+    private static readonly ContentTypeHeader = 'Content-Type';
+    private static readonly HtmlType = 'text/html; charset=utf-8';
+    private static readonly QueryMark = '?';
+    private static readonly NoText = '';
+    private static readonly ConfirmPrefix = '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Sign out</title></head><body><form method="post" action="';
+    private static readonly ConfirmSuffix = '"><p>Sign out of this account?</p><button type="submit">Sign out</button></form></body></html>';
 
     public constructor(
         private readonly realms: IdpRealmSet,
@@ -76,7 +81,8 @@ export class ProtocolEndpoints
     {
         routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.DiscoveryPath), Auth: RouteAuth.Public, Handler: ctx => this.Discovery(ctx) });
         routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.CertsPath), Auth: RouteAuth.Public, Handler: ctx => this.Certs(ctx) });
-        routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.LogoutPath), Auth: RouteAuth.Public, Handler: ctx => this.Logout(ctx) });
+        routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.LogoutPath), Auth: RouteAuth.Public, Handler: ctx => this.Logout(ctx, false) });
+        routes.Add({ Method: HttpMethod.Post, Pattern: RealmIssuer.Pattern(RealmIssuer.LogoutPath), Auth: RouteAuth.Public, Audited: false, Handler: ctx => this.Logout(ctx, true) });
     }
 
     /** The realm's discovery document. */
@@ -131,11 +137,14 @@ export class ProtocolEndpoints
     }
 
     /**
-     * RP-initiated logout (OpenID Connect RP-Initiated Logout 1.0): the SSO session of the cookie and its refresh
-     * tokens end, the cookie is cleared, and the browser returns to `post_logout_redirect_uri` when it is registered for
-     * the client (named by `client_id`, else by the audience of `id_token_hint`), with `state`.
+     * RP-initiated logout (OpenID Connect RP-Initiated Logout 1.0). A GET carrying an `id_token_hint` this realm signed
+     * for the session's account ends the session at once; any other GET with a live session answers a confirmation page
+     * whose button POSTs back here (the Origin guard covers the POST), so another site cannot sign a person out with a
+     * plain link or image. Ending a session ends every refresh token issued under it and clears the cookie; the browser
+     * then returns to `post_logout_redirect_uri` when it is registered for the client (`client_id`, else the hint's
+     * audience), with `state`.
      */
-    private async Logout(ctx: RequestContext): Promise<void>
+    private async Logout(ctx: RequestContext, confirmed: boolean): Promise<void>
     {
         const P = ProtocolEndpoints;
         const realm = this.realms.For(ctx.Param(RealmIssuer.RealmParam));
@@ -145,7 +154,10 @@ export class ProtocolEndpoints
             return;
         }
         const target = ctx.Query.get(P.PostLogoutParam);
-        const clientId = ctx.Query.get(P.ClientIdParam) ?? P.AudienceOf(ctx.Query.get(P.IdTokenHintParam));
+        const hint = ctx.Query.get(P.IdTokenHintParam);
+        const verified = hint === null ? undefined : await this.signingKey.VerifyOwn(hint, realm.Issuer);
+        const hintAudience = typeof verified?.aud === 'string' ? verified.aud : undefined;
+        const clientId = ctx.Query.get(P.ClientIdParam) ?? hintAudience;
         const client = target === null || clientId === undefined ? undefined : await this.clients.Find(realm.Id, clientId);
         if (target !== null && (client === undefined || !client.PostLogoutAllowed(target)))
         {
@@ -154,13 +166,19 @@ export class ProtocolEndpoints
         }
         const id = IdpSsoCookie.Read(ctx.Request.headers.cookie);
         const session = id === undefined ? undefined : await this.sso.Validate(id, realm.Id);
+        ctx.Response.setHeader(P.CacheControlHeader, P.NoStore);
         if (session !== undefined)
         {
+            if (!confirmed && verified?.sub !== session.SignIn.AccountId)
+            {
+                ctx.Response.writeHead(P.StatusOk, { [P.ContentTypeHeader]: P.HtmlType });
+                ctx.Response.end(P.ConfirmPage(ctx.Path + (ctx.Query.size > 0 ? P.QueryMark + ctx.Query.toString() : P.NoText)));
+                return;
+            }
             await this.sso.Revoke(session.IdHash);
             await this.refreshTokens.RevokeSso(session.IdHash);
         }
         ctx.Response.setHeader(P.SetCookieHeader, IdpSsoCookie.Clear(realm.Id, this.secureCookie));
-        ctx.Response.setHeader(P.CacheControlHeader, P.NoStore);
         if (target === null)
         {
             ctx.WriteJson(P.StatusOk, { [P.SignedOutField]: true });
@@ -176,21 +194,22 @@ export class ProtocolEndpoints
         ctx.Response.end();
     }
 
-    /** The client an ID token hint was issued to (only to pick whose registered URIs apply; never trusted further). */
-    private static AudienceOf(hint: string | null): string | undefined
+    /** The sign-out confirmation: one button posting back to `action` (escaped; no script, no inline style). */
+    private static ConfirmPage(action: string): string
     {
-        if (hint === null)
-        {
-            return undefined;
-        }
-        try
-        {
-            const aud = decodeJwt(hint).aud;
-            return typeof aud === 'string' ? aud : undefined;
-        }
-        catch
-        {
-            return undefined;
-        }
+        const P = ProtocolEndpoints;
+        return P.ConfirmPrefix + P.EscapeAttribute(action) + P.ConfirmSuffix;
     }
+
+    private static EscapeAttribute(text: string): string
+    {
+        return text.replace(HtmlAttributeEscapes.Pattern, match => HtmlAttributeEscapes.Map.get(match) ?? match);
+    }
+}
+
+/** HTML attribute escaping for the confirmation page's form action. */
+class HtmlAttributeEscapes
+{
+    public static readonly Pattern = /[&"<>']/g;
+    public static readonly Map: ReadonlyMap<string, string> = new Map([['&', '&amp;'], ['"', '&quot;'], ['<', '&lt;'], ['>', '&gt;'], ["'", '&#39;']]);
 }

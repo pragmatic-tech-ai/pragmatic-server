@@ -117,6 +117,7 @@ export class LoginFixture
 {
     public static readonly Origin = 'https://login.test'
     public static readonly AuthorizePath = '/realms/central/protocol/openid-connect/auth'
+    public static readonly ContinuePath = '/realms/central/login/continue'
     public static readonly Request = 'response_type=code&client_id=c1&redirect_uri=https%3A%2F%2Fapp.test%2Fcb&state=s1&code_challenge=x&code_challenge_method=S256'
     public static readonly ApiKey = 'browser-key'
 

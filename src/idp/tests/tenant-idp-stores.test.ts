@@ -92,14 +92,19 @@ SqlTestSessions.Describe('realm sign-in service stores', (makeSession, label) =>
             const codes = await SqlAuthorizationCodeStore.Open(await makeSession(), () => now);
             const grant = new AuthorizationGrant(F.Realm, F.Client, F.Redirect, 'nonce', 'challenge', F.SignIn(now), 'sso-hash');
             const code = await codes.Issue(grant);
-            const taken = await codes.Take(code);
+            const taken = (await codes.Take(code)).Grant;
             assert.equal(taken?.ClientId, F.Client);
             assert.equal(taken?.SignIn.AccountId, F.Account);
             assert.equal(taken?.SsoIdHash, 'sso-hash');
-            assert.equal(await codes.Take(code), undefined);
+            await codes.RecordFamily(code, 'family-1');
+            const replay = await codes.Take(code);
+            assert.equal(replay.Grant, undefined);
+            assert.equal(replay.Replayed, true);
+            assert.equal(replay.ReplayedFamily, 'family-1');
+            assert.equal((await codes.Take('never-issued')).Replayed, false);
             const late = await codes.Issue(grant);
             now = new Date(now.getTime() + SqlAuthorizationCodeStore.CodeTtlMs + 1);
-            assert.equal(await codes.Take(late), undefined);
+            assert.equal((await codes.Take(late)).Grant, undefined);
         });
 
         it('validates SSO sessions per realm, ends them, and expires them', async () =>
@@ -123,13 +128,14 @@ SqlTestSessions.Describe('realm sign-in service stores', (makeSession, label) =>
             const F = StoreFixture;
             const now = new Date('2026-11-20T10:00:00Z');
             const tokens = await SqlRefreshTokenStore.Open(await makeSession(), () => now);
-            const first = await tokens.IssueFamily(F.Realm, F.Client, F.SignIn(now), 'sso-hash', F.Policy());
+            const first = (await tokens.IssueFamily(F.Realm, F.Client, F.SignIn(now), 'sso-hash', F.Policy(), F.Policy().RefreshMaxMs)).Token;
             assert.equal((await tokens.Redeem(first, F.Realm, F.OtherClient)).Outcome, RefreshOutcome.Invalid);
             const redeemed = await tokens.Redeem(first, F.Realm, F.Client);
             assert.equal(redeemed.Outcome, RefreshOutcome.Redeemed);
-            const second = await tokens.Rotate(redeemed.Grant!, F.SignIn(now), F.Policy());
+            const second = (await tokens.Rotate(redeemed.Grant!, F.SignIn(now), F.Policy()))!;
             assert.equal((await tokens.Redeem(first, F.Realm, F.Client)).Outcome, RefreshOutcome.Reused);
             assert.equal((await tokens.Redeem(second, F.Realm, F.Client)).Outcome, RefreshOutcome.Invalid);
+            assert.equal(await tokens.Rotate(redeemed.Grant!, F.SignIn(now), F.Policy()), undefined, 'a rotation racing the revocation issues nothing');
         });
 
         it('expires refresh tokens idle and at the family end, and revokes by SSO session, account and token', async () =>
@@ -137,10 +143,10 @@ SqlTestSessions.Describe('realm sign-in service stores', (makeSession, label) =>
             const F = StoreFixture;
             let now = new Date('2026-11-20T10:00:00Z');
             const tokens = await SqlRefreshTokenStore.Open(await makeSession(), () => now);
-            const idle = await tokens.IssueFamily(F.Realm, F.Client, F.SignIn(now), undefined, F.Policy(F.HourMs, 2 * F.HourMs));
-            const bySso = await tokens.IssueFamily(F.Realm, F.Client, F.SignIn(now), 'sso-1', F.Policy());
-            const byAccount = await tokens.IssueFamily(F.Realm, F.Client, F.SignIn(now), undefined, F.Policy(10 * F.HourMs));
-            const byToken = await tokens.IssueFamily(F.Realm, F.Client, F.SignIn(now), undefined, F.Policy());
+            const idle = (await tokens.IssueFamily(F.Realm, F.Client, F.SignIn(now), undefined, F.Policy(F.HourMs, 2 * F.HourMs), F.Policy(F.HourMs, 2 * F.HourMs).RefreshMaxMs)).Token;
+            const bySso = (await tokens.IssueFamily(F.Realm, F.Client, F.SignIn(now), 'sso-1', F.Policy(), F.Policy().RefreshMaxMs)).Token;
+            const byAccount = (await tokens.IssueFamily(F.Realm, F.Client, F.SignIn(now), undefined, F.Policy(10 * F.HourMs), F.Policy(10 * F.HourMs).RefreshMaxMs)).Token;
+            const byToken = (await tokens.IssueFamily(F.Realm, F.Client, F.SignIn(now), undefined, F.Policy(), F.Policy().RefreshMaxMs)).Token;
             await tokens.RevokeSso('sso-1');
             assert.equal((await tokens.Redeem(bySso, F.Realm, F.Client)).Outcome, RefreshOutcome.Invalid);
             assert.equal(await tokens.RevokeToken(byToken, F.Realm, F.OtherClient), false);

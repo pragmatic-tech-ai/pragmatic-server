@@ -45,16 +45,17 @@ export class UpstreamSignIn
 
     public get Email(): string
     {
-        return this.Principal.Claims.get(UpstreamSignIn.EmailClaim) ?? '';
+        return this.Principal.Claims.get(UpstreamSignIn.EmailClaim) ?? UpstreamSignIn.NoValue;
     }
 
     public get Name(): string
     {
-        return this.Principal.Claims.get(UpstreamSignIn.NameClaim) ?? '';
+        return this.Principal.Claims.get(UpstreamSignIn.NameClaim) ?? UpstreamSignIn.NoValue;
     }
 
     public static readonly EmailClaim = 'email';
     public static readonly NameClaim = 'name';
+    private static readonly NoValue = '';
 }
 
 /**
@@ -181,7 +182,7 @@ export class UpstreamOidcSource
                 return new PragmaticIdentityProfile();
             default:
             {
-                const issuer = RealmIssuer.Trim(settings.Issuer ?? '');
+                const issuer = RealmIssuer.Trim(settings.Issuer ?? U.NoLabel);
                 return new GenericOidcProfile(
                     issuer,
                     settings.DiscoveryUrl ?? issuer + U.WellKnownSuffix,

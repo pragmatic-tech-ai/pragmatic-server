@@ -46,7 +46,7 @@ export class IdpAccountProfileMigrations extends SqlMigrationModule
 export class IdpFederatedAccountMigrations extends SqlMigrationModule
 {
     private static readonly V1 = new SqlMigration(1, [
-        'CREATE TABLE tenant_idp_federated_accounts (realm_id text NOT NULL, source text NOT NULL, subject text NOT NULL, account_id text NOT NULL, email text NOT NULL, display_name text NOT NULL, created_at timestamptz NOT NULL, last_sign_in_at timestamptz NOT NULL, PRIMARY KEY (realm_id, source, subject))',
+        'CREATE TABLE tenant_idp_federated_accounts (realm_id text NOT NULL, source text NOT NULL, subject text NOT NULL, account_id text NOT NULL, email text NOT NULL, display_name text NOT NULL, created_at timestamptz NOT NULL, last_sign_in_at timestamptz NOT NULL, disabled boolean NOT NULL DEFAULT false, PRIMARY KEY (realm_id, source, subject))',
         'CREATE UNIQUE INDEX tenant_idp_federated_accounts_account ON tenant_idp_federated_accounts (realm_id, account_id)',
     ]);
 
@@ -61,7 +61,7 @@ export class IdpFederatedAccountMigrations extends SqlMigrationModule
 export class IdpAuthorizationCodeMigrations extends SqlMigrationModule
 {
     private static readonly V1 = new SqlMigration(1, [
-        'CREATE TABLE tenant_idp_authorization_codes (code_hash text PRIMARY KEY, realm_id text NOT NULL, grant_facts jsonb NOT NULL, expires_at timestamptz NOT NULL)',
+        'CREATE TABLE tenant_idp_authorization_codes (code_hash text PRIMARY KEY, realm_id text NOT NULL, grant_facts jsonb NOT NULL, expires_at timestamptz NOT NULL, used_at timestamptz, family_id text)',
         'CREATE INDEX tenant_idp_authorization_codes_expires ON tenant_idp_authorization_codes (expires_at)',
     ]);
 

@@ -94,7 +94,7 @@ describe('end to end: a relying party signs in through the realm sign-in service
         const refreshed = await rp.Refresh(client, refreshToken!, F.PrincipalId);
         assert.notEqual(refreshed, null);
         assert.notEqual(refreshed!.RefreshToken, refreshToken, 'rotated');
-        const loggedOut = await host.Http.Send('GET', host.Issuer(F.Tenant) + RealmIssuer.LogoutPath, { Headers: { cookie: signedIn.Cookie! } });
+        const loggedOut = await host.Http.Send('GET', host.Issuer(F.Tenant) + RealmIssuer.LogoutPath + '?' + new URLSearchParams({ id_token_hint: refreshed!.IdToken }).toString(), { Headers: { cookie: signedIn.Cookie! } });
         assert.equal(loggedOut.Status, 200);
         assert.equal(await rp.Refresh(client, refreshed!.RefreshToken!, F.PrincipalId), null, 'logout ended the refresh tokens of the session');
     });
@@ -119,7 +119,7 @@ describe('end to end: a relying party signs in through the realm sign-in service
         assert.notEqual(refreshed, null);
         const payload = JSON.parse(Buffer.from(refreshed!.IdToken.split('.')[1], 'base64url').toString('utf8'));
         assert.deepEqual(payload.app_roles, { ledger: ['viewer'] }, 'the refresh follows the new mapping');
-        const loggedOut = await host.Http.Send('GET', host.Issuer(F.Central) + RealmIssuer.LogoutPath, { Headers: { cookie: first.Cookie! } });
+        const loggedOut = await host.Http.Send('POST', host.Issuer(F.Central) + RealmIssuer.LogoutPath, { Headers: { cookie: first.Cookie!, origin: host.BaseUrl } });
         assert.equal(loggedOut.Status, 200);
         assert.equal(await rp.Refresh(client, refreshed!.RefreshToken!, accountId), null);
     });

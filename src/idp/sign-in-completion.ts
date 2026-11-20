@@ -1,5 +1,6 @@
 import { AuthorizationGrant, type SqlAuthorizationCodeStore } from './sql-authorization-code-store.js';
 import type { SqlSsoSessionStore, SsoSession } from './sql-sso-session-store.js';
+import type { SqlRefreshTokenStore } from './sql-refresh-token-store.js';
 import type { AuthorizeRequest } from './authorize-request.js';
 import type { IdpRealm } from './idp-realm.js';
 import { IdpSsoCookie } from './idp-sso-cookie.js';
@@ -28,16 +29,28 @@ export class SignInCompletion
     public constructor(
         private readonly codes: SqlAuthorizationCodeStore,
         private readonly sso: SqlSsoSessionStore,
+        private readonly refreshTokens: SqlRefreshTokenStore,
         private readonly secureCookie: boolean)
     {
     }
 
-    public async Complete(realm: IdpRealm, request: AuthorizeRequest, signIn: RealmSignIn, session?: SsoSession): Promise<SignInRedirect>
+    /**
+     * `session`: the SSO session that answered the request (none: a new one is opened). `replacedCookie`: the cookie the
+     * browser still carried when it signed in again (e.g. `prompt=login`); that session and the refresh tokens issued
+     * under it end, so a later logout cannot miss them.
+     */
+    public async Complete(realm: IdpRealm, request: AuthorizeRequest, signIn: RealmSignIn, session?: SsoSession, replacedCookie?: string): Promise<SignInRedirect>
     {
         let setCookie: string | undefined;
         let ssoIdHash = session?.IdHash;
         if (session === undefined)
         {
+            const replaced = replacedCookie === undefined ? undefined : await this.sso.Validate(replacedCookie, realm.Id);
+            if (replaced !== undefined)
+            {
+                await this.sso.Revoke(replaced.IdHash);
+                await this.refreshTokens.RevokeSso(replaced.IdHash);
+            }
             const issued = await this.sso.Issue(realm.Id, signIn, realm.Settings.Tokens.SsoSessionMs);
             setCookie = IdpSsoCookie.Build(realm.Id, issued.Id, issued.Session.ExpiresAt, this.secureCookie);
             ssoIdHash = issued.Session.IdHash;

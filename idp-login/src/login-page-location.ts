@@ -6,6 +6,9 @@
 export class LoginPageLocation
 {
     public static readonly AuthorizeSuffix = '/protocol/openid-connect/auth'
+    // Where a federated provider returns the browser: the page again, served without validating the request (the
+    // provider's own parameters would otherwise be read as the authorize request's).
+    public static readonly ContinueSuffix = '/login/continue'
     private static readonly LoginSuffix = '/login'
     private static readonly ConfigSuffix = '/login/config'
     private static readonly QueryMark = '?'
@@ -18,18 +21,20 @@ export class LoginPageLocation
     private constructor(
         public readonly Origin: string,
         public readonly IssuerPath: string,
-        public readonly Request: string)
+        public readonly Request: string,
+        /** The page's full URL as the browser shows it (what a federated provider answered to). */
+        public readonly Href: string)
     {
     }
 
     // The location of a page served at `origin` + `pathname` + `search`.
     public static From(origin: string, pathname: string, search: string): LoginPageLocation
     {
-        const issuer = pathname.endsWith(LoginPageLocation.AuthorizeSuffix)
-            ? pathname.slice(0, pathname.length - LoginPageLocation.AuthorizeSuffix.length)
-            : pathname
-        const request = search.startsWith(LoginPageLocation.QueryMark) ? search.slice(1) : search
-        return new LoginPageLocation(origin, issuer, request)
+        const L = LoginPageLocation
+        const suffix = [L.AuthorizeSuffix, L.ContinueSuffix].find(candidate => pathname.endsWith(candidate))
+        const issuer = suffix === undefined ? pathname : pathname.slice(0, pathname.length - suffix.length)
+        const request = search.startsWith(L.QueryMark) ? search.slice(1) : search
+        return new LoginPageLocation(origin, issuer, request, origin + pathname + search)
     }
 
     public static FromWindow(): LoginPageLocation
@@ -40,7 +45,7 @@ export class LoginPageLocation
     // The same page for another authorize request (the original one, restored after a round trip).
     public WithRequest(request: string): LoginPageLocation
     {
-        return new LoginPageLocation(this.Origin, this.IssuerPath, request)
+        return new LoginPageLocation(this.Origin, this.IssuerPath, request, this.Href)
     }
 
     // The page's own query, as `location.search` reports it.
@@ -65,6 +70,12 @@ export class LoginPageLocation
     public get AuthorizeUrl(): string
     {
         return this.Origin + this.IssuerPath + LoginPageLocation.AuthorizeSuffix + this.Search
+    }
+
+    // Where a federated provider sends the browser back (the page, never the authorize endpoint).
+    public get ContinueUrl(): string
+    {
+        return this.Origin + this.IssuerPath + LoginPageLocation.ContinueSuffix
     }
 
     // True when the request carries `prompt=create` (OpenID Connect Initiating User Registration).

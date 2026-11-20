@@ -95,6 +95,8 @@ export class TenantIdpService
     private static readonly StatusNotFound = 404;
     private static readonly ErrorField = 'error';
     private static readonly NotFoundCode = 'not_found';
+    private static readonly UnauthorizedCode = 'unauthorized';
+    private static readonly StatusUnauthorized = 401;
     private static readonly LogPrefix = '[tenant-idp]';
 
     private constructor(
@@ -119,9 +121,9 @@ export class TenantIdpService
         const roles = new RoleMappingService(TenantRoleRegistry.Standard, stores.Applications, stores.RoleMappings);
         const resolver = new RealmRoleResolver(TenantRoleRegistry.Standard, stores.Applications, stores.RoleMappings);
         const issuer = new RealmTokenIssuer(options.SigningKey, resolver, now);
-        const completion = new SignInCompletion(stores.Codes, stores.Sso, options.SecureCookie);
+        const completion = new SignInCompletion(stores.Codes, stores.Sso, stores.RefreshTokens, options.SecureCookie);
         const throttles = new IdpLoginThrottles(stores.Throttles, () => now().getTime());
-        const signIn = new SignInEndpoints(realms, stores.Clients, stores.Sso, completion, options.LoginPage, throttles, now);
+        const signIn = new SignInEndpoints(realms, stores.Clients, stores.Sso, completion, options.LoginPage, throttles, options.SecureCookie, now);
         const protocol = new ProtocolEndpoints(realms, stores.Clients, stores.Sso, stores.RefreshTokens, options.SigningKey, options.InternalBaseUrl, options.SecureCookie);
         const routes = new RouteTable();
         signIn.Register(routes);
@@ -144,7 +146,7 @@ export class TenantIdpService
             Problems: new ProblemMapper(err => console.error(S.LogPrefix, err instanceof Error ? err.name : typeof err)),
         });
         const form = new Map<string, IFormEndpoint>([
-            [RealmIssuer.TokenPath, new TokenEndpoint(realms, stores.Clients, stores.Codes, stores.RefreshTokens, issuer)],
+            [RealmIssuer.TokenPath, new TokenEndpoint(realms, stores.Clients, stores.Codes, stores.RefreshTokens, stores.Sso, issuer)],
             [RealmIssuer.RevocationPath, new RevocationEndpoint(realms, stores.Clients, stores.RefreshTokens)],
         ]);
         const tls = options.Tls === undefined ? undefined : new IdpTlsFront(host, options.Tls);
@@ -230,6 +232,13 @@ export class TenantIdpService
                     catch
                     {
                         ctx.WriteJson(S.StatusNotFound, { [S.ErrorField]: S.NotFoundCode });
+                        return;
+                    }
+                    if (!admin.IsAdminCredential(ctx.Request.headers.authorization))
+                    {
+                        // The token is checked before any body is read (it is drained unread).
+                        ctx.Request.resume();
+                        ctx.WriteJson(S.StatusUnauthorized, { [S.ErrorField]: S.UnauthorizedCode });
                         return;
                     }
                     const body = method === HttpMethod.Get ? undefined : await ctx.ReadJson();

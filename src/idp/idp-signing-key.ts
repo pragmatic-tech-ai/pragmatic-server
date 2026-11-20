@@ -2,8 +2,8 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createPrivateKey, createPublicKey, generateKeyPairSync } from 'node:crypto';
 import type { KeyObject } from 'node:crypto';
-import { SignJWT, calculateJwkThumbprint } from 'jose';
-import type { JWK } from 'jose';
+import { SignJWT, calculateJwkThumbprint, jwtVerify } from 'jose';
+import type { JWK, JWTPayload } from 'jose';
 
 /**
  * RS256 signing key for the local OIDC identity provider. The private key is a
@@ -24,6 +24,8 @@ export class IdpSigningKey
     private static readonly Pkcs8Type = 'pkcs8';
     private static readonly PemFormat = 'pem';
     private static readonly JwkFormat = 'jwk';
+    /** Checking a hint "as of" the epoch accepts any expiry (jose checks iat only with a maximum token age). */
+    private static readonly Epoch = new Date(0);
 
     private constructor(
         private readonly privateKey: KeyObject,
@@ -69,6 +71,23 @@ export class IdpSigningKey
         return new SignJWT(claims)
             .setProtectedHeader({ alg: IdpSigningKey.Algorithm, kid: this.kid })
             .sign(this.privateKey);
+    }
+
+    /**
+     * The payload of a token this key signed for `issuer`, expired or not (an `id_token_hint` is usually expired), or
+     * undefined when the signature, algorithm or issuer does not match.
+     */
+    public async VerifyOwn(token: string, issuer: string): Promise<JWTPayload | undefined>
+    {
+        try
+        {
+            const verified = await jwtVerify(token, createPublicKey(this.privateKey), { issuer, algorithms: [IdpSigningKey.Algorithm], currentDate: IdpSigningKey.Epoch });
+            return verified.payload;
+        }
+        catch
+        {
+            return undefined;
+        }
     }
 
     private static async FromPrivateKey(privateKey: KeyObject): Promise<IdpSigningKey>

@@ -110,24 +110,25 @@ export class TenantIdpImport
             let count = 0;
             for (const account of await files.Accounts.ListAccounts(realm))
             {
-                const hash = await files.Secrets.Get(account.SecretRef);
-                if (hash !== null)
-                {
-                    await secrets.Put(account.SecretRef, hash);
-                }
+                // Only an account created here gets its hash: one a part-failed import created earlier may have a newer password.
                 if ((await stores.Accounts.FindByPrincipalId(realm, account.PrincipalId)) === null)
                 {
+                    const hash = await files.Secrets.Get(account.SecretRef);
+                    if (hash !== null)
+                    {
+                        await secrets.Put(account.SecretRef, hash);
+                    }
                     await stores.Accounts.CreateAccount(realm, account.Email, account.PrincipalId, account.SecretRef);
                     if (account.Disabled)
                     {
                         await stores.Accounts.Disable(realm, account.PrincipalId);
                     }
-                }
-                await stores.Profiles.PutName(realmId, account.PrincipalId, profiles.get(account.PrincipalId) ?? I.NoName);
-                const at = changed.get(account.PrincipalId);
-                if (at !== undefined && !Number.isNaN(new Date(at).getTime()))
-                {
-                    await stores.Profiles.StampCredentialsChanged(realmId, account.PrincipalId, new Date(at));
+                    await stores.Profiles.PutName(realmId, account.PrincipalId, profiles.get(account.PrincipalId) ?? I.NoName);
+                    const at = changed.get(account.PrincipalId);
+                    if (at !== undefined && !Number.isNaN(new Date(at).getTime()))
+                    {
+                        await stores.Profiles.StampCredentialsChanged(realmId, account.PrincipalId, new Date(at));
+                    }
                 }
                 count++;
             }

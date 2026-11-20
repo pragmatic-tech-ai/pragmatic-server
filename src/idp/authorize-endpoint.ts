@@ -6,6 +6,7 @@ import type { IdpLoginThrottles } from './idp-login-throttles.js';
 import type { IdpRealm } from './idp-realm.js';
 import type { IdpRealmSet } from './idp-realm-set.js';
 import { IdpSsoCookie } from './idp-sso-cookie.js';
+import { IdpBrokerBinding } from './idp-broker-binding.js';
 import { RealmIssuer } from './realm-issuer.js';
 import { RealmSignIn } from './realm-sign-in.js';
 import { SignInCompletion, type SignInRedirect } from './sign-in-completion.js';
@@ -76,6 +77,7 @@ export class SignInEndpoints
         private readonly completion: SignInCompletion,
         private readonly loginPage: IdpLoginPage,
         private readonly throttles: IdpLoginThrottles,
+        private readonly secureCookie: boolean,
         private readonly now: () => Date = () => new Date())
     {
     }
@@ -86,6 +88,7 @@ export class SignInEndpoints
         routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.AuthorizePath), Auth: RouteAuth.Public, Handler: ctx => this.Authorize(ctx) });
         routes.Add({ Method: HttpMethod.Post, Pattern: RealmIssuer.Pattern(RealmIssuer.LoginPath), Auth: RouteAuth.Public, Audited: false, BodyLimit: S.LoginBodyLimit, Handler: ctx => this.Login(ctx) });
         routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.LoginConfigPath), Auth: RouteAuth.Public, Handler: ctx => this.LoginConfig(ctx) });
+        routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.LoginContinuePath), Auth: RouteAuth.Public, Handler: ctx => this.LoginContinue(ctx) });
         routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.BrokerSegment + S.ParamPrefix + S.SourceParam + RealmIssuer.BrokerLoginSuffix), Auth: RouteAuth.Public, Handler: ctx => this.BrokerLogin(ctx) });
         routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.BrokerSegment + S.ParamPrefix + S.SourceParam + RealmIssuer.BrokerCallbackSuffix), Auth: RouteAuth.Public, Handler: ctx => this.BrokerCallback(ctx) });
     }
@@ -197,6 +200,11 @@ export class SignInEndpoints
         const email = token.Email ?? S.NoName;
         const name = token.DisplayName ?? S.NoName;
         const accountId = await realm.LinkUpstream(RealmSourceKind.IdentityPlatform, token.Uid, email, name);
+        if (!(await realm.IsActive(accountId)))
+        {
+            ctx.WriteJson(S.StatusUnauthorized, { [S.ErrorField]: S.InvalidCredentials });
+            return;
+        }
         const signIn = new RealmSignIn(accountId, RealmSourceKind.IdentityPlatform, token.Uid, [], email, name, token.EmailVerified, this.now());
         await this.AnswerSignIn(ctx, realm, request, signIn);
     }
@@ -204,7 +212,7 @@ export class SignInEndpoints
     private async AnswerSignIn(ctx: RequestContext, realm: IdpRealm, request: AuthorizeRequest, signIn: RealmSignIn): Promise<void>
     {
         const S = SignInEndpoints;
-        const redirect = await this.completion.Complete(realm, request, signIn);
+        const redirect = await this.completion.Complete(realm, request, signIn, undefined, IdpSsoCookie.Read(ctx.Request.headers.cookie));
         if (redirect.SetCookie !== undefined)
         {
             ctx.Response.setHeader(S.SetCookieHeader, redirect.SetCookie);
@@ -225,6 +233,18 @@ export class SignInEndpoints
         ctx.WriteJson(SignInEndpoints.StatusOk, new LoginConfig(realm).ToJson());
     }
 
+    /** Where a federated provider of Identity Platform returns the browser: the login page, the request not validated
+     *  (the provider's parameters are in the query; the page posts the request it saved before leaving). */
+    private async LoginContinue(ctx: RequestContext): Promise<void>
+    {
+        if (this.RealmOf(ctx) === undefined)
+        {
+            ctx.WriteJson(SignInEndpoints.StatusNotFound, { [SignInEndpoints.ErrorField]: SignInEndpoints.UnknownRealm });
+            return;
+        }
+        this.WritePage(ctx, false);
+    }
+
     private async BrokerLogin(ctx: RequestContext): Promise<void>
     {
         const S = SignInEndpoints;
@@ -241,7 +261,10 @@ export class SignInEndpoints
             ctx.WriteJson(S.StatusNotFound, { [S.ErrorField]: S.UnknownSource });
             return;
         }
-        this.RedirectTo(ctx, await source.Begin(request.Query));
+        const binding = IdpBrokerBinding.Begin(request.Query);
+        const location = await source.Begin(binding.ReturnPath);
+        ctx.Response.setHeader(S.SetCookieHeader, IdpBrokerBinding.Cookie(realm.Id, binding.Value, this.secureCookie));
+        this.RedirectTo(ctx, location);
     }
 
     private async BrokerCallback(ctx: RequestContext): Promise<void>
@@ -252,7 +275,13 @@ export class SignInEndpoints
         const code = ctx.Query.get(S.CodeParam);
         const state = ctx.Query.get(S.StateParam);
         const upstream = realm === undefined || source === undefined || code === null || state === null ? undefined : await source.Complete(code, state);
-        const request = upstream === undefined ? undefined : await AuthorizeRequest.Validate(realm, this.clients, upstream.AuthorizeRequest);
+        const carried = upstream === undefined ? undefined : IdpBrokerBinding.Parse(upstream.AuthorizeRequest);
+        const bound = carried !== undefined && IdpBrokerBinding.Admits(ctx.Request.headers.cookie, carried);
+        const request = carried === undefined || !bound ? undefined : await AuthorizeRequest.Validate(realm, this.clients, carried.AuthorizeRequest);
+        if (realm !== undefined)
+        {
+            ctx.Response.setHeader(S.SetCookieHeader, IdpBrokerBinding.Clear(realm.Id, this.secureCookie));
+        }
         if (realm === undefined || source === undefined || upstream === undefined || !(request instanceof AuthorizeRequest))
         {
             ctx.WriteJson(S.StatusUnauthorized, { [S.ErrorField]: S.UpstreamFailed });
@@ -260,8 +289,18 @@ export class SignInEndpoints
         }
         const subject = upstream.Principal.Id;
         const accountId = await realm.LinkUpstream(source.Id, subject, upstream.Email, upstream.Name);
+        if (!(await realm.IsActive(accountId)))
+        {
+            ctx.WriteJson(S.StatusUnauthorized, { [S.ErrorField]: S.UpstreamFailed });
+            return;
+        }
         const signIn = new RealmSignIn(accountId, source.Id, subject, upstream.Principal.Groups, upstream.Email, upstream.Name, undefined, this.now());
-        this.Redirect(ctx, await this.completion.Complete(realm, request, signIn));
+        const redirect = await this.completion.Complete(realm, request, signIn, undefined, IdpSsoCookie.Read(ctx.Request.headers.cookie));
+        if (redirect.SetCookie !== undefined)
+        {
+            ctx.Response.appendHeader(S.SetCookieHeader, redirect.SetCookie);
+        }
+        this.RedirectTo(ctx, redirect.Location);
     }
 
     private RealmOf(ctx: RequestContext): IdpRealm | undefined

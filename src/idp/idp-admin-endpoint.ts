@@ -47,6 +47,12 @@ export class IdpAdminEndpoint
     private static readonly AccountsSegment = 'accounts';
     private static readonly ClientsSegment = 'clients';
     private static readonly PasswordSegment = 'password';
+    private static readonly DisableSegment = 'disable';
+    private static readonly EnableSegment = 'enable';
+    private static readonly DisabledField = 'disabled';
+    private static readonly HttpsProtocol = 'https:';
+    private static readonly HttpProtocol = 'http:';
+    private static readonly LoopbackHosts: ReadonlySet<string> = new Set(['127.0.0.1', 'localhost', '[::1]']);
     private static readonly RolesSegment = 'roles';
     private static readonly MappingsSegment = 'role-mappings';
     private static readonly ApplicationsSegment = 'applications';
@@ -181,10 +187,15 @@ export class IdpAdminEndpoint
                 default: return A.NotFound();
             }
         }
-        if (segments.length === A.ActionPathLength && item !== undefined && resource === A.AccountsSegment
-            && segments[A.ActionIndex] === A.PasswordSegment && method === A.PostMethod)
+        if (segments.length === A.ActionPathLength && item !== undefined && resource === A.AccountsSegment && method === A.PostMethod)
         {
-            return await this.PostPasswordReset(realmId, item, body);
+            switch (segments[A.ActionIndex])
+            {
+                case A.PasswordSegment: return await this.PostPasswordReset(realmId, item, body);
+                case A.DisableSegment: return await this.SetDisabled(realmId, item, true);
+                case A.EnableSegment: return await this.SetDisabled(realmId, item, false);
+                default: return A.NotFound();
+            }
         }
         return A.NotFound();
     }
@@ -273,6 +284,22 @@ export class IdpAdminEndpoint
         return new AdminResult(A.OkStatus, { [A.PrincipalIdField]: principalId });
     }
 
+    /** Disables or enables a realm account (local or federated); a disabled one's SSO sessions and refresh tokens end. */
+    private async SetDisabled(realmId: string, accountId: string, disabled: boolean): Promise<AdminResult>
+    {
+        const A = IdpAdminEndpoint;
+        if (!(await this.stores.Realms.For(realmId)!.SetDisabled(accountId, disabled)))
+        {
+            return A.Fail(A.NotFoundStatus, A.UnknownAccountCode);
+        }
+        if (disabled)
+        {
+            await this.stores.Sso.RevokeAccount(realmId, accountId);
+            await this.stores.RefreshTokens.RevokeAccount(realmId, accountId);
+        }
+        return new AdminResult(A.OkStatus, { [A.PrincipalIdField]: accountId, [A.DisabledField]: disabled });
+    }
+
     private async PostClient(realmId: string, body: unknown): Promise<AdminResult>
     {
         const A = IdpAdminEndpoint;
@@ -285,7 +312,11 @@ export class IdpAdminEndpoint
         {
             return A.InvalidBody();
         }
-        await this.stores.Clients.Register(realmId, clientId, redirectUris, secret, postLogout);
+        if (await this.stores.Clients.Register(realmId, clientId, redirectUris, secret, postLogout))
+        {
+            // A rotated secret: what was issued under the old one ends.
+            await this.stores.RefreshTokens.RevokeClient(realmId, clientId);
+        }
         return new AdminResult(A.OkStatus, { [A.ClientIdField]: clientId });
     }
 
@@ -448,13 +479,26 @@ export class IdpAdminEndpoint
         for (const item of value)
         {
             const entry = IdpAdminEndpoint.NonEmptyString(item);
-            if (entry === undefined || !URL.canParse(entry))
+            if (entry === undefined || !IdpAdminEndpoint.IsRedirectUri(entry))
             {
                 return undefined;
             }
             out.push(entry);
         }
         return out;
+    }
+
+    /** A redirect a client may register: https, or http to a loopback host (a native app, RFC 8252); never a fragment. */
+    private static IsRedirectUri(text: string): boolean
+    {
+        const A = IdpAdminEndpoint;
+        if (!URL.canParse(text))
+        {
+            return false;
+        }
+        const url = new URL(text);
+        const transport = url.protocol === A.HttpsProtocol || (url.protocol === A.HttpProtocol && A.LoopbackHosts.has(url.hostname));
+        return transport && url.hash === '' && url.username === '' && url.password === '';
     }
 
     private static InvalidBody(): AdminResult

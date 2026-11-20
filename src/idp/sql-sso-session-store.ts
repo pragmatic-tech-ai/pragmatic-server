@@ -81,6 +81,13 @@ export class SqlSsoSessionStore
         return new SsoSession(idHash, realmId, signIn, expiresAt);
     }
 
+    /** Whether the session (by id digest) is still live: not ended by a logout or a reset, not expired. */
+    public async Exists(idHash: string): Promise<boolean>
+    {
+        const rows = await this.session.Query(SqlSsoSessionStore.GetSql, [idHash]);
+        return rows.length > 0 && SqlJson.Date(rows[0].expires_at).getTime() > this.now().getTime();
+    }
+
     public async Revoke(idHash: string): Promise<void>
     {
         await this.session.Execute(SqlSsoSessionStore.DeleteSql, [idHash]);

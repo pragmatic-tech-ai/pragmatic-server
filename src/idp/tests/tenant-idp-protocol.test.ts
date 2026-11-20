@@ -104,7 +104,13 @@ describe('the realm sign-in service: protocol edges and the admin API', () =>
         assert.deepEqual(realm.sources, ['local']);
         assert.equal((await host.Admin('PUT', '_hidden', { displayName: 'x' })).Json().error, 'invalid_realm');
         assert.equal((await host.Admin('GET', 'nope/roles')).Json().error, 'unknown_realm');
-        assert.equal((await host.Admin('POST', F.Realm + '/clients', { clientId: 'x', secret: 's', redirectUris: ['not a url'] })).Json().error, 'invalid_body');
+        for (const uri of ['not a url', 'javascript:alert(1)', 'http://app.example/cb', 'https://app.example/cb#frag', 'https://user:pw@app.example/cb'])
+        {
+            assert.equal((await host.Admin('POST', F.Realm + '/clients', { clientId: 'x', secret: 's', redirectUris: [uri] })).Json().error, 'invalid_body', uri);
+        }
+        assert.equal((await host.Admin('POST', F.Realm + '/clients', { clientId: 'x', secret: 's', redirectUris: ['http://127.0.0.1/cb'] })).Status, 200, 'a native loopback redirect');
+        const unauthenticated = await host.Http.Send('POST', host.BaseUrl + '/_admin/realms/' + F.Realm + '/clients', { Json: { clientId: 'y' } });
+        assert.equal(unauthenticated.Status, 401);
     });
 
     it('declares and removes applications from component descriptors, which the assignable roles follow', async () =>
@@ -117,6 +123,17 @@ describe('the realm sign-in service: protocol edges and the admin API', () =>
         assert.equal((await host.Admin('DELETE', F.Realm + '/applications/cabinet')).Json().removed, true);
         roles = (await host.Admin('GET', F.Realm + '/roles')).Json().map((r: { role: string }) => r.role);
         assert.deepEqual(roles, ['admin']);
+    });
+
+    it('disables and enables a local account: a disabled one signs in no more and loses its refresh tokens', async () =>
+    {
+        const { Tokens } = await flow.SignIn(F.Email, F.Password);
+        assert.equal((await host.Admin('POST', F.Realm + '/accounts/' + F.PrincipalId + '/disable')).Json().disabled, true);
+        assert.equal((await flow.Refresh(Tokens.refresh_token)).Status, 400);
+        assert.equal((await flow.PasswordLogin(flow.Request(), F.Email, F.Password)).Status, 401);
+        assert.equal((await host.Admin('POST', F.Realm + '/accounts/' + F.PrincipalId + '/enable')).Json().disabled, false);
+        assert.equal((await flow.PasswordLogin(flow.Request(), F.Email, F.Password)).Status, 200);
+        assert.equal((await host.Admin('POST', F.Realm + '/accounts/nobody/disable')).Json().error, 'unknown_account');
     });
 
     it('stores realm secrets sealed, never echoing them, and refuses a path-like name', async () =>

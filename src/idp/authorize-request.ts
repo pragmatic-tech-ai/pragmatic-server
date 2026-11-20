@@ -42,6 +42,7 @@ export class AuthorizeRequest
     private static readonly PromptParam = 'prompt';
     private static readonly LoginHintParam = 'login_hint';
     private static readonly PromptSeparator = ' ';
+    private static readonly NoValue = '';
     private static readonly MaxQueryChars = 4096;
     private static readonly StatusBadRequest = 400;
     private static readonly StatusNotFound = 404;
@@ -88,34 +89,34 @@ export class AuthorizeRequest
             return new AuthorizeRefusal(A.StatusBadRequest, A.UnsupportedResponseType, A.BadResponseTypeDescription);
         }
         const clientId = params.get(A.ClientIdParam);
-        const client = clientId === null || clientId === '' ? undefined : await clients.Find(realm.Id, clientId);
+        const client = clientId === null || clientId === A.NoValue ? undefined : await clients.Find(realm.Id, clientId);
         if (client === undefined)
         {
             return new AuthorizeRefusal(A.StatusBadRequest, A.InvalidClient, A.UnknownClientDescription);
         }
         const redirectUri = params.get(A.RedirectUriParam);
-        if (redirectUri === null || redirectUri === '' || !client.RedirectAllowed(redirectUri))
+        if (redirectUri === null || redirectUri === A.NoValue || !client.RedirectAllowed(redirectUri))
         {
             return new AuthorizeRefusal(A.StatusBadRequest, A.InvalidRequest, A.BadRedirectDescription);
         }
         const challenge = params.get(A.CodeChallengeParam);
-        if (challenge === null || challenge === '' || params.get(A.CodeChallengeMethodParam) !== A.MethodS256)
+        if (challenge === null || challenge === A.NoValue || params.get(A.CodeChallengeMethodParam) !== A.MethodS256)
         {
             return new AuthorizeRefusal(A.StatusBadRequest, A.InvalidRequest, A.BadChallengeDescription);
         }
         const state = params.get(A.StateParam);
         const nonce = params.get(A.NonceParam);
-        if (state === null || state === '' || nonce === null || nonce === '')
+        if (state === null || state === A.NoValue || nonce === null || nonce === A.NoValue)
         {
             return new AuthorizeRefusal(A.StatusBadRequest, A.InvalidRequest, A.MissingStateNonceDescription);
         }
-        const prompts = new Set((params.get(A.PromptParam) ?? '').split(A.PromptSeparator).filter(value => value !== ''));
+        const prompts = new Set((params.get(A.PromptParam) ?? A.NoValue).split(A.PromptSeparator).filter(value => value !== A.NoValue));
         if (prompts.has(A.PromptNone) && prompts.size > 1)
         {
             return new AuthorizeRefusal(A.StatusBadRequest, A.InvalidRequest, A.BadPromptDescription);
         }
         const hint = params.get(A.LoginHintParam);
-        return new AuthorizeRequest(client, redirectUri, challenge, state, nonce, prompts, hint === null || hint === '' ? undefined : hint, query);
+        return new AuthorizeRequest(client, redirectUri, challenge, state, nonce, prompts, hint === null || hint === A.NoValue ? undefined : hint, query);
     }
 
     /** `prompt=none`: never show the page. */

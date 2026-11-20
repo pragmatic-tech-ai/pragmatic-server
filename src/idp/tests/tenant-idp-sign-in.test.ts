@@ -160,17 +160,65 @@ describe('the realm sign-in service: sign-in, tokens, sessions', () =>
         assert.equal((await flow.Revoke('unknown')).Status, 200);
     });
 
-    it('logs out: ends the SSO session and its refresh tokens, clears the cookie, returns to a registered URI', async () =>
+    it('logs out with an ID token hint: ends the SSO session and its refresh tokens, clears the cookie, returns to a registered URI', async () =>
     {
         const { Tokens, Cookie } = await flow.SignIn(F.Email, F.Password);
         const refused = await flow.Logout(Cookie, new URLSearchParams({ client_id: F.ClientId, post_logout_redirect_uri: 'https://evil.example/' }).toString());
         assert.equal(refused.Status, 400);
-        const out = await flow.Logout(Cookie, new URLSearchParams({ client_id: F.ClientId, post_logout_redirect_uri: F.AfterLogout, state: 's1' }).toString());
+        const out = await flow.Logout(Cookie, new URLSearchParams({ id_token_hint: Tokens.id_token, post_logout_redirect_uri: F.AfterLogout, state: 's1' }).toString());
         assert.equal(out.Status, 302);
         assert.equal(out.Header('location'), F.AfterLogout + '?state=s1');
         assert.match(out.Header('set-cookie') ?? '', /idp_sso=; .*Max-Age=0/);
         assert.equal((await flow.Refresh(Tokens.refresh_token)).Status, 400);
         assert.equal((await flow.Authorize(flow.Request(), Cookie)).Status, 200, 'the old cookie shows the page again');
+    });
+
+    it('a logout without a valid hint asks first: the page posts back, and only the post signs out', async () =>
+    {
+        const { Tokens, Cookie } = await flow.SignIn(F.Email, F.Password);
+        const forged = await flow.Logout(Cookie, new URLSearchParams({ id_token_hint: Tokens.id_token.slice(0, -4) + 'AAAA' }).toString());
+        assert.equal(forged.Status, 200);
+        assert.match(forged.Text, /<form method="post" action="\/realms\/tenant-1\/protocol\/openid-connect\/logout\?id_token_hint=/);
+        assert.equal((await flow.Refresh(Tokens.refresh_token)).Status, 200, 'the confirmation page ended nothing');
+        const crossSite = await host.Http.Send('POST', flow.Issuer + RealmIssuer.LogoutPath, { Headers: { cookie: Cookie!, origin: 'https://evil.example' } });
+        assert.equal(crossSite.Status, 403);
+        const posted = await flow.Logout(Cookie, '', 'POST');
+        assert.equal(posted.Status, 200);
+        assert.equal(posted.Json().signedOut, true);
+        assert.equal((await flow.Authorize(flow.Request(), Cookie)).Status, 200);
+    });
+
+    it('signing in again over a live session (prompt=login) ends the old session and its refresh tokens', async () =>
+    {
+        const first = await flow.SignIn(F.Email, F.Password);
+        const request = flow.Request({ prompt: 'login' });
+        const again = await host.Http.Send('POST', flow.Issuer + RealmIssuer.LoginPath, { Json: { request: request.Query, method: 'password', email: F.Email, password: F.Password }, Headers: { origin: host.BaseUrl, cookie: first.Cookie! } });
+        assert.equal(again.Status, 200);
+        assert.equal((await flow.Refresh(first.Tokens.refresh_token)).Status, 400, 'the replaced session took its tokens with it');
+        assert.equal((await flow.Authorize(flow.Request(), first.Cookie)).Status, 200, 'the replaced cookie no longer answers');
+    });
+
+    it('a replayed code revokes the refresh tokens its first exchange issued', async () =>
+    {
+        const request = flow.Request();
+        const login = await flow.PasswordLogin(request, F.Email, F.Password);
+        const code = IdpTestFlow.CodeOf(login.Json().redirect, request);
+        const tokens = (await flow.Exchange(code, request)).Json();
+        assert.equal((await flow.Exchange(code, request)).Json().error, 'invalid_grant');
+        assert.equal((await flow.Refresh(tokens.refresh_token)).Status, 400);
+    });
+
+    it('a client re-registered with a new secret loses the refresh tokens issued under the old one', async () =>
+    {
+        await host.Admin('POST', F.Realm + '/clients', { clientId: 'rotating', secret: 'one', redirectUris: [F.Redirect] });
+        const rotating = new IdpTestFlow(host, F.Realm, 'rotating', 'one', F.Redirect);
+        const { Tokens } = await rotating.SignIn(F.Email, F.Password);
+        await host.Admin('POST', F.Realm + '/clients', { clientId: 'rotating', secret: 'one', redirectUris: [F.Redirect] });
+        const kept = await rotating.Refresh(Tokens.refresh_token);
+        assert.equal(kept.Status, 200, 'the same secret again keeps them');
+        await host.Admin('POST', F.Realm + '/clients', { clientId: 'rotating', secret: 'two', redirectUris: [F.Redirect] });
+        const after = new IdpTestFlow(host, F.Realm, 'rotating', 'two', F.Redirect);
+        assert.equal((await after.Refresh(kept.Json().refresh_token)).Status, 400);
     });
 
     it('issues roles and app_roles from the role mappings, and a refresh follows a mapping change', async () =>

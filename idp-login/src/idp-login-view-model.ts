@@ -603,7 +603,7 @@ export class IdpLoginViewModel extends Observable
         this.Begin()
         try
         {
-            const start = await federation.CreateAuthUri(IdentityPlatformProvider.Google, this.page.AuthorizeUrl)
+            const start = await federation.CreateAuthUri(IdentityPlatformProvider.Google, this.page.ContinueUrl)
             this.roundTrip.Save(new PendingFederatedSignIn(start.SessionId, this.page.Request))
             this.navigator.Assign(start.AuthUri)
         }
@@ -631,7 +631,7 @@ export class IdpLoginViewModel extends Observable
         let idToken: string
         try
         {
-            idToken = await federation.SignInWithIdp(this.location.AuthorizeUrl, pending.SessionId)
+            idToken = await federation.SignInWithIdp(this.location.Href, pending.SessionId)
         }
         catch (e)
         {

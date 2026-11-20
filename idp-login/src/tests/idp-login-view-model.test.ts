@@ -288,7 +288,7 @@ describe('IdP sign-in page: Identity Platform', () =>
         }
     })
 
-    it('Continue with Google saves the round trip and leaves for Google, coming back to the same authorize URL', async () =>
+    it('Continue with Google saves the round trip and leaves for Google, coming back to the page continue path', async () =>
     {
         const fixture = await LoginFixture.Loaded(LoginFixture.Platform([Google], false, false, 'tenant-a'))
         fixture.Ip.Ok('accounts:createAuthUri', { authUri: 'https://accounts.google.com/o/oauth2/auth?x=1', sessionId: 'sess-1' })
@@ -298,7 +298,7 @@ describe('IdP sign-in page: Identity Platform', () =>
         await page.SignInWithGoogle()
         assert.deepEqual(fixture.Ip.Calls[0]!.body, {
             providerId: 'google.com',
-            continueUri: LoginFixture.Origin + LoginFixture.AuthorizePath + '?' + LoginFixture.Request,
+            continueUri: LoginFixture.Origin + LoginFixture.ContinuePath,
             tenantId: 'tenant-a',
         })
         assert.deepEqual(fixture.Navigator.Visits, ['https://accounts.google.com/o/oauth2/auth?x=1'])
@@ -336,7 +336,7 @@ describe('IdP sign-in page: Identity Platform', () =>
         assert.equal(fixture.Page.ErrorText, 'Signing in with Google did not complete. Please try again.')
         assert.equal(fixture.Backend.Posts.length, 0)
         await fixture.Page.SignInWithGoogle()
-        assert.equal(fixture.Ip.Calls[1]!.body.continueUri, LoginFixture.Origin + LoginFixture.AuthorizePath + '?' + LoginFixture.Request)
+        assert.equal(fixture.Ip.Calls[1]!.body.continueUri, LoginFixture.Origin + LoginFixture.ContinuePath)
     })
 
     it('a plain reload with a saved round trip does not try to complete it', async () =>

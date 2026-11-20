@@ -177,6 +177,30 @@ export class IdpRealm
             return new AccountProfile(local.Email, await this.stores.Profiles.Name(this.Id, accountId) ?? IdpRealm.NoName, !local.Disabled);
         }
         const federated = await this.stores.Federated.ByAccount(this.Id, accountId);
-        return federated === undefined ? undefined : new AccountProfile(federated.Email, federated.DisplayName, true);
+        return federated === undefined ? undefined : new AccountProfile(federated.Email, federated.DisplayName, !federated.Disabled);
+    }
+
+    /** Disables or enables a realm account (local or federated); false when the realm has no such account. */
+    public async SetDisabled(accountId: string, disabled: boolean): Promise<boolean>
+    {
+        if ((await this.stores.Accounts.FindByPrincipalId(this.realm, accountId)) !== null)
+        {
+            if (disabled)
+            {
+                await this.stores.Accounts.Disable(this.realm, accountId);
+            }
+            else
+            {
+                await this.stores.Accounts.Enable(this.realm, accountId);
+            }
+            return true;
+        }
+        return await this.stores.Federated.SetDisabled(this.Id, accountId, disabled);
+    }
+
+    /** Whether the account may sign in now (it exists and is not disabled). */
+    public async IsActive(accountId: string): Promise<boolean>
+    {
+        return (await this.Profile(accountId))?.Active === true;
     }
 }
