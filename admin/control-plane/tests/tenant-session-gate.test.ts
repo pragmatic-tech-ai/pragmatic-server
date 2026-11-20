@@ -214,7 +214,7 @@ describe('TenantPrincipalSessions', () =>
     it('closes the connections even when ending the stored sessions fails, then reports the failure', async () =>
     {
         const connections = new RecordingConnections()
-        const failing = { RevokeSubject: async (): Promise<number> => { throw new Error('write failed') } } as unknown as SessionStore
+        const failing = { RevokeSubjectWithClaim: async (): Promise<number> => { throw new Error('write failed') } } as unknown as SessionStore
         const principals = new TenantPrincipalSessions(failing)
         principals.Attach(connections)
         await assert.rejects(principals.RevokeAllFor(GateFixture.Tenant, GateFixture.Member), /write failed/)

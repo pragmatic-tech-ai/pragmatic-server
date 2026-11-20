@@ -268,4 +268,16 @@ describe('ConsoleOwnerResetFollower', () =>
         assert.deepEqual(sockets.Closed, [[Names.Tenant, Names.Principal]])
         assert.deepEqual(relays.Closed, [[Names.Tenant, Names.Principal]])
     })
+
+    it('ends only the sessions of the principal in the reset tenant: its session in another tenant (the shared co-hosted table) stays', async () =>
+    {
+        const sessions = new TenantSessions(TenantSessions.InMemory(), false)
+        const store = sessions.Store
+        const principals = new TenantPrincipalSessions(store)
+        const reset = (await store.Issue(Names.Principal, TenantSessionClaims.Of(Names.Tenant, Names.OwnerEmail))).Token
+        const elsewhere = (await store.Issue(Names.Principal, TenantSessionClaims.Of(Names.OtherTenant, Names.OwnerEmail))).Token
+        await principals.RevokeAllFor(Names.Tenant, Names.Principal)
+        assert.equal(await store.Validate(reset), null)
+        assert.notEqual(await store.Validate(elsewhere), null)
+    })
 })
