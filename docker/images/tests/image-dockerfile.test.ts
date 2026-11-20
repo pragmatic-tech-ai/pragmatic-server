@@ -10,6 +10,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { IClosureEntry } from '../closure-check.js'
 import { ControlPlaneRole, ControlPlaneRoles } from '../../../admin/control-plane/control-plane-role.js'
+import { ConsoleComponents } from '../../../admin/control-plane/configuration/console-components.js'
 import { Template } from '../../../admin/control-plane/environment-record.js'
 import { ComponentDescriptorCli } from '../../../admin/control-plane/release/component-descriptor-cli.js'
 import { ComponentImageLabel } from '../../../admin/control-plane/release/component-image-label.js'
@@ -120,6 +121,12 @@ class RuntimeAssets
     {
         const R = RuntimeAssets
         return R.Compiled(TemplateCatalog.Resolve(template, R.ProbeName, R.ProbePort, TemplateCatalog.DefaultTypeFor(template)).seedDir)
+    }
+
+    /** The digest-pinned component descriptors the tenant console reads (ConsoleComponents). */
+    public static Descriptors(): string
+    {
+        return RuntimeAssets.Compiled(ConsoleComponents.VendoredDirectory())
     }
 
     public static Northwind(): string
@@ -290,10 +297,10 @@ describe('image contents', () =>
         assert.ok(!ImageFiles.Ships(app, RuntimeAssets.TenantPortal()))
     })
 
-    it('tenant-admin ships the tenant portal, the templates and the seeds, and never the Platform Admin SPA or the release keys', () =>
+    it('tenant-admin ships the tenant portal, the templates, the seeds and the vendored descriptors, and never the Platform Admin SPA or the release keys', () =>
     {
         const app = ImageFiles.TenantAdmin
-        for (const path of [RuntimeAssets.TenantPortal(), RuntimeAssets.Northwind(), ...RuntimeAssets.TemplateSeeds()])
+        for (const path of [RuntimeAssets.TenantPortal(), RuntimeAssets.Northwind(), ...RuntimeAssets.TemplateSeeds(), RuntimeAssets.Descriptors()])
         {
             assert.ok(ImageFiles.Ships(app, path), path)
         }
@@ -336,7 +343,7 @@ describe('image contents', () =>
         const build = ImageFiles.Stage(ImageFiles.BuildStage).join('\n')
         const templates = dirname(RuntimeAssets.SeedOf(Template.DevBlank))
         const sampleApps = dirname(dirname(RuntimeAssets.Northwind()))
-        for (const path of [RuntimeAssets.OperatorPortal(), RuntimeAssets.TenantPortal(), RuntimeAssets.ReleaseKeys(), templates, RuntimeAssets.SeedOf(Template.DemoContoso), sampleApps])
+        for (const path of [RuntimeAssets.OperatorPortal(), RuntimeAssets.TenantPortal(), RuntimeAssets.ReleaseKeys(), templates, RuntimeAssets.SeedOf(Template.DemoContoso), sampleApps, RuntimeAssets.Descriptors()])
         {
             assert.ok(build.includes(path), path)
         }

@@ -17,14 +17,12 @@
   },
   "pragmatic-platform-edge": {
     "entrypoint": ["node", "dist-tenant-admin/admin/control-plane/bin/pragmatic-platform-edged.js"],
-    "packages": ["pragmatic-shared/packages/pragmatic-app-host", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-local", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-realm-adapters", "todl-runtime"],
+    "packages": ["pragmatic-shared/packages/pragmatic-app-host", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-realm-adapters", "todl-runtime"],
     "files": [
       "pragmatic-shared/node_modules",
       "pragmatic-server/package.json",
       "pragmatic-server/node_modules",
-      "pragmatic-server/dist-tenant-admin/admin/control-plane",
-      "pragmatic-server/dist-tenant-admin/environments/seed",
-      "pragmatic-server/dist-tenant-admin/src"
+      "pragmatic-server/dist-tenant-admin/admin/control-plane"
     ]
   },
   "pragmatic-env-server": {

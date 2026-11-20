@@ -4,7 +4,8 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ISqlSession } from '@pragmatic-tech-ai/todl'
 import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
-import { OperatorBootstrapError, MasterKeyError, OperatorRole, OperatorExistsError } from '../operator-identity.js'
+import { Role } from '@pragmatic-tech-ai/pragmatic-identity'
+import { OperatorBootstrapError, MasterKeyError, OperatorIdentity, OperatorRole, OperatorExistsError } from '../operator-identity.js'
 import { OperatorHarness } from './operator-harness.js'
 
 class OperatorIdentityFixture
@@ -19,6 +20,8 @@ class OperatorIdentityFixture
     public static readonly SummaryKeys = ['disabled', 'email', 'role']
     private static readonly TempPrefix = 'op-'
     public static readonly KeyFile = 'master.key'
+    /** The bootstrap operator's principal id (OperatorIdentity's own, private there). */
+    public static readonly AdminPrincipal = 'admin'
 
     public static Compose(root: string, session: ISqlSession, initialPassword: string | undefined): Promise<OperatorHarness>
     {
@@ -107,6 +110,26 @@ SqlTestSessions.Describe('OperatorIdentity', (makeSession, backend) =>
                 const first = readFileSync(join(root, OperatorIdentityFixture.KeyFile))
                 await OperatorIdentityFixture.Compose(root, session, OperatorIdentityFixture.Password)
                 assert.ok(first.equals(readFileSync(join(root, OperatorIdentityFixture.KeyFile))))
+            })
+        })
+
+        it('repairs a missing Owner grant of the bootstrap operator at the next start (a crash between register and grant)', async () =>
+        {
+            await OperatorIdentityFixture.WithRoot(makeSession, async (root, session) =>
+            {
+                const F = OperatorIdentityFixture
+                await F.Compose(root, session, F.Password)
+                const stores = await OperatorIdentity.OpenStores(session, readFileSync(join(root, F.KeyFile)))
+                const realm = OperatorIdentity.Realm()
+                for (const grant of await stores.Grants.GrantsFor(F.AdminPrincipal, realm))
+                {
+                    await stores.Grants.Revoke(grant)
+                }
+                assert.equal((await stores.Grants.GrantsFor(F.AdminPrincipal, realm)).length, 0)
+                const again = await F.Compose(root, session, F.Password)
+                assert.ok((await stores.Grants.GrantsFor(F.AdminPrincipal, realm)).some(g => g.Role === Role.Owner))
+                const signedIn = await again.SignIn(F.Email, F.Password)
+                assert.equal((await again.Validate(signedIn!.token))?.role, OperatorRole.Full)
             })
         })
 

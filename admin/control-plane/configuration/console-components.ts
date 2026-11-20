@@ -1,3 +1,5 @@
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component'
 import { ComponentDescriptorSet } from '../release/component-descriptor-set.js'
 import { ReleaseApp } from '../release/release-tag.js'
@@ -25,9 +27,19 @@ export class ConsoleComponents
     /** The hive components the console configures besides itself, read from the vendored set. */
     private static readonly Vendored: readonly ReleaseApp[] = [ReleaseApp.EnvServer, ReleaseApp.EnvGateway, ReleaseApp.TenantIdp, ReleaseApp.HiveAgent]
     private static readonly MissingPrefix = 'the vendored descriptor set lacks '
+    private static readonly VendoredFolder = 'descriptors'
+    private static readonly ParentSegment = '..'
+
+    /** The set vendored with the console (`admin/control-plane/descriptors`; the image stages it at the same place in
+     *  the compiled tree). */
+    public static VendoredDirectory(): string
+    {
+        const C = ConsoleComponents
+        return join(dirname(fileURLToPath(import.meta.url)), C.ParentSegment, C.VendoredFolder)
+    }
 
     /** The catalogue of this console's release. */
-    public static Release(set: ComponentDescriptorSet = ComponentDescriptorSet.FromDirectory(ComponentDescriptorSet.VendoredDirectory())): ConsoleComponents
+    public static Release(set: ComponentDescriptorSet = ComponentDescriptorSet.FromDirectory(ConsoleComponents.VendoredDirectory())): ConsoleComponents
     {
         const C = ConsoleComponents
         const others = C.Vendored.map(app =>

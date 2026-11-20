@@ -1,7 +1,7 @@
 import { isIP } from 'node:net'
 import { EdgeHost } from './edge-host.js'
 import { InternalApiClient } from './internal-api-client.js'
-import { InternalApiRoutes } from './internal-api-routes.js'
+import { InternalApiLink } from './internal-api-link.js'
 import { RemoteAgentChannelBackend } from './remote-agent-channel-backend.js'
 import { RemoteDesktopDiscoveryBackend } from './remote-desktop-discovery-backend.js'
 
@@ -15,7 +15,7 @@ export interface ComposedEdge
 }
 
 /**
- * Composes `PRAGMATIC_CONTROL_PLANE_ROLE=edge`. Reads only its own five settings, never a data root, key, registry or
+ * Composes the keyless platform edge (bin/pragmatic-platform-edged). Reads only its own five settings, never a data root, key, registry or
  * the master key: everything it answers comes from admin's internal API.
  */
 export class EdgeComposition
@@ -47,12 +47,12 @@ export class EdgeComposition
             throw new Error(E.BadBind)
         }
         const adminUrl = E.AdminUrlOf(env[E.AdminUrlEnvVar])
-        const secretFile = env[InternalApiRoutes.SecretFileEnvVar]?.trim() ?? ''
+        const secretFile = env[InternalApiLink.SecretFileEnvVar]?.trim() ?? ''
         if (secretFile === '')
         {
             throw new Error(E.MissingSecret)
         }
-        const client = new InternalApiClient(adminUrl, InternalApiRoutes.Credential(secretFile))
+        const client = new InternalApiClient(adminUrl, InternalApiLink.Credential(secretFile))
         const trustedProxy = E.TrueValues.has(env[E.TrustedProxyEnvVar]?.trim().toLowerCase() ?? '')
         const host = new EdgeHost(new RemoteAgentChannelBackend(client), new RemoteDesktopDiscoveryBackend(client), trustedProxy)
         return { Host: host, Port: port, Bind: bind, TrustedProxy: trustedProxy }

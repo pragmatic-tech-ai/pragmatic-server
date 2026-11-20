@@ -27,6 +27,29 @@ export enum SplitHome
     Archive = 'pragmatic-server (archive)',
 }
 
+/**
+ * Which images may reach each shared package (the plan's "Used by" column). A shared home not listed here
+ * (pragmatic-component, pragmatic-identity, pragmatic-identity-source-oidc) is open to every image.
+ */
+export class SharedHomeUsers
+{
+    public static readonly ByHome: ReadonlyMap<SplitHome, readonly ReleaseApp[]> = new Map<SplitHome, readonly ReleaseApp[]>([
+        [SplitHome.ReleaseToolkit, [ReleaseApp.PlatformAdmin, ReleaseApp.TenantAdmin, ReleaseApp.UiUnpack]],
+        [SplitHome.Kube, [ReleaseApp.PlatformAdmin, ReleaseApp.TenantAdmin, ReleaseApp.HiveAgent]],
+        [SplitHome.TenantPlane, [ReleaseApp.PlatformAdmin, ReleaseApp.TenantAdmin]],
+        // the tenant plane builds on the link's HTTP helpers, so the tenant console reaches them through it
+        [SplitHome.PlatformLink, [ReleaseApp.PlatformAdmin, ReleaseApp.PlatformEdge, ReleaseApp.TenantAdmin]],
+        [SplitHome.EnvCluster, [ReleaseApp.EnvServer, ReleaseApp.EnvGateway]],
+        [SplitHome.Observability, [ReleaseApp.EnvServer, ReleaseApp.EnvGateway, ReleaseApp.HiveAgent]],
+    ])
+
+    public static Allows(home: string, app: ReleaseApp): boolean
+    {
+        const users = SharedHomeUsers.ByHome.get(home as SplitHome)
+        return users === undefined || users.includes(app)
+    }
+}
+
 /** One file's home and the rule that chose it. */
 export interface Assignment
 {
@@ -103,6 +126,7 @@ export class AssignmentRules
         ['admin/control-plane/internal-api-routes.ts', SplitHome.PlatformLink],
         ['admin/control-plane/internal-api-client.ts', SplitHome.PlatformLink],
         ['admin/control-plane/agent-channel-backend.ts', SplitHome.PlatformLink],
+        ['admin/control-plane/internal-api-link.ts', SplitHome.PlatformLink],
         ['admin/control-plane/desktop-discovery-contract.ts', SplitHome.PlatformLink],
         // the edge's hosts, which the console's single dev process (role `all`, the default) also serves, and the
         // helpers the edge borrows (plan Task 2 Step 3: into the link bucket)
@@ -138,8 +162,6 @@ export class AssignmentRules
         ['docker/postgres/pragmatic-postgres-component.ts', SplitHome.Postgres],
         // the vendored descriptor set: the consoles read it (ComponentDescriptorSet goes to the release toolkit)
         ['admin/control-plane/release/component-descriptor-set.ts', SplitHome.ReleaseToolkit],
-        // the env-server's operator bootstrap, which the platform console reaches until Task 2 untangles it
-        ['src/identity/server-bootstrap.ts', SplitHome.EnvServer],
         ['release-keys/release-2026-11.pub.pem', SplitHome.PlatformRelease],
     ])
 
@@ -153,6 +175,10 @@ export class AssignmentRules
         ['docker/postgres/', SplitHome.Postgres],
         ['docker/images/', SplitHome.Archive],
         ['docker/', SplitHome.EnvServer],
+        // read from disk, so no bundle sees them: the vendored descriptors are the tenant console's (ConsoleComponents),
+        // the environment templates the tenant plane's (TemplateCatalog)
+        ['admin/control-plane/descriptors/', SplitHome.TenantAdmin],
+        ['admin/control-plane/templates/', SplitHome.TenantPlane],
         ['admin/control-plane/live-loop/', SplitHome.E2e],
         ['admin/control-plane/dev/', SplitHome.E2e],
         ['admin/control-plane/smoke-cluster.ts', SplitHome.E2e],
@@ -194,11 +220,6 @@ export class AssignmentRules
             return { Home: SplitHome.E2e, Reason: R.PrefixReason + R.SmokeSuffix }
         }
         const apps = new Set(reachedBy)
-        // The edge runs the console's entry until it has its own: what both reach is the console's.
-        if (apps.has(ReleaseApp.PlatformAdmin))
-        {
-            apps.delete(ReleaseApp.PlatformEdge)
-        }
         if (apps.size === 1)
         {
             const [only] = apps

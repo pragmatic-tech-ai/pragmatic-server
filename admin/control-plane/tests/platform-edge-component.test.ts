@@ -11,9 +11,8 @@ class PlatformEdgeComponentFixture
     public static readonly Here = dirname(fileURLToPath(import.meta.url))
     public static readonly Golden = join(PlatformEdgeComponentFixture.Here, 'fixtures', 'pragmatic-platform-edge.component.json')
     public static readonly Digest = 'sha256:f8e6ed26594d13a07d6a35f48ad93bcdbede400637a431f9c16a8a3305a4ad8c'
-    public static readonly Readers = [['..', 'edge-composition.ts']].map(path => join(PlatformEdgeComponentFixture.Here, ...path))
-    /** PRAGMATIC_CONTROL_PLANE_ROLE: fixed to edge by the image, not configuration. */
-    public static readonly Undeclared: readonly string[] = ['PRAGMATIC_CONTROL_PLANE_ROLE']
+    public static readonly Readers = [['..', 'edge-composition.ts'], ['..', 'internal-api-link.ts'], ['..', 'bin', 'pragmatic-platform-edged.ts']].map(path => join(PlatformEdgeComponentFixture.Here, ...path))
+    public static readonly Undeclared: readonly string[] = []
 }
 
 describe('PlatformEdgeComponent', () =>

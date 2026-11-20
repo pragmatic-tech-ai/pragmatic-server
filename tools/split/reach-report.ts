@@ -1,13 +1,16 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { EsbuildLocator, type IEsbuild } from '../../docker/images/closure-check.js'
 import { ReleaseApp } from '../../admin/control-plane/release/release-tag.js'
 import { AssignmentRules, SplitHome } from './assignment-rules.js'
 
-/** The split's assignment: every tracked file's home, and the tests whose imports span container homes. */
+/**
+ * The split's assignment: every tracked file's home, the tests whose imports reach more than one container, and the
+ * test-support files whose readers live in more than one home (each needs a copy, or a home decided by hand).
+ */
 export class SplitAssignment
 {
     /** The folders the split assigns (every tracked file under them). */
@@ -16,15 +19,18 @@ export class SplitAssignment
     private static readonly Utf8 = 'utf8'
     private static readonly Newline = '\n'
 
-    public constructor(public readonly Homes: Readonly<Record<string, string>>, public readonly CrossHomeTests: readonly string[])
+    public constructor(
+        public readonly Homes: Readonly<Record<string, string>>,
+        public readonly CrossHomeTests: readonly string[],
+        public readonly SharedSupport: readonly string[])
     {
     }
 
-    /** Every file under the roots git knows or would add (tracked and untracked, not ignored) that exists. */
+    /** Every tracked (or staged) file under the roots that exists. */
     public static Files(root: string): string[]
     {
         const S = SplitAssignment
-        const listed = execFileSync(S.Git, ['-C', root, 'ls-files', '--cached', '--others', '--exclude-standard', ...S.Roots], { encoding: S.Utf8 })
+        const listed = execFileSync(S.Git, ['-C', root, 'ls-files', '--cached', ...S.Roots], { encoding: S.Utf8 })
         return [...new Set(listed.split(S.Newline).filter(line => line.length > 0))].filter(file => existsSync(join(root, file))).sort()
     }
 
@@ -60,13 +66,16 @@ interface IOutputMetafile
  * type-only imports dropped as in the image closure check) and every test, and AssignmentRules places each file. Tests
  * follow their subject (`dir/tests/x.test.ts` goes where `x.ts` goes, found beside the tests folder or, failing that,
  * as the one file of that name in the same area); a test with no subject goes to the one container its imports reach,
- * else it is a cross-home test (pragmatic-e2e). A test-support file goes where most tests of its folder go.
+ * to the shared home most of its reach lies in when it reaches no container, or by its path when it reaches none of
+ * the repository's files; one that reaches two or more containers is a cross-home test (pragmatic-e2e). A test-support
+ * file (fixtures, helpers) goes where the tests that name it go; when they live in several homes it is listed.
  */
 export class ReachReport
 {
     private static readonly TestSuffix = '.test.ts'
     private static readonly TestsSegment = '/tests/'
     private static readonly TsExtension = '.ts'
+    private static readonly JsExtension = '.js'
     private static readonly SharedPrefix = 'pragmatic-shared/'
     private static readonly Platform = 'node'
     private static readonly Format = 'esm'
@@ -75,7 +84,16 @@ export class ReachReport
     private static readonly ParentSegment = '..'
     private static readonly NodeModules = 'node_modules'
     private static readonly Slash = '/'
+    private static readonly Utf8 = 'utf8'
     private static readonly OutputFile = 'assignment.json'
+    private static readonly OutDirSuffix = '-reach'
+    private static readonly CountSeparator = ': '
+    private static readonly FilesSuffix = ' files, '
+    private static readonly TestsSuffix = ' tests'
+    private static readonly CrossHomeLine = 'cross-home tests: '
+    private static readonly SharedSupportLine = 'test support named by several homes: '
+    private static readonly JsonIndent = 2
+    private static readonly Newline = '\n'
     /** The area a subject is looked for in: the first two segments (`admin/control-plane`, `src/host`). */
     private static readonly AreaDepth = 2
 
@@ -129,7 +147,7 @@ export class ReachReport
             packages: R.External,
             metafile: true,
             write: false,
-            outdir: join(tmpdir(), basename(this.root) + '-reach'),
+            outdir: join(tmpdir(), basename(this.root) + R.OutDirSuffix),
             logLevel: R.LogLevel,
         })
         const metafile = result.metafile as unknown as IOutputMetafile
@@ -154,6 +172,23 @@ export class ReachReport
         return byEntry
     }
 
+    /** Which images reach each own file. */
+    public async ReachedBy(): Promise<ReadonlyMap<string, ReleaseApp[]>>
+    {
+        const all = [...new Set([...ReachReport.Entries.values()].flat())]
+        const reach = await this.ForEach(all)
+        const by = new Map<string, ReleaseApp[]>()
+        for (const [app, entries] of ReachReport.Entries)
+        {
+            const files = new Set(entries.flatMap(entry => [...(reach.get(entry) ?? [])]))
+            for (const file of files)
+            {
+                by.set(file, [...(by.get(file) ?? []), app])
+            }
+        }
+        return by
+    }
+
     public async Assignment(): Promise<SplitAssignment>
     {
         const R = ReachReport
@@ -165,7 +200,15 @@ export class ReachReport
             homes[file] = this.rules.Assign(file, reachedBy.get(file) ?? []).Home
         }
         const tests = tracked.filter(f => R.InTestsFolder(f) && R.IsTest(f))
-        const testReach = await this.ForEach(tests)
+        const cross = this.PlaceTests(tests, homes, await this.ForEach(tests))
+        const shared = this.PlaceSupport(tracked.filter(f => R.InTestsFolder(f) && !R.IsTest(f)), tests, homes, reachedBy)
+        return new SplitAssignment(homes, cross.sort(), shared.sort())
+    }
+
+    /** Places every test (see the class comment); returns the cross-home ones. */
+    private PlaceTests(tests: readonly string[], homes: Record<string, string>, testReach: ReadonlyMap<string, ReadonlySet<string>>): string[]
+    {
+        const R = ReachReport
         const cross: string[] = []
         for (const test of tests)
         {
@@ -181,40 +224,57 @@ export class ReachReport
             {
                 homes[test] = [...containers][0]
             }
-            else if (containers.size === 0 && reached.length > 0)
+            else if (containers.size > 1)
+            {
+                homes[test] = SplitHome.E2e
+                cross.push(test)
+            }
+            else if (reached.length > 0)
             {
                 homes[test] = R.MostCommon(reached)
             }
             else
             {
-                homes[test] = SplitHome.E2e
-                cross.push(test)
+                homes[test] = this.rules.Assign(test, []).Home
             }
         }
-        for (const file of tracked.filter(f => R.InTestsFolder(f) && !R.IsTest(f)))
+        return cross
+    }
+
+    /** Places every test-support file where the tests that name it go; returns the ones named from several homes. */
+    private PlaceSupport(support: readonly string[], tests: readonly string[], homes: Record<string, string>, reachedBy: ReadonlyMap<string, ReleaseApp[]>): string[]
+    {
+        const R = ReachReport
+        const texts = new Map(tests.map(t => [t, readFileSync(join(this.root, t), R.Utf8)]))
+        const shared: string[] = []
+        for (const file of support)
         {
+            const name = R.ReferenceName(file)
+            // The archive's own tests (the split tooling's) name files without being their readers.
+            const readers = tests.filter(t => homes[t] !== SplitHome.Archive && (texts.get(t) as string).includes(name)).map(t => homes[t])
+            const distinct = new Set(readers)
+            if (distinct.size > 1)
+            {
+                shared.push(file)
+            }
+            if (readers.length > 0)
+            {
+                homes[file] = R.MostCommon(readers)
+                continue
+            }
             const folder = R.TestsFolderOf(file)
             const siblings = tests.filter(t => R.TestsFolderOf(t) === folder).map(t => homes[t])
             homes[file] = siblings.length > 0 ? R.MostCommon(siblings) : this.rules.Assign(file, reachedBy.get(file) ?? []).Home
         }
-        return new SplitAssignment(homes, cross.sort())
+        return shared
     }
 
-    /** Which images reach each own file. */
-    private async ReachedBy(): Promise<ReadonlyMap<string, ReleaseApp[]>>
+    /** How a test names a support file: a TypeScript helper by its compiled import name, anything else by its file name. */
+    private static ReferenceName(file: string): string
     {
-        const all = [...new Set([...ReachReport.Entries.values()].flat())]
-        const reach = await this.ForEach(all)
-        const by = new Map<string, ReleaseApp[]>()
-        for (const [app, entries] of ReachReport.Entries)
-        {
-            const files = new Set(entries.flatMap(entry => [...(reach.get(entry) ?? [])]))
-            for (const file of files)
-            {
-                by.set(file, [...(by.get(file) ?? []), app])
-            }
-        }
-        return by
+        const R = ReachReport
+        const name = basename(file)
+        return extname(name) === R.TsExtension ? name.slice(0, -R.TsExtension.length) + R.JsExtension : name
     }
 
     /** `dir/tests/x.test.ts` → `dir/x.ts` when tracked, else the one tracked `x.ts` in the same area (outside tests). */
@@ -264,12 +324,14 @@ export class ReachReport
         const here = dirname(fileURLToPath(import.meta.url))
         const assignment = await new ReachReport(resolve(here, R.ParentSegment, R.ParentSegment)).Assignment()
         const sorted = Object.fromEntries(Object.entries(assignment.Homes).sort(([a], [b]) => a.localeCompare(b)))
-        writeFileSync(join(here, R.OutputFile), JSON.stringify({ homes: sorted, crossHomeTests: assignment.CrossHomeTests }, null, 2) + '\n')
+        const document = { homes: sorted, crossHomeTests: assignment.CrossHomeTests, sharedSupport: assignment.SharedSupport }
+        writeFileSync(join(here, R.OutputFile), JSON.stringify(document, null, R.JsonIndent) + R.Newline)
         for (const [home, count] of [...assignment.Counts()].sort(([a], [b]) => a.localeCompare(b)))
         {
-            console.log(home + ': ' + count.Files + ' files, ' + count.Tests + ' tests')
+            console.log(home + R.CountSeparator + count.Files + R.FilesSuffix + count.Tests + R.TestsSuffix)
         }
-        console.log('cross-home tests: ' + assignment.CrossHomeTests.length)
+        console.log(R.CrossHomeLine + assignment.CrossHomeTests.length)
+        console.log(R.SharedSupportLine + assignment.SharedSupport.length)
         return 0
     }
 

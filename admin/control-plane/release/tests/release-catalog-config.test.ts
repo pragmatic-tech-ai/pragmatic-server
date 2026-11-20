@@ -20,7 +20,6 @@ import { HiveOrchestratorFactory } from '../../hive-orchestrator-factory.js'
 import type { PlatformDeploymentRegistry } from '../../platform-deployment-registry.js'
 import { RolloutFixture } from '../../tests/rollout-fixture.js'
 import { ControlPlaneServer } from '../../server.js'
-import { ControlPlaneRole } from '../../control-plane-role.js'
 
 /** A temp data root with a deployment registry and credential files written into it. */
 class ConfigFixture
@@ -230,18 +229,12 @@ describe('ReleaseCatalogConfig', () =>
             (err: unknown) => F.Refuses(err, F.TrustDirVar, fx.Dir))
     })
 
-    it('builds the catalogue and poll only for roles that serve operators: the edge never reads the release settings', () =>
+    it('builds the catalogue and poll for the console, refusing an unreadable credential', () =>
     {
         const unreadable = { [F.CredentialVar]: fx.Missing() }
-        assert.equal(ControlPlaneServer.ReleasesOf(ControlPlaneRole.Edge, unreadable, F.RepoRoot, fx.Deployments), undefined)
-        assert.equal(ControlPlaneServer.ReleasesOf(ControlPlaneRole.Edge, { [F.PollVar]: 'x' }, F.RepoRoot, fx.Deployments), undefined)
-        assert.throws(() => ControlPlaneServer.ReleasesOf(ControlPlaneRole.Admin, unreadable, F.RepoRoot, fx.Deployments), ReleaseConfigError)
-        const file = fx.ValidCredential()
-        for (const role of [ControlPlaneRole.All, ControlPlaneRole.Admin])
-        {
-            const releases = ControlPlaneServer.ReleasesOf(role, { [F.CredentialVar]: file }, F.RepoRoot, fx.Deployments)
-            assert.ok(releases?.Refresher !== undefined, role)
-            assert.ok(releases.Poll !== undefined, role)
-        }
+        assert.throws(() => ControlPlaneServer.ReleasesOf(unreadable, F.RepoRoot, fx.Deployments), ReleaseConfigError)
+        const releases = ControlPlaneServer.ReleasesOf({ [F.CredentialVar]: fx.ValidCredential() }, F.RepoRoot, fx.Deployments)
+        assert.ok(releases?.Refresher !== undefined)
+        assert.ok(releases.Poll !== undefined)
     })
 })

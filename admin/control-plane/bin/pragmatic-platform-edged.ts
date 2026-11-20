@@ -37,7 +37,8 @@ export class PlatformEdgeBin
         }
         catch (err)
         {
-            console.error(PlatformEdgeBin.FailurePrefix + (err instanceof Error ? err.message : String(err)))
+            // The whole stack, as an uncaught start failure printed before the edge had its own entry.
+            console.error(PlatformEdgeBin.FailurePrefix + (err instanceof Error ? err.stack ?? err.message : String(err)))
             process.exitCode = 1
         }
     }

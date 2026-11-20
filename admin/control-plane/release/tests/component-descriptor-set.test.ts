@@ -3,13 +3,14 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
+import { ConsoleComponents } from '../../configuration/console-components.js'
 import { ComponentDescriptorSet, ComponentDescriptorSetDigestError } from '../component-descriptor-set.js'
 import { ReleaseComponents } from '../release-components.js'
 import { ReleaseApps } from '../release-tag.js'
 
 class VendoredFixture
 {
-    public static readonly Directory = ComponentDescriptorSet.VendoredDirectory()
+    public static readonly Directory = ConsoleComponents.VendoredDirectory()
     public static readonly Scratch = mkdtempSync(join(tmpdir(), 'descriptor-set-'))
 }
 

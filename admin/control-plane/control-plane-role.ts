@@ -1,8 +1,8 @@
 /**
- * Which listeners one control-plane process starts (`PRAGMATIC_CONTROL_PLANE_ROLE`). `all` is the single dev process;
- * `edge` is the keyless public process (agent channel + desktop discovery, answered by admin over the internal API;
- * the pragmatic-platform-edge image); `admin` runs everything except the public channel, plus the internal API (the
- * pragmatic-platform-admin image).
+ * Which listeners one control-plane process starts (`PRAGMATIC_CONTROL_PLANE_ROLE`). `all` is the single dev process
+ * (it also serves the agent channel); `admin` runs everything except the public channel, plus the internal API (the
+ * pragmatic-platform-admin image). `edge` is recognised only to be refused: the keyless edge has its own entry
+ * (bin/pragmatic-platform-edged, the pragmatic-platform-edge image), so a stale unit asking the console for it fails loudly.
  */
 export enum ControlPlaneRole
 {
@@ -44,16 +44,16 @@ export class ControlPlaneRoleInvalidError extends Error
     }
 }
 
-/** The edge role was asked for without an agent channel to listen on, so the process would start nothing. */
-export class EdgeRoleWithoutChannelError extends Error
+/** The console was asked to run the edge, which has its own entry now. */
+export class EdgeRoleRefusedError extends Error
 {
-    private static readonly ErrorName = 'EdgeRoleWithoutChannelError'
-    private static readonly MessageText = 'PRAGMATIC_CONTROL_PLANE_ROLE=edge needs PRAGMATIC_AGENT_CHANNEL_PORT set to a port 1-65535'
+    private static readonly ErrorName = 'EdgeRoleRefusedError'
+    private static readonly MessageText = '=edge: the platform edge runs bin/pragmatic-platform-edged, not the console'
 
-    public constructor()
+    public constructor(envVar: string)
     {
-        super(EdgeRoleWithoutChannelError.MessageText)
-        this.name = EdgeRoleWithoutChannelError.ErrorName
+        super(envVar + EdgeRoleRefusedError.MessageText)
+        this.name = EdgeRoleRefusedError.ErrorName
     }
 }
 
@@ -78,22 +78,10 @@ export class ControlPlaneRoles
         return role
     }
 
-    /** Pure: the listeners the role starts. */
+    /** Pure: the listeners a console role starts (only `all` serves the agent channel; `edge` is refused before). */
     public static ListenersOf(role: ControlPlaneRole): IControlPlaneListeners
     {
-        const edge = role === ControlPlaneRole.Edge
-        const admin = role === ControlPlaneRole.Admin
-        return { OperatorHost: !edge, AgentChannel: !admin, TenantPlane: !edge, InternalApi: !edge }
-    }
-
-    /**
-     * Pure: whether the role opens the operator-side state (operator accounts, the master key and the sealed secrets,
-     * the environment reconcile, the account back-fill, the DNS re-check). The edge serves only the agent channel, so a
-     * co-deployed edge never repeats that work.
-     */
-    public static ServesOperators(role: ControlPlaneRole): boolean
-    {
-        return role !== ControlPlaneRole.Edge
+        return { OperatorHost: true, AgentChannel: role === ControlPlaneRole.All, TenantPlane: true, InternalApi: true }
     }
 
     /** Pure: whether the role composes the agent channel at all (its host and the console advert receiver behind it). */
@@ -102,12 +90,12 @@ export class ControlPlaneRoles
         return ControlPlaneRoles.ListenersOf(role).AgentChannel
     }
 
-    /** Refuses an edge process with no agent-channel port: it would serve nothing. */
-    public static RequireListener(role: ControlPlaneRole, agentChannelEnabled: boolean): void
+    /** Refuses role `edge`: the console is not the edge any more (it has its own entry). */
+    public static RequireConsole(role: ControlPlaneRole): void
     {
-        if (role === ControlPlaneRole.Edge && !agentChannelEnabled)
+        if (role === ControlPlaneRole.Edge)
         {
-            throw new EdgeRoleWithoutChannelError()
+            throw new EdgeRoleRefusedError(ControlPlaneRoles.EnvVar)
         }
     }
 }

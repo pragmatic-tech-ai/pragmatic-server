@@ -4,7 +4,7 @@ import { isIP } from 'node:net'
 import { dirname, join, resolve } from 'node:path'
 import { AuditRegistry } from './audit-record.js'
 import { LocalDesktopDiscoveryBackend } from './desktop-discovery-backend.js'
-import { InternalApiRoutes } from './internal-api-routes.js'
+import { InternalApiLink } from './internal-api-link.js'
 import { InternalApiHost } from './internal-api-host.js'
 import { InfraTargetMode, InfraTargetModes } from './infra-target-mode.js'
 import { TenantIdpMode } from './tenant-idp-mode.js'
@@ -249,7 +249,6 @@ export class ControlPlaneServer
     private static readonly MaxPort = TenantPlaneComposer.MaxPort
     private static readonly BadPortPrefix = 'Invalid PRAGMATIC_ADMIN_PORT: '
     private static readonly DataDir = 'data'
-    private static readonly EdgeHasOwnEntry = 'PRAGMATIC_CONTROL_PLANE_ROLE=edge: the platform edge runs bin/pragmatic-platform-edged, not the console'
     private static readonly DataRootEnvVar = 'PRAGMATIC_ADMIN_DATA_ROOT'
     private static readonly KeysDirName = PlatformHiveOrchestratorFactory.KeysDirName
     private static readonly SigningKeyRefEnvVar = 'PRAGMATIC_ADMIN_SIGNING_KEY_REF'
@@ -307,18 +306,13 @@ export class ControlPlaneServer
 
     public static async Main(): Promise<void>
     {
-        // The role and the agent-channel port are read first, so an unknown role (or an edge with no channel port) fails
+        // The role and the agent-channel port are read first, so an unknown role (or `edge`, which has its own entry) fails
         // before any state is touched; `all` composes and starts everything, as before the role existed.
         const role = ControlPlaneRoles.Of(process.env)
+        ControlPlaneRoles.RequireConsole(role)
         const agentChannelRaw = process.env[ControlPlaneServer.AgentChannelPortEnvVar]
         const agentChannelPort = ControlPlaneServer.ParseAgentChannelPort(agentChannelRaw)
-        ControlPlaneRoles.RequireListener(role, agentChannelPort !== ControlPlaneServer.AgentChannelDisabled)
-        if (role === ControlPlaneRole.Edge)
-        {
-            // The keyless edge has its own entry (bin/pragmatic-platform-edged); the console no longer composes it.
-            throw new Error(ControlPlaneServer.EdgeHasOwnEntry)
-        }
-        // From here on the role is `all` or `admin`: both open the operator-side state.
+        // The role is `all` or `admin`: both open the operator-side state.
         const here = dirname(fileURLToPath(import.meta.url))
         const dataRoot = ControlPlaneServer.DataRootOf(process.env, here)
         mkdirSync(dataRoot, { recursive: true })
@@ -400,7 +394,7 @@ export class ControlPlaneServer
         // starts, and never by the edge.
         // Release images are countersigned by their registry digest (never a local docker id), into the same signature store.
         const countersigner = new PlatformReleaseCountersigner(ControlPlaneServer.ImageSignerOf(keys, new RegistryRefImageDigest(), signatures), signing.PlatformSigner.KeyRef, signatures)
-        const releases = ControlPlaneServer.ReleasesOf(role, process.env, join(here, TenantPlaneComposer.ParentSegment, TenantPlaneComposer.ParentSegment), deployments, countersigner)
+        const releases = ControlPlaneServer.ReleasesOf(process.env, join(here, TenantPlaneComposer.ParentSegment, TenantPlaneComposer.ParentSegment), deployments, countersigner)
         const agentChannelUrlRaw = process.env[ControlPlaneServer.AgentChannelUrlEnvVar]
         const agentChannelUrl = ControlPlaneServer.AgentChannelUrl(agentChannelPort, agentChannelUrlRaw)
         const agentChannelUrlSet = agentChannelUrlRaw !== undefined && agentChannelUrlRaw !== ''
@@ -431,7 +425,7 @@ export class ControlPlaneServer
         const discovery = new DesktopDiscoveryEndpoint(discoveryBackend, DesktopDiscoveryEndpoint.NewThrottle())
         const internalSettings = ControlPlaneServer.InternalApiSettingsOf(process.env)
         const internalStart: IInternalApiStart | undefined = internalSettings === undefined ? undefined
-            : { host: new InternalApiHost(InternalApiRoutes.Credential(internalSettings.SecretFile), agentBackend, discoveryBackend), settings: internalSettings }
+            : { host: new InternalApiHost(InternalApiLink.Credential(internalSettings.SecretFile), agentBackend, discoveryBackend), settings: internalSettings }
         // Installs a Local hive's tenant console through the same cluster access.
         const consoleInstaller = new TenantConsoleInstaller(directory, orchestrators, new TenantAdminBootstrap(deployments), fingerprintKeys,
             new DevCertificateAuthority(join(dataRoot, DevCertificateAuthority.DirName), sealed), new InHiveIdpAdmin(orchestrators, sealed),
@@ -507,7 +501,7 @@ export class ControlPlaneServer
         {
             throw new Error(C.BadInternalBindPrefix + rawBind)
         }
-        const secretFile = env[InternalApiRoutes.SecretFileEnvVar]?.trim() ?? ''
+        const secretFile = env[InternalApiLink.SecretFileEnvVar]?.trim() ?? ''
         if (secretFile === '')
         {
             throw new Error(C.InternalSecretRequired)
@@ -552,9 +546,9 @@ export class ControlPlaneServer
      * The release catalogue (POST /api/releases/refresh) and its periodic poll, for roles that serve operators only: the edge
      * never reads the release settings. Undefined there, and when no credential file is configured.
      */
-    public static ReleasesOf(role: ControlPlaneRole, env: NodeJS.ProcessEnv, repoRoot: string, deployments: PlatformDeploymentRegistry, countersigner?: IReleaseCountersigner): IReleaseServices | undefined
+    public static ReleasesOf(env: NodeJS.ProcessEnv, repoRoot: string, deployments: PlatformDeploymentRegistry, countersigner?: IReleaseCountersigner): IReleaseServices | undefined
     {
-        return ControlPlaneRoles.ServesOperators(role) ? ReleaseCatalogConfig.Compose(env, repoRoot, deployments, undefined, countersigner) : undefined
+        return ReleaseCatalogConfig.Compose(env, repoRoot, deployments, undefined, countersigner)
     }
 
     /** Derives the operator bootstrap settings and cookie policy from the environment (reads the password file, if one is named). */

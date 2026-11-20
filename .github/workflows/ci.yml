@@ -44,6 +44,10 @@ jobs:
       - name: Image closure check
         working-directory: ${{ github.workspace }}/pragmatic-server
         run: npx tsx docker/images/closure-check.ts
+      # The container split's line: no image reaches another image's files (tools/split, dev-kit A3 plan Task 2).
+      - name: Container boundaries
+        working-directory: ${{ github.workspace }}/pragmatic-server
+        run: npm run test:split
       - name: Test
         working-directory: ${{ github.workspace }}/pragmatic-server
         run: npx tsx --test "src/**/*.test.ts"

@@ -48,7 +48,7 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
 # are cut from, so no build (CI's or the release's) produces an image with an unchecked closure.
 RUN cd pragmatic-server && npx tsx docker/images/closure-check.ts
 
-# The control plane (platform-admin / platform-edge: dist-tenant-admin/admin/control-plane/server.js) and the tenant admin
+# The control plane (platform-admin: dist-tenant-admin/admin/control-plane/server.js; platform-edge: its bin/pragmatic-platform-edged.js) and the tenant admin
 # run from the tenant-admin compile; ui-unpack has its own compile of only what its entry imports (dist-ui-unpack). tsc
 # emits only JavaScript, so the assets those modules read relative to themselves are staged beside them, each set at its
 # own path, so that every image copies only the sets its app reads (closure.json `files`):
@@ -142,7 +142,7 @@ RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline -
 FROM build AS pragmatic-platform-edge-shared-modules
 RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
     --workspace=packages/pragmatic-app-host \
-    --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm --workspace=packages/pragmatic-identity-source-local \
+    --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
     --workspace=packages/pragmatic-identity-source-oidc --workspace=packages/pragmatic-realm-adapters \
     && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
 
@@ -261,13 +261,12 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD node -e "const r=require('node:http').request({host:'127.0.0.1',port:process.env.PRAGMATIC_ADMIN_PORT||7000,path:'/healthz'},x=>process.exit(x.statusCode===200?0:1));r.on('error',()=>process.exit(1));r.end()"
 ENTRYPOINT ["node", "dist-tenant-admin/admin/control-plane/server.js"]
 
-# The keyless public edge (PRAGMATIC_CONTROL_PLANE_ROLE=edge): agent channel + desktop discovery + /healthz on 7100, all
+# The keyless public edge (its own entry, bin/pragmatic-platform-edged): agent channel + desktop discovery + /healthz on 7100, all
 # answered by admin over the internal API. The compiled code alone: no SPA, seed, trust key, data root or tool.
 FROM runtime AS pragmatic-platform-edge
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host /workspace/pragmatic-shared/packages/pragmatic-app-host
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity /workspace/pragmatic-shared/packages/pragmatic-identity
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm /workspace/pragmatic-shared/packages/pragmatic-identity-realm
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local /workspace/pragmatic-shared/packages/pragmatic-identity-source-local
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
@@ -275,8 +274,6 @@ COPY --from=pragmatic-platform-edge-shared-modules --chown=10001:10001 /workspac
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/seed /workspace/pragmatic-server/dist-tenant-admin/environments/seed
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/src /workspace/pragmatic-server/dist-tenant-admin/src
 ENV PRAGMATIC_AGENT_CHANNEL_PORT=7100
 ENV PRAGMATIC_AGENT_CHANNEL_BIND=0.0.0.0
 ARG COMPONENT_DIGEST

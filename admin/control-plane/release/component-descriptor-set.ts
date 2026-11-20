@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { join } from 'node:path'
 import { ComponentDescriptorCodec, type ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component'
 
 /** A vendored descriptor file does not hash to the digest pinned for it. */
@@ -28,21 +27,12 @@ export class ComponentDescriptorSet
     private static readonly DigestsFile = 'digests.json'
     private static readonly JsonExtension = '.json'
     private static readonly Utf8 = 'utf8'
-    private static readonly VendoredFolder = 'descriptors'
-    private static readonly ParentSegment = '..'
 
     private readonly byName: ReadonlyMap<string, ComponentDescriptor>
 
     private constructor(descriptors: readonly ComponentDescriptor[])
     {
         this.byName = new Map(descriptors.map(d => [d.Name, d]))
-    }
-
-    /** The set vendored beside the control plane (`admin/control-plane/descriptors`, compiled tree alike). */
-    public static VendoredDirectory(): string
-    {
-        const C = ComponentDescriptorSet
-        return join(dirname(fileURLToPath(import.meta.url)), C.ParentSegment, C.VendoredFolder)
     }
 
     public static FromDirectory(dir: string): ComponentDescriptorSet

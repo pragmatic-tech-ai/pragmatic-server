@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert'
+import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import { before, describe, it } from 'node:test'
 import { ReleaseApp } from '../../../admin/control-plane/release/release-tag.js'
@@ -10,11 +11,8 @@ class Measured
 {
     public static readonly Root = join(import.meta.dirname, '..', '..', '..')
     public static Assignment: SplitAssignment
-
-    public static Tracked(): string[]
-    {
-        return SplitAssignment.Files(Measured.Root)
-    }
+    /** A test that reaches the env-server and the env-gateway with no subject of its own. */
+    public static readonly KnownCrossHome = 'src/cluster/tests/cluster-e2e.test.ts'
 }
 
 describe('AssignmentRules', () =>
@@ -27,15 +25,15 @@ describe('AssignmentRules', () =>
         assert.equal(rules.Assign('src/idp/token-endpoint.ts', [ReleaseApp.TenantIdp]).Home, SplitHome.TenantIdp)
     })
 
-    it('a file the platform admin console and the edge reach (one entry until the edge has its own) goes to platform-admin', () =>
+    it('a file the platform admin console and the edge both reach, which no rule names, is refused (it belongs in the link)', () =>
     {
-        assert.equal(rules.Assign('admin/control-plane/client-registry.ts', [ReleaseApp.PlatformAdmin, ReleaseApp.PlatformEdge]).Home, SplitHome.PlatformAdmin)
+        assert.throws(() => rules.Assign('admin/control-plane/client-registry.ts', [ReleaseApp.PlatformAdmin, ReleaseApp.PlatformEdge]), /client-registry\.ts/)
     })
 
     it('a file reached by tenant-admin and platform-admin goes to pragmatic-tenant-plane unless a kube/release/link rule claims it', () =>
     {
-        assert.equal(rules.Assign('admin/control-plane/tenant-api/tenant-api-endpoint.ts', [ReleaseApp.PlatformAdmin, ReleaseApp.PlatformEdge, ReleaseApp.TenantAdmin]).Home, SplitHome.TenantPlane)
-        assert.equal(rules.Assign('admin/control-plane/kube-api-client.ts', [ReleaseApp.PlatformAdmin, ReleaseApp.PlatformEdge, ReleaseApp.TenantAdmin]).Home, SplitHome.Kube)
+        assert.equal(rules.Assign('admin/control-plane/tenant-api/tenant-api-endpoint.ts', [ReleaseApp.PlatformAdmin, ReleaseApp.TenantAdmin]).Home, SplitHome.TenantPlane)
+        assert.equal(rules.Assign('admin/control-plane/kube-api-client.ts', [ReleaseApp.PlatformAdmin, ReleaseApp.TenantAdmin]).Home, SplitHome.Kube)
         assert.equal(rules.Assign('admin/control-plane/oci-registry-client.ts', [ReleaseApp.PlatformAdmin, ReleaseApp.TenantAdmin, ReleaseApp.UiUnpack]).Home, SplitHome.ReleaseToolkit)
         assert.equal(rules.Assign('admin/control-plane/internal-api-routes.ts', [ReleaseApp.PlatformAdmin, ReleaseApp.PlatformEdge]).Home, SplitHome.PlatformLink)
     })
@@ -56,6 +54,7 @@ describe('AssignmentRules', () =>
         assert.equal(rules.Assign('admin/tenant-portal/src/app.ts', []).Home, SplitHome.TenantAdmin)
         assert.equal(rules.Assign('docker/postgres/Dockerfile', []).Home, SplitHome.Postgres)
         assert.equal(rules.Assign('admin/control-plane/live-loop/loop-orchestrator.ts', []).Home, SplitHome.E2e)
+        assert.equal(rules.Assign('admin/control-plane/descriptors/digests.json', []).Home, SplitHome.TenantAdmin)
         assert.throws(() => rules.Assign('nowhere/file.ts', []), /nowhere\/file\.ts/)
     })
 
@@ -72,10 +71,16 @@ describe('ReachReport over the repository', () =>
         Measured.Assignment = await new ReachReport(Measured.Root).Assignment()
     })
 
-    it('assigns every tracked source file exactly once', () =>
+    it('assigns every tracked source file exactly once, and known files to their homes', () =>
     {
-        const tracked = Measured.Tracked()
+        const tracked = execFileSync('git', ['-C', Measured.Root, 'ls-files', ...SplitAssignment.Roots], { encoding: 'utf8' }).split('\n').filter(line => line.length > 0)
         assert.deepEqual(Object.keys(Measured.Assignment.Homes).sort(), [...tracked].sort())
+        const homes = Measured.Assignment.Homes
+        assert.equal(homes['src/idp/token-endpoint.ts'], SplitHome.TenantIdp)
+        assert.equal(homes['admin/control-plane/edge-host.ts'], SplitHome.PlatformEdge)
+        assert.equal(homes['admin/control-plane/k8s-manifest-builder.ts'], SplitHome.Kube)
+        assert.equal(homes['admin/control-plane/descriptors/digests.json'], SplitHome.TenantAdmin)
+        assert.equal(homes['src/bin/gateway-main.ts'], SplitHome.EnvGateway)
     })
 
     it('tests follow their subject', () =>
@@ -85,11 +90,24 @@ describe('ReachReport over the repository', () =>
         assert.equal(homes['admin/control-plane/tests/desktop-relay.test.ts'], homes['admin/control-plane/tenant-auth/desktop-relay.ts'])
     })
 
-    it('lists the tests whose imports span homes with no subject to follow', () =>
+    it('lists the tests whose imports span containers with no subject to follow, and not a one-container test', () =>
     {
-        for (const test of Measured.Assignment.CrossHomeTests)
-        {
-            assert.match(test, /\.test\.ts$/)
-        }
+        const cross = Measured.Assignment.CrossHomeTests
+        assert.ok(cross.every(test => test.endsWith('.test.ts')))
+        assert.ok(cross.includes(Measured.KnownCrossHome), Measured.KnownCrossHome)
+        assert.ok(!cross.includes('admin/control-plane/tests/edge-composition.test.ts'))
+    })
+
+    it('a test with no subject that reaches none of the repository\'s files goes by its path, not to pragmatic-e2e', () =>
+    {
+        assert.equal(Measured.Assignment.Homes['src/packaging/tests/helm.test.ts'], SplitHome.EnvServer)
+    })
+
+    it('a test-support file goes where the tests naming it go (each descriptor golden with its component)', () =>
+    {
+        const homes = Measured.Assignment.Homes
+        assert.equal(homes['admin/control-plane/tests/fixtures/pragmatic-platform-edge.component.json'], SplitHome.PlatformEdge)
+        assert.equal(homes['admin/control-plane/tests/fixtures/pragmatic-tenant-admin.component.json'], SplitHome.TenantAdmin)
+        assert.equal(homes['src/bin/tests/fixtures/pragmatic-env-gateway.component.json'], SplitHome.EnvGateway)
     })
 })
