@@ -29,12 +29,13 @@ jobs:
           for pkg in pragmatic-graph todl-runtime TODL Mural pragmatic-protocol pragmatic-shared todl-identity-engine todl-connectors-host; do
             (cd "$pkg" && npm install --no-audit --no-fund && npm run build)
           done
-      # TODL's lock resolves the graph engine from GitHub Packages (its own CI has no sibling checkout), which
-      # would give TODL a second engine copy beside the server's file:../pragmatic-graph. Re-point TODL at the
-      # sibling before the server builds so the workspace holds ONE engine, exactly as in local development.
-      - name: Point TODL at the sibling graph engine
+      # The siblings' locks resolve the graph engine and todl-runtime from GitHub Packages (their own CI has no sibling
+      # checkout), which would give the workspace second copies beside the server's file:../pragmatic-graph and
+      # file:../todl-runtime (a second todl-runtime breaks instanceof across the two). Re-point every copy at the
+      # sibling before the server builds so the workspace holds ONE of each, exactly as in local development.
+      - name: Point the siblings at the sibling graph engine and todl-runtime
         working-directory: ${{ github.workspace }}
-        run: sh pragmatic-server/docker/link-graph-engine.sh .
+        run: sh pragmatic-server/docker/link-workspace-singletons.sh .
       - name: Build pragmatic-server
         working-directory: ${{ github.workspace }}/pragmatic-server
         run: npm install --no-audit --no-fund && npm run build

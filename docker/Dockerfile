@@ -32,10 +32,11 @@ COPY todl-connectors-host/ ./todl-connectors-host/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-connectors-host && npm install --no-audit --no-fund && npm run build
 COPY pragmatic-server/ ./pragmatic-server/
-# TODL's lock pulls the engine from GitHub Packages; re-point it at the sibling before the server builds so
-# the image holds ONE engine (the server itself depends on file:../pragmatic-graph).
+# The siblings' locks pull the engine and todl-runtime from GitHub Packages; re-point them at the siblings before the
+# server builds so the image holds ONE of each (the server itself links both siblings through file: dependencies; see
+# docker/link-workspace-singletons.sh).
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
-    sh pragmatic-server/docker/link-graph-engine.sh /workspace && cd pragmatic-server && npm install --no-audit --no-fund && npm run build
+    sh pragmatic-server/docker/link-workspace-singletons.sh /workspace && cd pragmatic-server && npm install --no-audit --no-fund && npm run build
 
 # Tenant-admin container (node dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-admind.js): the control-plane tree compiles
 # separately from the main build (it lives outside src/), and serves the tenant-portal SPA from
@@ -60,12 +61,13 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
 # through the project-system import) imports both at module load (esbuild-bundler.js imports esbuild,
 # tsc-type-checker.js imports typescript), so the server cannot start without them. Stash those two
 # packages across TODL's prune and restore them afterwards; the rest of TODL's dev tooling is dropped.
-# The engine is a TODL devDependency (optional peer), so the prune drops TODL's link to it; the link is
-# removed first (a plain unlink, so the prune never walks into the sibling) and re-made afterwards.
-RUN set -e; mkdir /todl-dev-stash; for pkg in esbuild typescript; do \
+# The singleton links (the engine, todl-runtime) are removed first (a plain unlink, so the prune never walks into a
+# sibling) and re-made afterwards; the prune restores the registry copies the siblings' locks name (hence the npmrc).
+RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
+    set -e; mkdir /todl-dev-stash; for pkg in esbuild typescript; do \
       cp -a "/workspace/TODL/node_modules/$pkg" "/todl-dev-stash/$pkg"; \
     done; \
-    rm /workspace/TODL/node_modules/@pragmatic-tech-ai/pragmatic-graph; \
+    sh /workspace/pragmatic-server/docker/link-workspace-singletons.sh /workspace --unlink; \
     for d in pragmatic-graph todl-runtime TODL pragmatic-protocol pragmatic-shared todl-identity-engine \
       todl-connectors-host pragmatic-server; do \
       (cd "/workspace/$d" && npm prune --omit=dev --no-audit --no-fund); \
@@ -73,7 +75,7 @@ RUN set -e; mkdir /todl-dev-stash; for pkg in esbuild typescript; do \
     for pkg in esbuild typescript; do \
       cp -a "/todl-dev-stash/$pkg" "/workspace/TODL/node_modules/$pkg"; \
     done; rm -rf /todl-dev-stash; \
-    sh /workspace/pragmatic-server/docker/link-graph-engine.sh /workspace; \
+    sh /workspace/pragmatic-server/docker/link-workspace-singletons.sh /workspace; \
     find /workspace -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete 2>/dev/null || true
 
 FROM node:22-slim AS runtime

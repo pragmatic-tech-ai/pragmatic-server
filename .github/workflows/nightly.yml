@@ -59,19 +59,14 @@ jobs:
           for pkg in pragmatic-graph todl-runtime TODL Mural pragmatic-protocol pragmatic-shared todl-identity-engine todl-connectors-host; do
             (cd "$pkg" && npm install --no-audit --no-fund && npm run build)
           done
-      # TODL's lock resolves the graph engine from GitHub Packages (its own CI has no sibling checkout), which
-      # would give TODL a second engine copy beside the server's file:../pragmatic-graph. Re-point TODL at the
-      # sibling before the server builds so the workspace holds ONE engine, exactly as in local development.
-      # Git Bash's `ln -s` (used by docker/link-graph-engine.sh) copies the folder on Windows instead of linking it,
-      # which loads two copies of @pragmatic-tech-ai/pragmatic-graph and breaks instanceof checks. Use a real junction here.
-      - name: Point TODL at the sibling graph engine
-        shell: cmd
+      # The siblings' locks resolve the graph engine and todl-runtime from GitHub Packages (their own CI has no sibling
+      # checkout), which would give the workspace second copies beside the server's file:../pragmatic-graph and
+      # file:../todl-runtime (a second todl-runtime breaks instanceof across the two). Re-point every copy at the
+      # sibling before the server builds so the workspace holds ONE of each, exactly as in local development.
+      # On Windows the script makes directory junctions (Git Bash's `ln -s` would copy the folder instead).
+      - name: Point the siblings at the sibling graph engine and todl-runtime
         working-directory: ${{ github.workspace }}
-        run: |
-          if not exist pragmatic-graph (echo pragmatic-graph is missing & exit /b 1)
-          if not exist TODL\node_modules\@pragmatic-tech-ai mkdir TODL\node_modules\@pragmatic-tech-ai
-          if exist TODL\node_modules\@pragmatic-tech-ai\graph rd /s /q TODL\node_modules\@pragmatic-tech-ai\graph
-          mklink /J TODL\node_modules\@pragmatic-tech-ai\graph pragmatic-graph
+        run: sh pragmatic-server/docker/link-workspace-singletons.sh .
       - name: Build pragmatic-server
         working-directory: ${{ github.workspace }}/pragmatic-server
         run: npm install --no-audit --no-fund && npm run build
@@ -121,12 +116,13 @@ jobs:
           for pkg in pragmatic-graph todl-runtime TODL Mural pragmatic-protocol pragmatic-shared todl-identity-engine todl-connectors-host; do
             (cd "$pkg" && npm install --no-audit --no-fund && npm run build)
           done
-      # TODL's lock resolves the graph engine from GitHub Packages (its own CI has no sibling checkout), which
-      # would give TODL a second engine copy beside the server's file:../pragmatic-graph. Re-point TODL at the
-      # sibling before the server builds so the workspace holds ONE engine, exactly as in local development.
-      - name: Point TODL at the sibling graph engine
+      # The siblings' locks resolve the graph engine and todl-runtime from GitHub Packages (their own CI has no sibling
+      # checkout), which would give the workspace second copies beside the server's file:../pragmatic-graph and
+      # file:../todl-runtime (a second todl-runtime breaks instanceof across the two). Re-point every copy at the
+      # sibling before the server builds so the workspace holds ONE of each, exactly as in local development.
+      - name: Point the siblings at the sibling graph engine and todl-runtime
         working-directory: ${{ github.workspace }}
-        run: sh pragmatic-server/docker/link-graph-engine.sh .
+        run: sh pragmatic-server/docker/link-workspace-singletons.sh .
       - name: Build pragmatic-server
         working-directory: ${{ github.workspace }}/pragmatic-server
         run: npm install --no-audit --no-fund && npm run build

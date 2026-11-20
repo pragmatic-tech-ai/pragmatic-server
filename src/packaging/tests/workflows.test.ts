@@ -270,13 +270,13 @@ test('ci workflow runs the control-plane and image-tooling suites beside the ser
     }
 })
 
-test('ci workflow clones the graph engine and points TODL at it before the server builds', () =>
+test('ci workflow clones the graph engine and points the siblings at it and at todl-runtime before the server builds', () =>
 {
     const text = Workflows.Text('ci.yml')
     assert.match(text, /for pair in pragmatic-graph:pragmatic-graph /, 'the engine sibling is cloned')
-    const link = text.indexOf('link-graph-engine.sh')
+    const link = text.indexOf('link-workspace-singletons.sh')
     const server = text.indexOf('name: Build pragmatic-server')
-    assert.ok(link !== -1 && server !== -1 && link < server, 'TODL is re-pointed at the sibling engine before the server builds')
+    assert.ok(link !== -1 && server !== -1 && link < server, 'the siblings are re-pointed at the sibling engine and todl-runtime before the server builds')
 })
 
 class MultiArch

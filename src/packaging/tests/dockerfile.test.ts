@@ -56,16 +56,28 @@ test('Dockerfile builds TODL via the common npm run build (no DOM workaround)', 
     assert.match(text, /cd TODL && npm install --no-audit --no-fund && npm run build/)
 })
 
-test('the image holds one graph engine: the sibling is in the context and TODL is re-pointed at it', () =>
+class Singletons
+{
+    public static readonly Script = 'link-workspace-singletons.sh /workspace'
+    public static readonly LinkThenInstall = `${Singletons.Script} && cd pragmatic-server && npm install`
+    public static readonly Unlink = `${Singletons.Script} --unlink`
+    public static readonly Prune = 'npm prune --omit=dev'
+    public static readonly NpmrcSecret = '--mount=type=secret,id=npmrc'
+    public static readonly RunStart = 'RUN '
+}
+
+test('the image holds one graph engine and one todl-runtime: the siblings are re-pointed at them', () =>
 {
     const text = Dockerfile.Text()
     assert.match(Dockerfile.IgnoreText(), /^!pragmatic-graph$/m, 'the allowlist admits the engine sibling')
-    const link = text.indexOf('link-graph-engine.sh /workspace && cd pragmatic-server && npm install')
-    assert.ok(link > text.indexOf('COPY pragmatic-server/'), 'TODL is re-pointed before the server installs and builds')
-    const unlink = text.indexOf('rm /workspace/TODL/node_modules/@pragmatic-tech-ai/pragmatic-graph')
-    const prune = text.indexOf('npm prune --omit=dev')
-    const relink = text.lastIndexOf('link-graph-engine.sh /workspace')
-    assert.ok(unlink !== -1 && unlink < prune && prune < relink, 'the link is dropped before the prune and re-made after it')
+    const link = text.indexOf(Singletons.LinkThenInstall)
+    assert.ok(link > text.indexOf('COPY pragmatic-server/'), 'the siblings are re-pointed before the server installs and builds')
+    const unlink = text.indexOf(Singletons.Unlink)
+    const prune = text.indexOf(Singletons.Prune)
+    const relink = text.lastIndexOf(Singletons.Script)
+    assert.ok(unlink !== -1 && unlink < prune && prune < relink && relink !== unlink, 'the links are dropped before the prune and re-made after it')
+    const pruneRun = text.slice(text.lastIndexOf(Singletons.RunStart, prune), prune)
+    assert.ok(pruneRun.includes(Singletons.NpmrcSecret), 'the prune can restore the registry copies the siblings lock')
 })
 
 class Compose
