@@ -1,7 +1,7 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { OperatorContext } from '../../operator-context.js'
 import type { OperatorSummaryDto } from '../../portal-types.js'
-import { OptionViewModel } from '../../shell/option-view-model.js'
+import { OptionViewModel } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
 import type { SettingsSectionService } from './settings-section-service.js'

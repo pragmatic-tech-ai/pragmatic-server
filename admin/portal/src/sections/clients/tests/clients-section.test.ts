@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { ApiError } from '../../../api-client.js'
 import { OperatorContext } from '../../../operator-context.js'
-import { NameConfirmDialogViewModel } from '../../../shell/name-confirm-dialog-view-model.js'
+import { PortalNameConfirmDialogViewModel } from '../../../shell/portal-name-confirm-dialog-view-model.js'
 import { PageState } from '../../../shell/portal-page-view-model.js'
 import { FakeControlPlane, PortalTestHost, Tick, type FakeDialogService } from '../../../shell/tests/portal-test-fixtures.js'
 import { ClientDetailPageViewModel } from '../client-detail-page-view-model.js'
@@ -258,7 +258,7 @@ describe('Clients section', () =>
         detail.DeleteCommand.Execute()
         await Tick.Settle()
         const confirm = fx.Dialogs.Last
-        assert.ok(confirm instanceof NameConfirmDialogViewModel)
+        assert.ok(confirm instanceof PortalNameConfirmDialogViewModel)
         assert.equal(confirm.Expected, 'globex')
         confirm.Typed = 'globe'
         assert.equal(confirm.IsMatch, false)
@@ -284,7 +284,7 @@ describe('Clients section', () =>
         const detail = await fx.Detail('acme')
         detail.DeleteCommand.Execute()
         await Tick.Settle()
-        const confirm = fx.Dialogs.Last as NameConfirmDialogViewModel
+        const confirm = fx.Dialogs.Last as PortalNameConfirmDialogViewModel
         confirm.Typed = 'acme'
         fx.Api.Failure = new ApiError(409, 'client acme still has tenants')
         await confirm.Confirm()

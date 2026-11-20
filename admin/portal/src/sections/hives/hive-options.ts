@@ -1,5 +1,5 @@
 import { IngressTlsSource, type HiveClusterBackend, type HiveProvisionMode } from '../../portal-types.js'
-import { OptionViewModel } from '../../shell/option-view-model.js'
+import { OptionViewModel } from '@pragmatic-tech-ai/pragmatic-app-shell'
 
 // The ComboBox choices a hive's cluster and registry offer, shared by Create
 // hive and Stand up a hive, and the TLS choices of its tenant console. The

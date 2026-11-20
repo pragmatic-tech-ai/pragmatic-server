@@ -2,7 +2,7 @@ import type { Application, IServiceProvider } from '@pragmatic-tech-ai/mural/run
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import { AppShellBoot, BrowserPage, BrowserShellMount, type AppSession, type IPageReloader, type IShellApplications } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { ControlPlaneClient } from '../api-client.js'
-import { LiveUpdateBridge } from './live-update-bridge.js'
+import { PortalLiveUpdateBridge } from './portal-live-update-bridge.js'
 import { PlatformSignInHost } from './platform-sign-in-host.js'
 import { PortalSessionService } from './portal-session-service.js'
 
@@ -54,12 +54,12 @@ export class PortalApplications implements IShellApplications<Application>
     public static async StartShell(services: IServiceProvider, client: ControlPlaneClient, session: AppSession, reloader: IPageReloader): Promise<void>
     {
         services.getRequired(PortalSessionService.Key).Initialize(client, session, reloader)
-        const bridge = new LiveUpdateBridge(services.getRequired(NavigationService.Key))
+        const bridge = new PortalLiveUpdateBridge(services.getRequired(NavigationService.Key))
         client.OnChanged(() =>
         {
-            bridge.OnChanged().catch((e: unknown) => console.error(PortalApplications.LiveUpdateFailed, e))
+            bridge.OnEvent().catch((e: unknown) => console.error(PortalApplications.LiveUpdateFailed, e))
         })
-        await bridge.OnChanged()
+        await bridge.OnEvent()
     }
 }
 

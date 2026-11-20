@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { ApiError, ControlPlaneErrors } from '../../../api-client.js'
 import { OperatorContext } from '../../../operator-context.js'
-import { NameConfirmDialogViewModel } from '../../../shell/name-confirm-dialog-view-model.js'
+import { PortalNameConfirmDialogViewModel } from '../../../shell/portal-name-confirm-dialog-view-model.js'
 import { FakeControlPlane, PortalTestHost, Tick, type FakeDialogService } from '../../../shell/tests/portal-test-fixtures.js'
 import { HiveDetailPageViewModel } from '../hive-detail-page-view-model.js'
 import { HivesPageViewModel } from '../hives-page-view-model.js'
@@ -45,12 +45,12 @@ class DeleteFixture
     }
 
     // Runs a command that opens a name-confirm dialog, types the hive id and confirms; returns the dialog.
-    public async Confirm(run: () => void): Promise<NameConfirmDialogViewModel>
+    public async Confirm(run: () => void): Promise<PortalNameConfirmDialogViewModel>
     {
         run()
         await Tick.Settle()
         const confirm = this.Dialogs.Last
-        assert.ok(confirm instanceof NameConfirmDialogViewModel)
+        assert.ok(confirm instanceof PortalNameConfirmDialogViewModel)
         confirm.Typed = 'acme-hive'
         confirm.ConfirmCommand.Execute()
         await Tick.Settle()
@@ -169,7 +169,7 @@ describe('Hive delete: the agent cannot be removed from its cluster', () =>
         detail.DeleteCommand.Execute()
         await Tick.Settle()
         const confirm = fx.Dialogs.Last
-        assert.ok(confirm instanceof NameConfirmDialogViewModel)
+        assert.ok(confirm instanceof PortalNameConfirmDialogViewModel)
         assert.match(confirm.Message, /agent is removed from its cluster/)
         assert.match(confirm.Message, /token is revoked/)
         assert.match(confirm.Message, /kind cluster is destroyed/)

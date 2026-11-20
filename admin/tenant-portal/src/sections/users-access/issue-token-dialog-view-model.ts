@@ -1,7 +1,7 @@
 import { ObservableCollection } from '@pragmatic-tech-ai/mural/runtime'
 import type { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
 import { AdminCapability } from '../../shell/admin-capability.js'
-import type { OptionViewModel } from '../../shell/option-view-model.js'
+import type { OptionViewModel } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { TenantDialogViewModel } from '../../shell/tenant-dialog-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
 import type { TokenIssuedDto } from '../../tenant-types.js'

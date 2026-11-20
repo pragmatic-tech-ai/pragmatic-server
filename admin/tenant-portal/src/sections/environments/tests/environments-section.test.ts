@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { ApiError } from '../../../tenant-api-client.js'
 import { EnvStatus, EnvType, Template, TenantEventType } from '../../../tenant-types.js'
 import { ConfirmDialogViewModel } from '../../../shell/confirm-dialog-view-model.js'
-import { NameConfirmDialogViewModel } from '../../../shell/name-confirm-dialog-view-model.js'
+import { TenantNameConfirmDialogViewModel } from '../../../shell/tenant-name-confirm-dialog-view-model.js'
 import { PageState } from '../../../shell/tenant-page-view-model.js'
 import { FakeTenantApi, TenantTestHost, Tick } from '../../../shell/tests/tenant-test-fixtures.js'
 import { OverviewSectionService } from '../../overview/overview-section-service.js'
@@ -409,7 +409,7 @@ describe('Environment detail', () =>
         page.DeleteCommand.Execute()
         await Tick.Settle()
         const confirm = f.Dialogs.Last
-        assert.ok(confirm instanceof NameConfirmDialogViewModel)
+        assert.ok(confirm instanceof TenantNameConfirmDialogViewModel)
         assert.equal(confirm.ConfirmLabel, 'Delete environment')
         assert.equal(confirm.ConsequencesText, "- The live URL stops serving immediately.\n- The environment's database and files are deleted.\n- This cannot be undone.")
         confirm.Typed = 'alph'

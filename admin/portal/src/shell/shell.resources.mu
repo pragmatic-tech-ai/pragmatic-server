@@ -23,7 +23,7 @@
 // and PortalTableColumns is the one inset both header and row Grids use.
 
 import PortalSessionService from "./portal-session-service.js"
-import NameConfirmDialogViewModel from "./name-confirm-dialog-view-model.js"
+import PortalNameConfirmDialogViewModel from "./portal-name-confirm-dialog-view-model.js"
 import ObservedEnvironmentsViewModel from "./observed-environments-view-model.js"
 import ObservedEnvironmentRowViewModel from "./observed-environments-view-model.js"
 
@@ -112,7 +112,7 @@ resources ShellResources {
     }
 
     // Type the target's name to confirm an irreversible action.
-    DataTemplate [ DataType = NameConfirmDialogViewModel ] {
+    DataTemplate [ DataType = PortalNameConfirmDialogViewModel ] {
         StackPanel [ Orientation = Vertical, Margin = (0,4,0,0) ] {
             TextBlock [ Text = $Message, TextWrapping = Wrap, Foreground = @Fg1, Margin = (0,0,0,12) ]
             TextBlock [ Text = $PromptText, Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]

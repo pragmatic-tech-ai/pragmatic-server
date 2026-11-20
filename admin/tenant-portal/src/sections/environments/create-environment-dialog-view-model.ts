@@ -3,7 +3,7 @@ import type { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/ser
 import { ApiError } from '../../tenant-api-client.js'
 import { EnvType, Template, type EnvironmentDto } from '../../tenant-types.js'
 import { AdminCapability } from '../../shell/admin-capability.js'
-import { OptionViewModel } from '../../shell/option-view-model.js'
+import { OptionViewModel } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { TenantDialogViewModel } from '../../shell/tenant-dialog-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
 

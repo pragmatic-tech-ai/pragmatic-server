@@ -1,5 +1,5 @@
 import { ConfirmDialogViewModel } from "./confirm-dialog-view-model.js";
-import { NameConfirmDialogViewModel } from "./name-confirm-dialog-view-model.js";
+import { TenantNameConfirmDialogViewModel } from "./tenant-name-confirm-dialog-view-model.js";
 import { TenantSectionService } from "./tenant-section-service.js";
 import { Border, ContentPresenter, ControlTemplate, DataTemplate, Grid, ItemsPresenter, Orientation, StackPanel, TargetedSetter, TemplatePropertyTrigger, TextBlock, TextBox, TextWrapping } from "@pragmatic-tech-ai/mural/basic";
 import { Button, ButtonVariant } from "@pragmatic-tech-ai/mural/framework/buttons/button.js";
@@ -152,8 +152,8 @@ export class ShellResources extends ResourceDictionary {
             _stackPanel45.AddChild(_button48);
             _stackPanel39.AddChild(_stackPanel45);
             return _stackPanel39;
-        }, NameConfirmDialogViewModel);
-        t.Set(NameConfirmDialogViewModel, _tmpl38);
+        }, TenantNameConfirmDialogViewModel);
+        t.Set(TenantNameConfirmDialogViewModel, _tmpl38);
         const _tmpl50 = new DataTemplate((_data) => {
             const _stackPanel51 = new StackPanel();
             _stackPanel51.set_property_value(StackPanel.OrientationKey, Orientation.Vertical);

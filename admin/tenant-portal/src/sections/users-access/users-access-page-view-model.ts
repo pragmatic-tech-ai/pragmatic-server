@@ -1,7 +1,6 @@
 import { ObservableCollection, type RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { AdminCapabilities, AdminCapability } from '../../shell/admin-capability.js'
-import { PendingWork } from '@pragmatic-tech-ai/pragmatic-app-shell'
-import { OptionViewModel } from '../../shell/option-view-model.js'
+import { OptionViewModel, PendingWork } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
 import { ApiError } from '../../tenant-api-client.js'

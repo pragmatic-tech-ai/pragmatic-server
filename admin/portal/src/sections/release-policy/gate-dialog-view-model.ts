@@ -1,7 +1,7 @@
 import { ObservableCollection } from '@pragmatic-tech-ai/mural/runtime'
 import type { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
 import { ReleaseVerification, type GatingDto, type ManifestDto } from '../../portal-types.js'
-import { OptionViewModel } from '../../shell/option-view-model.js'
+import { OptionViewModel } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { PortalDialogViewModel } from '../../shell/portal-dialog-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
 import { VersionOrder } from '../../version-order.js'

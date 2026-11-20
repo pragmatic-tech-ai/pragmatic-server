@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import type { IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
 import { PortalPageViewModel } from '../portal-page-view-model.js'
 import { PortalSectionService } from '../portal-section-service.js'
-import { LiveUpdateBridge } from '../live-update-bridge.js'
+import { PortalLiveUpdateBridge } from '../portal-live-update-bridge.js'
 import { PortalTestHost, TestRail, Tick } from './portal-test-fixtures.js'
 
 class CountingPage extends PortalPageViewModel
@@ -53,7 +53,7 @@ class PlainService
     }
 }
 
-describe('LiveUpdateBridge', () =>
+describe('PortalLiveUpdateBridge', () =>
 {
     it('refreshes only the active section current page and keeps it shown', async () =>
     {
@@ -73,7 +73,7 @@ describe('LiveUpdateBridge', () =>
         assert.equal(detail.Loads, 1)
         assert.equal(host.Host.Content, detail)
 
-        await new LiveUpdateBridge(rail.Navigation).OnChanged()
+        await new PortalLiveUpdateBridge(rail.Navigation).OnEvent()
 
         assert.equal(detail.Loads, 2)
         assert.equal(active.Root?.Loads, rootLoads)
@@ -96,7 +96,7 @@ describe('LiveUpdateBridge', () =>
         const plain = host.Provider.getRequired(PlainService)
         assert.equal(rail.Navigation.ActiveService, plain)
 
-        await new LiveUpdateBridge(rail.Navigation).OnChanged()
+        await new PortalLiveUpdateBridge(rail.Navigation).OnEvent()
 
         assert.equal(plain.Refreshes, 0)
         assert.equal(page?.Loads, 1)

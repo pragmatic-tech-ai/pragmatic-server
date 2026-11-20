@@ -1,4 +1,4 @@
-import { OptionViewModel } from '../../shell/option-view-model.js'
+import { OptionViewModel } from '@pragmatic-tech-ai/pragmatic-app-shell'
 
 // How long an issued API token stays valid.
 export enum TokenDuration

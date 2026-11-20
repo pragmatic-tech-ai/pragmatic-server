@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { ApiError } from '../../../api-client.js'
 import { OperatorContext } from '../../../operator-context.js'
-import { NameConfirmDialogViewModel } from '../../../shell/name-confirm-dialog-view-model.js'
+import { PortalNameConfirmDialogViewModel } from '../../../shell/portal-name-confirm-dialog-view-model.js'
 import { PendingSecret } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { FakeControlPlane, PortalTestHost, TestRail, Tick, type FakeDialogService } from '../../../shell/tests/portal-test-fixtures.js'
 import { OwnerPasswordKind, OwnerPasswordRevealPageViewModel } from '../owner-password-reveal-page-view-model.js'
@@ -54,12 +54,12 @@ class ResetFixture
     }
 
     // Runs Reset Owner password, types the tenant id and confirms; returns the dialog.
-    public async Confirmed(detail: TenantDetailPageViewModel): Promise<NameConfirmDialogViewModel>
+    public async Confirmed(detail: TenantDetailPageViewModel): Promise<PortalNameConfirmDialogViewModel>
     {
         detail.ResetOwnerPasswordCommand.Execute()
         await Tick.Settle()
         const confirm = this.Dialogs.Last
-        assert.ok(confirm instanceof NameConfirmDialogViewModel)
+        assert.ok(confirm instanceof PortalNameConfirmDialogViewModel)
         confirm.Typed = 'acme-prod'
         confirm.ConfirmCommand.Execute()
         await Tick.Settle()
@@ -76,7 +76,7 @@ describe('Tenant Owner password reset', () =>
         detail.ResetOwnerPasswordCommand.Execute()
         await Tick.Settle()
         const confirm = fx.Dialogs.Last
-        assert.ok(confirm instanceof NameConfirmDialogViewModel)
+        assert.ok(confirm instanceof PortalNameConfirmDialogViewModel)
         assert.match(confirm.Message, /old password stops working immediately/)
         assert.equal(confirm.ConfirmLabel, 'Reset')
         fx.Dialogs.Dismiss()

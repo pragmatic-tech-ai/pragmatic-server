@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { OperatorContext } from '../../../operator-context.js'
-import { NameConfirmDialogViewModel } from '../../../shell/name-confirm-dialog-view-model.js'
+import { PortalNameConfirmDialogViewModel } from '../../../shell/portal-name-confirm-dialog-view-model.js'
 import { PageState } from '../../../shell/portal-page-view-model.js'
 import { FakeControlPlane, Inspect, PortalTestHost, Tick, type FakeDialogService } from '../../../shell/tests/portal-test-fixtures.js'
 import { HiveDetailPageViewModel, HiveLedgerRowViewModel, LedgerAction } from '../hive-detail-page-view-model.js'
@@ -193,7 +193,7 @@ describe('Hives section', () =>
         detail.DeleteCommand.Execute()
         await Tick.Settle()
         const confirm = fx.Dialogs.Last
-        assert.ok(confirm instanceof NameConfirmDialogViewModel)
+        assert.ok(confirm instanceof PortalNameConfirmDialogViewModel)
         confirm.Typed = 'acme'
         assert.equal(confirm.ConfirmCommand.CanExecute(), false)
         confirm.Typed = 'acme-hive'

@@ -2,7 +2,7 @@ import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import type { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { ApiError } from '../api-client.js'
-import { NameConfirmDialogViewModel } from './name-confirm-dialog-view-model.js'
+import { PortalNameConfirmDialogViewModel } from './portal-name-confirm-dialog-view-model.js'
 import type { PortalDialogViewModel } from './portal-dialog-view-model.js'
 import type { PortalSessionService } from './portal-session-service.js'
 
@@ -263,9 +263,8 @@ export abstract class PortalPageViewModel extends Observable
     // OnConfirmed once the dialog closes confirmed. Run it inside a Guard.
     protected async ConfirmByName(dialogs: DialogService | undefined, request: INameConfirmRequest): Promise<void>
     {
-        const confirm = new NameConfirmDialogViewModel(this.Session, PortalPageViewModel.RequireDialogs(dialogs),
-            request.Expected, request.Message, request.Action, request.ConfirmLabel, request.ReasonLabel)
-        if (await confirm.Open(request.Title) === NameConfirmDialogViewModel.Confirmed)
+        const confirm = new PortalNameConfirmDialogViewModel(this.Session, PortalPageViewModel.RequireDialogs(dialogs), request)
+        if (await confirm.Open(request.Title) === PortalNameConfirmDialogViewModel.Confirmed)
         {
             await request.OnConfirmed()
         }

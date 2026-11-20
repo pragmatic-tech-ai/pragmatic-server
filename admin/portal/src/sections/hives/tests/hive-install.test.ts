@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { ApiError } from '../../../api-client.js'
 import { OperatorContext } from '../../../operator-context.js'
-import { NameConfirmDialogViewModel } from '../../../shell/name-confirm-dialog-view-model.js'
+import { PortalNameConfirmDialogViewModel } from '../../../shell/portal-name-confirm-dialog-view-model.js'
 import { PendingSecret } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { FakeControlPlane, PortalTestHost, Tick, type FakeDialogService } from '../../../shell/tests/portal-test-fixtures.js'
 import { AgentTokenRevealPageViewModel } from '../agent-token-reveal-page-view-model.js'
@@ -62,7 +62,7 @@ class InstallFixture
         detail.ReissueTokenCommand.Execute()
         await Tick.Settle()
         const confirm = this.Dialogs.Last
-        assert.ok(confirm instanceof NameConfirmDialogViewModel)
+        assert.ok(confirm instanceof PortalNameConfirmDialogViewModel)
         confirm.Typed = 'acme-hive'
         confirm.ConfirmCommand.Execute()
         await Tick.Settle()

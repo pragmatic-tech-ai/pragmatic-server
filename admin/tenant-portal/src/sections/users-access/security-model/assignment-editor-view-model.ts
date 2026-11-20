@@ -1,6 +1,6 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import { OptionViewModel } from '../../../shell/option-view-model.js'
+import { OptionViewModel } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import type { IAssignmentHolders, SecurityAssignments } from './security-assignments.js'
 import type { SecurityModelDraft } from './security-model-draft.js'
 import type { ISecurityModelEditHost } from './security-model-edit-host.js'

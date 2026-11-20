@@ -3,7 +3,7 @@ import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/serv
 import { ApiError, AppShellBoot, BrowserPage, BrowserShellMount, type AppSession, type IPageNavigator, type IPageReloader, type IShellApplications } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { TenantApiClient } from '../tenant-api-client.js'
 import type { TenantProfileDto } from '../tenant-types.js'
-import { LiveUpdateBridge } from './live-update-bridge.js'
+import { TenantLiveUpdateBridge } from './tenant-live-update-bridge.js'
 import { TenantSessionService } from './tenant-session-service.js'
 import { TenantSignInHost } from './tenant-sign-in-host.js'
 
@@ -93,7 +93,7 @@ export class TenantApplications implements IShellApplications<Application>
     {
         const tenantSession = services.getRequired(TenantSessionService.Key)
         tenantSession.Initialize(client, session, reloader, profile)
-        const bridge = new LiveUpdateBridge(services.getRequired(NavigationService.Key), tenantSession)
+        const bridge = new TenantLiveUpdateBridge(services.getRequired(NavigationService.Key), tenantSession)
         client.OnEvent(ev =>
         {
             bridge.OnEvent(ev).catch((e: unknown) => console.error(TenantApplications.LiveUpdateFailed, e))

@@ -1,5 +1,5 @@
-import { NameConfirmDialogViewModel } from "./name-confirm-dialog-view-model.js";
 import { ObservedEnvironmentRowViewModel, ObservedEnvironmentsViewModel } from "./observed-environments-view-model.js";
+import { PortalNameConfirmDialogViewModel } from "./portal-name-confirm-dialog-view-model.js";
 import { PortalSessionService } from "./portal-session-service.js";
 import { Border, ColumnDefinition, ContentPresenter, ControlTemplate, DataTemplate, Dock, DockPanel, Grid, GridLength, ItemsPresenter, Orientation, StackPanel, TargetedSetter, TemplatePropertyTrigger, TextBlock, TextBox, TextWrapping } from "@pragmatic-tech-ai/mural/basic";
 import { Button, ButtonVariant } from "@pragmatic-tech-ai/mural/framework/buttons/button.js";
@@ -234,8 +234,8 @@ export class ShellResources extends ResourceDictionary {
             _stackPanel53.AddChild(_button56);
             _stackPanel43.AddChild(_stackPanel53);
             return _stackPanel43;
-        }, NameConfirmDialogViewModel);
-        t.Set(NameConfirmDialogViewModel, _tmpl42);
+        }, PortalNameConfirmDialogViewModel);
+        t.Set(PortalNameConfirmDialogViewModel, _tmpl42);
         const _tmpl58 = new DataTemplate((_data) => {
             const _border59 = new Border();
             _border59.set_property_value(Border.FillKey, DynamicResource(_border59, "Bg1"));

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { OperatorContext } from '../../../operator-context.js'
 import { PageState } from '../../../shell/portal-page-view-model.js'
 import { FakeControlPlane, Inspect, PortalTestHost, Tick, type FakeDialogService } from '../../../shell/tests/portal-test-fixtures.js'
-import { NameConfirmDialogViewModel } from '../../../shell/name-confirm-dialog-view-model.js'
+import { PortalNameConfirmDialogViewModel } from '../../../shell/portal-name-confirm-dialog-view-model.js'
 import { InviteOperatorDialogViewModel } from '../invite-operator-dialog-view-model.js'
 import { OperatorDetailPageViewModel } from '../operator-detail-page-view-model.js'
 import { OperatorPasswordRevealPageViewModel } from '../operator-password-reveal-page-view-model.js'
@@ -199,7 +199,7 @@ describe('Settings section', () =>
         detail.RevokeSessionsCommand.Execute()
         await Tick.Settle()
         const confirm = fx.Dialogs.Last
-        assert.ok(confirm instanceof NameConfirmDialogViewModel)
+        assert.ok(confirm instanceof PortalNameConfirmDialogViewModel)
         assert.equal(confirm.ConfirmLabel, 'Revoke sessions')
         confirm.Typed = 'zed@example.test'
         confirm.ConfirmCommand.Execute()
@@ -214,7 +214,7 @@ describe('Settings section', () =>
         const detail = await fx.Operator('zed@example.test')
         detail.ResetPasswordCommand.Execute()
         await Tick.Settle()
-        const confirm = fx.Dialogs.Last as NameConfirmDialogViewModel
+        const confirm = fx.Dialogs.Last as PortalNameConfirmDialogViewModel
         assert.equal(confirm.ConfirmLabel, 'Reset password')
         confirm.Typed = 'zed@example.test'
         confirm.ConfirmCommand.Execute()
@@ -249,7 +249,7 @@ describe('Settings section', () =>
         const detail = await fx.Operator('zed@example.test')
         detail.ResetPasswordCommand.Execute()
         await Tick.Settle()
-        const confirm = fx.Dialogs.Last as NameConfirmDialogViewModel
+        const confirm = fx.Dialogs.Last as PortalNameConfirmDialogViewModel
         confirm.Typed = 'zed@example.test'
         fx.Api.HoldCreates()
         confirm.ConfirmCommand.Execute()

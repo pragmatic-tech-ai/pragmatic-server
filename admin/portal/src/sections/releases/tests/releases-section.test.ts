@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { ApiError } from '../../../api-client.js'
 import { OperatorContext } from '../../../operator-context.js'
-import { NameConfirmDialogViewModel } from '../../../shell/name-confirm-dialog-view-model.js'
+import { PortalNameConfirmDialogViewModel } from '../../../shell/portal-name-confirm-dialog-view-model.js'
 import type { ManifestDto } from '../../../portal-types.js'
 import { PageState } from '../../../shell/portal-page-view-model.js'
 import { FakeControlPlane, PortalTestHost, Tick, type FakeDialogService } from '../../../shell/tests/portal-test-fixtures.js'
@@ -182,7 +182,7 @@ describe('Registry & Releases section', () =>
         detail.WithdrawCommand.Execute()
         await Tick.Settle()
         const confirm = fx.Dialogs.Last
-        assert.ok(confirm instanceof NameConfirmDialogViewModel)
+        assert.ok(confirm instanceof PortalNameConfirmDialogViewModel)
         assert.equal(confirm.ConfirmLabel, 'Withdraw')
         assert.equal(confirm.RequiresReason, true)
         confirm.Typed = '1.4.0'
@@ -206,7 +206,7 @@ describe('Registry & Releases section', () =>
         const detail = await fx.Detail()
         detail.WithdrawCommand.Execute()
         await Tick.Settle()
-        const confirm = fx.Dialogs.Last as NameConfirmDialogViewModel
+        const confirm = fx.Dialogs.Last as PortalNameConfirmDialogViewModel
         confirm.Typed = '1.4.0'
         confirm.Reason = 'Broken'
         confirm.ConfirmCommand.Execute()

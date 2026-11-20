@@ -19,7 +19,7 @@
 // TenantSectionService keeps the "can not resolve template" diagnostic away.
 
 import TenantSectionService from "./tenant-section-service.js"
-import NameConfirmDialogViewModel from "./name-confirm-dialog-view-model.js"
+import TenantNameConfirmDialogViewModel from "./tenant-name-confirm-dialog-view-model.js"
 import ConfirmDialogViewModel from "./confirm-dialog-view-model.js"
 
 resources ShellResources {
@@ -97,7 +97,7 @@ resources ShellResources {
     }
 
     // Type the target's name to confirm an irreversible action.
-    DataTemplate [ DataType = NameConfirmDialogViewModel ] {
+    DataTemplate [ DataType = TenantNameConfirmDialogViewModel ] {
         StackPanel [ Orientation = Vertical, Margin = (0,4,0,0) ] {
             TextBlock [ Text = $Message, TextWrapping = Wrap, Foreground = @Fg1, Margin = (0,0,0,8) ]
             TextBlock [ Text = $ConsequencesText, TextWrapping = Wrap, Foreground = @Fg2, Margin = (0,0,0,12),

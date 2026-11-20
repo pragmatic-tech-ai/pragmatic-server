@@ -10,8 +10,8 @@ import type { IWebSocketFactory, IWebSocketLike } from '../../tenant-types.js'
 import { TenantEventType } from '../../tenant-types.js'
 import { AdminCapability } from '../admin-capability.js'
 import { ConfirmDialogViewModel } from '../confirm-dialog-view-model.js'
-import { LiveUpdateBridge } from '../live-update-bridge.js'
-import { NameConfirmDialogViewModel } from '../name-confirm-dialog-view-model.js'
+import { TenantLiveUpdateBridge } from '../tenant-live-update-bridge.js'
+import { TenantNameConfirmDialogViewModel } from '../tenant-name-confirm-dialog-view-model.js'
 import { ShownPage, type IShownPage } from '../shown-page.js'
 import { TenantApplications } from '../tenant-boot.js'
 import { TenantNavigationService } from '../tenant-navigation-service.js'
@@ -239,7 +239,7 @@ describe('TenantSectionService.Restart', () =>
         const firstRoot = f.Content
         const detail = f.A.Page('detail')
         f.A.Present(detail)
-        new LiveUpdateBridge(f.Rail.Navigation, f.Host.Session).RestartActive()
+        new TenantLiveUpdateBridge(f.Rail.Navigation, f.Host.Session).RestartActive()
         await Tick.Settle()
         assert.equal(f.A.Roots, 2)
         assert.notEqual(f.Content, firstRoot)
@@ -354,7 +354,7 @@ describe('TenantPageViewModel', () =>
         let ran = 0
         const run = page.RunConfirmByName(dialogs, async () => { ran++ })
         await Tick.Settle()
-        const dialog = dialogs.Last as NameConfirmDialogViewModel
+        const dialog = dialogs.Last as TenantNameConfirmDialogViewModel
         assert.equal(dialog.ConsequencesText, '- Gone.')
         dialog.Typed = 'alph'
         assert.equal(dialog.ConfirmCommand.CanExecute(), false)
@@ -485,7 +485,7 @@ describe('TenantNavigationService', () =>
     })
 })
 
-describe('LiveUpdateBridge', () =>
+describe('TenantLiveUpdateBridge', () =>
 {
     it('records the event and reloads only the active section, keeping its detail page', async () =>
     {
@@ -500,7 +500,7 @@ describe('LiveUpdateBridge', () =>
         const b = f.Host.Provider.getRequired(SectionB.Key).Current as StubPage
         const bLoads = b.Loads
         const loads = detail.Loads
-        const bridge = new LiveUpdateBridge(f.Rail.Navigation, f.Host.Session)
+        const bridge = new TenantLiveUpdateBridge(f.Rail.Navigation, f.Host.Session)
         await bridge.OnEvent({ type: TenantEventType.HealthChanged, environmentName: 'alpha' })
         assert.equal(detail.Loads, loads + 1)
         assert.equal(b.Loads, bLoads)

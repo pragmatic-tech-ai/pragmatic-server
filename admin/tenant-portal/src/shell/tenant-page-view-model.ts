@@ -4,7 +4,7 @@ import { Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { ApiError } from '../tenant-api-client.js'
 import type { AdminCapability } from './admin-capability.js'
 import { ConfirmDialogViewModel, type IConfirmRequest } from './confirm-dialog-view-model.js'
-import { NameConfirmDialogViewModel } from './name-confirm-dialog-view-model.js'
+import { TenantNameConfirmDialogViewModel } from './tenant-name-confirm-dialog-view-model.js'
 import type { TenantDialogViewModel } from './tenant-dialog-view-model.js'
 import type { TenantSessionService } from './tenant-session-service.js'
 
@@ -267,8 +267,8 @@ export abstract class TenantPageViewModel extends Observable
     // OnConfirmed once the dialog closes confirmed. Run it inside a Guard.
     protected async ConfirmByName(dialogs: DialogService | undefined, request: INameConfirmRequest): Promise<void>
     {
-        const confirm = new NameConfirmDialogViewModel(this.Session, TenantPageViewModel.RequireDialogs(dialogs), request)
-        if (await confirm.Open(request.Title) === NameConfirmDialogViewModel.Confirmed)
+        const confirm = new TenantNameConfirmDialogViewModel(this.Session, TenantPageViewModel.RequireDialogs(dialogs), request)
+        if (await confirm.Open(request.Title) === TenantNameConfirmDialogViewModel.Confirmed)
         {
             await request.OnConfirmed()
         }
