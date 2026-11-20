@@ -1,8 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { newDb } from 'pg-mem'
-import { Pool } from 'pg'
+import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
 import { Realm, RealmKind, IdentityConfig, DelegationDepth } from '@pragmatic-tech-ai/pragmatic-identity'
 import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { CloudPlatform } from '../cloud-platform.js'
@@ -11,9 +10,7 @@ class CloudFixture
 {
     public static async Platform(): Promise<CloudPlatform>
     {
-        const db = newDb()
-        const pg = db.adapters.createPg()
-        const pool = new pg.Pool() as unknown as Pool
+        const pool = SqlTestSessions.MemPool()
         const session = new PgSession(pool)
         const secretManager = new CloudSecretManagerSecretStore()
         const keyRef = 'cluster/master-key'
@@ -35,9 +32,7 @@ test('Create resolves the 32-byte master key from the secret manager; ResolveMas
 
 test('Create rejects a master key that is not 32 bytes, without leaking it', async () =>
 {
-    const db = newDb()
-    const pg = db.adapters.createPg()
-    const session = new PgSession(new pg.Pool() as unknown as Pool)
+    const session = new PgSession(SqlTestSessions.MemPool())
     const secretManager = new CloudSecretManagerSecretStore()
     const encoded = Buffer.alloc(16, 1).toString('base64')
     await secretManager.Put('k', encoded)
@@ -51,9 +46,7 @@ test('Create rejects a master key that is not 32 bytes, without leaking it', asy
 
 test('Create rejects a missing key reference with a distinct message', async () =>
 {
-    const db = newDb()
-    const pg = db.adapters.createPg()
-    const session = new PgSession(new pg.Pool() as unknown as Pool)
+    const session = new PgSession(SqlTestSessions.MemPool())
     const secretManager = new CloudSecretManagerSecretStore()
     await assert.rejects(() => CloudPlatform.Create({ session, storage: new ObjectStoreProviderRegistry(), secretManager, masterKeyRef: 'absent' }), (e) =>
     {

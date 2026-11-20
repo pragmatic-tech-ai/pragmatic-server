@@ -3,8 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { newDb } from 'pg-mem'
-import type { Pool } from 'pg'
+import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
 import { AuthMethod, Credential, PresentedSecret, AuthenticatedResult } from '@pragmatic-tech-ai/pragmatic-identity'
 import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { CloudPlatform } from '../../platform/cloud-platform.js'
@@ -32,11 +31,9 @@ class TwoEnvironmentFixture
 
     public static async Platform(): Promise<CloudPlatform>
     {
-        const db = newDb()
-        const pg = db.adapters.createPg()
         const secretManager = new CloudSecretManagerSecretStore()
         await secretManager.Put(TwoEnvironmentFixture.MasterKeyRef, Buffer.alloc(32, 3).toString('base64'))
-        return CloudPlatform.Create({ session: new PgSession(new pg.Pool() as unknown as Pool), storage: new ObjectStoreProviderRegistry(), secretManager, masterKeyRef: TwoEnvironmentFixture.MasterKeyRef })
+        return CloudPlatform.Create({ session: new PgSession(SqlTestSessions.MemPool()), storage: new ObjectStoreProviderRegistry(), secretManager, masterKeyRef: TwoEnvironmentFixture.MasterKeyRef })
     }
 
     public static Provisioning(): InMemoryEnvironmentProvisioning

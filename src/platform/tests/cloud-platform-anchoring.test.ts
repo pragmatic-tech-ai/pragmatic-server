@@ -1,40 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { newDb } from 'pg-mem'
-import { Pool } from 'pg'
-import type { ISqlSession, SqlRow } from '@pragmatic-tech-ai/todl'
+import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
 import { AuditEvent, AuditEventKind } from '@pragmatic-tech-ai/pragmatic-identity'
 import { AuditTamperDetected } from '@pragmatic-tech-ai/pragmatic-identity-realm'
 import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { CloudPlatform } from '../cloud-platform.js'
-
-/** Reopen over an already-provisioned pg-mem db: pg-mem rejects a repeated constrained CREATE TABLE, so the
- *  reopen session skips CREATE TABLE statements (the tables already exist) and passes everything else through. */
-class ReopenSession implements ISqlSession
-{
-    private static readonly CreateTablePrefix = 'CREATE TABLE'
-
-    private readonly inner: ISqlSession
-
-    public constructor(inner: ISqlSession)
-    {
-        this.inner = inner
-    }
-
-    public Query(sql: string, params: readonly unknown[]): Promise<readonly SqlRow[]>
-    {
-        return this.inner.Query(sql, params)
-    }
-
-    public async Execute(sql: string, params: readonly unknown[]): Promise<number>
-    {
-        if (sql.trimStart().toUpperCase().startsWith(ReopenSession.CreateTablePrefix))
-        {
-            return 0
-        }
-        return this.inner.Execute(sql, params)
-    }
-}
 
 class AnchoringFixture
 {
@@ -54,9 +24,7 @@ class AnchoringFixture
 
     public static Session(): PgSession
     {
-        const db = newDb()
-        const pg = db.adapters.createPg()
-        return new PgSession(new pg.Pool() as unknown as Pool)
+        return new PgSession(SqlTestSessions.MemPool())
     }
 
     public static Event(environment: string, action: string): AuditEvent
@@ -87,7 +55,7 @@ test('anchoring on: a tail DELETE is detected fail-closed when a fresh platform 
     await audit.Record(AnchoringFixture.Event('t1', 'b'))
     await audit.Record(AnchoringFixture.Event('t1', 'c'))
     await session.Execute('DELETE FROM identity_audit WHERE realm_id = $1 AND seq >= $2', ['t1', 2])
-    const second = await CloudPlatform.Create({ session: new ReopenSession(session), storage: new ObjectStoreProviderRegistry(), secretManager, masterKeyRef: AnchoringFixture.MasterRef, auditAnchorKeyRef: AnchoringFixture.AnchorRef })
+    const second = await CloudPlatform.Create({ session, storage: new ObjectStoreProviderRegistry(), secretManager, masterKeyRef: AnchoringFixture.MasterRef, auditAnchorKeyRef: AnchoringFixture.AnchorRef })
     await assert.rejects(() => second.AuditSink(), AuditTamperDetected)
 })
 

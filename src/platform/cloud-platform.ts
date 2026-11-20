@@ -33,10 +33,10 @@ export interface CloudPlatformOptions
 /** Cloud PlatformServices bundle. Composes the object-store registry + the DB-backed identity stores
  *  (over ONE shared ISqlSession) + FileEncryptedSecretStore-over-object-storage for per-realm pack secrets.
  *  The SQL stores are multi-realm by data (every row/method carries the realm), so they are opened ONCE and
- *  shared across realms - which also avoids re-running CREATE TABLE on one db (pg-mem rejects a repeated
- *  constrained CREATE TABLE). Per CreateIdentityStores call, a fresh per-realm Secrets store is composed over
- *  a per-realm object-store namespace, isolating secrets by location. The master key is resolved ONCE from the
- *  secret manager by reference at Create and held; ResolveMasterKey hands out a defensive copy. */
+ *  shared across realms; each Open runs its store's schema migrations (SqlMigrationRunner). Per
+ *  CreateIdentityStores call, a fresh per-realm Secrets store is composed over a per-realm object-store
+ *  namespace, isolating secrets by location. The master key is resolved ONCE from the secret manager by
+ *  reference at Create and held; ResolveMasterKey hands out a defensive copy. */
 export class CloudPlatform implements PlatformServices
 {
     private static readonly KeyByteLength = 32

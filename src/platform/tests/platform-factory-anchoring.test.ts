@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { newDb } from 'pg-mem'
-import { Pool } from 'pg'
+import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
 import { AuditEvent, AuditEventKind } from '@pragmatic-tech-ai/pragmatic-identity'
 import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import type { ICloudBackends } from '../cloud-bundle.js'
@@ -19,9 +18,7 @@ class FactoryFixture
 
     public static async Backends(): Promise<ICloudBackends>
     {
-        const db = newDb()
-        const pg = db.adapters.createPg()
-        const session = new PgSession(new pg.Pool() as unknown as Pool)
+        const session = new PgSession(SqlTestSessions.MemPool())
         const secretManager = new CloudSecretManagerSecretStore()
         await secretManager.Put('m', Buffer.alloc(32, 7).toString('base64'))
         await secretManager.Put('a', 'anchor-secret-key-material')

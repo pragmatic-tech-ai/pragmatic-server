@@ -1,8 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { newDb } from 'pg-mem'
-import type { Pool } from 'pg'
+import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
 import { AuthMethod, Role, Credential, PresentedSecret, AuthenticatedResult } from '@pragmatic-tech-ai/pragmatic-identity'
 import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { CloudPlatform } from '../cloud-platform.js'
@@ -13,11 +12,9 @@ class CloudServerFixture
 {
     public static async Platform(key: number): Promise<CloudPlatform>
     {
-        const db = newDb()
-        const pg = db.adapters.createPg()
         const secretManager = new CloudSecretManagerSecretStore()
         await secretManager.Put('cluster/master-key', Buffer.alloc(32, key).toString('base64'))
-        return CloudPlatform.Create({ session: new PgSession(new pg.Pool() as unknown as Pool), storage: new ObjectStoreProviderRegistry(), secretManager, masterKeyRef: 'cluster/master-key' })
+        return CloudPlatform.Create({ session: new PgSession(SqlTestSessions.MemPool()), storage: new ObjectStoreProviderRegistry(), secretManager, masterKeyRef: 'cluster/master-key' })
     }
 
     public static Options(platform: CloudPlatform, environmentId: string)

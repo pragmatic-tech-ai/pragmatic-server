@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { newDb } from 'pg-mem'
-import type { Pool } from 'pg'
+import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
 import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { AzurePlatformFactory } from '../azure-platform-factory.js'
 import type { ICloudBackends } from '../cloud-bundle.js'
@@ -19,8 +18,7 @@ class FakeBackends implements ICloudBackends
 
     public constructor()
     {
-        const pg = newDb().adapters.createPg()
-        this.Session = new PgSession(new pg.Pool() as unknown as Pool)
+        this.Session = new PgSession(SqlTestSessions.MemPool())
     }
 
     public async Dispose(): Promise<void>

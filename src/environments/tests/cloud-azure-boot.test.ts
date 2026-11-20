@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { newDb } from 'pg-mem'
+import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
 import pg from 'pg'
 import type { Pool } from 'pg'
 import { AzureCloudBackends } from '@pragmatic-tech-ai/pragmatic-realm-azure'
@@ -126,10 +126,9 @@ class AzureCloudBootFixture
 
     public async DoubleBackends(): Promise<CountingBackends>
     {
-        const db = newDb().adapters.createPg()
         const secretManager = new CloudSecretManagerSecretStore()
         await this.PutMasterKey(secretManager)
-        return new CountingBackends(new ObjectStoreProviderRegistry(), secretManager, new PgSession(new db.Pool() as unknown as Pool))
+        return new CountingBackends(new ObjectStoreProviderRegistry(), secretManager, new PgSession(SqlTestSessions.MemPool()))
     }
 
     public async PutMasterKey(secrets: ICloudBackends['SecretManager']): Promise<void>
