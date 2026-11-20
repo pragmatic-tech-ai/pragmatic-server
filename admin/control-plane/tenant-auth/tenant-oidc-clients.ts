@@ -8,6 +8,7 @@ import type { IdpConnection } from '../idp-workload-driver.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import type { TenantAdminClientRegistry } from './tenant-admin-client-record.js'
 import { TenantSessionClaims } from './tenant-sessions.js'
+import { RealmIssuer } from '../../../src/idp/realm-issuer.js'
 
 /** Which confidential client a sign-in runs under: the tenant console's, or the Plexus desktop app's (RFC 8252 loopback). */
 export enum TenantOidcClientKind
@@ -107,8 +108,6 @@ export class TenantOidcClients implements ITenantOidcClients
     private static readonly HostHeader = 'host'
     private static readonly SecretBytes = 24
     private static readonly SecretEncoding = 'base64url'
-    private static readonly IssuerSeparator = '/'
-    private static readonly WellKnownSuffix = '/.well-known/openid-configuration'
 
     private readonly inFlight = new Map<string, Promise<string>>()
     /** secretRef -> the secret and redirect this process last registered at the IdP. */
@@ -157,13 +156,13 @@ export class TenantOidcClients implements ITenantOidcClients
     /** The OIDC issuer: the browser-facing origin (equals the internal one on single-host deployments). */
     public static IssuerFor(conn: IdpConnection, tenantId: string): string
     {
-        return conn.browserBaseUrl + TenantOidcClients.IssuerSeparator + encodeURIComponent(tenantId)
+        return RealmIssuer.Of(conn.browserBaseUrl, tenantId)
     }
 
     /** The discovery document URL, fetched over the internal origin. */
     public static DiscoveryUrlFor(conn: IdpConnection, tenantId: string): string
     {
-        return conn.baseUrl + TenantOidcClients.IssuerSeparator + encodeURIComponent(tenantId) + TenantOidcClients.WellKnownSuffix
+        return RealmIssuer.DiscoveryOf(conn.baseUrl, tenantId)
     }
 
     private DisplayNameFor(tenantId: string): string

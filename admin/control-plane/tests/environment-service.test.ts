@@ -15,14 +15,8 @@ import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
-import { DevCa, IdpTlsMaterial } from '../../../src/idp/dev-ca.js'
-import { IdpAdminEndpoint } from '../../../src/idp/idp-admin-endpoint.js'
-import { IdpClientStore } from '../../../src/idp/idp-client-store.js'
-import { IdpHost, IdpRealmSet } from '../../../src/idp/idp-host.js'
-import { IdpRealm } from '../../../src/idp/idp-realm.js'
-import { IdpSigningKey } from '../../../src/idp/idp-signing-key.js'
-import { IdpSsoSessionStore } from '../../../src/idp/idp-sso-session.js'
-import { InMemoryAuthorizationCodeStore } from '../../../src/idp/authorization-code-store.js'
+import type { SqlIdpClientStore } from '../../../src/idp/sql-idp-client-store.js'
+import { TenantIdpTestHost } from '../../../src/idp/tests/tenant-idp-test-host.js'
 import { IdpAdminClient } from '../idp-admin-client.js'
 import type { IdpConnection, IIdpService } from '../idp-service.js'
 import { PlatformDirectory } from '../platform-directory.js'
@@ -486,41 +480,26 @@ class IdpFixture
 {
     public static readonly Token = 'admin-token-for-env-tests'
 
-    /** Runs body against an in-process IdP (host + admin endpoint + dev CA) that already has the realm for tenantId. */
-    public static async With(tenantId: string, body: (conn: IdpConnection, clients: IdpClientStore) => Promise<void>): Promise<void>
+    /** Runs body against an in-process realm sign-in service (pg-mem, dev CA) that already has the realm for tenantId. */
+    public static async With(tenantId: string, body: (conn: IdpConnection, clients: SqlIdpClientStore) => Promise<void>): Promise<void>
     {
-        const dir = await mkdtemp(join(tmpdir(), 'envsvc-idp-'))
-        let host: IdpHost | undefined
+        const host = await TenantIdpTestHost.Start()
         try
         {
-            const key = await IdpSigningKey.LoadOrCreate(join(dir, 'idp-signing.pem'))
-            const ca = DevCa.EnsureAt(join(dir, 'ca'), 'localhost')
-            const tls = IdpTlsMaterial.Load({ certFile: ca.certFile, keyFile: ca.keyFile })
-            const realmsDir = join(dir, 'realms')
-            const realms = new IdpRealmSet([], (id, name) => IdpRealm.OpenFor(realmsDir, id, name, randomBytes(32)))
-            const clients = new IdpClientStore()
-            const sso = new IdpSsoSessionStore()
-            const admin = new IdpAdminEndpoint([IdpFixture.Token], realms, clients, sso)
-            host = new IdpHost('https://localhost', key, realms, clients, new InMemoryAuthorizationCodeStore(), sso, tls, true, admin)
-            await host.Listen(0, '127.0.0.1')
             const conn: IdpConnection = {
-                baseUrl: 'https://localhost:' + host.Address().port,
-                browserBaseUrl: 'https://localhost:' + host.Address().port,
-                ca: readFileSync(ca.caFile),
-                adminToken: IdpFixture.Token,
+                baseUrl: host.BaseUrl,
+                browserBaseUrl: host.BaseUrl,
+                ca: Buffer.from(host.Ca),
+                adminToken: TenantIdpTestHost.AdminToken,
                 adminTokenRef: 'admin-token',
                 caDir: '/data/idp/' + tenantId + '/tls'
             }
             await new IdpAdminClient(conn).EnsureRealm(tenantId, 'T')
-            await body(conn, clients)
+            await body(conn, host.Service.Stores.Clients)
         }
         finally
         {
-            if (host !== undefined)
-            {
-                await host.Close()
-            }
-            rmSync(dir, { recursive: true, force: true })
+            await host.Close()
         }
     }
 }
@@ -867,11 +846,11 @@ test('Delete of a federated env deregisters its OIDC client at the real IdP admi
         const idp = new ConnectingIdp(conn)
         h.UseIdp(idp)
         await new IdpAdminClient(conn).RegisterClient('plat-t1', { clientId: 'envfed', redirectUris: ['https://x/cb'], secret: 's' })
-        assert.notEqual(clients.Find('plat-t1', 'envfed'), undefined)
+        assert.notEqual(await clients.Find('plat-t1', 'envfed'), undefined)
         await h.Registry.Put({ ...Harness.Record('s1', EnvStatus.Running), tenantId: 'plat-t1', environmentId: 'envfed' })
         await h.Service.Delete('s1')
         assert.equal(idp.ConnectCalls, 1)
-        assert.equal(clients.Find('plat-t1', 'envfed'), undefined)
+        assert.equal(await clients.Find('plat-t1', 'envfed'), undefined)
         assert.equal(h.Service.List().length, 0)
     })
 })
@@ -1321,17 +1300,17 @@ test('BOUND Create registers an OIDC client at the tenant IdP and federates the 
         assert.deepEqual(h.Calls.slice(0, 3), ['allocate', 'generate', 'ensureImage'])
         const oidc = h.Bundle.Oidc
         assert.ok(oidc)
-        assert.equal(oidc.issuer, conn.baseUrl + '/' + encodeURIComponent('plat-t1'))
-        assert.equal(oidc.discoveryUrl, conn.baseUrl + '/plat-t1/.well-known/openid-configuration')
+        assert.equal(oidc.issuer, conn.baseUrl + '/realms/plat-t1')
+        assert.equal(oidc.discoveryUrl, conn.baseUrl + '/realms/plat-t1/.well-known/openid-configuration')
         assert.equal(oidc.clientId, rec.environmentId)
         assert.equal(oidc.redirectUri, 'http://localhost:9100/auth/oidc/callback?environment=' + rec.environmentId)
         assert.equal(oidc.secretRef, rec.environmentId + '-oidc-secret')
         assert.ok(oidc.secret.length >= 24)
-        assert.equal(await clients.VerifySecret('plat-t1', oidc.clientId, oidc.secret), true)
-        assert.equal(await clients.VerifySecret('plat-t1', oidc.clientId, oidc.secret + 'x'), false)
+        assert.equal((await clients.Authenticate('plat-t1', oidc.clientId, oidc.secret)) !== undefined, true)
+        assert.equal((await clients.Authenticate('plat-t1', oidc.clientId, oidc.secret + 'x')) !== undefined, false)
         // The IdP allow-lists the exact redirect_uri (environment hint included) the env server will present; the callback cannot route without it.
-        assert.equal(clients.RedirectAllowed('plat-t1', oidc.clientId, oidc.redirectUri), true)
-        assert.equal(clients.RedirectAllowed('plat-t1', oidc.clientId, 'http://localhost:9100/auth/oidc/callback'), false)
+        assert.equal((await clients.Find('plat-t1', oidc.clientId))?.RedirectAllowed(oidc.redirectUri), true)
+        assert.equal((await clients.Find('plat-t1', oidc.clientId))?.RedirectAllowed('http://localhost:9100/auth/oidc/callback'), false)
         assert.equal(h.Docker.CaHostPath, join(conn.caDir, 'ca.crt'))
     })
 })
@@ -1510,12 +1489,12 @@ test('BOUND in-cluster Create federates with a split issuer/discovery and a byte
         const rec = await h.Service.Create('fedic', Template.DevBlank, EnvType.Development, undefined, 'h1')
         const oidc = h.Bundle.Oidc
         assert.ok(oidc)
-        assert.equal(oidc.issuer, 'https://idp-plat-t1.hive.test/plat-t1')
-        assert.equal(oidc.discoveryUrl, conn.baseUrl + '/plat-t1/.well-known/openid-configuration')
+        assert.equal(oidc.issuer, 'https://idp-plat-t1.hive.test/realms/plat-t1')
+        assert.equal(oidc.discoveryUrl, conn.baseUrl + '/realms/plat-t1/.well-known/openid-configuration')
         assert.equal(oidc.redirectUri, 'https://' + rec.environmentId + '.hive.test/auth/oidc/callback?environment=' + rec.environmentId)
         assert.equal(oidc.secretRef, rec.environmentId + '-oidc-secret')
-        assert.equal(await clients.VerifySecret('plat-t1', oidc.clientId, oidc.secret), true)
-        assert.equal(clients.RedirectAllowed('plat-t1', oidc.clientId, oidc.redirectUri), true)
+        assert.equal((await clients.Authenticate('plat-t1', oidc.clientId, oidc.secret)) !== undefined, true)
+        assert.equal((await clients.Find('plat-t1', oidc.clientId))?.RedirectAllowed(oidc.redirectUri), true)
         assert.equal(rec.idpBaseDomain, 'hive.test')
     })
 })

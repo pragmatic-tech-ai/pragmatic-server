@@ -10,7 +10,8 @@ import { SystemInstallClock, type IInstallClock, type IInstallOrchestratorSource
 import { HiveConsoleSpecs, InvalidHiveConsoleError, type HiveConsoleSpec } from './hive-console-spec.js'
 import { IdpAdminError, IdpAdminTransportError } from './idp-admin-client.js'
 import { ImageVerificationError, type IImageVerifier } from './image-verifier.js'
-import { InClusterIdpSeedSource } from './in-cluster-idp-seed.js'
+import { IdpSecretSet, InClusterIdpSeedSource } from './in-cluster-idp-seed.js'
+import { IdpDatabaseSecret } from './idp-workload-driver.js'
 import { InHiveIdpUnavailableError, type IInHiveIdpAdmin, type InHiveOwnerPassword } from './in-hive-idp-admin.js'
 import { IngressTlsPolicy, IngressTlsSource } from './ingress-tls.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
@@ -156,6 +157,9 @@ type ConsoleImages = { tenantAdmin: string; idp: string; postgres: string }
 /** The IdP's CA + admin token for the bootstrap, and the seed Secrets to apply (undefined when the running IdP's are reused). */
 type IdpMaterial = { ca: Buffer; adminToken: string; secretsManifest: string | undefined; scrub: string[] }
 
+/** The IdP database Secret to apply (undefined when the IdP namespace already holds one) and its values' printable forms, for scrubbing. */
+type IdpDatabaseMaterial = { secretsManifest: string | undefined; scrub: string[] }
+
 /** One install's mutable state; the installer hands out copies only. */
 class ConsoleInstallRun
 {
@@ -282,6 +286,10 @@ export class TenantConsoleInstaller
     private static readonly PartialIdpInfix = ' is missing from '
     private static readonly PartialIdpWhile = ' while '
     private static readonly PartialIdpSuffix = ' exists. Restore it, or delete both to give the identity provider a new certificate (every environment then needs its identity provider CA re-applied).'
+    private static readonly IdpDatabaseIncompletePrefix = 'The identity provider database Secret '
+    private static readonly IdpDatabaseIncompleteInfix = ' in '
+    private static readonly IdpDatabaseIncompleteSuffix = ' lacks one of its keys (superuser, password, database-url). Restore them; the install never replaces it, since its passwords open the stored data.'
+    private static readonly IdpDatabaseKeys: readonly string[] = [IdpDatabaseSecret.SuperuserKey, IdpDatabaseSecret.PasswordKey, IdpDatabaseSecret.UrlKey]
 
     private readonly runs = new Map<string, ConsoleInstallRun>()
     private readonly manifests = new K8sManifestBuilder()
@@ -582,6 +590,10 @@ export class TenantConsoleInstaller
             C.Remember(run, masterKey)
             const idp = await this.IdpMaterialOf(kubectl, t, spec.baseDomain)
             run.secrets.push(idp.adminToken, ...idp.scrub)
+            // The IdP's own Postgres (its database Secret beside its TLS and admin token in the IdP namespace; the bootstrap renders
+            // the sidecar from the release's pragmatic-postgres image under that Secret's conventional name).
+            const idpDatabase = await C.IdpDatabaseOf(kubectl, t)
+            run.secrets.push(...idpDatabase.scrub)
             // Read before the Apply rewrites it: the copy the IdP Ingress served until now (installs before copies were labelled).
             const legacyCopies = C.LegacyTlsCopies(await kubectl.Find(idpName, C.IngressPrefix + idpName), spec, t)
             const bootstrap = await this.bootstrap.GenerateBootstrap({
@@ -622,6 +634,10 @@ export class TenantConsoleInstaller
             if (idp.secretsManifest !== undefined)
             {
                 await kubectl.ApplyServerSide(idp.secretsManifest)
+            }
+            if (idpDatabase.secretsManifest !== undefined)
+            {
+                await kubectl.ApplyServerSide(idpDatabase.secretsManifest)
             }
             // The current copies land first, stamped with this run, so the IdP Ingress never serves without its certificate.
             const copyRun = randomBytes(C.CopyRunBytes).toString(C.Hex)
@@ -777,6 +793,33 @@ export class TenantConsoleInstaller
         const seed = seeds.SeedFor(tenantId)
         const manifest = seeds.SecretsManifestFor(tenantId)
         return { ca: seed.ca, adminToken: seed.adminToken, secretsManifest: manifest, scrub: C.ServerKeyFormsOf(manifest) }
+    }
+
+    /**
+     * The IdP's database Secret: an existing one is kept as it is (its passwords open the IdP's stored data, so a reinstall must
+     * never rotate them) and only its values are recorded for scrubbing; one lacking a key fails the install with a sentence
+     * naming it (never overwritten); none is minted fresh (random superuser and role passwords, the URL over the role password).
+     */
+    private static async IdpDatabaseOf(kubectl: IKubectl, tenantId: string): Promise<IdpDatabaseMaterial>
+    {
+        const C = TenantConsoleInstaller
+        const ns = K8sManifestBuilder.IdpNameOf(tenantId)
+        const name = IdpDatabaseSecret.NameOf(tenantId)
+        const json = await kubectl.Find(ns, C.SecretPrefix + name)
+        if (json !== undefined)
+        {
+            const values = C.IdpDatabaseKeys.map(key => C.DataOf(json, key))
+            const present = values.filter((v): v is string => v !== undefined)
+            if (present.length !== values.length)
+            {
+                throw new ConsoleInstallStepError(C.IdpDatabaseIncompletePrefix + name + C.IdpDatabaseIncompleteInfix + ns + C.IdpDatabaseIncompleteSuffix)
+            }
+            return { secretsManifest: undefined, scrub: present.flatMap(v => [v, Buffer.from(v, C.Base64).toString(C.Utf8)]) }
+        }
+        const data = IdpDatabaseSecret.Mint()
+        const set = new IdpSecretSet(ns)
+        set.Add(name, data)
+        return { secretsManifest: set.RenderManifest(), scrub: [...data.values()].flatMap(v => [v.toString(C.Base64), v.toString(C.Utf8)]) }
     }
 
     /** The freshly minted IdP server key's printable forms (base64 as the Secret carries it, and the PEM text), for scrubbing. */

@@ -5,7 +5,6 @@ import { readFileSync, rmSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import type { IncomingMessage } from 'node:http'
 import { request as httpsRequest } from 'node:https'
-import { createServer as createNetServer } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,14 +12,8 @@ import { OidcRelyingParty } from '@pragmatic-tech-ai/pragmatic-app-host'
 import { InMemoryOidcFlowStateStore } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import { PgSession, type SqlSecretStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
-import { DevCa, IdpTlsMaterial } from '../../../src/idp/dev-ca.js'
-import { IdpAdminEndpoint } from '../../../src/idp/idp-admin-endpoint.js'
-import { IdpClientStore } from '../../../src/idp/idp-client-store.js'
-import { IdpHost, IdpRealmSet } from '../../../src/idp/idp-host.js'
-import { IdpRealm } from '../../../src/idp/idp-realm.js'
-import { IdpSigningKey } from '../../../src/idp/idp-signing-key.js'
-import { IdpSsoSessionStore } from '../../../src/idp/idp-sso-session.js'
-import { InMemoryAuthorizationCodeStore } from '../../../src/idp/authorization-code-store.js'
+import { RealmIssuer } from '../../../src/idp/realm-issuer.js'
+import { TenantIdpTestHost } from '../../../src/idp/tests/tenant-idp-test-host.js'
 import { IdpAdminClient } from '../idp-admin-client.js'
 import type { IdpAdminClientOptions, IdpAdminClientRegistration } from '../idp-admin-client.js'
 import type { IdpConnection, IIdpService } from '../idp-service.js'
@@ -49,7 +42,9 @@ class BrowserResponse
 /** Plays the browser: raw https GET/POST trusting the IdP dev CA, redirects captured not followed. */
 class Browser
 {
-    private static readonly FormContentType = 'application/x-www-form-urlencoded'
+    private static readonly JsonContentType = 'application/json'
+    private static readonly PasswordMethod = 'password'
+    private static readonly StatusOk = 200
     private static readonly ContentTypeHeader = 'Content-Type'
     private static readonly ContentLengthHeader = 'Content-Length'
     private static readonly GetMethod = 'GET'
@@ -64,9 +59,16 @@ class Browser
         return this.send(Browser.GetMethod, url, undefined)
     }
 
-    public PostForm(url: string, fields: ReadonlyMap<string, string>): Promise<BrowserResponse>
+    /** What the login page does: posts the credentials with the authorize request to the realm's login API; the
+     *  answer's `redirect` is where the browser goes next. */
+    public async Login(authorizeUrl: string, email: string, password: string): Promise<BrowserResponse>
     {
-        return this.send(Browser.PostMethod, url, new URLSearchParams([...fields]).toString())
+        const url = new URL(authorizeUrl)
+        const issuer = url.origin + url.pathname.slice(0, -RealmIssuer.AuthorizePath.length)
+        const body = JSON.stringify({ request: url.search.slice(1), method: Browser.PasswordMethod, email, password })
+        const reply = await this.send(Browser.PostMethod, issuer + RealmIssuer.LoginPath, body)
+        const redirect = reply.Status === Browser.StatusOk ? (JSON.parse(reply.Body) as { redirect: string }).redirect : undefined
+        return new BrowserResponse(reply.Status, redirect, reply.Body)
     }
 
     private send(method: string, url: string, body: string | undefined): Promise<BrowserResponse>
@@ -74,7 +76,7 @@ class Browser
         const headers: Record<string, string> = {}
         if (body !== undefined)
         {
-            headers[Browser.ContentTypeHeader] = Browser.FormContentType
+            headers[Browser.ContentTypeHeader] = Browser.JsonContentType
             headers[Browser.ContentLengthHeader] = String(Buffer.byteLength(body))
         }
         return new Promise<BrowserResponse>((resolve, reject) =>
@@ -131,7 +133,7 @@ class EmptyEnvironments implements IEnvironmentLookup
 class IdpFixture
 {
     public static readonly TenantId = 'acme'
-    public static readonly AdminToken = 'fixture-admin-token-0a1b2c3d4e5f'
+    public static readonly AdminToken = TenantIdpTestHost.AdminToken
     public static readonly OwnerEmail = 'owner@acme.test'
     public static readonly OwnerPrincipalId = 'user-owner-0001'
     public static readonly OwnerPassword = 'correct-horse-battery-staple'
@@ -164,52 +166,20 @@ class IdpFixture
 
     public static async With(body: (conn: IdpConnection, browser: Browser) => Promise<void>): Promise<void>
     {
-        const dir = await mkdtemp(join(tmpdir(), 'tenant-oidc-'))
-        let host: IdpHost | undefined
+        const host = await TenantIdpTestHost.Start()
         try
         {
-            const caFiles = DevCa.EnsureAt(join(dir, 'tls'), IdpFixture.Host)
-            const ca = readFileSync(caFiles.caFile)
-            const tls = IdpTlsMaterial.Load({ certFile: caFiles.certFile, keyFile: caFiles.keyFile })
-            const key = await IdpSigningKey.LoadOrCreate(join(dir, 'signing.pem'))
-            const realmsDir = join(dir, 'realms')
-            const masterKey = randomBytes(32)
-            const realms = new IdpRealmSet([], (id, name) => IdpRealm.OpenFor(realmsDir, id, name, masterKey))
-            const clients = new IdpClientStore()
-            const sso = new IdpSsoSessionStore()
-            const admin = new IdpAdminEndpoint([IdpFixture.AdminToken], realms, clients, sso)
-            const port = await IdpFixture.FreePort()
-            const baseUrl = 'https://' + IdpFixture.Host + ':' + port
-            host = new IdpHost(baseUrl, key, realms, clients, new InMemoryAuthorizationCodeStore(), sso, tls, true, admin)
-            await host.Listen(port, IdpFixture.Host)
-            const conn: IdpConnection = { baseUrl, browserBaseUrl: baseUrl, ca, adminToken: IdpFixture.AdminToken, adminTokenRef: 'admin-token', caDir: join(dir, 'tls') }
-            const client = new IdpAdminClient({ baseUrl, adminToken: IdpFixture.AdminToken, ca })
+            const ca = Buffer.from(host.Ca)
+            const conn: IdpConnection = { baseUrl: host.BaseUrl, browserBaseUrl: host.BaseUrl, ca, adminToken: IdpFixture.AdminToken, adminTokenRef: 'admin-token', caDir: '/data/idp/tls' }
+            const client = new IdpAdminClient({ baseUrl: host.BaseUrl, adminToken: IdpFixture.AdminToken, ca })
             await client.EnsureRealm(IdpFixture.TenantId, 'Acme')
             await client.SeedAccount(IdpFixture.TenantId, { email: IdpFixture.OwnerEmail, principalId: IdpFixture.OwnerPrincipalId, displayName: IdpFixture.OwnerDisplayName, password: IdpFixture.OwnerPassword })
             await body(conn, new Browser(ca))
         }
         finally
         {
-            if (host !== undefined)
-            {
-                await host.Close()
-            }
-            rmSync(dir, { recursive: true, force: true })
+            await host.Close()
         }
-    }
-
-    private static FreePort(): Promise<number>
-    {
-        return new Promise<number>((resolve, reject) =>
-        {
-            const server = createNetServer()
-            server.once('error', reject)
-            server.listen(0, IdpFixture.Host, () =>
-            {
-                const port = (server.address() as AddressInfo).port
-                server.close(() => resolve(port))
-            })
-        })
     }
 }
 
@@ -319,8 +289,8 @@ describe('TenantOidcClients over the real tenant IdP', () =>
             const durable = await Durable.Create()
             const clients = new TenantOidcClients(new StubIdp(conn), await IdpFixture.Directory(), IdpFixture.AdminClientFor, new Hosts(), durable.Secrets())
             const client = await clients.For(TenantOidcClientKind.Console, IdpFixture.TenantId, IdpFixture.CallbackUrl)
-            assert.equal(client.Issuer, conn.browserBaseUrl + '/' + IdpFixture.TenantId)
-            assert.equal(client.DiscoveryUrl, conn.baseUrl + '/' + IdpFixture.TenantId + '/.well-known/openid-configuration')
+            assert.equal(client.Issuer, conn.browserBaseUrl + '/realms/' + IdpFixture.TenantId)
+            assert.equal(client.DiscoveryUrl, conn.baseUrl + '/realms/' + IdpFixture.TenantId + '/.well-known/openid-configuration')
             assert.equal(client.ClientId, TenantOidcClients.ConsoleClientId)
             assert.equal(client.RedirectUri, IdpFixture.CallbackUrl)
             assert.equal(client.ClientSecret, await durable.Store.Get(Durable.ConsoleRef))
@@ -343,8 +313,8 @@ describe('TenantOidcClients over the real tenant IdP', () =>
             assert.equal(url.searchParams.get('client_id'), TenantOidcClients.ConsoleClientId)
             assert.equal(url.searchParams.get('redirect_uri'), IdpFixture.CallbackUrl)
             assert.ok((url.searchParams.get('code_challenge') ?? '').length > 0)
-            const redirect = await browser.PostForm(begin.Url, new Map([['email', IdpFixture.OwnerEmail], ['password', IdpFixture.OwnerPassword]]))
-            assert.equal(redirect.Status, 302)
+            const redirect = await browser.Login(begin.Url, IdpFixture.OwnerEmail, IdpFixture.OwnerPassword)
+            assert.equal(redirect.Status, 200)
             const target = new URL(redirect.Location as string)
             assert.equal(target.origin + target.pathname, IdpFixture.CallbackUrl)
             const who = await rp.Complete(await clients.For(TenantOidcClientKind.Console, IdpFixture.TenantId, IdpFixture.CallbackUrl), target.searchParams.get('code') as string, begin.State)

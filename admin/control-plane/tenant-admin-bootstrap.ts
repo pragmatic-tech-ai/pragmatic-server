@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
-import type { IdpWorkloadSpec } from './idp-workload-driver.js'
+import { IdpDatabaseSecret, type IdpDatabaseSpec, type IdpWorkloadSpec } from './idp-workload-driver.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import type { VerifiedImage } from './pinned-image-verifier.js'
 import type { HiveRecord, TenantRecord } from './platform-records.js'
@@ -40,8 +40,11 @@ export interface TenantBootstrapInput
      * Secret set is pragmatic-system only), so whoever provisions the IdP must create them in the IdP namespace. Omit when the IdP
      * is provisioned separately. With a `console` exposure the IdP Ingress uses the console's TLS choice (one choice for the console,
      * its IdP and the environments it creates); `idp.ingressTls` then is ignored and only applies without a console.
+     * The IdP stores in its own Postgres: `idp.database`, else the release's `postgresImage` with the conventional Secret
+     * IdpDatabaseSecret.NameOf(tenant) (minted in the IdP namespace by whoever provisions the IdP, like its TLS and admin
+     * token); an IdP with neither is refused, since the service cannot start without its database.
      */
-    idp?: Pick<IdpWorkloadSpec, 'image' | 'port' | 'tlsSecretName' | 'adminTokenSecretName' | 'adminTokenRef' | 'ingressTls'> & TenantIdpMaterial
+    idp?: Pick<IdpWorkloadSpec, 'image' | 'port' | 'tlsSecretName' | 'adminTokenSecretName' | 'adminTokenRef' | 'ingressTls'> & { database?: IdpDatabaseSpec } & TenantIdpMaterial
     /** The signing trust root's PUBLIC key (PEM). Never the private half. */
     trustRootPublicKey: string
     pullCredential?: PullCredential
@@ -231,6 +234,7 @@ export class TenantAdminBootstrap
     private static readonly BadMasterKey = 'TenantAdminBootstrap: the console master key must be exactly 32 bytes'
     private static readonly BadFingerprintKey = 'TenantAdminBootstrap: the console fingerprint key must be exactly 32 bytes'
     private static readonly ConsoleNeedsFingerprintKey = 'TenantAdminBootstrap: a console exposure needs its account-email fingerprint key'
+    private static readonly IdpNeedsDatabase = 'TenantAdminBootstrap: the IdP needs its database (idp.database or postgresImage)'
     private static readonly ApiVersionKey = 'apiVersion'
     private static readonly KindKey = 'kind'
     private static readonly ItemsKey = 'items'
@@ -273,6 +277,7 @@ export class TenantAdminBootstrap
         {
             throw new Error(TenantAdminBootstrap.ConsoleNeedsFingerprintKey)
         }
+        const idpDatabase = TenantAdminBootstrap.IdpDatabaseOf(input)
         const agentTokenSecretName = K8sManifestBuilder.AgentTokenSecretNameOf(hive.id)
         const seedSecretName = K8sManifestBuilder.TenantAdminSeedSecretNameOf(tenant.id)
         const seed: TenantDirectorySeed = { tenant: { ...tenant }, hives: [{ ...hive, agentTokenRef: agentTokenSecretName }], ...(input.organisation !== undefined ? { organisation: input.organisation } : {}) }
@@ -320,7 +325,25 @@ export class TenantAdminBootstrap
             secrets.Add(TenantAdminBootstrap.IdpCaSecretNameOf(tenant.id), { [TenantAdminBootstrap.IdpCaKey]: material.ca })
             secrets.Add(TenantAdminBootstrap.IdpTokenSecretNameOf(tenant.id), { [TenantAdminBootstrap.IdpAdminTokenKey]: material.adminToken })
         }
-        return new TenantBootstrap(seed, this.AssembleManifest(input, agentTokenSecretName, seedSecretName, material !== undefined), secrets, agentTokenSecretName, seedSecretName)
+        return new TenantBootstrap(seed, this.AssembleManifest(input, agentTokenSecretName, seedSecretName, material !== undefined, idpDatabase), secrets, agentTokenSecretName, seedSecretName)
+    }
+
+    /** The IdP's database: the one given, else the release postgres image under the conventional Secret; undefined without an IdP; throws when an IdP has neither. */
+    private static IdpDatabaseOf(input: TenantBootstrapInput): IdpDatabaseSpec | undefined
+    {
+        if (input.idp === undefined)
+        {
+            return undefined
+        }
+        if (input.idp.database !== undefined)
+        {
+            return input.idp.database
+        }
+        if (input.postgresImage === undefined)
+        {
+            throw new Error(TenantAdminBootstrap.IdpNeedsDatabase)
+        }
+        return { image: input.postgresImage, secretName: IdpDatabaseSecret.NameOf(input.tenant.id) }
     }
 
     /** A random database password (URL-safe, so the URL needs no escaping). */
@@ -352,7 +375,7 @@ export class TenantAdminBootstrap
         return ca !== undefined && adminToken !== undefined ? { ca, adminToken } : undefined
     }
 
-    private AssembleManifest(input: TenantBootstrapInput, agentTokenSecretName: string, seedSecretName: string, federated: boolean): string
+    private AssembleManifest(input: TenantBootstrapInput, agentTokenSecretName: string, seedSecretName: string, federated: boolean, idpDatabase: IdpDatabaseSpec | undefined): string
     {
         const { tenant, hive } = input
         const admin: TenantAdminWorkloadSpec = {
@@ -382,12 +405,12 @@ export class TenantAdminBootstrap
         }
         // A reused token means the hive agent already runs: re-applying it would revert its Deployment and RBAC.
         const rendered = input.reuseAgentToken === true ? [] : [this.manifests.RenderHiveAgent(hive.id, input.channelUrl, agentTokenSecretName, input.agentImage ?? K8sManifestBuilder.AgentImage)]
-        if (input.idp !== undefined)
+        if (input.idp !== undefined && idpDatabase !== undefined)
         {
             const { image, port, tlsSecretName, adminTokenSecretName, adminTokenRef } = input.idp
             // One TLS choice: with a console exposure the IdP Ingress is secured like the console (and its environments).
             const ingressTls = input.console?.ingressTls ?? input.idp.ingressTls
-            const idp: IdpWorkloadSpec = { tenantId: tenant.id, hiveId: hive.id, image, port, tlsSecretName, adminTokenSecretName, adminTokenRef, ingressTls }
+            const idp: IdpWorkloadSpec = { tenantId: tenant.id, hiveId: hive.id, image, port, tlsSecretName, adminTokenSecretName, adminTokenRef, ingressTls, database: idpDatabase }
             if (admin.idp !== undefined)
             {
                 idp.baseDomain = input.baseDomain

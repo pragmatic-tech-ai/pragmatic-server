@@ -1,38 +1,49 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { InMemoryAuthorizationCodeStore } from './authorization-code-store.js';
+import { ComponentDescriptorCodec, type ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component';
 import { DevCa, IdpTlsMaterial } from './dev-ca.js';
-import { IdpAdminEndpoint } from './idp-admin-endpoint.js';
-import { IdpClientStore } from './idp-client-store.js';
-import { IdpHost, IdpRealmSet, type RealmFactory } from './idp-host.js';
 import { IdpLoginPage } from './idp-login-page.js';
-import { IdpLoginThrottle } from './idp-login-throttle.js';
-import { IdpRealm } from './idp-realm.js';
-import { IdpRealmCatalog } from './idp-realm-catalog.js';
 import { IdpSigningKey } from './idp-signing-key.js';
-import { IdpSsoSessionStore } from './idp-sso-session.js';
+import { IdpTlsIdentity } from './idp-tls-front.js';
+import { RealmConfigurationReader, type RealmConfiguration } from './realm-configuration-reader.js';
+import { TenantIdpComponent } from './tenant-idp-component.js';
+import { TenantIdpDatabase } from './tenant-idp-database.js';
+import { TenantIdpImport } from './tenant-idp-import.js';
+import { SqlIdpRealmCatalogue } from './sql-idp-realm-catalogue.js';
+import { TenantIdpSecretsHome, TenantIdpService } from './tenant-idp-service.js';
 
-/** Env-driven launcher for the local `pragmatic-idp` service (single instance; in-memory client/code/SSO stores). */
+/**
+ * Env-driven launcher of the realm sign-in service (`pragmatic-tenant-idp`). The secret files (signing key, master key,
+ * TLS, admin tokens) live in the data folder; every record lives in the service's own Postgres; the realms'
+ * configurations are read at start (applied configuration files and the bootstrap realm file).
+ */
 export class IdpMain
 {
     private static readonly PortEnvVar = 'PRAGMATIC_IDP_PORT';
-    private static readonly LineBreak = /\r?\n/;
     private static readonly BaseUrlEnvVar = 'PRAGMATIC_IDP_BASE_URL';
     private static readonly InternalUrlEnvVar = 'PRAGMATIC_IDP_INTERNAL_URL';
     private static readonly HostEnvVar = 'PRAGMATIC_IDP_HOST';
     private static readonly DataEnvVar = 'PRAGMATIC_IDP_DATA';
     private static readonly SecureCookieEnvVar = 'PRAGMATIC_IDP_SECURE_COOKIE';
-    private static readonly TenantsEnvVar = 'PRAGMATIC_IDP_TENANTS';
+    private static readonly TlsEnvVar = 'PRAGMATIC_IDP_TLS';
+    private static readonly TrustedProxyEnvVar = 'PRAGMATIC_IDP_TRUSTED_PROXY';
     private static readonly AdminTokenRefEnvVar = 'PRAGMATIC_IDP_ADMIN_TOKEN_REF';
+    private static readonly ConfigurationDirEnvVar = 'PRAGMATIC_IDP_CONFIGURATION_DIR';
+    private static readonly BootstrapRealmEnvVar = 'PRAGMATIC_IDP_BOOTSTRAP_REALM_FILE';
+    private static readonly SecretsDirEnvVar = 'PRAGMATIC_IDP_SECRETS_DIR';
+    private static readonly ApplicationsDirEnvVar = 'PRAGMATIC_IDP_APPLICATIONS_DIR';
     // Where the built sign-in app lives; defaults to idp-login/dist beside this package.
     private static readonly LoginDirEnvVar = 'PRAGMATIC_IDP_LOGIN_DIR';
+    private static readonly DefaultConfigurationDir = '/etc/pragmatic/configuration';
+    private static readonly LineBreak = /\r?\n/;
     private static readonly SecretsDir = 'secrets';
     private static readonly CurrentDir = '.';
     private static readonly ParentDir = '..';
     private static readonly Utf8 = 'utf8';
     private static readonly NotFoundCode = 'ENOENT';
+    private static readonly JsonSuffix = '.json';
     private static readonly DefaultPort = 7100;
     private static readonly MaxPort = 65535;
     private static readonly DefaultHost = '127.0.0.1';
@@ -40,13 +51,12 @@ export class IdpMain
     private static readonly SigningKeyFile = 'signing-key.pem';
     private static readonly MasterKeyFile = 'master.key';
     private static readonly TlsDir = 'tls';
-    private static readonly RealmsDir = 'realms';
-    private static readonly ClientsFile = 'clients.json';
     private static readonly MasterKeyBytes = 32;
     private static readonly KeyFileMode = 0o600;
-    private static readonly TenantSeparator = ',';
     private static readonly FalseToken = 'false';
     private static readonly ZeroToken = '0';
+    private static readonly TrueToken = 'true';
+    private static readonly OneToken = '1';
     private static readonly MissingBaseUrlMessage = 'PRAGMATIC_IDP_BASE_URL is required (an https origin)';
     private static readonly BadBaseUrlMessage = 'PRAGMATIC_IDP_BASE_URL must be a valid https URL';
     private static readonly BadInternalUrlMessage = 'PRAGMATIC_IDP_INTERNAL_URL must be a valid https URL';
@@ -55,72 +65,79 @@ export class IdpMain
     private static readonly FailExitCode = 1;
     private static readonly BadPortPrefix = 'Invalid PRAGMATIC_IDP_PORT: ';
     private static readonly BadMasterKeyMessage = 'IdP master key file must be exactly 32 bytes';
+    private static readonly MissingMasterKeyMessage = 'the IdP master key file is missing but the database already holds realms (restore master.key; a new key cannot open their secrets)';
     private static readonly ListeningPrefix = 'pragmatic-idp listening on ';
 
     public static async Run(): Promise<void>
     {
-        const host = await IdpMain.Compose(process.env);
+        const service = await IdpMain.Compose(process.env);
         const bind = process.env[IdpMain.HostEnvVar] ?? IdpMain.DefaultHost;
         const port = IdpMain.ResolvePort(process.env[IdpMain.PortEnvVar]);
-        await host.Listen(port, bind);
+        await service.Listen(port, bind);
         console.log(IdpMain.ListeningPrefix + process.env[IdpMain.BaseUrlEnvVar]);
     }
 
-    /** Builds every collaborator from the environment and returns a not-yet-listening host. */
-    public static async Compose(env: NodeJS.ProcessEnv): Promise<IdpHost>
+    /** Builds every collaborator from the environment and returns a not-yet-listening service. */
+    public static async Compose(env: NodeJS.ProcessEnv, database?: TenantIdpDatabase): Promise<TenantIdpService>
     {
-        const baseUrl = env[IdpMain.BaseUrlEnvVar];
+        const M = IdpMain;
+        const baseUrl = env[M.BaseUrlEnvVar];
         if (baseUrl === undefined || baseUrl === '')
         {
-            throw new Error(IdpMain.MissingBaseUrlMessage);
+            throw new Error(M.MissingBaseUrlMessage);
         }
-        IdpMain.RequireHttps(baseUrl, IdpMain.BadBaseUrlMessage);
-        const rawInternal = env[IdpMain.InternalUrlEnvVar];
+        M.RequireHttps(baseUrl, M.BadBaseUrlMessage);
+        const rawInternal = env[M.InternalUrlEnvVar];
         const internalBaseUrl = rawInternal === undefined || rawInternal === '' ? undefined : rawInternal;
         if (internalBaseUrl !== undefined)
         {
-            IdpMain.RequireHttps(internalBaseUrl, IdpMain.BadInternalUrlMessage);
+            M.RequireHttps(internalBaseUrl, M.BadInternalUrlMessage);
         }
-        const data = env[IdpMain.DataEnvVar] ?? join(dirname(fileURLToPath(import.meta.url)), IdpMain.DataDir);
+        const data = env[M.DataEnvVar] ?? join(dirname(fileURLToPath(import.meta.url)), M.DataDir);
         mkdirSync(data, { recursive: true });
-        const signingKey = await IdpSigningKey.LoadOrCreate(join(data, IdpMain.SigningKeyFile));
-        const masterKey = IdpMain.LoadOrCreateMasterKey(join(data, IdpMain.MasterKeyFile));
-        const realmsDir = join(data, IdpMain.RealmsDir);
-        const adminTokens = IdpMain.LoadAdminTokens(data, env[IdpMain.AdminTokenRefEnvVar]);
-        // Realms and clients created through the admin API are durable on the data volume, so a restarted IdP (a
-        // reboot, a Docker restart, an image upgrade) reopens them instead of forgetting the tenant.
-        const catalog = await IdpRealmCatalog.Open(realmsDir);
-        const factory: RealmFactory | undefined = adminTokens === undefined
-            ? undefined
-            : async (tenantId, displayName) =>
-            {
-                const realm = await IdpRealm.OpenFor(realmsDir, tenantId, displayName, masterKey);
-                await catalog.Record(tenantId, displayName);
-                return realm;
-            };
-        const realms = new IdpRealmSet([], factory);
-        for (const tenantId of IdpMain.ParseTenants(env[IdpMain.TenantsEnvVar]))
+        const signingKey = await IdpSigningKey.LoadOrCreate(join(data, M.SigningKeyFile));
+        const adminTokens = M.LoadAdminTokens(data, env[M.AdminTokenRefEnvVar]);
+        const db = database ?? await TenantIdpDatabase.Open(env);
+        const masterKeyFile = join(data, M.MasterKeyFile);
+        // A new master key over a database that holds realms would leave every sealed secret unreadable: refuse instead.
+        if (!existsSync(masterKeyFile) && (await (await SqlIdpRealmCatalogue.Open(db.Session)).Entries()).length > 0)
         {
-            realms.Add(tenantId, await IdpRealm.OpenFor(realmsDir, tenantId, tenantId, masterKey));
+            throw new Error(M.MissingMasterKeyMessage);
         }
-        for (const entry of catalog.Entries())
+        const masterKey = M.LoadOrCreateMasterKey(masterKeyFile);
+        // Pre-A5 file data (realms, accounts, clients under the data folder) moves into the database once.
+        await TenantIdpImport.ImportIfPending(db, data, masterKey);
+        const secretsDir = M.Optional(env[M.SecretsDirEnvVar]);
+        const reader = new RealmConfigurationReader(TenantIdpComponent.Descriptor(), new TenantIdpSecretsHome(db, masterKey, secretsDir));
+        const configurations: RealmConfiguration[] = [...await reader.ReadDirectory(M.Optional(env[M.ConfigurationDirEnvVar]) ?? M.DefaultConfigurationDir)];
+        const bootstrap = M.Optional(env[M.BootstrapRealmEnvVar]);
+        if (bootstrap !== undefined)
         {
-            if (realms.For(entry.tenantId) === undefined)
-            {
-                realms.Add(entry.tenantId, await IdpRealm.OpenFor(realmsDir, entry.tenantId, entry.displayName, masterKey));
-            }
+            configurations.push(await reader.ReadBootstrap(bootstrap));
         }
-        const clients = await IdpClientStore.Open(join(data, IdpMain.ClientsFile));
-        // One SSO store for the host and the admin endpoint: an admin password reset ends the principal's SSO sessions.
-        const sso = new IdpSsoSessionStore();
-        const admin = adminTokens === undefined ? undefined : new IdpAdminEndpoint(adminTokens, realms, clients, sso);
-        const ca = DevCa.EnsureAt(join(data, IdpMain.TlsDir), new URL(baseUrl).hostname);
-        const tls = IdpTlsMaterial.Load({ certFile: ca.certFile, keyFile: ca.keyFile });
-        const secure = env[IdpMain.SecureCookieEnvVar];
-        const secureCookie = secure !== IdpMain.ZeroToken && secure !== IdpMain.FalseToken;
+        const tlsOn = !M.IsOff(env[M.TlsEnvVar]);
+        let tls: IdpTlsIdentity | undefined;
+        if (tlsOn)
+        {
+            const ca = DevCa.EnsureAt(join(data, M.TlsDir), new URL(baseUrl).hostname);
+            const material = IdpTlsMaterial.Load({ certFile: ca.certFile, keyFile: ca.keyFile });
+            tls = new IdpTlsIdentity(material.key, material.cert);
+        }
         // The built sign-in app is required: Load throws (the daemon refuses to start) when it is missing.
-        return new IdpHost(baseUrl, signingKey, realms, clients, new InMemoryAuthorizationCodeStore(), sso, tls, secureCookie, admin, internalBaseUrl,
-            new IdpLoginThrottle(), IdpLoginPage.Load(env[IdpMain.LoginDirEnvVar] || IdpLoginPage.DefaultRoot()));
+        return await TenantIdpService.Open({
+            Database: db,
+            SigningKey: signingKey,
+            MasterKey: masterKey,
+            BaseUrl: baseUrl,
+            InternalBaseUrl: internalBaseUrl,
+            Configurations: RealmConfigurationReader.Unique(configurations),
+            Applications: M.ReadApplications(M.Optional(env[M.ApplicationsDirEnvVar])),
+            LoginPage: IdpLoginPage.Load(env[M.LoginDirEnvVar] || IdpLoginPage.DefaultRoot()),
+            SecureCookie: !M.IsOff(env[M.SecureCookieEnvVar]),
+            TrustedProxy: M.IsOn(env[M.TrustedProxyEnvVar]),
+            Tls: tls,
+            AdminTokens: adminTokens,
+        });
     }
 
     /** Prints a concise startup failure (message only, no stack) and sets a non-zero exit code. */
@@ -128,6 +145,25 @@ export class IdpMain
     {
         console.error(IdpMain.FailPrefix + (err instanceof Error ? err.message : String(err)));
         process.exitCode = IdpMain.FailExitCode;
+    }
+
+    /** True when this module is the process entry point (not when imported by tests); the bin starts Run directly. */
+    public static IsEntryPoint(): boolean
+    {
+        return process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
+    }
+
+    /** Every component descriptor (`*.json`) of the folder; none when it is unset or absent. */
+    private static ReadApplications(directory: string | undefined): ComponentDescriptor[]
+    {
+        if (directory === undefined || !existsSync(directory))
+        {
+            return [];
+        }
+        return readdirSync(directory)
+            .filter(name => name.endsWith(IdpMain.JsonSuffix))
+            .sort()
+            .map(name => ComponentDescriptorCodec.Parse(readFileSync(join(directory, name), IdpMain.Utf8)));
     }
 
     /**
@@ -179,19 +215,19 @@ export class IdpMain
         }
     }
 
-    /** True when this module is the process entry point (not when imported by tests); the bin starts Run directly. */
-    public static IsEntryPoint(): boolean
+    private static Optional(raw: string | undefined): string | undefined
     {
-        return process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1];
+        return raw === undefined || raw.trim() === '' ? undefined : raw.trim();
     }
 
-    private static ParseTenants(raw: string | undefined): string[]
+    private static IsOff(raw: string | undefined): boolean
     {
-        if (raw === undefined)
-        {
-            return [];
-        }
-        return raw.split(IdpMain.TenantSeparator).map(t => t.trim()).filter(t => t !== '');
+        return raw === IdpMain.FalseToken || raw === IdpMain.ZeroToken;
+    }
+
+    private static IsOn(raw: string | undefined): boolean
+    {
+        return raw === IdpMain.TrueToken || raw === IdpMain.OneToken;
     }
 
     private static ResolvePort(raw: string | undefined): number

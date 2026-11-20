@@ -8,13 +8,9 @@ import * as https from 'node:https';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { DevCa, IdpTlsMaterial } from '../../../src/idp/dev-ca.js';
-import { IdpAdminEndpoint } from '../../../src/idp/idp-admin-endpoint.js';
-import { IdpClientStore } from '../../../src/idp/idp-client-store.js';
-import { IdpHost, IdpRealmSet } from '../../../src/idp/idp-host.js';
-import { IdpRealm } from '../../../src/idp/idp-realm.js';
-import { IdpSigningKey } from '../../../src/idp/idp-signing-key.js';
-import { IdpSsoSessionStore } from '../../../src/idp/idp-sso-session.js';
-import { InMemoryAuthorizationCodeStore } from '../../../src/idp/authorization-code-store.js';
+import type { IdpRealmSet } from '../../../src/idp/idp-realm-set.js';
+import type { SqlIdpClientStore } from '../../../src/idp/sql-idp-client-store.js';
+import { TenantIdpTestHost } from '../../../src/idp/tests/tenant-idp-test-host.js';
 import { IdpAdminClient, IdpAdminError, IdpAdminTransportError } from '../idp-admin-client.js';
 
 class ClientFixture
@@ -27,7 +23,7 @@ class ClientFixture
     public static readonly Loopback = '127.0.0.1';
     public static readonly Localhost = 'localhost';
     public static readonly Utf8 = 'utf8';
-    public static readonly Token = 'admin-token-for-tests';
+    public static readonly Token = TenantIdpTestHost.AdminToken;
     public static readonly BadToken = 'wrong-token';
     public static readonly TenantId = 'tenant-1';
     public static readonly DisplayName = 'Tenant One';
@@ -42,37 +38,22 @@ class ClientFixture
     public static readonly Unauthorized = 401;
     public static readonly Ann = 'Ann';
 
-    public static async WithHost(body: (host: IdpHost, realms: IdpRealmSet, clients: IdpClientStore, caPem: string) => Promise<void>): Promise<void>
+    public static async WithHost(body: (host: TenantIdpTestHost, realms: IdpRealmSet, clients: SqlIdpClientStore, caPem: string) => Promise<void>): Promise<void>
     {
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), ClientFixture.DirPrefix));
-        let host: IdpHost | undefined;
+        const host = await TenantIdpTestHost.Start();
         try
         {
-            const key = await IdpSigningKey.LoadOrCreate(path.join(dir, ClientFixture.KeyFileName));
-            const ca = DevCa.EnsureAt(path.join(dir, ClientFixture.CaDirName), ClientFixture.Localhost);
-            const tls = IdpTlsMaterial.Load({ certFile: ca.certFile, keyFile: ca.keyFile });
-            const realmsDir = path.join(dir, ClientFixture.RealmDirName);
-            const realms = new IdpRealmSet([], (tenantId, displayName) => IdpRealm.OpenFor(realmsDir, tenantId, displayName, randomBytes(32)));
-            const clients = new IdpClientStore();
-            const sso = new IdpSsoSessionStore();
-            const admin = new IdpAdminEndpoint([ClientFixture.Token], realms, clients, sso);
-            host = new IdpHost(ClientFixture.BaseUrl, key, realms, clients, new InMemoryAuthorizationCodeStore(), sso, tls, true, admin);
-            await host.Listen(0, ClientFixture.Loopback);
-            await body(host, realms, clients, fs.readFileSync(ca.caFile, ClientFixture.Utf8));
+            await body(host, host.Service.Realms, host.Service.Stores.Clients, host.Ca);
         }
         finally
         {
-            if (host !== undefined)
-            {
-                await host.Close();
-            }
-            fs.rmSync(dir, { recursive: true, force: true });
+            await host.Close();
         }
     }
 
-    public static UrlOf(host: IdpHost): string
+    public static UrlOf(host: TenantIdpTestHost): string
     {
-        return ClientFixture.HttpsScheme + ClientFixture.Localhost + ClientFixture.Colon + host.Address().port;
+        return host.BaseUrl;
     }
 }
 
@@ -87,9 +68,9 @@ test('EnsureRealm, SeedAccount, RegisterClient round-trip over https', async () 
 
         const realm = realms.For(ClientFixture.TenantId);
         assert.ok(realm !== undefined);
-        assert.ok(await realm.Authenticate(ClientFixture.Email, ClientFixture.Password) !== null);
-        assert.equal(await clients.VerifySecret(ClientFixture.TenantId, ClientFixture.ClientId, ClientFixture.Secret), true);
-        assert.equal(clients.RedirectAllowed(ClientFixture.TenantId, ClientFixture.ClientId, ClientFixture.Redirect), true);
+        assert.ok(await realm.AuthenticatePassword(ClientFixture.Email, ClientFixture.Password) !== undefined);
+        assert.notEqual(await clients.Authenticate(ClientFixture.TenantId, ClientFixture.ClientId, ClientFixture.Secret), undefined);
+        assert.equal((await clients.Find(ClientFixture.TenantId, ClientFixture.ClientId))?.RedirectAllowed(ClientFixture.Redirect), true);
     });
 });
 
@@ -104,8 +85,8 @@ test('ResetPassword replaces an account password over https: the new one authent
         await client.ResetPassword(ClientFixture.TenantId, ClientFixture.PrincipalId, fresh);
         const realm = realms.For(ClientFixture.TenantId);
         assert.ok(realm !== undefined);
-        assert.ok(await realm.Authenticate(ClientFixture.Email, fresh) !== null);
-        assert.equal(await realm.Authenticate(ClientFixture.Email, ClientFixture.Password), null);
+        assert.ok(await realm.AuthenticatePassword(ClientFixture.Email, fresh) !== undefined);
+        assert.equal(await realm.AuthenticatePassword(ClientFixture.Email, ClientFixture.Password), undefined);
     });
 });
 

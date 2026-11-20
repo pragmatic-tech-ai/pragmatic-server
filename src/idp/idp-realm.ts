@@ -1,98 +1,69 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { AuthMethod, AuthenticatedResult, Credential, PresentedSecret, Realm, RealmKind } from '@pragmatic-tech-ai/pragmatic-identity';
-import type { IdentityStoreSet } from '@pragmatic-tech-ai/pragmatic-identity';
+import type { ISecretStore } from '@pragmatic-tech-ai/pragmatic-identity';
 import { Argon2PasswordHasher, LocalPasswordAuthenticator } from '@pragmatic-tech-ai/pragmatic-identity-source-local';
-import { FileIdentityStores } from '@pragmatic-tech-ai/pragmatic-identity-store';
-import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node';
+import type { IHttpClient } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc';
+import type { TenantIdpStores } from './tenant-idp-database.js';
+import type { RealmSettings } from './realm-settings.js';
+import { RealmSignIn } from './realm-sign-in.js';
+import { RealmSourceKind } from './tenant-idp-options.js';
+import { UpstreamOidcSource } from './upstream-oidc-source.js';
+import { IdentityPlatformSource } from './identity-platform-source.js';
 
-/**
- * A per-principal side-store: principalId -> one string, one small JSON doc beside the identity stores (the display names,
- * and the time each principal's credentials last changed). Holds no email or secret.
- */
-class PrincipalSideStore
+/** The HTTP clients the realms' sources use instead of their defaults (tests: fakes of the upstreams). */
+export class IdpSourceClients
 {
-    public static readonly ProfilesFile = 'idp-profiles.json';
-    public static readonly CredentialsChangedFile = 'idp-credentials-changed.json';
-    private static readonly TmpSuffix = '.tmp';
-    private static readonly Encoding = 'utf8';
-    private static readonly NotFound = 'ENOENT';
+    public static readonly Default = new IdpSourceClients(undefined, undefined);
 
-    private readonly file: string;
-    private writeQueue: Promise<void> = Promise.resolve();
-    private tmpCounter = 0;
-
-    public constructor(private readonly dir: string, fileName: string)
+    public constructor(public readonly Upstream: IHttpClient | undefined, public readonly IdentityPlatform: IHttpClient | undefined)
     {
-        this.file = join(dir, fileName);
+        Object.freeze(this);
     }
+}
 
-    public async Get(principalId: string): Promise<string | undefined>
+/** An account's profile as tokens carry it. */
+export class AccountProfile
+{
+    public constructor(public readonly Email: string, public readonly Name: string, public readonly Active: boolean)
     {
-        const map = await this.Load();
-        return map.get(principalId);
-    }
-
-    public Put(principalId: string, displayName: string): Promise<void>
-    {
-        const result = this.writeQueue.then(() => this.DoPut(principalId, displayName));
-        this.writeQueue = result.catch(() => undefined);
-        return result;
-    }
-
-    private async DoPut(principalId: string, displayName: string): Promise<void>
-    {
-        const map = await this.Load();
-        map.set(principalId, displayName);
-        await mkdir(this.dir, { recursive: true });
-        const tmp = this.file + PrincipalSideStore.TmpSuffix + (this.tmpCounter++);
-        await writeFile(tmp, JSON.stringify(Object.fromEntries(map)), PrincipalSideStore.Encoding);
-        await rename(tmp, this.file);
-    }
-
-    private async Load(): Promise<Map<string, string>>
-    {
-        try
-        {
-            return new Map(Object.entries(JSON.parse(await readFile(this.file, PrincipalSideStore.Encoding)) as Record<string, string>));
-        }
-        catch (e)
-        {
-            if ((e as NodeJS.ErrnoException).code === PrincipalSideStore.NotFound)
-            {
-                return new Map();
-            }
-            throw e;
-        }
+        Object.freeze(this);
     }
 }
 
 /**
- * A tenant's human-account realm for the local IdP. Reuses the pragmatic-identity stores,
- * hasher and authenticator; keyed by the IdP's own master key (never the operator's).
+ * One realm of the sign-in service: its settings (token policy, sources), its issuer and its accounts. Local accounts
+ * live in the SQL identity stores (email, password hash in the realm's sealed secrets) with a profile beside them;
+ * upstream identities are linked to realm accounts at their first sign-in. Every read and write is scoped to the realm.
  */
 export class IdpRealm
 {
     private static readonly SecretRefPrefix = 'idp-password/';
+    private static readonly NoName = '';
 
     private readonly hasher = new Argon2PasswordHasher();
     private readonly authenticator: LocalPasswordAuthenticator;
+    private readonly realm: Realm;
+    private readonly upstreams: ReadonlyMap<string, UpstreamOidcSource>;
 
     private constructor(
-        private readonly realm: Realm,
-        private readonly stores: IdentityStoreSet,
-        private readonly profiles: PrincipalSideStore,
-        private readonly credentialsChanged: PrincipalSideStore)
+        public readonly Settings: RealmSettings,
+        public readonly Issuer: string,
+        private readonly stores: TenantIdpStores,
+        /** The realm's sealed secrets: password hashes and the secrets its configuration names (`secret:realm/...`). */
+        public readonly Secrets: ISecretStore,
+        upstreams: readonly UpstreamOidcSource[],
+        public readonly IdentityPlatform: IdentityPlatformSource | undefined,
+        private readonly now: () => Date)
     {
-        this.authenticator = new LocalPasswordAuthenticator(stores.Accounts, stores.Secrets, this.hasher);
+        this.realm = new Realm(Settings.RealmId, RealmKind.SelfHosted, Settings.DisplayName);
+        this.authenticator = new LocalPasswordAuthenticator(stores.Accounts, Secrets, this.hasher);
+        this.upstreams = new Map(upstreams.map(source => [source.Id, source]));
     }
 
-    public static async OpenFor(realmRoot: string, tenantId: string, displayName: string, masterKey: Buffer): Promise<IdpRealm>
+    public static Open(settings: RealmSettings, issuer: string, stores: TenantIdpStores, secrets: ISecretStore, clients: IdpSourceClients = IdpSourceClients.Default, now: () => Date = () => new Date()): IdpRealm
     {
-        const dir = join(realmRoot, tenantId);
-        const stores = await FileIdentityStores.Open(new NodeFsStorage(dir), masterKey);
-        return new IdpRealm(new Realm(tenantId, RealmKind.SelfHosted, displayName), stores,
-            new PrincipalSideStore(dir, PrincipalSideStore.ProfilesFile), new PrincipalSideStore(dir, PrincipalSideStore.CredentialsChangedFile));
+        const upstreams = settings.Upstreams.map(upstream => UpstreamOidcSource.For(upstream, settings.RealmId, issuer, stores.FlowStates, clients.Upstream, now));
+        const identityPlatform = settings.IdentityPlatform === undefined ? undefined : IdentityPlatformSource.For(settings.IdentityPlatform, clients.IdentityPlatform, now);
+        return new IdpRealm(settings, issuer, stores, secrets, upstreams, identityPlatform, now);
     }
 
     public static SecretRefFor(principalId: string): string
@@ -100,115 +71,112 @@ export class IdpRealm
         return IdpRealm.SecretRefPrefix + principalId;
     }
 
-    public TenantId(): string
+    public get Id(): string
     {
-        return this.realm.Id;
+        return this.Settings.RealmId;
     }
 
-    public async SeedAccount(email: string, principalId: string, password: string, displayName?: string): Promise<void>
+    public get DisplayName(): string
+    {
+        return this.Settings.DisplayName;
+    }
+
+    public get HasLocalAccounts(): boolean
+    {
+        return this.Settings.Local !== undefined;
+    }
+
+    public Upstream(sourceId: string): UpstreamOidcSource | undefined
+    {
+        return this.upstreams.get(sourceId);
+    }
+
+    public Upstreams(): readonly UpstreamOidcSource[]
+    {
+        return [...this.upstreams.values()];
+    }
+
+    /** Creates the local account unless it exists (then only its display name follows). */
+    public async SeedAccount(email: string, principalId: string, password: string, displayName: string): Promise<void>
     {
         const existing = await this.stores.Accounts.FindByPrincipalId(this.realm, principalId);
-        if (existing)
+        if (existing === null)
         {
-            if (displayName !== undefined)
+            const ref = IdpRealm.SecretRefFor(principalId);
+            await this.Secrets.Put(ref, await this.hasher.Hash(password));
+            await this.stores.Accounts.CreateAccount(this.realm, email, principalId, ref);
+        }
+        await this.stores.Profiles.PutName(this.Id, principalId, displayName);
+    }
+
+    /**
+     * The local sign-in of `email` with `password`, checked against the credential change stamp: a sign-in whose check
+     * began before the password changed is refused. Undefined for any failure (one answer, no enumeration).
+     */
+    public async AuthenticatePassword(email: string, password: string): Promise<RealmSignIn | undefined>
+    {
+        if (!this.HasLocalAccounts)
+        {
+            return undefined;
+        }
+        const startedAt = this.now();
+        const presented = new PresentedSecret(password);
+        try
+        {
+            const result = await this.authenticator.Authenticate(new Credential(AuthMethod.Local, email), presented, this.realm);
+            if (!(result instanceof AuthenticatedResult))
             {
-                await this.profiles.Put(principalId, displayName);
+                return undefined;
             }
-            return;
+            const account = await this.stores.Accounts.FindByPrincipalId(this.realm, result.Principal.Id);
+            if (account === null || account.Disabled || await this.IsStale(account.PrincipalId, startedAt))
+            {
+                return undefined;
+            }
+            const name = await this.stores.Profiles.Name(this.Id, account.PrincipalId) ?? IdpRealm.NoName;
+            return new RealmSignIn(account.PrincipalId, RealmSourceKind.Local, account.PrincipalId, [], account.Email, name, undefined, startedAt);
         }
-        const ref = IdpRealm.SecretRefFor(principalId);
-        await this.stores.Secrets.Put(ref, await this.hasher.Hash(password));
-        await this.stores.Accounts.CreateAccount(this.realm, email, principalId, ref);
-        await this.profiles.Put(principalId, displayName ?? '');
-    }
-
-    public async LookupProfile(principalId: string): Promise<{ email: string; name: string } | null>
-    {
-        const account = await this.stores.Accounts.FindByPrincipalId(this.realm, principalId);
-        if (!account)
+        finally
         {
-            return null;
+            presented.Clear();
         }
-        return { email: account.Email, name: (await this.profiles.Get(principalId)) ?? '' };
     }
 
-    /**
-     * Self-service rotation: verifies the CURRENT password first and only then stores the Argon2 hash of the new one.
-     * Returns false (secret untouched) on a wrong current password, unknown email, or empty new password.
-     */
-    public async RotatePassword(email: string, currentPassword: string, newPassword: string): Promise<boolean>
-    {
-        return (await this.RotatePasswordOf(email, currentPassword, newPassword)) !== undefined;
-    }
-
-    /** As RotatePassword, returning the rotated principal's id (undefined when nothing changed). */
-    public async RotatePasswordOf(email: string, currentPassword: string, newPassword: string): Promise<string | undefined>
-    {
-        if (newPassword.length === 0)
-        {
-            return undefined;
-        }
-        const result = await this.Authenticate(email, currentPassword);
-        if (result === null)
-        {
-            return undefined;
-        }
-        await this.StoreSecret(result.Principal.Id, newPassword);
-        await this.StampCredentialsChanged(result.Principal.Id);
-        return result.Principal.Id;
-    }
-
-    /**
-     * Admin-forced reset: sets a new password WITHOUT the current one. Reachable only behind the admin endpoint.
-     * Returns false (nothing changed) for an unknown principal or an empty password.
-     */
+    /** An admin-forced reset (no current password); false for an unknown account or an empty password. */
     public async ResetPassword(principalId: string, newPassword: string): Promise<boolean>
     {
-        if (newPassword.length === 0)
+        if (newPassword.length === 0 || (await this.stores.Accounts.FindByPrincipalId(this.realm, principalId)) === null)
         {
             return false;
         }
-        const existing = await this.stores.Accounts.FindByPrincipalId(this.realm, principalId);
-        if (!existing)
-        {
-            return false;
-        }
-        await this.StoreSecret(principalId, newPassword);
-        await this.StampCredentialsChanged(principalId);
+        await this.Secrets.Put(IdpRealm.SecretRefFor(principalId), await this.hasher.Hash(newPassword));
+        // Stamped AFTER the new hash is stored: a sign-in that read the old hash started before the stamp, so it is refused.
+        await this.stores.Profiles.StampCredentialsChanged(this.Id, principalId, this.now());
         return true;
     }
 
-    /**
-     * When the principal's password last changed (an admin reset or a self-service change); undefined when never. Anything
-     * authenticated before it (an SSO session, an auth code, a sign-in whose check started earlier) no longer counts.
-     */
-    public async CredentialsChangedAt(principalId: string): Promise<Date | undefined>
+    /** Whether something authenticated at `at` predates the account's last credential change. */
+    public async IsStale(accountId: string, at: Date): Promise<boolean>
     {
-        const raw = await this.credentialsChanged.Get(principalId);
-        return raw === undefined ? undefined : new Date(raw);
-    }
-
-    /** Whether something authenticated at `at` predates the principal's last credential change. */
-    public async IsStale(principalId: string, at: Date): Promise<boolean>
-    {
-        const changed = await this.CredentialsChangedAt(principalId);
+        const changed = await this.stores.Profiles.CredentialsChangedAt(this.Id, accountId);
         return changed !== undefined && changed.getTime() >= at.getTime();
     }
 
-    // Stamped AFTER the new hash is stored: a sign-in that read the old hash started before the stamp, so it is refused.
-    private async StampCredentialsChanged(principalId: string): Promise<void>
+    /** The realm account an upstream identity signs in as (linked at its first sign-in). */
+    public async LinkUpstream(source: string, subject: string, email: string, name: string): Promise<string>
     {
-        await this.credentialsChanged.Put(principalId, new Date().toISOString());
+        return (await this.stores.Federated.Link(this.Id, source, subject, email, name, this.now())).AccountId;
     }
 
-    private async StoreSecret(principalId: string, password: string): Promise<void>
+    /** The current profile of a realm account (local or federated); undefined when the realm has no such account. */
+    public async Profile(accountId: string): Promise<AccountProfile | undefined>
     {
-        await this.stores.Secrets.Put(IdpRealm.SecretRefFor(principalId), await this.hasher.Hash(password));
-    }
-
-    public async Authenticate(email: string, password: string): Promise<AuthenticatedResult | null>
-    {
-        const result = await this.authenticator.Authenticate(new Credential(AuthMethod.Local, email), new PresentedSecret(password), this.realm);
-        return result instanceof AuthenticatedResult ? result : null;
+        const local = await this.stores.Accounts.FindByPrincipalId(this.realm, accountId);
+        if (local !== null)
+        {
+            return new AccountProfile(local.Email, await this.stores.Profiles.Name(this.Id, accountId) ?? IdpRealm.NoName, !local.Disabled);
+        }
+        const federated = await this.stores.Federated.ByAccount(this.Id, accountId);
+        return federated === undefined ? undefined : new AccountProfile(federated.Email, federated.DisplayName, true);
     }
 }

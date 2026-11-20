@@ -58,6 +58,7 @@ import { FileSignatureStore } from './signature-store.js'
 import { TenantAdminBootstrap } from './tenant-admin-bootstrap.js'
 import type { IHiveRegistrar } from './tenant-admin-bootstrap.js'
 import { SeededTenantDirectory } from './tenant-api/seeded-tenant-directory.js'
+import { IdpDatabaseSecret } from './idp-workload-driver.js'
 
 /** Hands out a throwaway agent bearer; this smoke does not run a platform agent channel. */
 class SmokeRegistrar implements IHiveRegistrar
@@ -327,6 +328,7 @@ export class InClusterFederationSmoke
             tenant: InClusterFederationSmoke.Tenant(),
             hive: InClusterFederationSmoke.Hive(),
             tenantAdminImage: S.Image,
+            postgresImage: IdpDatabaseSecret.DevImage,
             tenantPlanePort: S.TenantPlanePort,
             baseDomain: S.BaseDomain,
             externalScheme: S.ExternalScheme,

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { inspect } from 'node:util'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { TenantAdminDatabaseSecret } from '../tenant-admin-workload.js'
+import { IdpDatabaseSecret } from '../idp-workload-driver.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
 import { IngressTlsSource, type IngressTls } from '../ingress-tls.js'
@@ -54,7 +55,10 @@ class BootstrapFixture
             baseDomain: 'tenants.test',
             externalScheme: 'https',
             channelUrl: 'http://channel.example:7000',
-            idp: { image: 'pragmatic-server:dev', port: 9443, tlsSecretName: 'idp-tls', adminTokenSecretName: 'idp-admin', adminTokenRef: 'tok-ref' },
+            idp: {
+                image: 'pragmatic-server:dev', port: 9443, tlsSecretName: 'idp-tls', adminTokenSecretName: 'idp-admin', adminTokenRef: 'tok-ref',
+                database: { image: 'pragmatic-postgres:idp', secretName: 'idp-db' },
+            },
             trustRootPublicKey: BootstrapFixture.TrustRootPem,
         }
         if (withPull)
@@ -204,8 +208,8 @@ describe('TenantAdminBootstrap.GenerateBootstrap', () =>
         const idpDeployment = items.find(i => i.kind === 'Deployment' && i.metadata.name === idpNs)!
         assert.equal(idpDeployment.metadata.namespace, idpNs)
         const volumes = (idpDeployment as any).spec.template.spec.volumes.map((v: any) => v.secret?.secretName).filter(Boolean)
-        assert.deepEqual(volumes.sort(), ['idp-admin', 'idp-tls'])
-        assert.ok(!b.secrets.Names().some(n => n === 'idp-tls' || n === 'idp-admin'))
+        assert.deepEqual(volumes.sort(), ['idp-admin', 'idp-db', 'idp-db', 'idp-tls'])
+        assert.ok(!b.secrets.Names().some(n => n === 'idp-tls' || n === 'idp-admin' || n === 'idp-db'))
     })
 
     it('omits the pull credential Secret when none is supplied', async () =>
@@ -478,5 +482,38 @@ describe('TenantAdminBootstrap console database', () =>
         const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(BootstrapFixture.Input())
         assert.equal(BootstrapFixture.SecretItems(b).some(s => s.metadata.name === K8sManifestBuilder.ConsolePostgresNameOf('acme')), false)
         assert.equal(BootstrapFixture.AdminDeployment(b.manifest).spec.template.spec.containers.length, 1)
+    })
+})
+
+describe('TenantAdminBootstrap IdP database', () =>
+{
+    const IdpPod = (b: TenantBootstrap): any => BootstrapFixture.Items(b.manifest).find(i => i.kind === 'Deployment' && i.metadata.name === K8sManifestBuilder.IdpNameOf('acme')).spec.template.spec
+
+    it('renders the IdP with the database it is given, and mints no IdP Secret (those live in the IdP namespace)', async () =>
+    {
+        const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(BootstrapFixture.Input())
+        const pod = IdpPod(b)
+        assert.ok(pod.containers.some((c: { name: string; image: string }) => c.name === 'postgres' && c.image === 'pragmatic-postgres:idp'))
+        assert.ok(pod.volumes.some((v: any) => v.secret?.secretName === 'idp-db'))
+        assert.ok(!b.secrets.Names().includes('idp-db'))
+        assert.ok(!b.secrets.Names().includes(IdpDatabaseSecret.NameOf('acme')))
+        assert.ok(BootstrapFixture.Items(b.manifest).some(i => i.kind === 'ConfigMap' && i.metadata.name === IdpDatabaseSecret.NameOf('acme')))
+    })
+
+    it('without an explicit database the IdP stores in the release postgres image, in the conventional Secret', async () =>
+    {
+        const input = BootstrapFixture.Input()
+        delete input.idp!.database
+        input.postgresImage = 'pragmatic-postgres:release'
+        const pod = IdpPod(await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(input))
+        assert.ok(pod.containers.some((c: { name: string; image: string }) => c.name === 'postgres' && c.image === 'pragmatic-postgres:release'))
+        assert.ok(pod.volumes.some((v: any) => v.secret?.secretName === IdpDatabaseSecret.NameOf('acme')))
+    })
+
+    it('refuses an IdP with no database at all (the service cannot start without one)', async () =>
+    {
+        const input = BootstrapFixture.Input()
+        delete input.idp!.database
+        await assert.rejects(new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(input), /IdP needs its database/)
     })
 })

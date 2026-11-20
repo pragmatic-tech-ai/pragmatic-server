@@ -14,9 +14,17 @@ export class ComponentSources
     private static readonly SourceSeparator = ': '
     private static readonly Utf8 = 'utf8'
 
+    /** The environment sources the descriptor declares (settings read from a configuration document carry none). */
     public static Declared(descriptor: ComponentDescriptor): string[]
     {
-        return descriptor.Options.flatMap(option => option.Settings.map(setting => setting.Description.split(ComponentSources.SourceSeparator)[0]))
+        return descriptor.Options
+            .flatMap(option => option.Settings.map(setting => setting.Description.split(ComponentSources.SourceSeparator)[0]))
+            .filter(name => ComponentSources.IsVariable(name))
+    }
+
+    private static IsVariable(name: string): boolean
+    {
+        return [...name.matchAll(ComponentSources.VariablePattern)].some(match => match[0] === name)
     }
 
     public static ReadBy(files: readonly string[]): string[]

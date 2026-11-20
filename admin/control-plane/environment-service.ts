@@ -26,6 +26,7 @@ import { InClusterOperationFailedError } from './in-cluster-environment-runtime.
 import { EnvironmentSecuritySeed, SecuritySeedError } from './environment-security-seed.js'
 import { EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrlsLease, type IEnvironmentReach } from './environment-endpoints.js'
 import { TenantIdpMode, TenantSignInInHiveError } from './tenant-idp-mode.js'
+import { RealmIssuer } from '../../src/idp/realm-issuer.js'
 
 export class EnvironmentExistsError extends Error
 {
@@ -162,8 +163,6 @@ export class EnvironmentService implements IAdminAccess
     /** The callback carries its own environment hint: the IdP redirect lands with no SPA to add `?environment=`, and the host routes by that hint. The key must byte-match PragmaticServerHost.EnvironmentParam. */
     private static readonly EnvironmentQueryPrefix = '?environment='
     private static readonly OidcSecretRefSuffix = '-oidc-secret'
-    private static readonly IssuerSeparator = '/'
-    private static readonly DiscoverySuffix = '/.well-known/openid-configuration'
     private static readonly CaFileName = 'ca.crt'
     private static readonly OidcSecretBytes = 24
     private static readonly OidcSecretEncoding = 'base64url'
@@ -271,11 +270,10 @@ export class EnvironmentService implements IAdminAccess
             const redirectUri = origin + EnvironmentService.OidcCallbackPath + EnvironmentService.EnvironmentQueryPrefix + encodeURIComponent(def.environmentId)
             await this.adminClientFactory(conn).RegisterClient(platformTenantId, { clientId, redirectUris: [redirectUri], secret })
             // The issuer is the browser-facing base (equals baseUrl on Docker); discovery/token/jwks are fetched on the internal base.
-            const issuer = conn.browserBaseUrl + EnvironmentService.IssuerSeparator + encodeURIComponent(platformTenantId)
-            const discoveryBase = conn.baseUrl + EnvironmentService.IssuerSeparator + encodeURIComponent(platformTenantId)
+            const issuer = RealmIssuer.Of(conn.browserBaseUrl, platformTenantId)
             const oidc: EnvOidc = {
                 issuer,
-                discoveryUrl: discoveryBase + EnvironmentService.DiscoverySuffix,
+                discoveryUrl: RealmIssuer.DiscoveryOf(conn.baseUrl, platformTenantId),
                 clientId,
                 redirectUri,
                 secretRef: def.environmentId + EnvironmentService.OidcSecretRefSuffix,

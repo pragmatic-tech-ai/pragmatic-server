@@ -5,21 +5,21 @@
   "options": [
     {
       "name": "core",
-      "description": "The realm sign-in service of a tenant.",
+      "description": "The container: where it listens, its secret files and its database.",
       "settings": [
         {
           "name": "baseUrl",
           "type": "url",
           "required": true,
           "secret": false,
-          "description": "PRAGMATIC_IDP_BASE_URL: The browser-facing https origin (the issuer)."
+          "description": "PRAGMATIC_IDP_BASE_URL: The browser-facing https origin; a realm's issuer is <baseUrl>/realms/<realm>."
         },
         {
           "name": "internalUrl",
           "type": "url",
           "required": false,
           "secret": false,
-          "description": "PRAGMATIC_IDP_INTERNAL_URL: The in-cluster https origin, when it differs from baseUrl."
+          "description": "PRAGMATIC_IDP_INTERNAL_URL: The in-cluster https origin of the token, key and revocation endpoints, when it differs from baseUrl."
         },
         {
           "name": "host",
@@ -35,14 +35,37 @@
           "required": false,
           "secret": false,
           "default": 7100,
-          "description": "PRAGMATIC_IDP_PORT: Port the HTTPS listener binds."
+          "description": "PRAGMATIC_IDP_PORT: Port the listener binds."
+        },
+        {
+          "name": "tls",
+          "type": "boolean",
+          "required": false,
+          "secret": false,
+          "default": true,
+          "description": "PRAGMATIC_IDP_TLS: Whether the service terminates TLS itself (false behind a TLS-terminating proxy)."
+        },
+        {
+          "name": "trustedProxy",
+          "type": "boolean",
+          "required": false,
+          "secret": false,
+          "default": false,
+          "description": "PRAGMATIC_IDP_TRUSTED_PROXY: Whether to honour the last x-forwarded-for / x-forwarded-proto hop (behind a reverse proxy)."
         },
         {
           "name": "dataDir",
           "type": "string",
           "required": false,
           "secret": false,
-          "description": "PRAGMATIC_IDP_DATA: The state folder (signing key, master key, realms, clients, TLS); defaults to data beside the code."
+          "description": "PRAGMATIC_IDP_DATA: The secret files folder (signing key, master key, TLS, admin tokens; pre-A5 data to import); defaults to data beside the code."
+        },
+        {
+          "name": "databaseUrl",
+          "type": "string",
+          "required": true,
+          "secret": true,
+          "description": "PRAGMATIC_IDP_DATABASE_URL_FILE: The URL of the service's own Postgres database, where every record lives (a mounted secret file)."
         },
         {
           "name": "secureCookie",
@@ -53,18 +76,11 @@
           "description": "PRAGMATIC_IDP_SECURE_COOKIE: Whether session cookies are Secure (false or 0 turns it off)."
         },
         {
-          "name": "tenants",
-          "type": "list",
-          "required": false,
-          "secret": false,
-          "description": "PRAGMATIC_IDP_TENANTS: Tenants whose realms are opened at start (comma-separated ids)."
-        },
-        {
           "name": "adminToken",
           "type": "string",
           "required": false,
           "secret": true,
-          "description": "PRAGMATIC_IDP_ADMIN_TOKEN_REF: The admin API token (PRAGMATIC_IDP_ADMIN_TOKEN_REF names its file under the data folder secrets)."
+          "description": "PRAGMATIC_IDP_ADMIN_TOKEN_REF: The admin API tokens (PRAGMATIC_IDP_ADMIN_TOKEN_REF names their file under the data folder secrets)."
         },
         {
           "name": "loginDir",
@@ -72,6 +88,303 @@
           "required": false,
           "secret": false,
           "description": "PRAGMATIC_IDP_LOGIN_DIR: Folder of the built sign-in app (defaults to idp-login/dist beside the code)."
+        },
+        {
+          "name": "configurationDir",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "default": "/etc/pragmatic/configuration",
+          "description": "PRAGMATIC_IDP_CONFIGURATION_DIR: Folder of the realms' applied configuration files (one per realm)."
+        },
+        {
+          "name": "bootstrapRealm",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_IDP_BOOTSTRAP_REALM_FILE: A realm configuration mounted by the deploy ({ realm, displayName, configuration }), validated at start."
+        },
+        {
+          "name": "secretsDir",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_IDP_SECRETS_DIR: Folder of secret files a realm's configuration names as secret:file/<name>."
+        },
+        {
+          "name": "applicationsDir",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_IDP_APPLICATIONS_DIR: Folder of component descriptors whose application roles every realm offers for mapping."
+        }
+      ]
+    },
+    {
+      "name": "tokens",
+      "description": "Token and session lifetimes of the realm.",
+      "settings": [
+        {
+          "name": "idTokenLifetime",
+          "type": "duration",
+          "required": false,
+          "secret": false,
+          "default": "5m",
+          "description": "How long an ID token (and its access token) is valid."
+        },
+        {
+          "name": "refreshTokenIdleLifetime",
+          "type": "duration",
+          "required": false,
+          "secret": false,
+          "default": "7d",
+          "description": "How long a refresh token is valid unused (each refresh rotates it)."
+        },
+        {
+          "name": "refreshTokenMaxLifetime",
+          "type": "duration",
+          "required": false,
+          "secret": false,
+          "default": "30d",
+          "description": "How long refreshing can go on after the sign-in."
+        },
+        {
+          "name": "ssoSessionLifetime",
+          "type": "duration",
+          "required": false,
+          "secret": false,
+          "default": "12h",
+          "description": "How long the login domain's single sign-on session re-authenticates silently."
+        }
+      ]
+    },
+    {
+      "name": "local",
+      "description": "Local accounts of the realm (email and password, provisioned by the tenant admin).",
+      "settings": [
+        {
+          "name": "maxAttempts",
+          "type": "integer",
+          "required": false,
+          "secret": false,
+          "default": 5,
+          "description": "Failed sign-ins of one account from one address before it locks."
+        },
+        {
+          "name": "lockout",
+          "type": "duration",
+          "required": false,
+          "secret": false,
+          "default": "15m",
+          "description": "How long a locked sign-in stays locked."
+        }
+      ]
+    },
+    {
+      "name": "google",
+      "description": "Sign in with Google (an OAuth client of the tenant's Google Cloud project).",
+      "settings": [
+        {
+          "name": "clientId",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "The OAuth client id."
+        },
+        {
+          "name": "clientSecret",
+          "type": "string",
+          "required": true,
+          "secret": true,
+          "description": "The OAuth client secret."
+        },
+        {
+          "name": "hostedDomain",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "Only accounts of this Google Workspace domain sign in (the hd claim)."
+        }
+      ]
+    },
+    {
+      "name": "entra",
+      "description": "Sign in with Microsoft Entra ID (an app registration of the tenant's directory).",
+      "settings": [
+        {
+          "name": "tenantId",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "The directory (tenant) id."
+        },
+        {
+          "name": "clientId",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "The application (client) id."
+        },
+        {
+          "name": "clientSecret",
+          "type": "string",
+          "required": true,
+          "secret": true,
+          "description": "The client secret."
+        }
+      ]
+    },
+    {
+      "name": "oidc",
+      "description": "Sign in with any OpenID Connect provider.",
+      "settings": [
+        {
+          "name": "issuer",
+          "type": "url",
+          "required": true,
+          "secret": false,
+          "description": "The provider's issuer."
+        },
+        {
+          "name": "discoveryUrl",
+          "type": "url",
+          "required": false,
+          "secret": false,
+          "description": "The discovery document (default <issuer>/.well-known/openid-configuration)."
+        },
+        {
+          "name": "clientId",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "The client id."
+        },
+        {
+          "name": "clientSecret",
+          "type": "string",
+          "required": true,
+          "secret": true,
+          "description": "The client secret."
+        },
+        {
+          "name": "scopes",
+          "type": "list",
+          "required": false,
+          "secret": false,
+          "default": [
+            "openid",
+            "email",
+            "profile"
+          ],
+          "description": "The scopes asked for."
+        },
+        {
+          "name": "groupsClaim",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "default": "groups",
+          "description": "The ID token claim listing the person's groups."
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "The sign-in button's text."
+        },
+        {
+          "name": "caBundleFile",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "A PEM CA bundle file trusted besides the public roots (a provider on a private CA)."
+        }
+      ]
+    },
+    {
+      "name": "pragmatic",
+      "description": "Sign in with Pragmatic (the central login as an OpenID Connect upstream).",
+      "settings": [
+        {
+          "name": "clientId",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "The client id registered at the central login."
+        },
+        {
+          "name": "clientSecret",
+          "type": "string",
+          "required": true,
+          "secret": true,
+          "description": "The client secret."
+        },
+        {
+          "name": "issuer",
+          "type": "url",
+          "required": false,
+          "secret": false,
+          "description": "The central realm's issuer (default https://login.pragmatic-tech.ai/realms/central)."
+        },
+        {
+          "name": "caBundleFile",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "A PEM CA bundle file trusted besides the public roots (a development central login)."
+        }
+      ]
+    },
+    {
+      "name": "identityPlatform",
+      "description": "Google Identity Platform accounts (the central realm): email and password with sign-up and a verified email, Google accounts.",
+      "settings": [
+        {
+          "name": "projectId",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "The Google Cloud project."
+        },
+        {
+          "name": "apiKey",
+          "type": "string",
+          "required": true,
+          "secret": true,
+          "description": "The browser API key the login page uses (public by design, restricted by referrer and API)."
+        },
+        {
+          "name": "providers",
+          "type": "list",
+          "required": false,
+          "secret": false,
+          "default": [
+            "password"
+          ],
+          "description": "The Identity Platform providers accepted: password, google.com."
+        },
+        {
+          "name": "tenantId",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "The Identity Platform tenant, when the project uses multi-tenancy."
+        },
+        {
+          "name": "maxAuthAge",
+          "type": "duration",
+          "required": false,
+          "secret": false,
+          "default": "10m",
+          "description": "How old an Identity Platform sign-in may be when the page posts its token."
+        },
+        {
+          "name": "authDomain",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "The Identity Platform auth domain (default <projectId>.firebaseapp.com)."
         }
       ]
     }

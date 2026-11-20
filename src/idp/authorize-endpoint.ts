@@ -1,200 +1,364 @@
-import { AuthorizationCodeBinding } from './authorization-code-store.js';
-import type { IAuthorizationCodeStore } from './authorization-code-store.js';
-import type { IdpClientStore } from './idp-client-store.js';
-import type { IdpLoginThrottle } from './idp-login-throttle.js';
-import type { IdpRealmSet } from './idp-host.js';
-import { IdpSsoCookie } from './idp-sso-session.js';
-import type { IdpSsoSessionStore } from './idp-sso-session.js';
+import { BadRequestProblem, HttpMethod, RouteAuth, type RequestContext, type RouteTable } from '@pragmatic-tech-ai/pragmatic-app-host';
+import { AuthorizeRefusal, AuthorizeRequest } from './authorize-request.js';
+import { IdentityPlatformOutcome } from './identity-platform-source.js';
+import type { IdpLoginPage } from './idp-login-page.js';
+import type { IdpLoginThrottles } from './idp-login-throttles.js';
+import type { IdpRealm } from './idp-realm.js';
+import type { IdpRealmSet } from './idp-realm-set.js';
+import { IdpSsoCookie } from './idp-sso-cookie.js';
+import { RealmIssuer } from './realm-issuer.js';
+import { RealmSignIn } from './realm-sign-in.js';
+import { SignInCompletion, type SignInRedirect } from './sign-in-completion.js';
+import type { SqlIdpClientStore } from './sql-idp-client-store.js';
+import type { SqlSsoSessionStore, SsoSession } from './sql-sso-session-store.js';
+import { RealmSourceKind } from './tenant-idp-options.js';
 
-export type AuthorizeResult =
-    | { kind: 'redirect'; location: string; setCookie?: string }
-    | { kind: 'loginPage'; failed: boolean }
-    | { kind: 'error'; status: number; body: object; retryAfterSeconds?: number };
-
-/** The validated, trusted OIDC request parameters. */
-class AuthorizeRequest
+/** The ways the login page signs a person in (the `method` of its JSON post). */
+export enum LoginMethod
 {
-    public constructor(
-        public readonly ClientId: string,
-        public readonly RedirectUri: string,
-        public readonly CodeChallenge: string,
-        public readonly State: string,
-        public readonly Nonce: string)
-    {
-    }
+    Password = 'password',
+    IdentityPlatform = 'identityPlatform',
 }
 
 /**
- * `/authorize`: fail-closed request validation, the sign-in page (rendered by the host from the sign-in app, flagged
- * when a sign-in was just rejected), SSO cookie, PKCE-bound code issue. The page posts back the same email/password form.
+ * The browser side of a realm's sign-in:
+ * - `GET <issuer>/protocol/openid-connect/auth`: validates the request; a live SSO session answers it silently (unless
+ *   `prompt=login` or `prompt=create`); `prompt=none` without one answers `login_required` to the client; otherwise the
+ *   login page (the sign-in app; it reads `prompt` and `login_hint` from the query itself).
+ * - `POST <issuer>/login` (JSON, from the login page): `{ request, method, email, password }` or `{ request, method,
+ *   idToken }`; answers `{ redirect }` and sets the SSO cookie, or an error the page shows.
+ * - `GET <issuer>/login/config`: what the page offers (local accounts, upstream buttons, the Identity Platform config,
+ *   sign-up).
+ * - `GET <issuer>/broker/<source>/login?<request>` and `.../callback`: an upstream source's round trip.
  */
-export class AuthorizeEndpoint
+export class SignInEndpoints
 {
-    public static readonly CodeTtlMs = 60 * 1000;
-    private static readonly ResponseType = 'response_type';
-    private static readonly ResponseTypeCode = 'code';
-    private static readonly ClientIdParam = 'client_id';
-    private static readonly RedirectUriParam = 'redirect_uri';
-    private static readonly CodeChallengeParam = 'code_challenge';
-    private static readonly CodeChallengeMethodParam = 'code_challenge_method';
-    private static readonly MethodS256 = 'S256';
-    private static readonly StateParam = 'state';
-    private static readonly NonceParam = 'nonce';
-    private static readonly CodeParam = 'code';
+    private static readonly RequestField = 'request';
+    private static readonly MethodField = 'method';
     private static readonly EmailField = 'email';
     private static readonly PasswordField = 'password';
-    private static readonly StatusBadRequest = 400;
-    private static readonly StatusNotFound = 404;
-    private static readonly StatusTooManyRequests = 429;
-    private static readonly MillisPerSecond = 1000;
-    private static readonly TooManyAttemptsCode = 'too_many_attempts';
+    private static readonly IdTokenField = 'idToken';
+    private static readonly RedirectField = 'redirect';
     private static readonly ErrorField = 'error';
-    private static readonly DescriptionField = 'error_description';
-    private static readonly InvalidRequest = 'invalid_request';
-    private static readonly InvalidClient = 'invalid_client';
-    private static readonly UnsupportedResponseType = 'unsupported_response_type';
-    private static readonly UnknownTenantDescription = 'unknown tenant';
-    private static readonly BadResponseTypeDescription = 'response_type must be code';
-    private static readonly UnknownClientDescription = 'unknown client';
-    private static readonly BadRedirectDescription = 'redirect_uri is not registered for this client';
-    private static readonly BadChallengeDescription = 'PKCE code_challenge with method S256 is required';
-    private static readonly MissingStateNonceDescription = 'state and nonce are required';
-    private static readonly EmptyText = '';
+    private static readonly SourceParam = 'source';
+    private static readonly CodeParam = 'code';
+    private static readonly StateParam = 'state';
+    private static readonly QueryMark = '?';
+    private static readonly InvalidCredentials = 'invalid_credentials';
+    private static readonly EmailNotVerified = 'email_not_verified';
+    private static readonly TooManyAttempts = 'too_many_attempts';
+    private static readonly LoginRequired = 'login_required';
+    private static readonly UpstreamFailed = 'upstream_sign_in_failed';
+    private static readonly UnknownSource = 'unknown_source';
+    private static readonly UnknownRealm = 'unknown_realm';
+    private static readonly ParamPrefix = ':';
+    private static readonly MissingFieldsMessage = 'request, method and its credentials are required';
+    private static readonly UnknownMethodMessage = 'unknown sign-in method';
+    private static readonly HtmlType = 'text/html; charset=utf-8';
+    private static readonly ContentTypeHeader = 'Content-Type';
+    private static readonly CacheControlHeader = 'Cache-Control';
+    private static readonly NoStore = 'no-store';
+    private static readonly LocationHeader = 'Location';
+    private static readonly SetCookieHeader = 'Set-Cookie';
+    private static readonly RetryAfterHeader = 'Retry-After';
+    private static readonly StatusOk = 200;
+    private static readonly StatusFound = 302;
+    private static readonly StatusUnauthorized = 401;
+    private static readonly StatusNotFound = 404;
+    private static readonly StatusTooMany = 429;
+    private static readonly LoginBodyLimit = 32 * 1024;
+    private static readonly NoName = '';
 
     public constructor(
         private readonly realms: IdpRealmSet,
-        private readonly clients: IdpClientStore,
-        private readonly codes: IAuthorizationCodeStore,
-        private readonly sso: IdpSsoSessionStore,
-        private readonly secureCookie: boolean,
-        private readonly throttle: IdpLoginThrottle,
+        private readonly clients: SqlIdpClientStore,
+        private readonly sso: SqlSsoSessionStore,
+        private readonly completion: SignInCompletion,
+        private readonly loginPage: IdpLoginPage,
+        private readonly throttles: IdpLoginThrottles,
         private readonly now: () => Date = () => new Date())
     {
     }
 
-    public async HandleGet(tenantId: string, query: URLSearchParams, cookieHeader: string | undefined): Promise<AuthorizeResult>
+    public Register(routes: RouteTable): void
     {
-        const request = this.Validate(tenantId, query);
-        if (!(request instanceof AuthorizeRequest))
-        {
-            return request;
-        }
-        const id = IdpSsoCookie.Read(cookieHeader);
-        const session = id === undefined ? null : this.sso.Validate(id, tenantId);
-        if (session === null)
-        {
-            return this.LoginPage(false);
-        }
-        // A session from before the principal's password changed no longer signs in.
-        if (await this.realms.For(tenantId)?.IsStale(session.PrincipalId, session.IssuedAt))
-        {
-            this.sso.Revoke(id as string);
-            return this.LoginPage(false);
-        }
-        return this.RedirectWithCode(tenantId, request, session.PrincipalId, undefined, session.IssuedAt);
+        const S = SignInEndpoints;
+        routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.AuthorizePath), Auth: RouteAuth.Public, Handler: ctx => this.Authorize(ctx) });
+        routes.Add({ Method: HttpMethod.Post, Pattern: RealmIssuer.Pattern(RealmIssuer.LoginPath), Auth: RouteAuth.Public, Audited: false, BodyLimit: S.LoginBodyLimit, Handler: ctx => this.Login(ctx) });
+        routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.LoginConfigPath), Auth: RouteAuth.Public, Handler: ctx => this.LoginConfig(ctx) });
+        routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.BrokerSegment + S.ParamPrefix + S.SourceParam + RealmIssuer.BrokerLoginSuffix), Auth: RouteAuth.Public, Handler: ctx => this.BrokerLogin(ctx) });
+        routes.Add({ Method: HttpMethod.Get, Pattern: RealmIssuer.Pattern(RealmIssuer.BrokerSegment + S.ParamPrefix + S.SourceParam + RealmIssuer.BrokerCallbackSuffix), Auth: RouteAuth.Public, Handler: ctx => this.BrokerCallback(ctx) });
     }
 
-    public async HandlePost(tenantId: string, query: URLSearchParams, cookieHeader: string | undefined, form: URLSearchParams, clientIp: string): Promise<AuthorizeResult>
+    private async Authorize(ctx: RequestContext): Promise<void>
     {
-        const request = this.Validate(tenantId, query);
-        if (!(request instanceof AuthorizeRequest))
+        const realm = this.RealmOf(ctx);
+        const request = await AuthorizeRequest.Validate(realm, this.clients, ctx.Query.toString());
+        if (request instanceof AuthorizeRefusal || realm === undefined)
         {
-            return request;
+            this.Refuse(ctx, request as AuthorizeRefusal);
+            return;
         }
-        const realm = this.realms.For(tenantId);
-        const email = form.get(AuthorizeEndpoint.EmailField);
-        const password = form.get(AuthorizeEndpoint.PasswordField);
-        if (realm === undefined || !email || !password)
+        if (!request.BypassesSession)
         {
-            return this.LoginPage(true);
+            const session = await this.Session(ctx, realm);
+            if (session !== undefined)
+            {
+                this.Redirect(ctx, await this.completion.Complete(realm, request, session.SignIn, session));
+                return;
+            }
         }
-        const decision = this.throttle.CheckAllowed(tenantId, email, clientIp);
-        if (!decision.allowed)
+        if (request.Silent)
         {
-            return {
-                kind: 'error',
-                status: AuthorizeEndpoint.StatusTooManyRequests,
-                body: { [AuthorizeEndpoint.ErrorField]: AuthorizeEndpoint.TooManyAttemptsCode },
-                retryAfterSeconds: Math.ceil(decision.retryAfterMs / AuthorizeEndpoint.MillisPerSecond)
-            };
+            this.RedirectTo(ctx, SignInCompletion.ErrorRedirect(request, SignInEndpoints.LoginRequired));
+            return;
         }
-        // Count the attempt at the gate, synchronously BEFORE the await: Authenticate yields (Argon2 + I/O), so a concurrent
-        // burst would otherwise all pass CheckAllowed before any failure was recorded. Success clears the optimistic count.
-        this.throttle.RecordFailure(tenantId, email, clientIp);
-        const startedAt = this.now();
-        const result = await realm.Authenticate(email, password);
-        if (result === null)
-        {
-            return this.LoginPage(true);
-        }
-        // The check may have read a password that changed while it ran: if so, refuse it.
-        if (await realm.IsStale(result.Principal.Id, startedAt))
-        {
-            return this.LoginPage(true);
-        }
-        this.throttle.Clear(tenantId, email, clientIp);
-        const issued = this.sso.Issue(result.Principal.Id, tenantId);
-        const cookie = IdpSsoCookie.Build(issued.Id, issued.session.ExpiresAt, this.secureCookie);
-        return this.RedirectWithCode(tenantId, request, result.Principal.Id, cookie, startedAt);
+        this.WritePage(ctx, false);
     }
 
-    private Validate(tenantId: string, query: URLSearchParams): AuthorizeRequest | AuthorizeResult
+    private async Login(ctx: RequestContext): Promise<void>
     {
-        if (this.realms.For(tenantId) === undefined)
+        const S = SignInEndpoints;
+        const body = await ctx.ReadJsonObject();
+        const query = body[S.RequestField];
+        const method = body[S.MethodField];
+        if (typeof query !== 'string' || typeof method !== 'string')
         {
-            return this.Error(AuthorizeEndpoint.StatusNotFound, AuthorizeEndpoint.InvalidRequest, AuthorizeEndpoint.UnknownTenantDescription);
+            throw new BadRequestProblem(S.MissingFieldsMessage);
         }
-        if (query.get(AuthorizeEndpoint.ResponseType) !== AuthorizeEndpoint.ResponseTypeCode)
+        const realm = this.RealmOf(ctx);
+        const request = await AuthorizeRequest.Validate(realm, this.clients, query);
+        if (request instanceof AuthorizeRefusal || realm === undefined)
         {
-            return this.Error(AuthorizeEndpoint.StatusBadRequest, AuthorizeEndpoint.UnsupportedResponseType, AuthorizeEndpoint.BadResponseTypeDescription);
+            this.Refuse(ctx, request as AuthorizeRefusal);
+            return;
         }
-        const clientId = query.get(AuthorizeEndpoint.ClientIdParam);
-        if (!clientId || this.clients.Find(tenantId, clientId) === undefined)
+        if (method === LoginMethod.Password)
         {
-            return this.Error(AuthorizeEndpoint.StatusBadRequest, AuthorizeEndpoint.InvalidClient, AuthorizeEndpoint.UnknownClientDescription);
+            await this.PasswordLogin(ctx, realm, request, body);
+            return;
         }
-        const redirectUri = query.get(AuthorizeEndpoint.RedirectUriParam);
-        if (!redirectUri || !this.clients.RedirectAllowed(tenantId, clientId, redirectUri))
+        if (method === LoginMethod.IdentityPlatform)
         {
-            return this.Error(AuthorizeEndpoint.StatusBadRequest, AuthorizeEndpoint.InvalidRequest, AuthorizeEndpoint.BadRedirectDescription);
+            await this.IdentityPlatformLogin(ctx, realm, request, body);
+            return;
         }
-        const challenge = query.get(AuthorizeEndpoint.CodeChallengeParam);
-        if (!challenge || query.get(AuthorizeEndpoint.CodeChallengeMethodParam) !== AuthorizeEndpoint.MethodS256)
-        {
-            return this.Error(AuthorizeEndpoint.StatusBadRequest, AuthorizeEndpoint.InvalidRequest, AuthorizeEndpoint.BadChallengeDescription);
-        }
-        const state = query.get(AuthorizeEndpoint.StateParam);
-        const nonce = query.get(AuthorizeEndpoint.NonceParam);
-        if (!state || !nonce)
-        {
-            return this.Error(AuthorizeEndpoint.StatusBadRequest, AuthorizeEndpoint.InvalidRequest, AuthorizeEndpoint.MissingStateNonceDescription);
-        }
-        return new AuthorizeRequest(clientId, redirectUri, challenge, state, nonce);
+        throw new BadRequestProblem(S.UnknownMethodMessage);
     }
 
-    private async RedirectWithCode(tenantId: string, request: AuthorizeRequest, sub: string, setCookie: string | undefined, authenticatedAt: Date): Promise<AuthorizeResult>
+    private async PasswordLogin(ctx: RequestContext, realm: IdpRealm, request: AuthorizeRequest, body: Record<string, unknown>): Promise<void>
     {
-        const expiresAt = new Date(this.now().getTime() + AuthorizeEndpoint.CodeTtlMs);
-        const profile = await this.realms.For(tenantId)?.LookupProfile(sub);
-        const code = await this.codes.Issue(new AuthorizationCodeBinding(
-            sub, tenantId, request.ClientId, request.RedirectUri, request.Nonce, request.CodeChallenge, expiresAt,
-            profile?.email ?? AuthorizeEndpoint.EmptyText, profile?.name ?? AuthorizeEndpoint.EmptyText, authenticatedAt));
-        const target = new URL(request.RedirectUri);
-        target.searchParams.set(AuthorizeEndpoint.CodeParam, code);
-        target.searchParams.set(AuthorizeEndpoint.StateParam, request.State);
-        return setCookie === undefined
-            ? { kind: 'redirect', location: target.toString() }
-            : { kind: 'redirect', location: target.toString(), setCookie };
+        const S = SignInEndpoints;
+        const email = body[S.EmailField];
+        const password = body[S.PasswordField];
+        if (typeof email !== 'string' || typeof password !== 'string' || email.trim() === '' || password === '')
+        {
+            throw new BadRequestProblem(S.MissingFieldsMessage);
+        }
+        const throttle = this.throttles.For(realm);
+        const decision = await throttle.Attempt(email, ctx.ClientAddress);
+        if (!decision.Allowed)
+        {
+            ctx.Response.setHeader(S.RetryAfterHeader, String(decision.RetryAfterSeconds()));
+            ctx.WriteJson(S.StatusTooMany, { [S.ErrorField]: S.TooManyAttempts });
+            return;
+        }
+        const signIn = await realm.AuthenticatePassword(email.trim(), password);
+        if (signIn === undefined)
+        {
+            ctx.WriteJson(S.StatusUnauthorized, { [S.ErrorField]: S.InvalidCredentials });
+            return;
+        }
+        await throttle.Succeeded(email, ctx.ClientAddress);
+        await this.AnswerSignIn(ctx, realm, request, signIn);
     }
 
-    // The page posts back to its own URL, so the validated OIDC query travels with the form unchanged.
-    private LoginPage(failed: boolean): AuthorizeResult
+    private async IdentityPlatformLogin(ctx: RequestContext, realm: IdpRealm, request: AuthorizeRequest, body: Record<string, unknown>): Promise<void>
     {
-        return { kind: 'loginPage', failed };
+        const S = SignInEndpoints;
+        const idToken = body[S.IdTokenField];
+        if (typeof idToken !== 'string' || idToken === '')
+        {
+            throw new BadRequestProblem(S.MissingFieldsMessage);
+        }
+        const source = realm.IdentityPlatform;
+        const verified = source === undefined ? undefined : await source.Verify(idToken);
+        if (verified?.Outcome === IdentityPlatformOutcome.EmailNotVerified)
+        {
+            ctx.WriteJson(S.StatusUnauthorized, { [S.ErrorField]: S.EmailNotVerified });
+            return;
+        }
+        const token = verified?.Token;
+        if (token === undefined)
+        {
+            ctx.WriteJson(S.StatusUnauthorized, { [S.ErrorField]: S.InvalidCredentials });
+            return;
+        }
+        const email = token.Email ?? S.NoName;
+        const name = token.DisplayName ?? S.NoName;
+        const accountId = await realm.LinkUpstream(RealmSourceKind.IdentityPlatform, token.Uid, email, name);
+        const signIn = new RealmSignIn(accountId, RealmSourceKind.IdentityPlatform, token.Uid, [], email, name, token.EmailVerified, this.now());
+        await this.AnswerSignIn(ctx, realm, request, signIn);
     }
 
-    private Error(status: number, error: string, description: string): AuthorizeResult
+    private async AnswerSignIn(ctx: RequestContext, realm: IdpRealm, request: AuthorizeRequest, signIn: RealmSignIn): Promise<void>
     {
-        return { kind: 'error', status, body: { [AuthorizeEndpoint.ErrorField]: error, [AuthorizeEndpoint.DescriptionField]: description } };
+        const S = SignInEndpoints;
+        const redirect = await this.completion.Complete(realm, request, signIn);
+        if (redirect.SetCookie !== undefined)
+        {
+            ctx.Response.setHeader(S.SetCookieHeader, redirect.SetCookie);
+        }
+        ctx.Response.setHeader(S.CacheControlHeader, S.NoStore);
+        ctx.WriteJson(S.StatusOk, { [S.RedirectField]: redirect.Location });
+    }
+
+    private async LoginConfig(ctx: RequestContext): Promise<void>
+    {
+        const realm = this.RealmOf(ctx);
+        if (realm === undefined)
+        {
+            ctx.WriteJson(SignInEndpoints.StatusNotFound, { [SignInEndpoints.ErrorField]: SignInEndpoints.UnknownRealm });
+            return;
+        }
+        ctx.Response.setHeader(SignInEndpoints.CacheControlHeader, SignInEndpoints.NoStore);
+        ctx.WriteJson(SignInEndpoints.StatusOk, new LoginConfig(realm).ToJson());
+    }
+
+    private async BrokerLogin(ctx: RequestContext): Promise<void>
+    {
+        const S = SignInEndpoints;
+        const realm = this.RealmOf(ctx);
+        const request = await AuthorizeRequest.Validate(realm, this.clients, ctx.Query.toString());
+        if (request instanceof AuthorizeRefusal || realm === undefined)
+        {
+            this.Refuse(ctx, request as AuthorizeRefusal);
+            return;
+        }
+        const source = realm.Upstream(ctx.Param(S.SourceParam));
+        if (source === undefined)
+        {
+            ctx.WriteJson(S.StatusNotFound, { [S.ErrorField]: S.UnknownSource });
+            return;
+        }
+        this.RedirectTo(ctx, await source.Begin(request.Query));
+    }
+
+    private async BrokerCallback(ctx: RequestContext): Promise<void>
+    {
+        const S = SignInEndpoints;
+        const realm = this.RealmOf(ctx);
+        const source = realm?.Upstream(ctx.Param(S.SourceParam));
+        const code = ctx.Query.get(S.CodeParam);
+        const state = ctx.Query.get(S.StateParam);
+        const upstream = realm === undefined || source === undefined || code === null || state === null ? undefined : await source.Complete(code, state);
+        const request = upstream === undefined ? undefined : await AuthorizeRequest.Validate(realm, this.clients, upstream.AuthorizeRequest);
+        if (realm === undefined || source === undefined || upstream === undefined || !(request instanceof AuthorizeRequest))
+        {
+            ctx.WriteJson(S.StatusUnauthorized, { [S.ErrorField]: S.UpstreamFailed });
+            return;
+        }
+        const subject = upstream.Principal.Id;
+        const accountId = await realm.LinkUpstream(source.Id, subject, upstream.Email, upstream.Name);
+        const signIn = new RealmSignIn(accountId, source.Id, subject, upstream.Principal.Groups, upstream.Email, upstream.Name, undefined, this.now());
+        this.Redirect(ctx, await this.completion.Complete(realm, request, signIn));
+    }
+
+    private RealmOf(ctx: RequestContext): IdpRealm | undefined
+    {
+        return this.realms.For(ctx.Param(RealmIssuer.RealmParam));
+    }
+
+    private async Session(ctx: RequestContext, realm: IdpRealm): Promise<SsoSession | undefined>
+    {
+        const id = IdpSsoCookie.Read(ctx.Request.headers.cookie);
+        const session = id === undefined ? undefined : await this.sso.Validate(id, realm.Id);
+        if (session === undefined)
+        {
+            return undefined;
+        }
+        const profile = await realm.Profile(session.SignIn.AccountId);
+        // A session from before the account's password changed, or of an account gone or disabled, no longer signs in.
+        if (profile === undefined || !profile.Active || await realm.IsStale(session.SignIn.AccountId, session.SignIn.AuthenticatedAt))
+        {
+            await this.sso.Revoke(session.IdHash);
+            return undefined;
+        }
+        return session;
+    }
+
+    private Refuse(ctx: RequestContext, refusal: AuthorizeRefusal): void
+    {
+        ctx.Response.setHeader(SignInEndpoints.CacheControlHeader, SignInEndpoints.NoStore);
+        ctx.WriteJson(refusal.Status, refusal.Body());
+    }
+
+    private Redirect(ctx: RequestContext, redirect: SignInRedirect): void
+    {
+        if (redirect.SetCookie !== undefined)
+        {
+            ctx.Response.setHeader(SignInEndpoints.SetCookieHeader, redirect.SetCookie);
+        }
+        this.RedirectTo(ctx, redirect.Location);
+    }
+
+    private RedirectTo(ctx: RequestContext, location: string): void
+    {
+        const S = SignInEndpoints;
+        ctx.Response.writeHead(S.StatusFound, { [S.LocationHeader]: location, [S.CacheControlHeader]: S.NoStore });
+        ctx.Response.end();
+    }
+
+    private WritePage(ctx: RequestContext, failed: boolean): void
+    {
+        const S = SignInEndpoints;
+        ctx.Response.writeHead(S.StatusOk, { [S.ContentTypeHeader]: S.HtmlType, [S.CacheControlHeader]: S.NoStore });
+        ctx.Response.end(this.loginPage.Render(failed));
+    }
+
+    /** The broker login path of a source under the issuer (the login page appends the request). */
+    public static BrokerLoginPath(issuer: string, source: string): string
+    {
+        return issuer + RealmIssuer.BrokerSegment + encodeURIComponent(source) + RealmIssuer.BrokerLoginSuffix + SignInEndpoints.QueryMark;
+    }
+}
+
+/** What the login page offers for a realm (`GET <issuer>/login/config`). */
+export class LoginConfig
+{
+    private static readonly NoPage = null;
+    private static readonly RealmField = 'realm';
+    private static readonly DisplayNameField = 'displayName';
+    private static readonly LocalField = 'local';
+    private static readonly SourcesField = 'sources';
+    private static readonly IdField = 'id';
+    private static readonly KindField = 'kind';
+    private static readonly LabelField = 'label';
+    private static readonly LoginField = 'login';
+    private static readonly IdentityPlatformField = 'identityPlatform';
+    private static readonly SignUpField = 'signUp';
+
+    public constructor(private readonly realm: IdpRealm)
+    {
+    }
+
+    public ToJson(): Record<string, unknown>
+    {
+        const L = LoginConfig;
+        const realm = this.realm;
+        const issuerPath = new URL(realm.Issuer).pathname;
+        return {
+            [L.RealmField]: realm.Id,
+            [L.DisplayNameField]: realm.DisplayName,
+            [L.LocalField]: realm.HasLocalAccounts,
+            [L.SourcesField]: realm.Upstreams().map(source => ({
+                [L.IdField]: source.Id,
+                [L.KindField]: source.Settings.Kind,
+                [L.LabelField]: source.Label,
+                [L.LoginField]: SignInEndpoints.BrokerLoginPath(issuerPath, source.Id),
+            })),
+            [L.IdentityPlatformField]: realm.IdentityPlatform === undefined ? L.NoPage : realm.IdentityPlatform.PageConfig().ToJson(),
+            [L.SignUpField]: realm.Settings.OffersSignUp,
+        };
     }
 }

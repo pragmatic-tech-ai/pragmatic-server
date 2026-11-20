@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { get } from 'node:https'
 import { DockerEnv } from '../../environments/seed/docker.js'
-import { IdpWorkloadNames } from './idp-workload-driver.js'
+import { IdpDatabaseSecret, IdpWorkloadNames } from './idp-workload-driver.js'
 
 export interface IdpContainerSpec
 {
@@ -52,10 +52,38 @@ export class ExecFileDockerExec implements IDockerExec
     }
 }
 
-/** Docker lifecycle for one per-tenant pragmatic-idp container, run from the server image with the IdP entrypoint. */
+/**
+ * Docker lifecycle for one per-tenant pragmatic-idp container, run from the server image with the IdP entrypoint, and its
+ * companion Postgres: a stock postgres container sharing the IdP container's network namespace (the IdP reaches it at
+ * 127.0.0.1:5432, as a pod sidecar), on its own named volume, its one database and role created at first start from the
+ * password file the driver keeps in the IdP's data volume. No secret ever travels in a docker argument.
+ */
 export class IdpContainerEnv
 {
     private static readonly DataMount = '/idp-data'
+    /** The base of pragmatic-postgres (dev-up.sh runs it too): one database needs no reconcile, the image's own env creates it. */
+    public static readonly PostgresImage = 'postgres:17.12-trixie'
+    /** Where the driver keeps the role password and the URL over it, in the tenant's data dir and (seeded) the data volume. */
+    public static readonly DatabasePasswordFile = 'database-password'
+    public static readonly DatabaseUrlFile = 'database-url'
+    private static readonly SecretsDir = 'secrets'
+    private static readonly PathSeparator = '/'
+    private static readonly PostgresSuffix = '-postgres'
+    private static readonly PostgresVolumeSuffix = '-pgdata'
+    private static readonly PostgresDataPath = '/var/lib/postgresql/data'
+    private static readonly NetworkFlag = '--network'
+    private static readonly ContainerNetworkPrefix = 'container:'
+    private static readonly SettingFlag = '-c'
+    private static readonly ListenLoopback = 'listen_addresses=127.0.0.1'
+    private static readonly EnvPostgresUser = 'POSTGRES_USER'
+    private static readonly EnvPostgresDb = 'POSTGRES_DB'
+    private static readonly EnvPostgresPasswordFile = 'POSTGRES_PASSWORD_FILE'
+    /**
+     * The seed's last step: the database password and URL files (DatabasePasswordFile, DatabaseUrlFile under the volume's
+     * secrets folder) become 0600 and owned by the server image's user (docker/Dockerfile `USER 10001`), the only one left to
+     * read them; the companion's entrypoint reads the password as root before it drops privileges.
+     */
+    private static readonly DatabaseFilesScript = ' && for f in database-password database-url; do p=/idp-data/secrets/$f; if [ -e "$p" ]; then chown 10001 "$p" && chmod 0600 "$p"; fi; done'
     public static readonly ContainerHost = 'host.docker.internal'
     private static readonly HostGateway = 'host-gateway'
     private static readonly BindAll = '0.0.0.0'
@@ -100,6 +128,7 @@ export class IdpContainerEnv
     private static readonly EnvHost = 'PRAGMATIC_IDP_HOST'
     private static readonly EnvData = 'PRAGMATIC_IDP_DATA'
     private static readonly EnvAdminTokenRef = 'PRAGMATIC_IDP_ADMIN_TOKEN_REF'
+    private static readonly EnvDatabaseUrlFile = 'PRAGMATIC_IDP_DATABASE_URL_FILE'
 
     private static readonly HealthTimeoutMessage = 'IdP did not become healthy over TLS in time on port '
     private static readonly AttemptsSuffix = ' after attempts: '
@@ -111,6 +140,25 @@ export class IdpContainerEnv
     public static ContainerName(tenantId: string): string
     {
         return `${IdpWorkloadNames.NamePrefix}${tenantId}`
+    }
+
+    /** The companion Postgres container of an IdP container. */
+    public static PostgresContainerName(containerName: string): string
+    {
+        return containerName + IdpContainerEnv.PostgresSuffix
+    }
+
+    /** The companion Postgres's data volume, named after the IdP's data volume (so RemoveVolume takes both). */
+    public static PostgresVolumeName(volumeName: string): string
+    {
+        return volumeName + IdpContainerEnv.PostgresVolumeSuffix
+    }
+
+    /** A file of the data volume's secrets folder, as the containers see it. */
+    private static SecretPath(file: string): string
+    {
+        const E = IdpContainerEnv
+        return E.DataMount + E.PathSeparator + E.SecretsDir + E.PathSeparator + file
     }
 
     public static BaseUrl(port: number): string
@@ -133,19 +181,48 @@ export class IdpContainerEnv
             IdpContainerEnv.EnvFlag, `${IdpContainerEnv.EnvHost}=${IdpContainerEnv.BindAll}`,
             IdpContainerEnv.EnvFlag, `${IdpContainerEnv.EnvData}=${IdpContainerEnv.DataMount}`,
             IdpContainerEnv.EnvFlag, `${IdpContainerEnv.EnvAdminTokenRef}=${spec.adminTokenRef}`,
+            IdpContainerEnv.EnvFlag, `${IdpContainerEnv.EnvDatabaseUrlFile}=${IdpContainerEnv.SecretPath(IdpContainerEnv.DatabaseUrlFile)}`,
             spec.image, IdpContainerEnv.Script
         ]
     }
 
+    /**
+     * The companion Postgres: in the IdP container's network namespace (so it needs no port of its own and listens on that
+     * loopback only), its data on its own volume, the IdP's data volume read-only for the password file (the image's
+     * entrypoint reads it as root before it drops to the postgres user, so the file stays the IdP user's alone).
+     */
+    public static PostgresRunArgs(spec: IdpContainerSpec): string[]
+    {
+        const E = IdpContainerEnv
+        const S = IdpDatabaseSecret
+        const container = E.ContainerName(spec.tenantId)
+        return [
+            E.Run, E.Detach,
+            E.NameFlag, E.PostgresContainerName(container),
+            E.NetworkFlag, E.ContainerNetworkPrefix + container,
+            E.VolumeFlag, `${E.PostgresVolumeName(spec.volumeName)}:${E.PostgresDataPath}`,
+            E.VolumeFlag, `${spec.volumeName}:${E.DataMount}${E.ReadOnly}`,
+            E.EnvFlag, `${E.EnvPostgresUser}=${S.Role}`,
+            E.EnvFlag, `${E.EnvPostgresDb}=${S.Database}`,
+            E.EnvFlag, `${E.EnvPostgresPasswordFile}=${E.SecretPath(E.DatabasePasswordFile)}`,
+            E.PostgresImage, E.SettingFlag, E.ListenLoopback
+        ]
+    }
+
+    /** Runs the IdP, then its Postgres in the IdP's network namespace (the IdP waits for its database at start). */
     public async Up(spec: IdpContainerSpec): Promise<void>
     {
         await this.exec.Run(IdpContainerEnv.RunArgs(spec))
+        await this.exec.Run(IdpContainerEnv.PostgresRunArgs(spec))
     }
 
-    /** Script run in the throwaway root container: copy the host dir into the volume, then open perms for the IdP's non-root uid. */
+    /**
+     * Script run in the throwaway root container: copy the host dir into the volume, open perms for the IdP's non-root uid, then
+     * leave the database password and URL files to that uid alone (0600).
+     */
     public static SeedScript(): string
     {
-        return `cp -a ${IdpContainerEnv.SeedMount}/. ${IdpContainerEnv.DataMount}/ && chmod -R a+rwX ${IdpContainerEnv.DataMount}`
+        return `cp -a ${IdpContainerEnv.SeedMount}/. ${IdpContainerEnv.DataMount}/ && chmod -R a+rwX ${IdpContainerEnv.DataMount}` + IdpContainerEnv.DatabaseFilesScript
     }
 
     public static SeedArgs(volumeName: string, hostDir: string, image: string): string[]
@@ -166,15 +243,17 @@ export class IdpContainerEnv
         await this.exec.Run(IdpContainerEnv.SeedArgs(volumeName, hostDir, image))
     }
 
-    /** Force-removes the container; absence is the desired end state. */
+    /** Force-removes the companion Postgres, then the IdP container (whose network namespace it shares); absence is the desired end state. */
     public async Down(containerName: string): Promise<void>
     {
+        await this.Tolerate([IdpContainerEnv.RmCmd, IdpContainerEnv.ForceFlag, IdpContainerEnv.PostgresContainerName(containerName)])
         await this.Tolerate([IdpContainerEnv.RmCmd, IdpContainerEnv.ForceFlag, containerName])
     }
 
-    /** Force-removes the data volume; absence is the desired end state. */
+    /** Force-removes the companion Postgres's volume and the data volume; absence is the desired end state. */
     public async RemoveVolume(volumeName: string): Promise<void>
     {
+        await this.Tolerate([IdpContainerEnv.VolumeCmd, IdpContainerEnv.RmCmd, IdpContainerEnv.ForceFlag, IdpContainerEnv.PostgresVolumeName(volumeName)])
         await this.Tolerate([IdpContainerEnv.VolumeCmd, IdpContainerEnv.RmCmd, IdpContainerEnv.ForceFlag, volumeName])
     }
 

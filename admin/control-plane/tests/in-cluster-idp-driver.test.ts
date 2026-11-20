@@ -3,14 +3,17 @@ import assert from 'node:assert/strict'
 import { InClusterIdpDriver } from '../in-cluster-idp-driver.js'
 import type { IIdpSeedSource, IdpSeed } from '../in-cluster-idp-driver.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
+import { IdpDatabaseSecret } from '../idp-workload-driver.js'
 import { IdpStatus } from '../idp-record.js'
 import type { IKubectl } from '../kubectl.js'
 
 class FakeKubectl implements IKubectl
 {
     public Applied: string[] = []
+    public ServerApplied: string[] = []
     public Rollouts: string[] = []
     public FailApply = false
+    public readonly Objects = new Map<string, string>()
 
     public async Apply(manifestJson: string): Promise<void>
     {
@@ -31,9 +34,17 @@ class FakeKubectl implements IKubectl
     public async ScaleStatefulSet(): Promise<void> { }
     public async RolloutRestart(): Promise<void> { }
     public async RolloutRestartSelector(): Promise<void> { }
-    public async ApplyServerSide(): Promise<void> { }
+    public async ApplyServerSide(manifestJson: string): Promise<void>
+    {
+        this.ServerApplied.push(manifestJson)
+    }
+
     public async DeleteManifest(): Promise<void> { }
-    public async Find(): Promise<string | undefined> { return undefined }
+    public async Find(namespace: string, resource: string): Promise<string | undefined>
+    {
+        return this.Objects.get(namespace + '|' + resource)
+    }
+
     public async DeleteBySelector(): Promise<void> { }
     public async DeleteNamespacesBySelector(): Promise<string[]> { return [] }
     public async ListNamespacesBySelector(): Promise<string[]> { return [] }
@@ -46,6 +57,7 @@ class FakeSeeds implements IIdpSeedSource
 {
     public static readonly Token = 'seeded-token-VALUE'
     public static readonly Ca = 'seeded-ca-BYTES'
+    public static readonly DatabaseManifest = '{"kind":"List","items":["database-secret"]}'
 
     public constructor(public readonly BaseDomain?: string)
     {
@@ -57,6 +69,11 @@ class FakeSeeds implements IIdpSeedSource
             caRef: 'idp-tls-secret', adminTokenRef: 'admin-token', tlsSecretName: 'idp-tls-secret', adminTokenSecretName: 'idp-admin-secret',
             ca: Buffer.from(FakeSeeds.Ca), adminToken: FakeSeeds.Token
         }
+    }
+
+    public DatabaseSecretManifestFor(): string
+    {
+        return FakeSeeds.DatabaseManifest
     }
 }
 
@@ -124,5 +141,28 @@ describe('InClusterIdpDriver', () =>
         kubectl.FailApply = true
         await assert.rejects(() => Make(kubectl).EnsureRunning({ tenantId: 't1', displayName: 'T', takenPorts: [] }),
             (e: Error) => e.message.includes('t1') && !e.message.includes(FakeSeeds.Token) && !e.message.includes(FakeSeeds.Ca))
+    })
+
+    it('renders the IdP with its Postgres sidecar (the development image unless one is given) under the conventional database Secret', async () =>
+    {
+        const pod = (kubectl: FakeKubectl): any => (JSON.parse(kubectl.Applied[0]!).items as any[]).find(o => o.kind === 'Deployment').spec.template.spec
+        const dev = new FakeKubectl()
+        await Make(dev).EnsureRunning({ tenantId: 't1', displayName: 'T', takenPorts: [] })
+        assert.equal(pod(dev).containers[1].image, 'pragmatic-postgres:local')
+        assert.ok(pod(dev).volumes.some((v: any) => v.secret?.secretName === IdpDatabaseSecret.NameOf('t1')))
+        const release = new FakeKubectl()
+        await new InClusterIdpDriver(release, new K8sManifestBuilder(), new FakeSeeds(), 'hive-a', 'img', 'registry/pragmatic-postgres:1').EnsureRunning({ tenantId: 't1', displayName: 'T', takenPorts: [] })
+        assert.equal(pod(release).containers[1].image, 'registry/pragmatic-postgres:1')
+    })
+
+    it('applies the database Secret server-side only when the IdP namespace holds none, so a restart never rotates it', async () =>
+    {
+        const kubectl = new FakeKubectl()
+        await Make(kubectl).EnsureRunning({ tenantId: 't1', displayName: 'T', takenPorts: [] })
+        assert.deepEqual(kubectl.ServerApplied, [FakeSeeds.DatabaseManifest])
+        assert.ok(!kubectl.Applied.includes(FakeSeeds.DatabaseManifest))
+        kubectl.Objects.set('pragmatic-idp-t1|secret/' + IdpDatabaseSecret.NameOf('t1'), '{"data":{}}')
+        await Make(kubectl).EnsureRunning({ tenantId: 't1', displayName: 'T', takenPorts: [] })
+        assert.equal(kubectl.ServerApplied.length, 1)
     })
 })

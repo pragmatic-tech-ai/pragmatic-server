@@ -76,23 +76,52 @@ test('RunArgs builds the exact docker run argv', () =>
         '-e', 'PRAGMATIC_IDP_HOST=0.0.0.0',
         '-e', 'PRAGMATIC_IDP_DATA=/idp-data',
         '-e', 'PRAGMATIC_IDP_ADMIN_TOKEN_REF=admin.token',
+        '-e', 'PRAGMATIC_IDP_DATABASE_URL_FILE=/idp-data/secrets/database-url',
         'pragmatic-server:dev', 'dist/bin/pragmatic-idpd.js'
     ])
 })
 
-test('Up runs the container; Down and RemoveVolume tolerate absence', async () =>
+test('PostgresRunArgs runs the companion in the IdP container\'s network namespace, on its own volume, the password by file only', () =>
+{
+    assert.deepEqual(IdpContainerEnv.PostgresRunArgs(Fixture.Spec), [
+        'run', '-d', '--name', 'pragmatic-idp-t1-postgres',
+        '--network', 'container:pragmatic-idp-t1',
+        '-v', 'idp-t1-data-pgdata:/var/lib/postgresql/data',
+        '-v', 'idp-t1-data:/idp-data:ro',
+        '-e', 'POSTGRES_USER=tenant_idp',
+        '-e', 'POSTGRES_DB=tenant_idp',
+        '-e', 'POSTGRES_PASSWORD_FILE=/idp-data/secrets/database-password',
+        'postgres:17.12-trixie', '-c', 'listen_addresses=127.0.0.1'
+    ])
+    assert.equal(IdpContainerEnv.PostgresContainerName('pragmatic-idp-t1'), 'pragmatic-idp-t1-postgres')
+    assert.equal(IdpContainerEnv.PostgresVolumeName('idp-t1-data'), 'idp-t1-data-pgdata')
+})
+
+test('Up runs the IdP then its Postgres; Down and RemoveVolume take the companion and its volume too, tolerating absence', async () =>
 {
     const exec = new FakeExec()
     const env = new IdpContainerEnv(exec)
     await env.Up(Fixture.Spec)
     assert.deepEqual(exec.Calls[0], IdpContainerEnv.RunArgs(Fixture.Spec))
+    assert.deepEqual(exec.Calls[1], IdpContainerEnv.PostgresRunArgs(Fixture.Spec))
     await env.Down('pragmatic-idp-t1')
     await env.RemoveVolume('idp-t1-data')
-    assert.deepEqual(exec.Calls[1], ['rm', '-f', 'pragmatic-idp-t1'])
-    assert.deepEqual(exec.Calls[2], ['volume', 'rm', '-f', 'idp-t1-data'])
+    assert.deepEqual(exec.Calls.slice(2), [
+        ['rm', '-f', 'pragmatic-idp-t1-postgres'],
+        ['rm', '-f', 'pragmatic-idp-t1'],
+        ['volume', 'rm', '-f', 'idp-t1-data-pgdata'],
+        ['volume', 'rm', '-f', 'idp-t1-data'],
+    ])
     exec.FailWith = new Error('no such container')
     await env.Down('x')
     await env.RemoveVolume('y')
+})
+
+test('the seed leaves the database files to the IdP user alone', () =>
+{
+    const script = IdpContainerEnv.SeedScript()
+    assert.match(script, /chown 10001 "\$p" && chmod 0600 "\$p"/)
+    assert.ok(script.includes('database-password') && script.includes('database-url'))
 })
 
 test('WaitHealthy resolves on 200 over verified TLS', async () =>

@@ -7,6 +7,7 @@ import { KubectlError } from '../kubectl.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import { UnknownHiveError } from '../rollout-errors.js'
 import { TenantAdminBootstrap } from '../tenant-admin-bootstrap.js'
+import { IdpDatabaseSecret } from '../idp-workload-driver.js'
 import {
     ConsoleInstallInProgressError,
     ConsoleInstallState,
@@ -254,11 +255,12 @@ describe('TenantConsoleInstaller', () =>
         const status = await fx.Installer.WhenSettled('h1')
         const idp = K8sManifestBuilder.IdpNameOf('acme')
         const admin = K8sManifestBuilder.TenantAdminNameOf('acme')
-        const run = (Items.Of(fx.Kubectl.ServerApplied[2] as string)[0] as unknown as { metadata: { labels: Record<string, string> } }).metadata.labels['pragmatic/tls-copy-run']
+        const run = (Items.Of(fx.Kubectl.ServerApplied[3] as string)[0] as unknown as { metadata: { labels: Record<string, string> } }).metadata.labels['pragmatic/tls-copy-run']
         assert.deepEqual(fx.Kubectl.Calls.filter(c => c[0] !== 'Find'), [
             ['ServesResource', 'admissionregistration.k8s.io/v1', 'validatingadmissionpolicies'],
             ['ServesResource', 'admissionregistration.k8s.io/v1', 'validatingadmissionpolicybindings'],
             ['Apply'],
+            ['ApplyServerSide'],
             ['ApplyServerSide'],
             ['ApplyServerSide'],
             ['ApplyServerSide'],
@@ -271,10 +273,11 @@ describe('TenantConsoleInstaller', () =>
             ['RolloutStatus', 'pragmatic-system', admin],
             ['SeedOwner', 'h1'],
         ])
-        // Bootstrap secrets (pragmatic-system), then the freshly minted IdP seed Secrets (IdP namespace), then the two TLS copies.
-        const [bootstrapSecrets, idpSeed] = fx.Kubectl.ServerApplied.map(m => Items.Of(m))
+        // Bootstrap secrets (pragmatic-system), the freshly minted IdP seed Secrets and the IdP's database Secret (IdP namespace), then the two TLS copies.
+        const [bootstrapSecrets, idpSeed, idpDatabase] = fx.Kubectl.ServerApplied.map(m => Items.Of(m))
         assert.ok(bootstrapSecrets?.every(i => i.metadata.namespace === 'pragmatic-system'))
         assert.deepEqual(idpSeed?.map(i => i.metadata.name), [InClusterIdpSeedSource.TlsSecretNameOf('acme'), InClusterIdpSeedSource.AdminSecretNameOf('acme')])
+        assert.deepEqual(idpDatabase?.map(i => [i.metadata.namespace, i.metadata.name]), [[idp, IdpDatabaseSecret.NameOf('acme')]])
         assert.deepEqual({ state: status?.state, consoleUrl: status?.consoleUrl, devCaFile: status?.devCaFile },
             { state: 'deployed', consoleUrl: 'https://console-acme.localtest.me', devCaFile: fx.DevCa.CaFileOf('localtest.me') })
         assert.ok(status?.finishedAt !== undefined && status.error === undefined)
@@ -858,5 +861,129 @@ describe('PlatformConsoleImageApproval', () =>
     {
         const verifier: IImageVerifier = { Verify: async () => { throw new Error('no signature') } }
         await assert.rejects(new PlatformConsoleImageApproval(undefined, verifier).Approve(ConsoleInstallFixture.Hive('h1'), 'x:1'), /no signature/)
+    })
+})
+
+class IdpDatabaseFixture
+{
+    public static readonly Key = 'pragmatic-idp-acme|secret/' + IdpDatabaseSecret.NameOf('acme')
+
+    public static Secrets(fx: ConsoleInstallFixture): Item[]
+    {
+        return fx.Kubectl.ServerApplied.map(m => Items.Of(m)).flat().filter(i => i.kind === 'Secret' && i.metadata.name === IdpDatabaseSecret.NameOf('acme'))
+    }
+
+    public static Value(item: Item, key: string): string
+    {
+        return Buffer.from(item.data?.[key] ?? '', 'base64').toString('utf8')
+    }
+
+    public static IdpPod(fx: ConsoleInstallFixture): any
+    {
+        const name = K8sManifestBuilder.IdpNameOf('acme')
+        const all = fx.Kubectl.Applied.map(m => Items.Of(m)).flat() as any[]
+        return all.find(i => i.kind === 'Deployment' && i.metadata.name === name).spec.template.spec
+    }
+}
+
+describe('TenantConsoleInstaller IdP database', () =>
+{
+    let fx: ConsoleInstallFixture
+
+    afterEach(() =>
+    {
+        fx?.Dispose()
+    })
+
+    it('a first install mints the IdP database Secret in the IdP namespace and renders the IdP with the release postgres image', async () =>
+    {
+        const postgres = 'ghcr.io/pragmatic-tech-ai/pragmatic-postgres@sha256:' + 'd'.repeat(64)
+        const images: IPlatformImages = { ImageOf: (app: ReleaseApp) => app === ReleaseApp.Postgres ? postgres : 'img:' + app }
+        fx = await ConsoleInstallFixture.Create({ platformImages: images })
+        fx.Installer.Start('h1')
+        assert.equal((await fx.Installer.WhenSettled('h1'))?.state, ConsoleInstallState.Deployed)
+        const [secret] = IdpDatabaseFixture.Secrets(fx)
+        assert.ok(secret !== undefined)
+        assert.equal(secret.metadata.namespace, K8sManifestBuilder.IdpNameOf('acme'))
+        assert.deepEqual(Object.keys(secret.data ?? {}).sort(), ['database-url', 'password', 'superuser'])
+        const password = IdpDatabaseFixture.Value(secret, 'password')
+        assert.ok(password.length >= 32)
+        assert.notEqual(IdpDatabaseFixture.Value(secret, 'superuser'), password)
+        assert.equal(IdpDatabaseFixture.Value(secret, 'database-url'), IdpDatabaseSecret.UrlOf(password))
+        const pod = IdpDatabaseFixture.IdpPod(fx)
+        assert.ok(pod.containers.some((c: any) => c.name === 'postgres' && c.image === postgres))
+        assert.ok(pod.volumes.some((v: any) => v.secret?.secretName === IdpDatabaseSecret.NameOf('acme')))
+        assert.ok(!fx.Kubectl.Applied.join(' ').includes(password), 'no password in the applied manifests')
+    })
+
+    it('a reinstall keeps the IdP database Secret: never re-applied, never rotated', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        fx.Installer.Start('h1')
+        await fx.Installer.WhenSettled('h1')
+        const first = fx.Kubectl.Objects.get(IdpDatabaseFixture.Key)
+        assert.ok(first !== undefined)
+        const before = fx.Kubectl.ServerApplied.length
+        fx.Installer.Start('h1')
+        assert.equal((await fx.Installer.WhenSettled('h1'))?.state, ConsoleInstallState.Deployed)
+        const second = fx.Kubectl.ServerApplied.slice(before).map(m => Items.Of(m)).flat()
+        assert.ok(!second.some(i => i.metadata.name === IdpDatabaseSecret.NameOf('acme')))
+        assert.equal(fx.Kubectl.Objects.get(IdpDatabaseFixture.Key), first)
+    })
+
+    it('an existing IdP database Secret is reused as it is', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        const data = { 'superuser': Buffer.from('su-pw').toString('base64'), 'password': Buffer.from('role-pw').toString('base64'), 'database-url': Buffer.from(IdpDatabaseSecret.UrlOf('role-pw')).toString('base64') }
+        fx.Kubectl.Put(K8sManifestBuilder.IdpNameOf('acme'), 'secret/' + IdpDatabaseSecret.NameOf('acme'), { data })
+        fx.Installer.Start('h1')
+        assert.equal((await fx.Installer.WhenSettled('h1'))?.state, ConsoleInstallState.Deployed)
+        assert.deepEqual(IdpDatabaseFixture.Secrets(fx), [])
+        assert.deepEqual((JSON.parse(fx.Kubectl.Objects.get(IdpDatabaseFixture.Key) as string) as Item).data, data)
+    })
+
+    it('an IdP database Secret missing a key fails at preparing-certificates and is never overwritten', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        const data = { 'password': Buffer.from('role-pw').toString('base64') }
+        fx.Kubectl.Put(K8sManifestBuilder.IdpNameOf('acme'), 'secret/' + IdpDatabaseSecret.NameOf('acme'), { data })
+        fx.Installer.Start('h1')
+        const status = await fx.Installer.WhenSettled('h1')
+        assert.equal(status?.state, ConsoleInstallState.Failed)
+        assert.equal(status?.step, ConsoleInstallStep.PreparingCertificates)
+        assert.match(status?.error ?? '', new RegExp(IdpDatabaseSecret.NameOf('acme')))
+        assert.ok(!(status?.error ?? '').includes('role-pw'))
+        assert.equal(fx.Kubectl.Applied.length + fx.Kubectl.ServerApplied.length, 0)
+    })
+
+    it('scrubs the minted and the reused IdP database passwords from a failure', async () =>
+    {
+        fx = await ConsoleInstallFixture.Create()
+        const kubectl = fx.Kubectl
+        const seen: string[] = []
+        kubectl.ServerApplyFail = {
+            at: 1,
+            error: async () =>
+            {
+                const secret = Items.Of(kubectl.ServerApplied[1] as string)[0] as Item
+                for (const key of ['superuser', 'password', 'database-url'])
+                {
+                    seen.push(IdpDatabaseFixture.Value(secret, key), secret.data?.[key] ?? '')
+                }
+                return new KubectlError('apply failed ' + seen.join(' '), 'kubectl failed: ', false)
+            },
+        }
+        let status: unknown
+        await ErrorLog.Capture(async () =>
+        {
+            fx.Installer.Start('h1')
+            status = await fx.Installer.WhenSettled('h1')
+        })
+        assert.equal((status as { step: string }).step, ConsoleInstallStep.StoringSecrets)
+        assert.equal(seen.length, 6)
+        for (const secret of seen)
+        {
+            assert.ok(secret.length > 0 && !JSON.stringify(status).includes(secret), 'leaked a secret')
+        }
     })
 })

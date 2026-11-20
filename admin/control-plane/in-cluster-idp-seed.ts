@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DevCa } from '../../src/idp/dev-ca.js'
 import type { IIdpSeedSource, IdpSeed } from './in-cluster-idp-driver.js'
+import { IdpDatabaseSecret } from './idp-workload-driver.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 
 interface IdpSecretEntry
@@ -77,11 +78,19 @@ class IdpTenantSeed
 {
     #seed: IdpSeed
     #secrets: IdpSecretSet
+    #database: IdpSecretSet
 
-    public constructor(seed: IdpSeed, secrets: IdpSecretSet)
+    public constructor(seed: IdpSeed, secrets: IdpSecretSet, database: IdpSecretSet)
     {
         this.#seed = seed
         this.#secrets = secrets
+        this.#database = database
+    }
+
+    /** The IdP's database Secret, kept apart from the TLS + admin seed: the driver applies it only when none exists. */
+    public get Database(): IdpSecretSet
+    {
+        return this.#database
     }
 
     public get Seed(): IdpSeed
@@ -106,8 +115,10 @@ class IdpTenantSeed
 }
 
 /**
- * In-cluster IdP seed source: per tenant, generates the IdP's TLS (DevCa, SAN = the Service-DNS host the IdP self-issues on)
- * and an admin token, once, and hands them out as the IdpSeed plus a secret-safe Secret manifest.
+ * In-cluster IdP seed source: per tenant, generates the IdP's TLS (DevCa, SAN = the Service-DNS host the IdP self-issues on),
+ * an admin token and the IdP's database passwords, once per process, and hands them out as the IdpSeed plus secret-safe Secret
+ * manifests. In memory only: a new process mints anew, so the database Secret is applied only where none exists yet (the driver
+ * checks), and its passwords never rotate across restarts.
  */
 export class InClusterIdpSeedSource implements IIdpSeedSource
 {
@@ -162,6 +173,12 @@ export class InClusterIdpSeedSource implements IIdpSeedSource
         return this.TenantSeed(tenantId).Secrets
     }
 
+    /** IIdpSeedSource hook: the IdP's database Secret (superuser, role password, URL), applied by the driver only where none exists. */
+    public DatabaseSecretManifestFor(tenantId: string): string
+    {
+        return this.TenantSeed(tenantId).Database.RenderManifest()
+    }
+
     /** IIdpSeedSource hook: the manifest of seed Secrets the driver applies before the workload. */
     public SecretsManifestFor(tenantId: string): string
     {
@@ -210,7 +227,9 @@ export class InClusterIdpSeedSource implements IIdpSeedSource
                 caRef: tlsName, adminTokenRef: InClusterIdpSeedSource.AdminTokenKey, tlsSecretName: tlsName, adminTokenSecretName: adminName,
                 ca: tls.get(InClusterIdpSeedSource.CaFile)!, adminToken: token
             }
-            return new IdpTenantSeed(seed, secrets)
+            const database = new IdpSecretSet(K8sManifestBuilder.IdpNameOf(tenantId))
+            database.Add(IdpDatabaseSecret.NameOf(tenantId), IdpDatabaseSecret.Mint())
+            return new IdpTenantSeed(seed, secrets, database)
         }
         finally
         {

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import type { IdpRecord } from './idp-record.js'
 import type { IngressTls } from './ingress-tls.js'
 
@@ -63,6 +64,85 @@ export interface IdpWorkloadSpec
     tlsSecretName: string
     /** The Ingress TLS choice for the browser host; absent -> ssl-passthrough of the IdP's own certificate. */
     ingressTls?: IngressTls
+    /**
+     * The IdP's own Postgres (required: the realm sign-in service stores every record there and refuses to start without
+     * it, so a spec without one would render a pod that can never become ready).
+     */
+    database: IdpDatabaseSpec
+}
+
+/**
+ * The IdP's Postgres: the pragmatic-postgres image run beside the IdP in its pod (reachable on the pod's loopback only), its
+ * data on its own volume, and the Secret (in the IdP namespace) holding the superuser password, the IdP's role password and
+ * the IdP's database URL (keys IdpDatabaseSecret.*).
+ */
+export interface IdpDatabaseSpec
+{
+    image: string
+    secretName: string
+}
+
+/** The keys of the IdP's database Secret and what its Postgres creates: the one home of their names. */
+export class IdpDatabaseSecret
+{
+    public static readonly SuperuserKey = 'superuser'
+    public static readonly PasswordKey = 'password'
+    public static readonly UrlKey = 'database-url'
+    /** The application (the realm sign-in service's component name), database and role its Postgres creates. */
+    public static readonly Application = 'pragmatic-tenant-idp'
+    public static readonly Database = 'tenant_idp'
+    public static readonly Role = 'tenant_idp'
+    public static readonly Host = '127.0.0.1'
+    public static readonly Port = 5432
+    /** The pragmatic-postgres image a development cluster runs (docker/postgres, loaded into kind). */
+    public static readonly DevImage = 'pragmatic-postgres:local'
+    private static readonly NameSuffix = '-postgres'
+    private static readonly UrlScheme = 'postgres://'
+    private static readonly UserSeparator = ':'
+    private static readonly HostSeparator = '@'
+    private static readonly PathSeparator = '/'
+    private static readonly Space = ' '
+    private static readonly PasswordBytes = 24
+    private static readonly PasswordEncoding = 'base64url'
+    private static readonly Utf8 = 'utf8'
+
+    /** The IdP's pragmatic-postgres name (`pragmatic-idp-<tenant>-postgres`): its Secret, ConfigMap and volume claim. */
+    public static NameOf(tenantId: string): string
+    {
+        return IdpWorkloadNames.NamePrefix + tenantId + IdpDatabaseSecret.NameSuffix
+    }
+
+    /** The IdP's database URL for a role password (on the loopback its Postgres shares with it). */
+    public static UrlOf(password: string): string
+    {
+        const S = IdpDatabaseSecret
+        return S.UrlScheme + S.Role + S.UserSeparator + encodeURIComponent(password) + S.HostSeparator + S.Host + S.UserSeparator + String(S.Port) + S.PathSeparator + S.Database
+    }
+
+    /** The pragmatic-postgres applications.conf line. */
+    public static ApplicationsLine(): string
+    {
+        const S = IdpDatabaseSecret
+        return [S.Application, S.Database, S.Role].join(S.Space)
+    }
+
+    /** A random database password (URL-safe, so the URL needs no escaping). */
+    public static NewPassword(): string
+    {
+        return randomBytes(IdpDatabaseSecret.PasswordBytes).toString(IdpDatabaseSecret.PasswordEncoding)
+    }
+
+    /** Fresh Secret data: a superuser password, the IdP role's password and the URL that carries it. */
+    public static Mint(): Map<string, Buffer>
+    {
+        const S = IdpDatabaseSecret
+        const password = S.NewPassword()
+        return new Map<string, Buffer>([
+            [S.SuperuserKey, Buffer.from(S.NewPassword(), S.Utf8)],
+            [S.PasswordKey, Buffer.from(password, S.Utf8)],
+            [S.UrlKey, Buffer.from(S.UrlOf(password), S.Utf8)],
+        ])
+    }
 }
 
 /** Shared message plumbing for driver errors: only the message is forwarded, so secret material never reaches an error. */

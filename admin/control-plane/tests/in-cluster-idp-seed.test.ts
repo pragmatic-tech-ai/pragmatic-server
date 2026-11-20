@@ -7,12 +7,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { InClusterIdpDriver } from '../in-cluster-idp-driver.js'
 import { InClusterIdpSeedSource } from '../in-cluster-idp-seed.js'
+import { IdpDatabaseSecret } from '../idp-workload-driver.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import type { IKubectl } from '../kubectl.js'
 
 class FakeKubectl implements IKubectl
 {
     public Applied: string[] = []
+    public ServerApplied: string[] = []
 
     public async Apply(manifestJson: string): Promise<void>
     {
@@ -25,7 +27,11 @@ class FakeKubectl implements IKubectl
     public async ScaleStatefulSet(): Promise<void> { }
     public async RolloutRestart(): Promise<void> { }
     public async RolloutRestartSelector(): Promise<void> { }
-    public async ApplyServerSide(): Promise<void> { }
+    public async ApplyServerSide(manifestJson: string): Promise<void>
+    {
+        this.ServerApplied.push(manifestJson)
+    }
+
     public async DeleteManifest(): Promise<void> { }
     public async Find(): Promise<string | undefined> { return undefined }
     public async DeleteBySelector(): Promise<void> { }
@@ -69,12 +75,13 @@ describe('InClusterIdpSeedSource', () =>
         const kubectl = new FakeKubectl()
         await new InClusterIdpDriver(kubectl, new K8sManifestBuilder(), source, 'hive-a', 'img').EnsureRunning({ tenantId: Tenant, displayName: 'T', takenPorts: [] })
         assert.equal(kubectl.Applied.length, 2)
-        const seedNames = Secrets(kubectl.Applied[1]!).map(s => s.metadata.name)
-        const mounted = (JSON.parse(kubectl.Applied[0]!).items as any[]).find(o => o.kind === 'Deployment').spec.template.spec.volumes
-            .filter((v: any) => v.secret !== undefined).map((v: any) => v.secret.secretName)
+        assert.equal(kubectl.ServerApplied.length, 1)
+        const seedNames = [...Secrets(kubectl.Applied[1]!), ...Secrets(kubectl.ServerApplied[0]!)].map(s => s.metadata.name)
+        const mounted = [...new Set<string>((JSON.parse(kubectl.Applied[0]!).items as any[]).find(o => o.kind === 'Deployment').spec.template.spec.volumes
+            .filter((v: any) => v.secret !== undefined).map((v: any) => v.secret.secretName))]
         assert.deepEqual(seedNames.sort(), mounted.sort())
         const seed = source.SeedFor(Tenant)
-        assert.deepEqual(mounted.sort(), [seed.adminTokenSecretName, seed.tlsSecretName].sort())
+        assert.deepEqual(mounted.sort(), [seed.adminTokenSecretName, seed.tlsSecretName, IdpDatabaseSecret.NameOf(Tenant)].sort())
     })
 
     it('issues a server cert whose SAN equals the Service-DNS host IdpBaseUrlOf encodes', () =>
@@ -154,5 +161,25 @@ describe('InClusterIdpSeedSource', () =>
         assert.ok(!kubectl.Applied[0]!.includes(source.SeedFor(Tenant).adminToken))
         assert.ok(!kubectl.Applied[0]!.includes('"kind":"Secret"'))
         assert.equal(source.SeedFor(Tenant), source.SeedFor(Tenant))
+    })
+
+    it('mints the IdP database Secret once per tenant, apart from the TLS and admin seed, in the IdP namespace', () =>
+    {
+        const source = new InClusterIdpSeedSource()
+        const first = source.DatabaseSecretManifestFor(Tenant)
+        assert.equal(source.DatabaseSecretManifestFor(Tenant), first)
+        const [secret, ...rest] = Secrets(first)
+        assert.equal(rest.length, 0)
+        assert.equal(secret!.metadata.name, IdpDatabaseSecret.NameOf(Tenant))
+        assert.equal(secret!.metadata.namespace, K8sManifestBuilder.IdpNameOf(Tenant))
+        const value = (key: string): string => Buffer.from(secret!.data[key]!, 'base64').toString('utf8')
+        assert.equal(value('database-url'), IdpDatabaseSecret.UrlOf(value('password')))
+        assert.notEqual(value('superuser'), value('password'))
+        assert.ok(!Secrets(source.SecretsManifestFor(Tenant)).some(s => s.metadata.name === IdpDatabaseSecret.NameOf(Tenant)))
+        for (const text of [String(source), JSON.stringify(source)])
+        {
+            assert.ok(!text.includes(value('password')) && !text.includes(value('superuser')))
+        }
+        assert.notEqual(Secrets(new InClusterIdpSeedSource().DatabaseSecretManifestFor(Tenant))[0]!.data['password'], secret!.data['password'])
     })
 })

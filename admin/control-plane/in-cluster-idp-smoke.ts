@@ -24,6 +24,7 @@ import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KubectlCli, KubectlError, NodeExecFile } from './kubectl.js'
 import { IdpStatus } from './idp-record.js'
 import type { IdpWorkloadResult } from './idp-workload-driver.js'
+import { RealmIssuer } from '../../src/idp/realm-issuer.js'
 
 interface HttpsResponse
 {
@@ -106,7 +107,8 @@ export class InClusterIdpSmoke
     private static readonly BadToken = 'definitely-not-the-token'
     private static readonly AdminRealmPrefix = '/_admin/realms/'
     private static readonly RealmBody = '{"displayName":"ICC smoke"}'
-    private static readonly DiscoveryPath = '.well-known/openid-configuration'
+    /** Only the path of the realm's discovery URL is used (the request goes to the forwarded port). */
+    private static readonly LocalOrigin = 'https://localhost'
     private static readonly JwksUriField = 'jwks_uri'
     private static readonly Fields = ['issuer', 'authorization_endpoint', 'token_endpoint', 'jwks_uri']
     private static readonly JwksKeysField = 'keys'
@@ -155,7 +157,7 @@ export class InClusterIdpSmoke
             this.Expect(S.Labels.AdminBad, S.Unauthorized.includes(bad.status), S.StatusDetail(bad))
             const good = await S.Https(port, host, ca, S.MethodPut, realmPath, result.connection.adminToken, S.RealmBody)
             this.Expect(S.Labels.AdminOk, good.status >= S.StatusOk && good.status < S.OkMax, S.StatusDetail(good))
-            const discovery = await S.Https(port, host, ca, S.MethodGet, S.Slash + S.TenantId + S.Slash + S.DiscoveryPath)
+            const discovery = await S.Https(port, host, ca, S.MethodGet, new URL(RealmIssuer.DiscoveryOf(S.LocalOrigin, S.TenantId)).pathname)
             const doc = S.ParseObject(discovery.body)
             const missing = S.Fields.filter(f => typeof doc?.[f] !== 'string')
             this.Expect(S.Labels.Discovery, discovery.status === S.StatusOk && doc !== undefined && missing.length === 0, S.StatusDetail(discovery) + S.MissingTag + missing.join(S.Comma))

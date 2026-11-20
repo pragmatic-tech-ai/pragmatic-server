@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@pragmatic-tech-ai/mural": "file:../../Mural",
+    "@pragmatic-tech-ai/pragmatic-identity-source-identity-platform": "file:../../pragmatic-shared/packages/pragmatic-identity-source-identity-platform",
     "@pragmatic-tech-ai/todl-runtime": "file:../../todl-runtime"
   },
   "devDependencies": {

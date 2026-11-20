@@ -17,7 +17,7 @@ import { DesktopTargets } from '../tenant-auth/desktop-targets.js'
 import { TenantOidcClientKind, TenantOidcClients, type ITenantOidcClients } from '../tenant-auth/tenant-oidc-clients.js'
 import { TenantSessionGate } from '../tenant-auth/tenant-session-gate.js'
 import { TenantSessionClaims, TenantSessionKind, TenantSessions } from '../tenant-auth/tenant-sessions.js'
-import { IdpClientStore } from '../../../src/idp/idp-client-store.js'
+import { OidcClient } from '../../../src/idp/sql-idp-client-store.js'
 
 type Reply = { status: number; body: Record<string, unknown> | undefined; text: string; headers: IncomingHttpHeaders }
 
@@ -572,15 +572,14 @@ describe('DesktopEndpoint redirect rule agrees with the IdP loopback rule', () =
 {
     it('accepts exactly the redirects the IdP accepts for the registered desktop redirect', async () =>
     {
-        const idp = new IdpClientStore()
-        await idp.Register('acme', 'plexus-desktop', [TenantOidcClients.DesktopRegisteredRedirect], 'secret')
+        const idp = new OidcClient('plexus-desktop', 'acme', [TenantOidcClients.DesktopRegisteredRedirect], [], 'unused-hash')
         const path = '/pragmatic-desktop/callback'
         const candidates = [1, 79, 80, 81, 443, 8080, 53111, 65535].map(port => 'http://127.0.0.1:' + String(port) + path)
             .concat(['http://127.0.0.1:080' + path, 'http://127.0.0.1:0' + path, 'http://127.0.0.1:65536' + path, 'http://127.0.0.1:05' + path,
                 'http://localhost:5000' + path, 'http://127.0.0.1:5000/other', 'http://127.0.0.1:5000' + path + '?x=1'])
         for (const uri of candidates)
         {
-            assert.equal(DesktopEndpoint.IsLoopbackRedirect(uri), idp.RedirectAllowed('acme', 'plexus-desktop', uri), uri)
+            assert.equal(DesktopEndpoint.IsLoopbackRedirect(uri), idp.RedirectAllowed(uri), uri)
         }
         assert.equal(DesktopEndpoint.IsLoopbackRedirect('http://127.0.0.1:80' + path), false)
     })

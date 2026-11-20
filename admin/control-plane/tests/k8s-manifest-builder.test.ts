@@ -294,15 +294,18 @@ describe('K8sManifestBuilder.RenderIdp', () =>
 {
     const Spec: IdpWorkloadSpec = {
         tenantId: 't1', hiveId: 'hive-a', image: 'pragmatic-server:dev', port: 9443,
-        adminTokenSecretName: 'idp-admin-secret', adminTokenRef: 'admin-token', tlsSecretName: 'idp-tls-secret'
+        adminTokenSecretName: 'idp-admin-secret', adminTokenRef: 'admin-token', tlsSecretName: 'idp-tls-secret',
+        database: { image: 'pragmatic-postgres:local', secretName: 'pragmatic-idp-t1-postgres' }
     }
 
     const Items = (): any[] => JSON.parse(new K8sManifestBuilder().RenderIdp(Spec)).items
+    const Of = (kind: string): any => Items().find((i: any) => i.kind === kind)
+    const Pod = (): any => Of('Deployment').spec.template.spec
 
-    it('emits Namespace, ServiceAccount, PVC, Deployment and Service, all hive-labeled', () =>
+    it('emits Namespace, ServiceAccount, both PVCs, the Postgres ConfigMap, Deployment and Service, all hive-labeled', () =>
     {
         const items = Items()
-        assert.deepEqual(items.map(i => i.kind), ['Namespace', 'ServiceAccount', 'PersistentVolumeClaim', 'Deployment', 'Service'])
+        assert.deepEqual(items.map(i => i.kind), ['Namespace', 'ServiceAccount', 'PersistentVolumeClaim', 'PersistentVolumeClaim', 'ConfigMap', 'Deployment', 'Service'])
         for (const i of items)
         {
             assert.equal(i.metadata.labels['pragmatic/hive'], 'hive-a', i.kind)
@@ -384,7 +387,7 @@ describe('K8sManifestBuilder.RenderIdp', () =>
     {
         const items = Items()
         assert.ok(items.every((i: any) => i.kind !== 'Ingress'))
-        assert.equal(items.length, 5)
+        assert.equal(items.length, 7)
     })
 
     it('IdpBrowserUrlOf is the idp-<tenant>.<baseDomain> browser origin, distinct from the internal base', () =>
@@ -396,7 +399,7 @@ describe('K8sManifestBuilder.RenderIdp', () =>
 
     it('Service is ClusterIP and its DNS name matches IdpBaseUrlOf', () =>
     {
-        const svc = Items()[4]
+        const svc = Of('Service')
         assert.equal(svc.spec.type, 'ClusterIP')
         assert.equal(svc.spec.ports[0].port, 9443)
         assert.equal(K8sManifestBuilder.IdpBaseUrlOf('t1', 9443), `https://${svc.metadata.name}.${svc.metadata.namespace}.svc.cluster.local:9443`)
@@ -405,10 +408,9 @@ describe('K8sManifestBuilder.RenderIdp', () =>
     it('carries secrets only as volume refs, never inline, and runs least-privilege', () =>
     {
         const raw = new K8sManifestBuilder().RenderIdp(Spec)
-        const dep = Items()[3]
-        const pod = dep.spec.template.spec
+        const pod = Pod()
         const secretNames = pod.volumes.filter((v: any) => v.secret).map((v: any) => v.secret.secretName).sort()
-        assert.deepEqual(secretNames, ['idp-admin-secret', 'idp-tls-secret'])
+        assert.deepEqual(secretNames, ['idp-admin-secret', 'idp-tls-secret', 'pragmatic-idp-t1-postgres', 'pragmatic-idp-t1-postgres'])
         assert.equal(pod.automountServiceAccountToken, false)
         assert.equal(pod.securityContext.fsGroup, 1000)
         assert.equal(pod.volumes.find((v: any) => v.secret).secret.defaultMode, 0o440)
@@ -424,6 +426,74 @@ describe('K8sManifestBuilder.RenderIdp', () =>
         assert.equal(env.find((e: any) => e.name === 'PRAGMATIC_IDP_ADMIN_TOKEN_REF').value, 'admin-token')
         assert.equal(env.find((e: any) => e.name === 'PRAGMATIC_IDP_BASE_URL').value, K8sManifestBuilder.IdpBaseUrlOf('t1', 9443))
         assert.ok(!raw.includes('ClusterRole') && !raw.includes('RoleBinding'))
+    })
+
+    it('the IdP reads its database URL from the mounted url key only, never the passwords', () =>
+    {
+        const pod = Pod()
+        const idp = pod.containers[0]
+        const env = idp.env as { name: string; value: string }[]
+        assert.equal(env.find(e => e.name === 'PRAGMATIC_IDP_DATABASE_URL_FILE')?.value, '/run/secrets/pragmatic-tenant-idp-database/database-url')
+        const mount = idp.volumeMounts.find((m: any) => m.mountPath === '/run/secrets/pragmatic-tenant-idp-database')
+        assert.equal(mount.readOnly, true)
+        const volume = pod.volumes.find((v: any) => v.name === mount.name)
+        assert.equal(volume.secret.secretName, 'pragmatic-idp-t1-postgres')
+        assert.deepEqual(volume.secret.items, [{ key: 'database-url', path: 'database-url' }])
+    })
+
+    it('mounts the realm configuration ConfigMap optionally and read-only at the default configuration folder', () =>
+    {
+        const pod = Pod()
+        const mount = pod.containers[0].volumeMounts.find((m: any) => m.mountPath === '/etc/pragmatic/configuration')
+        assert.equal(mount.readOnly, true)
+        const volume = pod.volumes.find((v: any) => v.name === mount.name)
+        assert.deepEqual(volume.configMap, { name: 'pragmatic-config-pragmatic-tenant-idp', optional: true })
+    })
+
+    it('runs a pragmatic-postgres sidecar: non-root 999, read-only root, loopback only, data on its own claim', () =>
+    {
+        const pod = Pod()
+        assert.equal(pod.containers.length, 2)
+        const pg = pod.containers[1]
+        assert.equal(pg.name, 'postgres')
+        assert.equal(pg.image, 'pragmatic-postgres:local')
+        assert.deepEqual(pg.args, ['postgres', '-c', 'listen_addresses=127.0.0.1'])
+        assert.equal(pg.securityContext.runAsNonRoot, true)
+        assert.equal(pg.securityContext.runAsUser, 999)
+        assert.equal(pg.securityContext.runAsGroup, 999)
+        assert.equal(pg.securityContext.readOnlyRootFilesystem, true)
+        assert.equal(pg.securityContext.allowPrivilegeEscalation, false)
+        assert.deepEqual(pg.securityContext.capabilities.drop, ['ALL'])
+        assert.deepEqual(pg.env, [{ name: 'PGDATA', value: '/var/lib/postgresql/data/pgdata' }])
+        assert.equal(pg.ports, undefined)
+        const byPath = (path: string): any => pg.volumeMounts.find((m: any) => m.mountPath === path)
+        const volumeOf = (path: string): any => pod.volumes.find((v: any) => v.name === byPath(path).name)
+        assert.equal(volumeOf('/var/lib/postgresql/data').persistentVolumeClaim.claimName, 'pragmatic-idp-t1-postgres')
+        assert.ok(volumeOf('/var/run/postgresql').emptyDir)
+        assert.ok(volumeOf('/tmp').emptyDir)
+        assert.notEqual(byPath('/tmp').name, pod.containers[0].volumeMounts.find((m: any) => m.mountPath === '/tmp').name)
+        assert.equal(byPath('/etc/pragmatic-postgres').readOnly, true)
+        assert.equal(volumeOf('/etc/pragmatic-postgres').configMap.name, 'pragmatic-idp-t1-postgres')
+        assert.equal(byPath('/run/secrets/pragmatic-postgres').readOnly, true)
+        const secrets = volumeOf('/run/secrets/pragmatic-postgres').secret
+        assert.equal(secrets.secretName, 'pragmatic-idp-t1-postgres')
+        assert.deepEqual(secrets.items, [{ key: 'superuser', path: 'superuser' }, { key: 'password', path: 'applications/pragmatic-tenant-idp' }])
+        // The IdP container never sees the superuser or role password files.
+        assert.ok(!pod.containers[0].volumeMounts.some((m: any) => m.name === byPath('/run/secrets/pragmatic-postgres').name))
+    })
+
+    it('the Postgres ConfigMap names the one application; its own 1Gi claim sits beside the unchanged 256Mi data claim', () =>
+    {
+        const items = Items()
+        const config = items.find((i: any) => i.kind === 'ConfigMap')
+        assert.equal(config.metadata.name, 'pragmatic-idp-t1-postgres')
+        assert.equal(config.metadata.namespace, 'pragmatic-idp-t1')
+        assert.deepEqual(config.data, { 'applications.conf': 'pragmatic-tenant-idp tenant_idp tenant_idp\n' })
+        const claims = items.filter((i: any) => i.kind === 'PersistentVolumeClaim')
+        assert.deepEqual(claims.map((c: any) => [c.metadata.name, c.spec.resources.requests.storage]), [
+            ['pragmatic-idp-t1-data', '256Mi'],
+            ['pragmatic-idp-t1-postgres', '1Gi'],
+        ])
     })
 })
 

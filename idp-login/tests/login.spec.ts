@@ -5,21 +5,27 @@ import type { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { expect, test, type Page } from '@playwright/test'
 
-// A fake IdP: serves the built app the way IdpHost does (index.html at the
-// authorize URL with its flag, assets under /_login/), records every form post
-// to the authorize URL, and answers a post with the failed page or a redirect.
+// A fake realm sign-in service: serves the built app the way the IdP does
+// (index.html at the realm's authorize URL, assets under /_login/), answers the
+// page's config (local accounts plus one upstream source), records every JSON
+// login post and answers it with a redirect or invalid_credentials, and
+// records the broker login the source button navigates to.
 class FakeIdp
 {
-    public static readonly AuthorizePath = '/tenant-1/authorize'
-    public static readonly Query = '?response_type=code&client_id=c1&state=s1&nonce=n1'
+    public static readonly AuthorizePath = '/realms/central/protocol/openid-connect/auth'
+    public static readonly ConfigPath = '/realms/central/login/config'
+    public static readonly LoginPath = '/realms/central/login'
+    public static readonly BrokerPath = '/realms/central/broker/corp/login'
+    public static readonly Request = 'response_type=code&client_id=c1&state=s1&nonce=n1'
+    public static readonly Query = '?' + FakeIdp.Request
     public static readonly DonePath = '/done'
     public static readonly GoodPassword = 'right-pw'
-    private static readonly ReadyFlag = '<meta name="pragmatic-login" content="ready">'
-    private static readonly FailedFlag = '<meta name="pragmatic-login" content="failed">'
+    public static readonly SourceLabel = 'Corporate SSO'
     private static readonly AssetPrefix = '/_login/'
     private static readonly Types: Record<string, string> = { '.js': 'text/javascript', '.woff2': 'font/woff2', '.css': 'text/css' }
 
-    public readonly Posts: Array<{ url: string; form: Record<string, string> }> = []
+    public readonly Posts: Array<{ contentType: string | undefined; body: Record<string, unknown> }> = []
+    public readonly Brokered: string[] = []
     private readonly dist = resolve(fileURLToPath(new URL('../dist', import.meta.url)))
     private server: Server | undefined
 
@@ -38,33 +44,49 @@ class FakeIdp
     private async Handle(req: IncomingMessage, res: ServerResponse): Promise<void>
     {
         const url = new URL(req.url ?? '/', 'http://localhost')
-        if (url.pathname === FakeIdp.AuthorizePath && req.method === 'POST')
+        if (url.pathname === FakeIdp.LoginPath && req.method === 'POST')
         {
             const chunks: Buffer[] = []
             for await (const chunk of req)
             {
                 chunks.push(chunk as Buffer)
             }
-            const form = Object.fromEntries(new URLSearchParams(Buffer.concat(chunks).toString()))
-            this.Posts.push({ url: url.pathname + url.search, form })
-            if (form.password === FakeIdp.GoodPassword)
+            const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>
+            this.Posts.push({ contentType: req.headers['content-type'], body })
+            if (body.password === FakeIdp.GoodPassword)
             {
-                res.writeHead(302, { Location: FakeIdp.DonePath })
-                res.end()
+                this.WriteJson(res, 200, { redirect: FakeIdp.DonePath })
                 return
             }
-            this.WritePage(res, true)
+            this.WriteJson(res, 401, { error: 'invalid_credentials' })
+            return
+        }
+        if (url.pathname === FakeIdp.ConfigPath)
+        {
+            this.WriteJson(res, 200, {
+                realm: 'central',
+                displayName: 'Central',
+                local: true,
+                sources: [{ id: 'corp', kind: 'oidc', label: FakeIdp.SourceLabel, login: FakeIdp.BrokerPath + '?' }],
+                identityPlatform: null,
+                signUp: false,
+            })
             return
         }
         if (url.pathname === FakeIdp.AuthorizePath)
         {
-            this.WritePage(res, false)
+            res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+            res.end(readFileSync(join(this.dist, 'index.html'), 'utf8'))
             return
         }
-        if (url.pathname === FakeIdp.DonePath)
+        if (url.pathname === FakeIdp.BrokerPath || url.pathname === FakeIdp.DonePath)
         {
+            if (url.pathname === FakeIdp.BrokerPath)
+            {
+                this.Brokered.push(url.search)
+            }
             res.writeHead(200, { 'content-type': 'text/plain' })
-            res.end('signed in')
+            res.end('left the page')
             return
         }
         if (url.pathname.startsWith(FakeIdp.AssetPrefix))
@@ -81,11 +103,10 @@ class FakeIdp
         res.end()
     }
 
-    private WritePage(res: ServerResponse, failed: boolean): void
+    private WriteJson(res: ServerResponse, status: number, body: unknown): void
     {
-        const index = readFileSync(join(this.dist, 'index.html'), 'utf8')
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-        res.end(failed ? index.replace(FakeIdp.ReadyFlag, FakeIdp.FailedFlag) : index)
+        res.writeHead(status, { 'content-type': 'application/json' })
+        res.end(JSON.stringify(body))
     }
 }
 
@@ -115,7 +136,7 @@ test.describe('IdP sign-in app', () =>
         await idp.Stop()
     })
 
-    test('renders the form; Sign in posts email and password to the authorize URL with its query, then follows the redirect', async ({ page }) =>
+    test('renders the form; Sign in posts the request, email and password as JSON, then follows the redirect', async ({ page }) =>
     {
         await page.goto(base + FakeIdp.AuthorizePath + FakeIdp.Query)
         await expect(page.getByText('Use your organisation account.', { exact: true })).toBeVisible()
@@ -124,7 +145,10 @@ test.describe('IdP sign-in app', () =>
         await LoginSteps.TypeInto(page, 'current-password', FakeIdp.GoodPassword)
         await page.getByText('Sign in', { exact: true }).last().click({ force: true })
         await page.waitForURL(base + FakeIdp.DonePath)
-        expect(idp.Posts.at(-1)).toEqual({ url: FakeIdp.AuthorizePath + FakeIdp.Query, form: { email: 'owner@acme.test', password: FakeIdp.GoodPassword } })
+        expect(idp.Posts.at(-1)).toEqual({
+            contentType: 'application/json',
+            body: { request: FakeIdp.Request, method: 'password', email: 'owner@acme.test', password: FakeIdp.GoodPassword },
+        })
     })
 
     test('the fields are real inputs a password manager recognises', async ({ page }) =>
@@ -136,15 +160,15 @@ test.describe('IdP sign-in app', () =>
         await expect(email).toHaveAttribute('type', 'email')
         await expect(email).toHaveAttribute('aria-label', 'Email')
         await expect(password).toHaveAttribute('type', 'password')
-        // Autofill writes the inputs directly; the form still posts what they hold.
+        // Autofill writes the inputs directly; the page still posts what they hold.
         await email.fill('autofilled@acme.test')
         await password.fill(FakeIdp.GoodPassword)
         await page.getByText('Sign in', { exact: true }).last().click({ force: true })
         await page.waitForURL(base + FakeIdp.DonePath)
-        expect(idp.Posts.at(-1)?.form).toEqual({ email: 'autofilled@acme.test', password: FakeIdp.GoodPassword })
+        expect(idp.Posts.at(-1)?.body).toEqual({ request: FakeIdp.Request, method: 'password', email: 'autofilled@acme.test', password: FakeIdp.GoodPassword })
     })
 
-    test('a rejected sign-in comes back flagged and shows the error; Enter submits', async ({ page }) =>
+    test('a rejected sign-in shows the error on the same page; Enter submits', async ({ page }) =>
     {
         await page.goto(base + FakeIdp.AuthorizePath + FakeIdp.Query)
         await expect(page.getByText('Use your organisation account.', { exact: true })).toBeVisible()
@@ -152,6 +176,15 @@ test.describe('IdP sign-in app', () =>
         await LoginSteps.TypeInto(page, 'current-password', 'wrong-pw')
         await page.keyboard.press('Enter')
         await expect(page.getByText('Invalid email or password.', { exact: true })).toBeVisible()
-        expect(idp.Posts.at(-1)?.form).toEqual({ email: 'owner@acme.test', password: 'wrong-pw' })
+        expect(page.url()).toBe(base + FakeIdp.AuthorizePath + FakeIdp.Query)
+        expect(idp.Posts.at(-1)?.body).toEqual({ request: FakeIdp.Request, method: 'password', email: 'owner@acme.test', password: 'wrong-pw' })
+    })
+
+    test('an upstream source button navigates to its broker login with the authorize request', async ({ page }) =>
+    {
+        await page.goto(base + FakeIdp.AuthorizePath + FakeIdp.Query)
+        await page.getByText(FakeIdp.SourceLabel, { exact: true }).click({ force: true })
+        await page.waitForURL(base + FakeIdp.BrokerPath + FakeIdp.Query)
+        expect(idp.Brokered.at(-1)).toBe(FakeIdp.Query)
     })
 })

@@ -1,8 +1,12 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { ReservedRealmError } from './idp-host.js';
-import type { IdpRealmSet } from './idp-host.js';
-import type { IdpClientStore } from './idp-client-store.js';
-import type { IdpSsoSessionStore } from './idp-sso-session.js';
+import { ComponentDescriptorCodec } from '@pragmatic-tech-ai/pragmatic-component';
+import { ApplicationDeclaration, InvalidRealmRoleError, RealmRole, RoleMapping, RoleMember } from '@pragmatic-tech-ai/pragmatic-identity';
+import type { IApplicationCatalogue } from '@pragmatic-tech-ai/pragmatic-identity';
+import { RoleMappingError, type RoleMappingService } from '@pragmatic-tech-ai/pragmatic-identity-realm';
+import { ReservedRealmError, type IdpRealmSet } from './idp-realm-set.js';
+import type { SqlIdpClientStore } from './sql-idp-client-store.js';
+import type { SqlRefreshTokenStore } from './sql-refresh-token-store.js';
+import type { SqlSsoSessionStore } from './sql-sso-session-store.js';
 
 /** Status + JSON body produced by the admin endpoint. Never carries secrets. */
 export class AdminResult
@@ -12,10 +16,28 @@ export class AdminResult
     }
 }
 
+/** What the admin API reaches: the realms and the stores its operations write. */
+export class IdpAdminStores
+{
+    public constructor(
+        public readonly Realms: IdpRealmSet,
+        public readonly Clients: SqlIdpClientStore,
+        public readonly Sso: SqlSsoSessionStore,
+        public readonly RefreshTokens: SqlRefreshTokenStore,
+        public readonly Roles: RoleMappingService,
+        public readonly Applications: IApplicationCatalogue)
+    {
+        Object.freeze(this);
+    }
+}
+
 /**
- * Authenticated provisioning API for the local IdP (ensure realm, seed account, register client).
- * The bearer token is verified before any routing or body inspection. Nothing is logged and no
- * password / client secret / admin token ever appears in a result.
+ * The authenticated provisioning API of the realm sign-in service, under `/_admin/realms/<realm>`: ensure a realm,
+ * seed an account, reset its password (ends its SSO sessions and refresh tokens), register and remove clients, the
+ * role mappings (the assignable roles, list, add, remove; used by the tenant admin console), the applications whose
+ * roles the realm offers (a component descriptor each), and the realm's secrets (the `realm` store a configuration's
+ * secret references name). The bearer token is verified before any routing or body inspection; nothing is logged and
+ * no password, client secret, realm secret or admin token ever appears in a result.
  */
 export class IdpAdminEndpoint
 {
@@ -24,20 +46,23 @@ export class IdpAdminEndpoint
     private static readonly RealmsSegment = 'realms';
     private static readonly AccountsSegment = 'accounts';
     private static readonly ClientsSegment = 'clients';
+    private static readonly PasswordSegment = 'password';
+    private static readonly RolesSegment = 'roles';
+    private static readonly MappingsSegment = 'role-mappings';
+    private static readonly ApplicationsSegment = 'applications';
+    private static readonly SecretsSegment = 'secrets';
+    private static readonly GetMethod = 'GET';
     private static readonly PutMethod = 'PUT';
     private static readonly PostMethod = 'POST';
     private static readonly DeleteMethod = 'DELETE';
+    private static readonly RealmIndex = 1;
+    private static readonly ResourceIndex = 2;
+    private static readonly ItemIndex = 3;
+    private static readonly ActionIndex = 4;
     private static readonly RealmPathLength = 2;
-    private static readonly SubResourcePathLength = 3;
-    private static readonly PasswordResetPathLength = 5;
-    private static readonly ClientPathLength = 4;
-    private static readonly PasswordSegment = 'password';
-    private static readonly PrincipalIndex = 3;
-    private static readonly PasswordIndex = 4;
-    private static readonly ClientIdIndex = 3;
-    private static readonly RealmIndex = 0;
-    private static readonly TenantIndex = 1;
-    private static readonly SubResourceIndex = 2;
+    private static readonly ResourcePathLength = 3;
+    private static readonly ItemPathLength = 4;
+    private static readonly ActionPathLength = 5;
     private static readonly OkStatus = 200;
     private static readonly BadRequestStatus = 400;
     private static readonly UnauthorizedStatus = 401;
@@ -48,90 +73,120 @@ export class IdpAdminEndpoint
     private static readonly NotFoundCode = 'not_found';
     private static readonly UnknownRealmCode = 'unknown_realm';
     private static readonly UnknownAccountCode = 'unknown_account';
+    private static readonly InvalidDescriptorCode = 'invalid_descriptor';
     private static readonly ErrorField = 'error';
+    private static readonly RoleField = 'role';
+    private static readonly MemberField = 'member';
+    private static readonly KindField = 'kind';
+    private static readonly SourceField = 'source';
+    private static readonly ValueField = 'value';
+    private static readonly DescriptionField = 'description';
+    private static readonly AddedField = 'added';
+    private static readonly RemovedField = 'removed';
     private static readonly TenantIdField = 'tenantId';
+    private static readonly RealmIdField = 'realmId';
+    private static readonly IssuerField = 'issuer';
+    private static readonly SourcesField = 'sources';
     private static readonly PrincipalIdField = 'principalId';
     private static readonly ClientIdField = 'clientId';
     private static readonly DisplayNameField = 'displayName';
     private static readonly EmailField = 'email';
     private static readonly PasswordField = 'password';
     private static readonly RedirectUrisField = 'redirectUris';
+    private static readonly PostLogoutRedirectUrisField = 'postLogoutRedirectUris';
     private static readonly SecretField = 'secret';
+    private static readonly NameField = 'name';
+    private static readonly SecretName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+    private static readonly NoSource = '';
 
     private readonly adminTokenDigests: readonly Buffer[];
 
-    /**
-     * `adminTokens` is the set of currently valid admin tokens (several during a rotation); an empty set rejects everything.
-     * `sso` is the host's SSO session store: a password reset ends the principal's SSO sessions in it.
-     */
-    public constructor(
-        adminTokens: readonly string[],
-        private readonly realms: IdpRealmSet,
-        private readonly clients: IdpClientStore,
-        private readonly sso: IdpSsoSessionStore)
+    /** `adminTokens` is the set of currently valid admin tokens (several during a rotation); an empty set rejects everything. */
+    public constructor(adminTokens: readonly string[], private readonly stores: IdpAdminStores)
     {
         this.adminTokenDigests = adminTokens.filter(t => t.length > 0).map(t => IdpAdminEndpoint.Digest(t));
     }
 
     public async Handle(method: string, segments: readonly string[], authorization: string | undefined, body: unknown): Promise<AdminResult>
     {
+        const A = IdpAdminEndpoint;
         if (!this.VerifyToken(authorization))
         {
-            return IdpAdminEndpoint.Fail(IdpAdminEndpoint.UnauthorizedStatus, IdpAdminEndpoint.UnauthorizedCode);
+            return A.Fail(A.UnauthorizedStatus, A.UnauthorizedCode);
         }
-        if (segments[IdpAdminEndpoint.RealmIndex] !== IdpAdminEndpoint.RealmsSegment || typeof segments[IdpAdminEndpoint.TenantIndex] !== 'string')
+        if (segments[0] !== A.RealmsSegment || segments.length < A.RealmPathLength)
         {
-            return IdpAdminEndpoint.NotFound();
+            return A.NotFound();
         }
-        const tenantId = segments[IdpAdminEndpoint.TenantIndex]!;
+        const realmId = segments[A.RealmIndex]!;
         try
         {
-            if (segments.length === IdpAdminEndpoint.RealmPathLength && method === IdpAdminEndpoint.PutMethod)
+            if (segments.length === A.RealmPathLength)
             {
-                return await this.PutRealm(tenantId, body);
+                return method === A.PutMethod ? await this.PutRealm(realmId, body) : method === A.GetMethod ? this.GetRealm(realmId) : A.NotFound();
             }
-            if (segments.length === IdpAdminEndpoint.SubResourcePathLength && method === IdpAdminEndpoint.PostMethod)
+            if (this.stores.Realms.For(realmId) === undefined)
             {
-                const sub = segments[IdpAdminEndpoint.SubResourceIndex];
-                if (sub === IdpAdminEndpoint.AccountsSegment)
-                {
-                    return await this.PostAccount(tenantId, body);
-                }
-                if (sub === IdpAdminEndpoint.ClientsSegment)
-                {
-                    return await this.PostClient(tenantId, body);
-                }
+                return A.Fail(A.NotFoundStatus, A.UnknownRealmCode);
             }
-            if (segments.length === IdpAdminEndpoint.ClientPathLength && method === IdpAdminEndpoint.DeleteMethod
-                && segments[IdpAdminEndpoint.SubResourceIndex] === IdpAdminEndpoint.ClientsSegment)
-            {
-                return await this.DeleteClient(tenantId, segments[IdpAdminEndpoint.ClientIdIndex]!);
-            }
-            if (segments.length === IdpAdminEndpoint.PasswordResetPathLength && method === IdpAdminEndpoint.PostMethod
-                && segments[IdpAdminEndpoint.SubResourceIndex] === IdpAdminEndpoint.AccountsSegment
-                && segments[IdpAdminEndpoint.PasswordIndex] === IdpAdminEndpoint.PasswordSegment)
-            {
-                return await this.PostPasswordReset(tenantId, segments[IdpAdminEndpoint.PrincipalIndex]!, body);
-            }
+            return await this.RealmResource(method, realmId, segments, body);
         }
         catch (err)
         {
             if (err instanceof ReservedRealmError)
             {
-                return IdpAdminEndpoint.Fail(IdpAdminEndpoint.BadRequestStatus, IdpAdminEndpoint.InvalidRealmCode);
+                return A.Fail(A.BadRequestStatus, A.InvalidRealmCode);
+            }
+            if (err instanceof RoleMappingError)
+            {
+                return A.Fail(A.BadRequestStatus, err.Reason);
             }
             throw err;
         }
-        return IdpAdminEndpoint.NotFound();
     }
 
-    /**
-     * Whether an Authorization header carries a valid admin bearer token (the same check the admin API makes). Lets the
-     * host trust a relayed end-user address only from an admin-credentialed caller. Constant-time; never logs the token.
-     */
+    /** Whether an Authorization header carries a valid admin bearer token. Constant-time; never logs the token. */
     public IsAdminCredential(authorization: string | undefined): boolean
     {
         return this.VerifyToken(authorization);
+    }
+
+    private async RealmResource(method: string, realmId: string, segments: readonly string[], body: unknown): Promise<AdminResult>
+    {
+        const A = IdpAdminEndpoint;
+        const resource = segments[A.ResourceIndex];
+        const item = segments[A.ItemIndex];
+        if (segments.length === A.ResourcePathLength)
+        {
+            switch (resource + method)
+            {
+                case A.AccountsSegment + A.PostMethod: return await this.PostAccount(realmId, body);
+                case A.ClientsSegment + A.PostMethod: return await this.PostClient(realmId, body);
+                case A.RolesSegment + A.GetMethod: return await this.GetRoles(realmId);
+                case A.MappingsSegment + A.GetMethod: return await this.GetMappings(realmId);
+                case A.MappingsSegment + A.PostMethod: return await this.AddMapping(realmId, body);
+                case A.MappingsSegment + A.DeleteMethod: return await this.RemoveMapping(realmId, body);
+                default: return A.NotFound();
+            }
+        }
+        if (segments.length === A.ItemPathLength && item !== undefined)
+        {
+            switch (resource + method)
+            {
+                case A.ClientsSegment + A.DeleteMethod: return await this.DeleteClient(realmId, item);
+                case A.ApplicationsSegment + A.PutMethod: return await this.PutApplication(realmId, item, body);
+                case A.ApplicationsSegment + A.DeleteMethod: return await this.DeleteApplication(realmId, item);
+                case A.SecretsSegment + A.PutMethod: return await this.PutSecret(realmId, item, body);
+                case A.SecretsSegment + A.DeleteMethod: return await this.DeleteSecret(realmId, item);
+                default: return A.NotFound();
+            }
+        }
+        if (segments.length === A.ActionPathLength && item !== undefined && resource === A.AccountsSegment
+            && segments[A.ActionIndex] === A.PasswordSegment && method === A.PostMethod)
+        {
+            return await this.PostPasswordReset(realmId, item, body);
+        }
+        return A.NotFound();
     }
 
     private VerifyToken(authorization: string | undefined): boolean
@@ -156,91 +211,212 @@ export class IdpAdminEndpoint
         return matched;
     }
 
-    private async PutRealm(tenantId: string, body: unknown): Promise<AdminResult>
+    private async PutRealm(realmId: string, body: unknown): Promise<AdminResult>
     {
-        const fields = IdpAdminEndpoint.AsRecord(body);
-        const displayName = fields === undefined ? undefined : IdpAdminEndpoint.NonEmptyString(fields[IdpAdminEndpoint.DisplayNameField]);
+        const A = IdpAdminEndpoint;
+        const displayName = A.NonEmptyString(A.AsRecord(body)?.[A.DisplayNameField]);
         if (displayName === undefined)
         {
-            return IdpAdminEndpoint.InvalidBody();
+            return A.InvalidBody();
         }
-        await this.realms.EnsureRealm(tenantId, displayName);
-        return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.TenantIdField]: tenantId });
+        await this.stores.Realms.EnsureRealm(realmId, displayName);
+        return new AdminResult(A.OkStatus, { [A.TenantIdField]: realmId });
     }
 
-    private async PostAccount(tenantId: string, body: unknown): Promise<AdminResult>
+    private GetRealm(realmId: string): AdminResult
     {
-        const fields = IdpAdminEndpoint.AsRecord(body);
-        if (fields === undefined)
+        const A = IdpAdminEndpoint;
+        const realm = this.stores.Realms.For(realmId);
+        if (realm === undefined)
         {
-            return IdpAdminEndpoint.InvalidBody();
+            return A.Fail(A.NotFoundStatus, A.UnknownRealmCode);
         }
-        const email = IdpAdminEndpoint.NonEmptyString(fields[IdpAdminEndpoint.EmailField]);
-        const principalId = IdpAdminEndpoint.NonEmptyString(fields[IdpAdminEndpoint.PrincipalIdField]);
-        const displayName = IdpAdminEndpoint.NonEmptyString(fields[IdpAdminEndpoint.DisplayNameField]);
-        const password = IdpAdminEndpoint.NonEmptyString(fields[IdpAdminEndpoint.PasswordField]);
+        return new AdminResult(A.OkStatus, {
+            [A.RealmIdField]: realm.Id,
+            [A.DisplayNameField]: realm.DisplayName,
+            [A.IssuerField]: realm.Issuer,
+            [A.SourcesField]: [...realm.Settings.SourceIds()],
+        });
+    }
+
+    private async PostAccount(realmId: string, body: unknown): Promise<AdminResult>
+    {
+        const A = IdpAdminEndpoint;
+        const fields = A.AsRecord(body);
+        const email = A.NonEmptyString(fields?.[A.EmailField]);
+        const principalId = A.NonEmptyString(fields?.[A.PrincipalIdField]);
+        const displayName = A.NonEmptyString(fields?.[A.DisplayNameField]);
+        const password = A.NonEmptyString(fields?.[A.PasswordField]);
         if (email === undefined || principalId === undefined || displayName === undefined || password === undefined)
         {
-            return IdpAdminEndpoint.InvalidBody();
+            return A.InvalidBody();
         }
-        const realm = this.realms.For(tenantId);
-        if (realm === undefined)
-        {
-            return IdpAdminEndpoint.UnknownRealm();
-        }
-        await realm.SeedAccount(email, principalId, password, displayName);
-        return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.PrincipalIdField]: principalId });
+        await this.stores.Realms.For(realmId)!.SeedAccount(email, principalId, password, displayName);
+        return new AdminResult(A.OkStatus, { [A.PrincipalIdField]: principalId });
     }
 
-    private async PostPasswordReset(tenantId: string, principalId: string, body: unknown): Promise<AdminResult>
+    private async PostPasswordReset(realmId: string, principalId: string, body: unknown): Promise<AdminResult>
     {
-        const fields = IdpAdminEndpoint.AsRecord(body);
-        const password = fields === undefined ? undefined : IdpAdminEndpoint.NonEmptyString(fields[IdpAdminEndpoint.PasswordField]);
+        const A = IdpAdminEndpoint;
+        const password = A.NonEmptyString(A.AsRecord(body)?.[A.PasswordField]);
         if (password === undefined)
         {
-            return IdpAdminEndpoint.InvalidBody();
+            return A.InvalidBody();
         }
-        const realm = this.realms.For(tenantId);
-        if (realm === undefined)
+        if (!(await this.stores.Realms.For(realmId)!.ResetPassword(principalId, password)))
         {
-            return IdpAdminEndpoint.UnknownRealm();
+            return A.Fail(A.NotFoundStatus, A.UnknownAccountCode);
         }
-        if (!(await realm.ResetPassword(principalId, password)))
-        {
-            return IdpAdminEndpoint.Fail(IdpAdminEndpoint.NotFoundStatus, IdpAdminEndpoint.UnknownAccountCode);
-        }
-        // An SSO cookie issued before the reset must not re-authorize without the new password.
-        this.sso.RevokeAllFor(tenantId, principalId);
-        return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.PrincipalIdField]: principalId });
+        // An SSO cookie or refresh token issued before the reset must not re-authorize without the new password.
+        await this.stores.Sso.RevokeAccount(realmId, principalId);
+        await this.stores.RefreshTokens.RevokeAccount(realmId, principalId);
+        return new AdminResult(A.OkStatus, { [A.PrincipalIdField]: principalId });
     }
 
-    private async PostClient(tenantId: string, body: unknown): Promise<AdminResult>
+    private async PostClient(realmId: string, body: unknown): Promise<AdminResult>
     {
-        const fields = IdpAdminEndpoint.AsRecord(body);
-        if (fields === undefined)
+        const A = IdpAdminEndpoint;
+        const fields = A.AsRecord(body);
+        const clientId = A.NonEmptyString(fields?.[A.ClientIdField]);
+        const secret = A.NonEmptyString(fields?.[A.SecretField]);
+        const redirectUris = A.AbsoluteUrlList(fields?.[A.RedirectUrisField], false);
+        const postLogout = fields?.[A.PostLogoutRedirectUrisField] === undefined ? [] : A.AbsoluteUrlList(fields[A.PostLogoutRedirectUrisField], true);
+        if (clientId === undefined || secret === undefined || redirectUris === undefined || postLogout === undefined)
         {
-            return IdpAdminEndpoint.InvalidBody();
+            return A.InvalidBody();
         }
-        const clientId = IdpAdminEndpoint.NonEmptyString(fields[IdpAdminEndpoint.ClientIdField]);
-        const secret = IdpAdminEndpoint.NonEmptyString(fields[IdpAdminEndpoint.SecretField]);
-        const redirectUris = IdpAdminEndpoint.AbsoluteUrlList(fields[IdpAdminEndpoint.RedirectUrisField]);
-        if (clientId === undefined || secret === undefined || redirectUris === undefined)
-        {
-            return IdpAdminEndpoint.InvalidBody();
-        }
-        if (this.realms.For(tenantId) === undefined)
-        {
-            return IdpAdminEndpoint.UnknownRealm();
-        }
-        await this.clients.Register(tenantId, clientId, redirectUris, secret);
+        await this.stores.Clients.Register(realmId, clientId, redirectUris, secret, postLogout);
+        return new AdminResult(A.OkStatus, { [A.ClientIdField]: clientId });
+    }
+
+    /** Idempotent teardown: 200 whether or not the client still exists; its refresh tokens end with it. */
+    private async DeleteClient(realmId: string, clientId: string): Promise<AdminResult>
+    {
+        await this.stores.Clients.Remove(realmId, clientId);
+        await this.stores.RefreshTokens.RevokeClient(realmId, clientId);
         return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.ClientIdField]: clientId });
     }
 
-    /** Idempotent teardown: 200 whether or not the client (or its realm) still exists, so a retried or late delete never fails. */
-    private async DeleteClient(tenantId: string, clientId: string): Promise<AdminResult>
+    private async GetRoles(realmId: string): Promise<AdminResult>
     {
-        await this.clients.Remove(tenantId, clientId);
-        return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.ClientIdField]: clientId });
+        const A = IdpAdminEndpoint;
+        const roles = await this.stores.Roles.AssignableRoles(realmId);
+        return new AdminResult(A.OkStatus, roles.map(role => ({ [A.RoleField]: role.Role.ToString(), [A.DescriptionField]: role.Description })));
+    }
+
+    private async GetMappings(realmId: string): Promise<AdminResult>
+    {
+        const mappings = await this.stores.Roles.List(realmId);
+        return new AdminResult(IdpAdminEndpoint.OkStatus, mappings.map(mapping => IdpAdminEndpoint.MappingJson(mapping)));
+    }
+
+    private async AddMapping(realmId: string, body: unknown): Promise<AdminResult>
+    {
+        const mapping = IdpAdminEndpoint.MappingOf(body);
+        if (mapping === undefined)
+        {
+            return IdpAdminEndpoint.InvalidBody();
+        }
+        return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.AddedField]: await this.stores.Roles.Add(realmId, mapping) });
+    }
+
+    private async RemoveMapping(realmId: string, body: unknown): Promise<AdminResult>
+    {
+        const mapping = IdpAdminEndpoint.MappingOf(body);
+        if (mapping === undefined)
+        {
+            return IdpAdminEndpoint.InvalidBody();
+        }
+        return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.RemovedField]: await this.stores.Roles.Remove(realmId, mapping) });
+    }
+
+    /** Declares an application of the realm from its component descriptor (the name in the path must be its name). */
+    private async PutApplication(realmId: string, name: string, body: unknown): Promise<AdminResult>
+    {
+        const A = IdpAdminEndpoint;
+        let declaration: ApplicationDeclaration;
+        try
+        {
+            declaration = ApplicationDeclaration.FromDescriptor(ComponentDescriptorCodec.Parse(JSON.stringify(body)));
+        }
+        catch
+        {
+            return A.Fail(A.BadRequestStatus, A.InvalidDescriptorCode);
+        }
+        if (declaration.Name !== name || !RealmRole.IsApplicationName(name))
+        {
+            return A.Fail(A.BadRequestStatus, A.InvalidDescriptorCode);
+        }
+        await this.stores.Applications.Declare(realmId, declaration);
+        return new AdminResult(A.OkStatus, { [A.NameField]: name });
+    }
+
+    private async DeleteApplication(realmId: string, name: string): Promise<AdminResult>
+    {
+        return new AdminResult(IdpAdminEndpoint.OkStatus, { [IdpAdminEndpoint.RemovedField]: await this.stores.Applications.Remove(realmId, name) });
+    }
+
+    /** Stores one realm secret (`secret:realm/<name>` in the realm's configuration); the value is never echoed. */
+    private async PutSecret(realmId: string, name: string, body: unknown): Promise<AdminResult>
+    {
+        const A = IdpAdminEndpoint;
+        const value = A.NonEmptyString(A.AsRecord(body)?.[A.ValueField]);
+        if (!A.SecretName.test(name) || value === undefined)
+        {
+            return A.InvalidBody();
+        }
+        await this.stores.Realms.For(realmId)!.Secrets.Put(name, value);
+        return new AdminResult(A.OkStatus, { [A.NameField]: name });
+    }
+
+    private async DeleteSecret(realmId: string, name: string): Promise<AdminResult>
+    {
+        const A = IdpAdminEndpoint;
+        if (!A.SecretName.test(name))
+        {
+            return A.InvalidBody();
+        }
+        await this.stores.Realms.For(realmId)!.Secrets.Delete(name);
+        return new AdminResult(A.OkStatus, { [A.NameField]: name });
+    }
+
+    private static MappingOf(body: unknown): RoleMapping | undefined
+    {
+        const A = IdpAdminEndpoint;
+        const fields = A.AsRecord(body);
+        const member = A.AsRecord(fields?.[A.MemberField]);
+        const role = fields?.[A.RoleField];
+        const kind = member?.[A.KindField];
+        const source = member?.[A.SourceField] ?? A.NoSource;
+        const value = member?.[A.ValueField];
+        if (typeof role !== 'string' || typeof kind !== 'string' || typeof source !== 'string' || typeof value !== 'string')
+        {
+            return undefined;
+        }
+        const parsedMember = RoleMember.From(kind, source, value);
+        let parsedRole: RealmRole;
+        try
+        {
+            parsedRole = RealmRole.Parse(role);
+        }
+        catch (err)
+        {
+            if (err instanceof InvalidRealmRoleError)
+            {
+                return undefined;
+            }
+            throw err;
+        }
+        return parsedMember === null ? undefined : new RoleMapping(parsedRole, parsedMember);
+    }
+
+    private static MappingJson(mapping: RoleMapping): Record<string, unknown>
+    {
+        const A = IdpAdminEndpoint;
+        return {
+            [A.RoleField]: mapping.Role.ToString(),
+            [A.MemberField]: { [A.KindField]: mapping.Member.Kind, [A.SourceField]: mapping.Member.Source, [A.ValueField]: mapping.Member.Value },
+        };
     }
 
     private static Digest(value: string): Buffer
@@ -262,42 +438,21 @@ export class IdpAdminEndpoint
         return typeof value === 'string' && value.length > 0 ? value : undefined;
     }
 
-    private static AbsoluteUrlList(value: unknown): string[] | undefined
+    private static AbsoluteUrlList(value: unknown, mayBeEmpty: boolean): string[] | undefined
     {
-        const list = IdpAdminEndpoint.StringList(value);
-        if (list === undefined)
-        {
-            return undefined;
-        }
-        for (const entry of list)
-        {
-            try
-            {
-                new URL(entry);
-            }
-            catch
-            {
-                return undefined;
-            }
-        }
-        return list;
-    }
-
-    private static StringList(value: unknown): string[] | undefined
-    {
-        if (!Array.isArray(value) || value.length === 0)
+        if (!Array.isArray(value) || (value.length === 0 && !mayBeEmpty))
         {
             return undefined;
         }
         const out: string[] = [];
         for (const item of value)
         {
-            const s = IdpAdminEndpoint.NonEmptyString(item);
-            if (s === undefined)
+            const entry = IdpAdminEndpoint.NonEmptyString(item);
+            if (entry === undefined || !URL.canParse(entry))
             {
                 return undefined;
             }
-            out.push(s);
+            out.push(entry);
         }
         return out;
     }
@@ -305,11 +460,6 @@ export class IdpAdminEndpoint
     private static InvalidBody(): AdminResult
     {
         return IdpAdminEndpoint.Fail(IdpAdminEndpoint.BadRequestStatus, IdpAdminEndpoint.InvalidBodyCode);
-    }
-
-    private static UnknownRealm(): AdminResult
-    {
-        return IdpAdminEndpoint.Fail(IdpAdminEndpoint.NotFoundStatus, IdpAdminEndpoint.UnknownRealmCode);
     }
 
     private static NotFound(): AdminResult

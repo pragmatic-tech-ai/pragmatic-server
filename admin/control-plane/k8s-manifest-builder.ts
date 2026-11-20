@@ -4,7 +4,7 @@ import { EnvConventions } from '../../environments/seed/env-conventions.js'
 import type { EnvironmentWorkload, WorkloadAppDeployment, WorkloadDatabase } from './environment-workload.js'
 import { EnvServerSeedSource } from './env-server-seed.js'
 import { InClusterRegistry } from './in-cluster-registry.js'
-import { IdpWorkloadNames, type IdpWorkloadSpec } from './idp-workload-driver.js'
+import { IdpDatabaseSecret, IdpWorkloadNames, type IdpWorkloadSpec } from './idp-workload-driver.js'
 import { TenantAdminEnv } from './tenant-admin-env.js'
 import { TenantAdminDatabaseSecret, type TenantAdminDatabaseSpec, type TenantAdminWorkloadSpec } from './tenant-admin-workload.js'
 import { InvalidRecordIdError } from './platform-records.js'
@@ -220,6 +220,20 @@ export class K8sManifestBuilder
     private static readonly IdpSecretsVolume = 'secrets'
     private static readonly TmpVolume = 'tmp'
     private static readonly IdpDataSize = '256Mi'
+    // The IdP's pragmatic-postgres sidecar (the console's image paths and user; its own claim, ConfigMap and Secret, all IdpDatabaseSecret.NameOf).
+    /** Its own claim rather than a sub folder of the 256Mi data claim: a bound claim cannot grow on a class without expansion (kind's). */
+    private static readonly IdpPostgresSize = '1Gi'
+    private static readonly IdpPostgresDataVolume = 'postgres-data'
+    private static readonly IdpDatabaseUrlVar = 'PRAGMATIC_IDP_DATABASE_URL_FILE'
+    private static readonly IdpDatabaseVolume = 'database-url'
+    private static readonly IdpDatabaseMount = '/run/secrets/pragmatic-tenant-idp-database'
+    /** The mounted URL file (the mount plus the one projected item, IdpDatabaseSecret.UrlKey). */
+    public static readonly IdpDatabaseUrlFile = '/run/secrets/pragmatic-tenant-idp-database/database-url'
+    /** The realm's applied configuration (written by the tenant admin console; absent means defaults), at the service's default folder. */
+    private static readonly IdpConfigurationVolume = 'configuration'
+    private static readonly IdpConfigurationMount = '/etc/pragmatic/configuration'
+    private static readonly IdpConfigurationMapName = 'pragmatic-config-pragmatic-tenant-idp'
+    private static readonly OptionalKey = 'optional'
     private static readonly SecretFileMode = 0o440
     private static readonly PersistentVolumeClaimKind = 'PersistentVolumeClaim'
     private static readonly VolumesKey = 'volumes'
@@ -752,13 +766,15 @@ export class K8sManifestBuilder
         return `${K8sManifestBuilder.IdpBrowserHostPrefix}${tenantId}.${baseDomain}`
     }
 
-    /** Renders one tenant's IdP as an in-cluster workload: Namespace, SA (no API token), PVC, Deployment, ClusterIP Service, plus an ssl-passthrough Ingress when baseDomain is set. Hive-labeled only (no environment label, so the pull agent never selects it); secrets mounted by Secret name, never inline; no RBAC. */
+    /** Renders one tenant's IdP as an in-cluster workload: Namespace, SA (no API token), data PVC, its Postgres sidecar's PVC and ConfigMap, Deployment (IdP + pragmatic-postgres sidecar), ClusterIP Service, plus an ssl-passthrough Ingress when baseDomain is set. Hive-labeled only (no environment label, so the pull agent never selects it); secrets mounted by Secret name, never inline; no RBAC. */
     public RenderIdp(spec: IdpWorkloadSpec): string
     {
         const items: K8sObject[] = [
             this.IdpNamespaceObject(spec),
             this.IdpServiceAccount(spec),
             this.IdpClaim(spec),
+            this.IdpPostgresClaim(spec),
+            this.IdpPostgresConfig(spec),
             this.IdpDeployment(spec),
             this.IdpServiceObject(spec),
         ]
@@ -819,6 +835,87 @@ export class K8sManifestBuilder
         }
     }
 
+    /** The IdP Postgres sidecar's own data claim (retained like the data claim: a reinstall resumes it). */
+    private IdpPostgresClaim(spec: IdpWorkloadSpec): K8sObject
+    {
+        const B = K8sManifestBuilder
+        return {
+            [B.ApiVersionKey]: B.ApiVersionCore,
+            [B.KindKey]: B.PersistentVolumeClaimKind,
+            [B.MetadataKey]: this.IdpMeta(spec, IdpDatabaseSecret.NameOf(spec.tenantId)),
+            [B.SpecKey]: {
+                [B.AccessModesKey]: [B.ReadWriteOnce],
+                [B.ResourcesKey]: { [B.RequestsKey]: { [B.StorageKey]: B.IdpPostgresSize } },
+            },
+        }
+    }
+
+    /** The IdP sidecar's applications.conf: the IdP's one database and role. */
+    private IdpPostgresConfig(spec: IdpWorkloadSpec): K8sObject
+    {
+        const B = K8sManifestBuilder
+        return {
+            [B.ApiVersionKey]: B.ApiVersionCore,
+            [B.KindKey]: B.ConfigMapKindName,
+            [B.MetadataKey]: this.IdpMeta(spec, IdpDatabaseSecret.NameOf(spec.tenantId)),
+            [B.DataKeyName]: { [B.ConsolePostgresApplicationsFile]: IdpDatabaseSecret.ApplicationsLine() + B.NewLine },
+        }
+    }
+
+    /**
+     * The IdP's pragmatic-postgres sidecar, shaped like the console's: non-root (999; the pod's fsGroup lets it read the 0440
+     * Secret files) with a read-only root, its data on its own claim (PGDATA one level below so initdb owns it), the superuser
+     * and IdP role passwords projected from the database Secret as the image expects them, the applications file from the
+     * ConfigMap. It listens on the pod's loopback only (no port, no Service), so no other pod reaches it.
+     */
+    private IdpPostgresContainer(spec: IdpWorkloadSpec): K8sObject
+    {
+        const B = K8sManifestBuilder
+        return {
+            [B.NameKey]: B.ConsolePostgresContainerName,
+            [B.ImageKey]: spec.database.image,
+            [B.ImagePullPolicyKey]: B.IfNotPresent,
+            [B.ArgsKey]: [...B.ConsolePostgresArgs],
+            [B.SecurityContextKey]: {
+                [B.RunAsNonRootKey]: true,
+                [B.RunAsUserKey]: B.ConsolePostgresUid,
+                [B.RunAsGroupKeyName]: B.ConsolePostgresUid,
+                [B.AllowPrivilegeEscalationKey]: false,
+                [B.CapabilitiesKey]: { [B.DropKey]: [B.AllCapabilities] },
+                [B.SeccompProfileKey]: { [B.TypeKey]: B.RuntimeDefault },
+                [B.ReadOnlyRootFilesystemKey]: true,
+            },
+            [B.EnvKey]: [this.EnvLiteral(B.ConsolePostgresPgDataVar, B.ConsolePostgresPgData)],
+            [B.VolumeMountsKey]: [
+                { [B.NameKey]: B.IdpPostgresDataVolume, [B.MountPathKey]: B.ConsolePostgresDataPath },
+                { [B.NameKey]: B.ConsolePostgresSecretsVolume, [B.MountPathKey]: B.ConsolePostgresSecretsMount, [B.ReadOnlyKey]: true },
+                { [B.NameKey]: B.ConsolePostgresConfigVolume, [B.MountPathKey]: B.ConsolePostgresConfigMount, [B.ReadOnlyKey]: true },
+                { [B.NameKey]: B.ConsolePostgresRunVolume, [B.MountPathKey]: B.ConsolePostgresRunMount },
+                { [B.NameKey]: B.ConsolePostgresTmpVolume, [B.MountPathKey]: B.TmpMount },
+            ],
+        }
+    }
+
+    /** The volumes of the IdP's database: the sidecar's claim, password files, applications file and scratch; the IdP's url-only projection; the realm configuration. */
+    private IdpDatabaseVolumes(spec: IdpWorkloadSpec): K8sObject[]
+    {
+        const B = K8sManifestBuilder
+        const S = IdpDatabaseSecret
+        const name = S.NameOf(spec.tenantId)
+        return [
+            { [B.NameKey]: B.IdpPostgresDataVolume, [B.PersistentVolumeClaimKey]: { [B.ClaimNameKey]: name } },
+            this.SecretVolume(B.ConsolePostgresSecretsVolume, spec.database.secretName, [
+                { key: S.SuperuserKey, path: S.SuperuserKey },
+                { key: S.PasswordKey, path: B.ConsolePostgresApplicationsDir + S.Application },
+            ]),
+            { [B.NameKey]: B.ConsolePostgresConfigVolume, [B.ConfigMapVolumeKey]: { [B.NameKey]: name } },
+            { [B.NameKey]: B.ConsolePostgresRunVolume, [B.EmptyDirKey]: {} },
+            { [B.NameKey]: B.ConsolePostgresTmpVolume, [B.EmptyDirKey]: {} },
+            this.SecretVolume(B.IdpDatabaseVolume, spec.database.secretName, [{ key: S.UrlKey, path: S.UrlKey }]),
+            { [B.NameKey]: B.IdpConfigurationVolume, [B.ConfigMapVolumeKey]: { [B.NameKey]: B.IdpConfigurationMapName, [B.OptionalKey]: true } },
+        ]
+    }
+
     private SecretVolume(volumeName: string, secretName: string, items?: ReadonlyArray<{ key: string; path: string }>): K8sObject
     {
         return {
@@ -849,7 +946,7 @@ export class K8sManifestBuilder
                         [K8sManifestBuilder.ServiceAccountNameKey]: name,
                         [K8sManifestBuilder.AutomountTokenKey]: false,
                         [K8sManifestBuilder.SecurityContextKey]: { [K8sManifestBuilder.FsGroupKey]: K8sManifestBuilder.IdpUid },
-                        [K8sManifestBuilder.ContainersKey]: [this.IdpContainer(spec)],
+                        [K8sManifestBuilder.ContainersKey]: [this.IdpContainer(spec), this.IdpPostgresContainer(spec)],
                         [K8sManifestBuilder.VolumesKey]: [
                             {
                                 [K8sManifestBuilder.NameKey]: K8sManifestBuilder.IdpDataVolume,
@@ -858,6 +955,7 @@ export class K8sManifestBuilder
                             this.SecretVolume(K8sManifestBuilder.IdpTlsVolume, spec.tlsSecretName),
                             this.SecretVolume(K8sManifestBuilder.IdpSecretsVolume, spec.adminTokenSecretName),
                             { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TmpVolume, [K8sManifestBuilder.EmptyDirKey]: {} },
+                            ...this.IdpDatabaseVolumes(spec),
                         ],
                     },
                 },
@@ -882,6 +980,7 @@ export class K8sManifestBuilder
             this.EnvLiteral(K8sManifestBuilder.IdpHostVar, K8sManifestBuilder.IdpBindAll),
             this.EnvLiteral(K8sManifestBuilder.IdpDataVar, K8sManifestBuilder.IdpDataMount),
             this.EnvLiteral(K8sManifestBuilder.IdpAdminTokenRefVar, spec.adminTokenRef),
+            this.EnvLiteral(K8sManifestBuilder.IdpDatabaseUrlVar, K8sManifestBuilder.IdpDatabaseUrlFile),
         ]
     }
 
@@ -907,6 +1006,8 @@ export class K8sManifestBuilder
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.IdpTlsVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.IdpTlsMount, [K8sManifestBuilder.ReadOnlyKey]: true },
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.IdpSecretsVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.IdpSecretsMount, [K8sManifestBuilder.ReadOnlyKey]: true },
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TmpVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TmpMount },
+                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.IdpDatabaseVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.IdpDatabaseMount, [K8sManifestBuilder.ReadOnlyKey]: true },
+                { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.IdpConfigurationVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.IdpConfigurationMount, [K8sManifestBuilder.ReadOnlyKey]: true },
             ],
             [K8sManifestBuilder.ReadinessProbeKey]: {
                 [K8sManifestBuilder.HttpGetKey]: {

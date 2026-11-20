@@ -4,8 +4,9 @@ import { ComponentDescriptorBuilder, type ComponentDescriptor, type JsonValue, t
 export type SettingDeclaration = {
     name: string
     type: SettingType
-    /** The environment variable the code reads the value from (for a secret: the one naming the mounted secret file). */
-    source: string
+    /** The environment variable the code reads the value from (for a secret: the one naming the mounted secret file);
+     *  absent for a setting the application reads from its applied configuration document instead. */
+    source?: string
     description: string
     required?: boolean
     secret?: boolean
@@ -80,7 +81,7 @@ export class ComponentDeclarations
 
     private static Setting(builder: SettingBuilder, setting: SettingDeclaration): SettingBuilder
     {
-        builder.Description(setting.source + ComponentDeclarations.SourceSeparator + setting.description)
+        builder.Description(setting.source === undefined ? setting.description : setting.source + ComponentDeclarations.SourceSeparator + setting.description)
         if (setting.required === true)
         {
             builder.Required()

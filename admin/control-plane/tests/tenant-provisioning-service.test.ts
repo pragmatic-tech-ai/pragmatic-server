@@ -4,14 +4,8 @@ import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { DevCa, IdpTlsMaterial } from '../../../src/idp/dev-ca.js';
-import { IdpAdminEndpoint } from '../../../src/idp/idp-admin-endpoint.js';
-import { IdpClientStore } from '../../../src/idp/idp-client-store.js';
-import { IdpHost, IdpRealmSet } from '../../../src/idp/idp-host.js';
-import { IdpRealm } from '../../../src/idp/idp-realm.js';
-import { IdpSigningKey } from '../../../src/idp/idp-signing-key.js';
-import { IdpSsoSessionStore } from '../../../src/idp/idp-sso-session.js';
-import { InMemoryAuthorizationCodeStore } from '../../../src/idp/authorization-code-store.js';
+import type { IdpRealmSet } from '../../../src/idp/idp-realm-set.js';
+import { TenantIdpTestHost } from '../../../src/idp/tests/tenant-idp-test-host.js';
 import { IdpAdminClient } from '../idp-admin-client.js';
 import type { IdpConnection, IIdpService } from '../idp-service.js';
 import { ClientRegistry } from '../client-registry.js';
@@ -87,7 +81,7 @@ class ProvFixture
     public static readonly Loopback = '127.0.0.1';
     public static readonly BaseUrl = 'https://localhost';
     public static readonly Utf8 = 'utf8';
-    public static readonly Token = 'admin-token-for-prov-tests';
+    public static readonly Token = TenantIdpTestHost.AdminToken;
     public static readonly TokenRef = 'admin-token';
     public static readonly CaRef = '/data/idp/tenant-1/tls';
     public static readonly BadClientId = 'no-such-client';
@@ -109,23 +103,14 @@ class ProvFixture
     public static async WithHost(body: (conn: IdpConnection, realms: IdpRealmSet, directory: PlatformDirectory) => Promise<void>): Promise<void>
     {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), ProvFixture.DirPrefix));
-        let host: IdpHost | undefined;
+        const host = await TenantIdpTestHost.Start();
+        const realms = host.Service.Realms;
         try
         {
-            const key = await IdpSigningKey.LoadOrCreate(path.join(dir, ProvFixture.KeyFile));
-            const ca = DevCa.EnsureAt(path.join(dir, ProvFixture.CaDir), ProvFixture.Localhost);
-            const tls = IdpTlsMaterial.Load({ certFile: ca.certFile, keyFile: ca.keyFile });
-            const realmsDir = path.join(dir, ProvFixture.RealmsDir);
-            const realms = new IdpRealmSet([], (tenantId, displayName) => IdpRealm.OpenFor(realmsDir, tenantId, displayName, randomBytes(32)));
-            const clients = new IdpClientStore();
-            const sso = new IdpSsoSessionStore();
-            const admin = new IdpAdminEndpoint([ProvFixture.Token], realms, clients, sso);
-            host = new IdpHost(ProvFixture.BaseUrl, key, realms, clients, new InMemoryAuthorizationCodeStore(), sso, tls, true, admin);
-            await host.Listen(0, ProvFixture.Loopback);
             const conn: IdpConnection = {
-                baseUrl: ProvFixture.HttpsScheme + ProvFixture.Localhost + ProvFixture.Colon + host.Address().port,
-                browserBaseUrl: ProvFixture.HttpsScheme + ProvFixture.Localhost + ProvFixture.Colon + host.Address().port,
-                ca: fs.readFileSync(ca.caFile),
+                baseUrl: host.BaseUrl,
+                browserBaseUrl: host.BaseUrl,
+                ca: Buffer.from(host.Ca),
                 adminToken: ProvFixture.Token,
                 adminTokenRef: ProvFixture.TokenRef,
                 caDir: ProvFixture.CaRef
@@ -141,10 +126,7 @@ class ProvFixture
         }
         finally
         {
-            if (host !== undefined)
-            {
-                await host.Close();
-            }
+            await host.Close();
             fs.rmSync(dir, { recursive: true, force: true });
         }
     }
@@ -231,8 +213,8 @@ test('Provision ensures the realm, seeds an Owner who can authenticate, and pers
         assert.ok(ownerPassword.length >= ProvFixture.MinPasswordLength);
         const realm = realms.For(ProvFixture.TenantId);
         assert.ok(realm !== undefined);
-        assert.ok(await realm.Authenticate(ProvFixture.OwnerEmail, ownerPassword) !== null);
-        assert.equal(await realm.Authenticate(ProvFixture.OwnerEmail, ownerPassword + ProvFixture.WrongSuffix), null);
+        assert.ok(await realm.AuthenticatePassword(ProvFixture.OwnerEmail, ownerPassword) !== undefined);
+        assert.equal(await realm.AuthenticatePassword(ProvFixture.OwnerEmail, ownerPassword + ProvFixture.WrongSuffix), undefined);
         assert.equal(record.ownerEmail, ProvFixture.OwnerEmail);
         assert.equal(record.ownerPrincipalId, ProvFixture.OwnerPrincipal);
         assert.equal(record.idpBaseUrl, conn.baseUrl);
@@ -308,7 +290,7 @@ test('re-provisioning is rejected cleanly by the directory and the original pass
         });
         const realm = realms.For(ProvFixture.TenantId);
         assert.ok(realm !== undefined);
-        assert.ok(await realm.Authenticate(ProvFixture.OwnerEmail, first.ownerPassword) !== null);
+        assert.ok(await realm.AuthenticatePassword(ProvFixture.OwnerEmail, first.ownerPassword) !== undefined);
     });
 });
 
@@ -324,8 +306,8 @@ test('ResetOwnerPassword sets a fresh strong password for the Owner principal: i
         assert.notEqual(reset.ownerPassword, first.ownerPassword);
         const realm = realms.For(ProvFixture.TenantId);
         assert.ok(realm !== undefined);
-        assert.ok(await realm.Authenticate(ProvFixture.OwnerEmail, reset.ownerPassword) !== null);
-        assert.equal(await realm.Authenticate(ProvFixture.OwnerEmail, first.ownerPassword), null);
+        assert.ok(await realm.AuthenticatePassword(ProvFixture.OwnerEmail, reset.ownerPassword) !== undefined);
+        assert.equal(await realm.AuthenticatePassword(ProvFixture.OwnerEmail, first.ownerPassword), undefined);
         // Nothing about the reset is stored on the record.
         assert.ok(!JSON.stringify(directory.GetTenant(ProvFixture.TenantId)).includes(reset.ownerPassword));
     });
@@ -412,7 +394,7 @@ test('a session revoke failure after the password changed still returns the pass
         assert.equal(reset.sessionsRevoked, false);
         assert.match(reset.warning ?? '', /could not be ended durably: they may return after a control-plane restart/);
         assert.ok(!(reset.warning ?? '').includes(reset.ownerPassword));
-        assert.ok(await realms.For(ProvFixture.TenantId)!.Authenticate(ProvFixture.OwnerEmail, reset.ownerPassword) !== null);
+        assert.ok(await realms.For(ProvFixture.TenantId)!.AuthenticatePassword(ProvFixture.OwnerEmail, reset.ownerPassword) !== undefined);
     });
 });
 

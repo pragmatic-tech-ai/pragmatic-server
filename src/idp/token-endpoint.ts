@@ -1,127 +1,235 @@
-import { createHash, randomBytes } from 'node:crypto';
-import type { IAuthorizationCodeStore } from './authorization-code-store.js';
-import type { IdpClientStore } from './idp-client-store.js';
-import type { IdpRealmSet } from './idp-host.js';
-import type { IdpSigningKey } from './idp-signing-key.js';
+import { createHash } from 'node:crypto';
+import type { IdpRealmSet } from './idp-realm-set.js';
+import type { IdpRealm } from './idp-realm.js';
+import { RealmSignIn } from './realm-sign-in.js';
+import type { RealmTokenIssuer } from './realm-token-issuer.js';
+import type { OidcClient, SqlIdpClientStore } from './sql-idp-client-store.js';
+import type { SqlAuthorizationCodeStore } from './sql-authorization-code-store.js';
+import { RefreshOutcome, type SqlRefreshTokenStore } from './sql-refresh-token-store.js';
 
-export interface TokenResult
+/** The answer of a form-bodied protocol endpoint (token, revocation): a status and a JSON body. */
+export class ProtocolReply
 {
-    status: number;
-    body: object;
+    public constructor(public readonly Status: number, public readonly Body: Record<string, unknown>)
+    {
+        Object.freeze(this);
+    }
 }
 
-/** OAuth2 token endpoint: exchanges a single-use authorization code (+PKCE, +client secret) for an RS256 id_token. Fail-closed. */
+/** A confidential client's credentials: `client_secret_post` fields, or `client_secret_basic` (RFC 6749 §2.3.1). */
+export class ClientCredentials
+{
+    private static readonly ClientIdField = 'client_id';
+    private static readonly ClientSecretField = 'client_secret';
+    private static readonly BasicPrefix = 'basic ';
+    private static readonly Base64 = 'base64';
+    private static readonly Utf8 = 'utf8';
+    private static readonly Colon = ':';
+    private static readonly NoValue = '';
+    private static readonly Plus = /\+/g;
+    private static readonly Space = ' ';
+
+    private constructor(public readonly ClientId: string, public readonly Secret: string)
+    {
+    }
+
+    public static From(form: URLSearchParams, authorization: string | undefined): ClientCredentials
+    {
+        const C = ClientCredentials;
+        if (authorization !== undefined && authorization.toLowerCase().startsWith(C.BasicPrefix))
+        {
+            const decoded = Buffer.from(authorization.slice(C.BasicPrefix.length).trim(), C.Base64).toString(C.Utf8);
+            const colon = decoded.indexOf(C.Colon);
+            if (colon > 0)
+            {
+                return new ClientCredentials(C.FormDecode(decoded.slice(0, colon)), C.FormDecode(decoded.slice(colon + 1)));
+            }
+        }
+        return new ClientCredentials(form.get(C.ClientIdField) ?? C.NoValue, form.get(C.ClientSecretField) ?? C.NoValue);
+    }
+
+    /** RFC 6749 §2.3.1: the Basic user and password are form-urlencoded. */
+    private static FormDecode(value: string): string
+    {
+        try
+        {
+            return decodeURIComponent(value.replace(ClientCredentials.Plus, ClientCredentials.Space));
+        }
+        catch
+        {
+            return ClientCredentials.NoValue;
+        }
+    }
+}
+
+/**
+ * `POST <issuer>/protocol/openid-connect/token` (form-encoded, RFC 6749 §3.2): the authorization code grant (single-use
+ * code, PKCE S256, the client's secret, the same redirect URI; the account still active and its credentials unchanged
+ * since the sign-in) and the refresh token grant (a rotating token of the client: a refresh uses it up and answers the
+ * next one; a reused token revokes its family; the account checked again and the roles resolved again). Every refusal
+ * is `invalid_grant` / `invalid_client` / `unsupported_grant_type`, nothing more.
+ */
 export class TokenEndpoint
 {
-    private static readonly GrantType = 'grant_type';
-    private static readonly AuthorizationCode = 'authorization_code';
+    private static readonly GrantTypeField = 'grant_type';
+    private static readonly AuthorizationCodeGrant = 'authorization_code';
+    private static readonly RefreshTokenGrant = 'refresh_token';
     private static readonly CodeField = 'code';
     private static readonly VerifierField = 'code_verifier';
     private static readonly RedirectField = 'redirect_uri';
-    private static readonly ClientIdField = 'client_id';
-    private static readonly ClientSecretField = 'client_secret';
+    private static readonly RefreshTokenField = 'refresh_token';
     private static readonly ErrorField = 'error';
     private static readonly InvalidGrant = 'invalid_grant';
     private static readonly InvalidClient = 'invalid_client';
-    private static readonly StatusOk = 200;
-    private static readonly StatusBadRequest = 400;
-    private static readonly StatusUnauthorized = 401;
-    private static readonly HashAlgorithm = 'sha256';
-    private static readonly Base64Url = 'base64url';
-    private static readonly AccessTokenBytes = 32;
-    private static readonly LifetimeSeconds = 300;
-    private static readonly MillisPerSecond = 1000;
-    private static readonly BearerType = 'Bearer';
+    private static readonly UnsupportedGrantType = 'unsupported_grant_type';
+    private static readonly InvalidRequest = 'invalid_request';
     private static readonly IdTokenField = 'id_token';
     private static readonly AccessTokenField = 'access_token';
     private static readonly TokenTypeField = 'token_type';
     private static readonly ExpiresInField = 'expires_in';
-    private static readonly IssClaim = 'iss';
-    private static readonly AudClaim = 'aud';
-    private static readonly SubClaim = 'sub';
-    private static readonly NonceClaim = 'nonce';
-    private static readonly IatClaim = 'iat';
-    private static readonly ExpClaim = 'exp';
-    private static readonly EmailClaim = 'email';
-    private static readonly NameClaim = 'name';
-    private static readonly EmptyText = '';
-    /** The authentication time of a code that carries none: older than any credential change. */
-    private static readonly Epoch = new Date(0);
-
-    private readonly baseUrl: string;
+    private static readonly BearerType = 'Bearer';
+    private static readonly HashAlgorithm = 'sha256';
+    private static readonly Base64Url = 'base64url';
+    private static readonly StatusOk = 200;
+    private static readonly StatusBadRequest = 400;
+    private static readonly StatusUnauthorized = 401;
+    private static readonly NoValue = '';
 
     public constructor(
-        baseUrl: string,
-        private readonly signingKey: IdpSigningKey,
-        private readonly codes: IAuthorizationCodeStore,
-        private readonly clients: IdpClientStore,
-        private readonly now: () => Date = () => new Date(),
-        /** The realms whose credential changes void codes from earlier sign-ins; absent -> no such check. */
-        private readonly realms?: IdpRealmSet)
+        private readonly realms: IdpRealmSet,
+        private readonly clients: SqlIdpClientStore,
+        private readonly codes: SqlAuthorizationCodeStore,
+        private readonly refreshTokens: SqlRefreshTokenStore,
+        private readonly issuer: RealmTokenIssuer)
     {
-        this.baseUrl = baseUrl.replace(/\/+$/, '');
     }
 
-    public async Handle(tenantId: string, form: URLSearchParams): Promise<TokenResult>
+    public async Handle(realmId: string, form: URLSearchParams, authorization: string | undefined): Promise<ProtocolReply>
     {
-        if (form.get(TokenEndpoint.GrantType) !== TokenEndpoint.AuthorizationCode)
+        const T = TokenEndpoint;
+        const realm = this.realms.For(realmId);
+        if (realm === undefined)
         {
-            return this.Fail(TokenEndpoint.StatusBadRequest, TokenEndpoint.InvalidGrant);
+            return T.Fail(T.StatusBadRequest, T.InvalidRequest);
         }
-        const clientId = form.get(TokenEndpoint.ClientIdField) ?? '';
-        const secret = form.get(TokenEndpoint.ClientSecretField) ?? '';
-        if (!(await this.clients.VerifySecret(tenantId, clientId, secret)))
+        const grantType = form.get(T.GrantTypeField);
+        if (grantType !== T.AuthorizationCodeGrant && grantType !== T.RefreshTokenGrant)
         {
-            return this.Fail(TokenEndpoint.StatusUnauthorized, TokenEndpoint.InvalidClient);
+            return T.Fail(T.StatusBadRequest, T.UnsupportedGrantType);
         }
-        const code = form.get(TokenEndpoint.CodeField) ?? '';
-        const verifier = form.get(TokenEndpoint.VerifierField) ?? '';
-        const redirectUri = form.get(TokenEndpoint.RedirectField) ?? '';
-        const binding = code === '' ? null : await this.codes.Take(code);
-        if (binding === null
-            || binding.TenantId !== tenantId
-            || binding.ClientId !== clientId
-            || binding.RedirectUri !== redirectUri
-            || verifier === ''
-            || createHash(TokenEndpoint.HashAlgorithm).update(verifier).digest(TokenEndpoint.Base64Url) !== binding.CodeChallenge
-            || binding.Sub === '')
+        const credentials = ClientCredentials.From(form, authorization);
+        const client = await this.clients.Authenticate(realm.Id, credentials.ClientId, credentials.Secret);
+        if (client === undefined)
         {
-            return this.Fail(TokenEndpoint.StatusBadRequest, TokenEndpoint.InvalidGrant);
+            return T.Fail(T.StatusUnauthorized, T.InvalidClient);
         }
-        // A code from a sign-in before the principal's password changed is not exchanged.
-        const realm = this.realms?.For(tenantId);
-        if (realm !== undefined && await realm.IsStale(binding.Sub, binding.AuthenticatedAt ?? TokenEndpoint.Epoch))
-        {
-            return this.Fail(TokenEndpoint.StatusBadRequest, TokenEndpoint.InvalidGrant);
-        }
-        const iat = Math.floor(this.now().getTime() / TokenEndpoint.MillisPerSecond);
-        const claims: Record<string, unknown> = {
-            [TokenEndpoint.IssClaim]: `${this.baseUrl}/${encodeURIComponent(tenantId)}`,
-            [TokenEndpoint.AudClaim]: clientId,
-            [TokenEndpoint.SubClaim]: binding.Sub,
-            [TokenEndpoint.NonceClaim]: binding.Nonce,
-            [TokenEndpoint.IatClaim]: iat,
-            [TokenEndpoint.ExpClaim]: iat + TokenEndpoint.LifetimeSeconds,
-            [TokenEndpoint.EmailClaim]: binding.Email
-        };
-        if (binding.Name !== TokenEndpoint.EmptyText)
-        {
-            claims[TokenEndpoint.NameClaim] = binding.Name;
-        }
-        const idToken = await this.signingKey.Sign(claims);
-        return {
-            status: TokenEndpoint.StatusOk,
-            body: {
-                [TokenEndpoint.IdTokenField]: idToken,
-                [TokenEndpoint.AccessTokenField]: randomBytes(TokenEndpoint.AccessTokenBytes).toString(TokenEndpoint.Base64Url),
-                [TokenEndpoint.TokenTypeField]: TokenEndpoint.BearerType,
-                [TokenEndpoint.ExpiresInField]: TokenEndpoint.LifetimeSeconds
-            }
-        };
+        return grantType === T.AuthorizationCodeGrant ? await this.ExchangeCode(realm, client, form) : await this.Refresh(realm, client, form);
     }
 
-    private Fail(status: number, error: string): TokenResult
+    private async ExchangeCode(realm: IdpRealm, client: OidcClient, form: URLSearchParams): Promise<ProtocolReply>
     {
-        return { status, body: { [TokenEndpoint.ErrorField]: error } };
+        const T = TokenEndpoint;
+        const verifier = form.get(T.VerifierField) ?? T.NoValue;
+        const grant = await this.codes.Take(form.get(T.CodeField) ?? T.NoValue);
+        if (grant === undefined
+            || grant.RealmId !== realm.Id
+            || grant.ClientId !== client.ClientId
+            || grant.RedirectUri !== (form.get(T.RedirectField) ?? T.NoValue)
+            || verifier === T.NoValue
+            || createHash(T.HashAlgorithm).update(verifier).digest(T.Base64Url) !== grant.CodeChallenge
+            || !(await this.StillValid(realm, grant.SignIn)))
+        {
+            return T.Fail(T.StatusBadRequest, T.InvalidGrant);
+        }
+        const tokens = await this.issuer.Issue(realm, client.ClientId, grant.SignIn, grant.Nonce);
+        const refresh = await this.refreshTokens.IssueFamily(realm.Id, client.ClientId, grant.SignIn, grant.SsoIdHash, realm.Settings.Tokens);
+        return T.Tokens(tokens.IdToken, tokens.AccessToken, tokens.ExpiresIn, refresh);
+    }
+
+    private async Refresh(realm: IdpRealm, client: OidcClient, form: URLSearchParams): Promise<ProtocolReply>
+    {
+        const T = TokenEndpoint;
+        const redeemed = await this.refreshTokens.Redeem(form.get(T.RefreshTokenField) ?? T.NoValue, realm.Id, client.ClientId);
+        const grant = redeemed.Grant;
+        if (redeemed.Outcome !== RefreshOutcome.Redeemed || grant === undefined)
+        {
+            return T.Fail(T.StatusBadRequest, T.InvalidGrant);
+        }
+        const profile = await realm.Profile(grant.SignIn.AccountId);
+        if (profile === undefined || !profile.Active || await realm.IsStale(grant.SignIn.AccountId, grant.SignIn.AuthenticatedAt))
+        {
+            await this.refreshTokens.RevokeFamily(grant.FamilyId);
+            return T.Fail(T.StatusBadRequest, T.InvalidGrant);
+        }
+        const old = grant.SignIn;
+        const signIn = new RealmSignIn(old.AccountId, old.Source, old.Subject, old.Groups, profile.Email, profile.Name, old.EmailVerified, old.AuthenticatedAt);
+        const tokens = await this.issuer.Issue(realm, client.ClientId, signIn, undefined);
+        const next = await this.refreshTokens.Rotate(grant, signIn, realm.Settings.Tokens);
+        return T.Tokens(tokens.IdToken, tokens.AccessToken, tokens.ExpiresIn, next);
+    }
+
+    /** The account still exists, is active, and its credentials did not change since the sign-in. */
+    private async StillValid(realm: IdpRealm, signIn: RealmSignIn): Promise<boolean>
+    {
+        const profile = await realm.Profile(signIn.AccountId);
+        return profile !== undefined && profile.Active && !(await realm.IsStale(signIn.AccountId, signIn.AuthenticatedAt));
+    }
+
+    private static Tokens(idToken: string, accessToken: string, expiresIn: number, refreshToken: string): ProtocolReply
+    {
+        const T = TokenEndpoint;
+        return new ProtocolReply(T.StatusOk, {
+            [T.IdTokenField]: idToken,
+            [T.AccessTokenField]: accessToken,
+            [T.TokenTypeField]: T.BearerType,
+            [T.ExpiresInField]: expiresIn,
+            [T.RefreshTokenField]: refreshToken,
+        });
+    }
+
+    private static Fail(status: number, error: string): ProtocolReply
+    {
+        return new ProtocolReply(status, { [TokenEndpoint.ErrorField]: error });
+    }
+}
+
+/**
+ * `POST <issuer>/protocol/openid-connect/revoke` (form-encoded, RFC 7009): the client revokes one of its refresh
+ * tokens, which ends the token's family. The answer is 200 whether or not the token was known; a bad client is 401.
+ */
+export class RevocationEndpoint
+{
+    private static readonly TokenField = 'token';
+    private static readonly ErrorField = 'error';
+    private static readonly InvalidClient = 'invalid_client';
+    private static readonly InvalidRequest = 'invalid_request';
+    private static readonly StatusOk = 200;
+    private static readonly StatusBadRequest = 400;
+    private static readonly StatusUnauthorized = 401;
+    private static readonly NoValue = '';
+
+    public constructor(
+        private readonly realms: IdpRealmSet,
+        private readonly clients: SqlIdpClientStore,
+        private readonly refreshTokens: SqlRefreshTokenStore)
+    {
+    }
+
+    public async Handle(realmId: string, form: URLSearchParams, authorization: string | undefined): Promise<ProtocolReply>
+    {
+        const R = RevocationEndpoint;
+        const realm = this.realms.For(realmId);
+        if (realm === undefined)
+        {
+            return new ProtocolReply(R.StatusBadRequest, { [R.ErrorField]: R.InvalidRequest });
+        }
+        const credentials = ClientCredentials.From(form, authorization);
+        const client = await this.clients.Authenticate(realm.Id, credentials.ClientId, credentials.Secret);
+        if (client === undefined)
+        {
+            return new ProtocolReply(R.StatusUnauthorized, { [R.ErrorField]: R.InvalidClient });
+        }
+        await this.refreshTokens.RevokeToken(form.get(R.TokenField) ?? R.NoValue, realm.Id, client.ClientId);
+        return new ProtocolReply(R.StatusOk, {});
     }
 }

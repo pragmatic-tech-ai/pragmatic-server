@@ -1,7 +1,10 @@
 import { ServiceBase, ServiceKey, type IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
-import { BrowserFormPoster } from './form-poster.js'
+import { FederatedRoundTrip } from './federated-round-trip.js'
 import { IdpLoginViewModel } from './idp-login-view-model.js'
+import { BrowserLoginBackend } from './login-backend.js'
 import { LoginBootState } from './login-boot-state.js'
+import { LoginPageLocation } from './login-page-location.js'
+import { BrowserPageNavigator } from './page-navigator.js'
 
 // Hosts the sign-in page for login.mu; its root binds DataContext to Page.
 export class LoginHostService extends ServiceBase
@@ -14,9 +17,17 @@ export class LoginHostService extends ServiceBase
     public constructor(provider: IServiceProvider)
     {
         super(provider)
-        this.page = new IdpLoginViewModel(new BrowserFormPoster(), LoginBootState.FromDocument(document).Failed)
+        const location = LoginPageLocation.FromWindow()
+        const fetchFn = globalThis.fetch.bind(globalThis)
+        this.page = new IdpLoginViewModel(
+            new BrowserLoginBackend(location, fetchFn),
+            new BrowserPageNavigator(),
+            location,
+            new FederatedRoundTrip(window.sessionStorage),
+            fetchFn,
+            LoginBootState.FromDocument(document).Failed)
         // A page restored from the back/forward cache keeps its in-memory state (a
-        // busy form); reset it so Sign in works again.
+        // busy form); reset it so the form works again.
         window.addEventListener(LoginHostService.PageShowEvent, (e) =>
         {
             if ((e as PageTransitionEvent).persisted)
@@ -24,6 +35,7 @@ export class LoginHostService extends ServiceBase
                 this.page.Reset()
             }
         })
+        this.page.Load().catch((e: unknown) => console.error(e))
     }
 
     public get Page(): IdpLoginViewModel

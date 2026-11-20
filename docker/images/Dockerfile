@@ -168,8 +168,13 @@ RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline -
 
 FROM build AS pragmatic-tenant-idp-shared-modules
 RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
+    --workspace=packages/pragmatic-app-host --workspace=packages/pragmatic-component --workspace=packages/pragmatic-configuration \
     --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
-    --workspace=packages/pragmatic-identity-source-local --workspace=packages/pragmatic-identity-store \
+    --workspace=packages/pragmatic-identity-source-entra --workspace=packages/pragmatic-identity-source-google \
+    --workspace=packages/pragmatic-identity-source-identity-platform --workspace=packages/pragmatic-identity-source-local \
+    --workspace=packages/pragmatic-identity-source-oidc --workspace=packages/pragmatic-identity-source-pragmatic \
+    --workspace=packages/pragmatic-identity-store --workspace=packages/pragmatic-realm-adapters \
+    --workspace=packages/pragmatic-realm-custom \
     && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
 
 # Shared runtime base: the app images below differ only in what they copy and how they start.
@@ -384,10 +389,21 @@ ENTRYPOINT ["node", "dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-
 # tenant's host, not 127.0.0.1), so the health probe speaks TLS without verifying the peer: it checks liveness, not identity.
 FROM runtime AS pragmatic-tenant-idp
 RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+COPY --from=build --chown=10001:10001 /workspace/TODL /workspace/TODL
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host /workspace/pragmatic-shared/packages/pragmatic-app-host
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component /workspace/pragmatic-shared/packages/pragmatic-component
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-configuration /workspace/pragmatic-shared/packages/pragmatic-configuration
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity /workspace/pragmatic-shared/packages/pragmatic-identity
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm /workspace/pragmatic-shared/packages/pragmatic-identity-realm
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-google /workspace/pragmatic-shared/packages/pragmatic-identity-source-google
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-identity-platform /workspace/pragmatic-shared/packages/pragmatic-identity-source-identity-platform
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local /workspace/pragmatic-shared/packages/pragmatic-identity-source-local
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-pragmatic /workspace/pragmatic-shared/packages/pragmatic-identity-source-pragmatic
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store /workspace/pragmatic-shared/packages/pragmatic-identity-store
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom /workspace/pragmatic-shared/packages/pragmatic-realm-custom
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-tenant-idp-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json

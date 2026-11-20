@@ -60,7 +60,7 @@
   },
   "pragmatic-tenant-idp": {
     "entrypoint": ["node", "dist/bin/pragmatic-idpd.js"],
-    "packages": ["pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-local", "pragmatic-shared/packages/pragmatic-identity-store", "todl-runtime"],
+    "packages": ["TODL", "pragmatic-shared/packages/pragmatic-app-host", "pragmatic-shared/packages/pragmatic-component", "pragmatic-shared/packages/pragmatic-configuration", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-entra", "pragmatic-shared/packages/pragmatic-identity-source-google", "pragmatic-shared/packages/pragmatic-identity-source-identity-platform", "pragmatic-shared/packages/pragmatic-identity-source-local", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-identity-source-pragmatic", "pragmatic-shared/packages/pragmatic-identity-store", "pragmatic-shared/packages/pragmatic-realm-adapters", "pragmatic-shared/packages/pragmatic-realm-custom", "todl-runtime"],
     "files": [
       "pragmatic-shared/node_modules",
       "pragmatic-server/package.json",

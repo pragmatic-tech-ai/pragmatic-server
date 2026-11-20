@@ -6,7 +6,7 @@ import { IdpContainerEnv } from './idp-container-env.js'
 import type { StaleImage } from './idp-container-env.js'
 import { IdpStatus } from './idp-record.js'
 import type { IdpRecord } from './idp-record.js'
-import { IdpDriverMessages, IdpWorkloadNames } from './idp-workload-driver.js'
+import { IdpDatabaseSecret, IdpDriverMessages, IdpWorkloadNames } from './idp-workload-driver.js'
 import type { IdpConnection, IIdpWorkloadDriver, IdpWorkloadRequest, IdpWorkloadResult } from './idp-workload-driver.js'
 import type { PortAllocator } from './port-allocator.js'
 
@@ -17,7 +17,10 @@ interface ReuseOutcome
     stale?: StaleImage
 }
 
-/** Collapsed-dev driver: one docker container per tenant IdP on the platform box; pre-mints its CA on the host, provisions its admin token, seeds its data volume. */
+/**
+ * Collapsed-dev driver: one docker container per tenant IdP on the platform box (with its companion Postgres, IdpContainerEnv);
+ * pre-mints its CA on the host, provisions its admin token and its database password (with the URL over it), seeds its data volume.
+ */
 export class DockerIdpDriver implements IIdpWorkloadDriver
 {
     private static readonly IdpDirName = 'idp'
@@ -143,6 +146,8 @@ export class DockerIdpDriver implements IIdpWorkloadDriver
                 DevCa.EnsureAt(tlsDir, IdpContainerEnv.ContainerHost, this.openssl)
             }
             const ca = readFileSync(join(record.caDir, DockerIdpDriver.CaFileName))
+            // An IdP from before it stored in Postgres gets its database password now; an existing one is never replaced.
+            this.EnsureDatabaseFiles(join(dir, DockerIdpDriver.SecretsDirName))
             await this.containers.Down(record.containerName)
             await this.containers.SeedVolume(record.volumeName, dir, image)
             await this.containers.Up({ tenantId: record.tenantId, port: record.port, volumeName: record.volumeName, adminTokenRef: record.adminTokenRef, image })
@@ -208,8 +213,8 @@ export class DockerIdpDriver implements IIdpWorkloadDriver
             const secretsDir = join(dir, DockerIdpDriver.SecretsDirName)
             mkdirSync(secretsDir, { recursive: true })
             const tokenFile = join(secretsDir, DockerIdpDriver.AdminTokenRef)
-            writeFileSync(tokenFile, adminToken, { encoding: DockerIdpDriver.FileEncoding, mode: DockerIdpDriver.SecretMode })
-            chmodSync(tokenFile, DockerIdpDriver.SecretMode)
+            DockerIdpDriver.WriteSecret(tokenFile, adminToken)
+            this.EnsureDatabaseFiles(secretsDir)
             await this.containers.SeedVolume(volumeName, dir, this.image)
             await this.containers.Up({ tenantId, port, volumeName, adminTokenRef: DockerIdpDriver.AdminTokenRef, image: this.image })
             await this.containers.WaitHealthy(port, ca)
@@ -228,6 +233,32 @@ export class DockerIdpDriver implements IIdpWorkloadDriver
             const detail = IdpDriverMessages.Detail(err)
             throw new Error(`${DockerIdpDriver.LaunchFailed}${tenantId}${IdpDriverMessages.Separator}${detail}`)
         }
+    }
+
+    /**
+     * The database role password and the URL over it, minted once into the tenant's secrets dir (seeded into the data volume,
+     * where the companion Postgres reads the password at its first start and the IdP the URL). Kept when present: the
+     * companion's data volume was initialized with that password.
+     */
+    private EnsureDatabaseFiles(secretsDir: string): void
+    {
+        const passwordFile = join(secretsDir, IdpContainerEnv.DatabasePasswordFile)
+        const urlFile = join(secretsDir, IdpContainerEnv.DatabaseUrlFile)
+        if (!existsSync(passwordFile))
+        {
+            DockerIdpDriver.WriteSecret(passwordFile, IdpDatabaseSecret.NewPassword())
+        }
+        if (!existsSync(urlFile))
+        {
+            DockerIdpDriver.WriteSecret(urlFile, IdpDatabaseSecret.UrlOf(readFileSync(passwordFile, DockerIdpDriver.FileEncoding)))
+        }
+    }
+
+    /** Writes a secret file readable by its owner only. */
+    private static WriteSecret(file: string, value: string): void
+    {
+        writeFileSync(file, value, { encoding: DockerIdpDriver.FileEncoding, mode: DockerIdpDriver.SecretMode })
+        chmodSync(file, DockerIdpDriver.SecretMode)
     }
 
     public async Discard(record: IdpRecord): Promise<void>
