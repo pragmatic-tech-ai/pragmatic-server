@@ -98,29 +98,50 @@ export class ClosureReport
     }
 }
 
-/** The stages of docker/images/Dockerfile: per stage, the workspace paths it copies from the build stage and its ENTRYPOINT. */
+/** One `COPY --from=<stage>` of a Dockerfile stage: the stage it copies from and the workspace path. */
+export interface IStageCopy
+{
+    From: string
+    Path: string
+}
+
+/**
+ * The stages of docker/images/Dockerfile: per stage, the workspace paths it copies from other stages, its ENTRYPOINT, and
+ * the `npm ci` installs its RUN lines make (whether dev deps are omitted, and the `--workspace=` filters).
+ */
 export class DockerfileTargets
 {
     private static readonly FromPattern = /^FROM\s+\S+\s+AS\s+(\S+)$/i
     private static readonly CopyPattern = /^COPY\s+(.+)$/i
+    private static readonly RunPattern = /^RUN\s+(.+)$/i
     private static readonly EntrypointPattern = /^ENTRYPOINT\s+(\[.*\])$/i
-    private static readonly FromBuildFlag = '--from=build'
+    private static readonly FromFlagPrefix = '--from='
     private static readonly FlagPrefix = '--'
     private static readonly WorkspacePrefix = '/workspace/'
+    private static readonly WorkspaceFlagPrefix = '--workspace='
+    private static readonly OmitDevFlag = '--omit=dev'
+    private static readonly NpmCi = /\bnpm ci\b/
     private static readonly Continuation = /\\\r?\n/g
     private static readonly LineBreak = /\r?\n/
     private static readonly Space = ' '
     private static readonly Whitespace = /\s+/
 
-    private constructor(private readonly copies: Map<string, string[]>, private readonly entrypoints: Map<string, string[]>)
+    private constructor(
+        private readonly copies: Map<string, IStageCopy[]>,
+        private readonly entrypoints: Map<string, string[]>,
+        private readonly workspaces: Map<string, string[]>,
+        private readonly omitsDev: Map<string, boolean>,
+    )
     {
     }
 
     public static Parse(text: string): DockerfileTargets
     {
         const D = DockerfileTargets
-        const copies = new Map<string, string[]>()
+        const copies = new Map<string, IStageCopy[]>()
         const entrypoints = new Map<string, string[]>()
+        const workspaces = new Map<string, string[]>()
+        const omitsDev = new Map<string, boolean>()
         let stage: string | undefined
         for (const raw of text.replace(D.Continuation, D.Space).split(D.LineBreak))
         {
@@ -132,37 +153,210 @@ export class DockerfileTargets
                 copies.set(stage, [])
                 continue
             }
+            if (stage === undefined)
+            {
+                continue
+            }
             const copy = D.CopyPattern.exec(line)
-            if (copy !== null && stage !== undefined)
+            if (copy !== null)
             {
                 const tokens = copy[1].split(D.Whitespace)
-                if (tokens.includes(D.FromBuildFlag))
+                const source = tokens.find(t => t.startsWith(D.FromFlagPrefix))
+                if (source !== undefined)
                 {
                     const paths = tokens.filter(t => !t.startsWith(D.FlagPrefix))
-                    for (const source of paths.slice(0, -1))
+                    for (const path of paths.slice(0, -1))
                     {
-                        copies.get(stage)?.push(source.startsWith(D.WorkspacePrefix) ? source.slice(D.WorkspacePrefix.length) : source)
+                        copies.get(stage)?.push({
+                            From: source.slice(D.FromFlagPrefix.length),
+                            Path: path.startsWith(D.WorkspacePrefix) ? path.slice(D.WorkspacePrefix.length) : path,
+                        })
                     }
                 }
                 continue
             }
+            const run = D.RunPattern.exec(line)
+            if (run !== null && D.NpmCi.test(run[1]))
+            {
+                const tokens = run[1].split(D.Whitespace)
+                const filters = workspaces.get(stage) ?? []
+                filters.push(...tokens.filter(t => t.startsWith(D.WorkspaceFlagPrefix)).map(t => t.slice(D.WorkspaceFlagPrefix.length)))
+                workspaces.set(stage, filters)
+                omitsDev.set(stage, (omitsDev.get(stage) ?? true) && tokens.includes(D.OmitDevFlag))
+                continue
+            }
             const entry = D.EntrypointPattern.exec(line)
-            if (entry !== null && stage !== undefined)
+            if (entry !== null)
             {
                 entrypoints.set(stage, JSON.parse(entry[1]) as string[])
             }
         }
-        return new DockerfileTargets(copies, entrypoints)
+        return new DockerfileTargets(copies, entrypoints, workspaces, omitsDev)
     }
 
-    public Copies(stage: string): readonly string[]
+    /** The workspace paths the stage copies from the given stage. */
+    public Copies(stage: string, from: string): readonly string[]
     {
-        return this.copies.get(stage) ?? []
+        return (this.copies.get(stage) ?? []).filter(c => c.From === from).map(c => c.Path)
     }
 
     public Entrypoint(stage: string): readonly string[] | undefined
     {
         return this.entrypoints.get(stage)
+    }
+
+    /** The `--workspace=` filters of the stage's `npm ci` runs; undefined when it runs none. */
+    public Workspaces(stage: string): readonly string[] | undefined
+    {
+        return this.workspaces.get(stage)
+    }
+
+    /** True when every `npm ci` the stage runs omits dev dependencies. */
+    public OmitsDev(stage: string): boolean
+    {
+        return this.omitsDev.get(stage) === true
+    }
+}
+
+/** One `packages` entry of a package-lock.json (wire casing). */
+export interface ILockPackage
+{
+    version?: string
+    link?: boolean
+    resolved?: string
+    dependencies?: Record<string, string>
+    optionalDependencies?: Record<string, string>
+    peerDependencies?: Record<string, string>
+    devDependencies?: Record<string, string>
+    peerDependenciesMeta?: Record<string, { optional?: boolean }>
+}
+
+/**
+ * The third-party packages a filtered production install of an npm workspace places: from each workspace's lock entry,
+ * its dependencies, optional dependencies and required peers, resolved through the lock's node_modules layout the way
+ * Node resolves them (nearest node_modules first), transitively. A link into the workspace (a sibling workspace package)
+ * is followed; a link out of it (a `file:../` sibling repo) is not, since that package ships as its own sibling.
+ */
+export class SharedLockClosure
+{
+    private static readonly NodeModulesSegment = 'node_modules/'
+    private static readonly ScopePrefix = '@'
+    private static readonly OutsidePrefix = '../'
+    private static readonly Slash = '/'
+    private static readonly Utf8 = 'utf8'
+
+    private constructor(private readonly packages: Record<string, ILockPackage>)
+    {
+    }
+
+    /** Reads the lock at `path`; undefined when there is none. */
+    public static Load(path: string): SharedLockClosure | undefined
+    {
+        if (!existsSync(path))
+        {
+            return undefined
+        }
+        const lock = JSON.parse(readFileSync(path, SharedLockClosure.Utf8)) as { packages?: Record<string, ILockPackage> }
+        return new SharedLockClosure(lock.packages ?? {})
+    }
+
+    public static FromPackages(packages: Record<string, ILockPackage>): SharedLockClosure
+    {
+        return new SharedLockClosure(packages)
+    }
+
+    /**
+     * The package dir (a lock key such as `node_modules/@scope/name` or `node_modules/a/node_modules/b`) that a file path
+     * relative to the workspace root lies in, or undefined when it lies in no node_modules.
+     */
+    public static PackageDirOf(relativePath: string): string | undefined
+    {
+        const S = SharedLockClosure
+        const at = relativePath.lastIndexOf(S.NodeModulesSegment)
+        if (at === -1)
+        {
+            return undefined
+        }
+        const rest = relativePath.slice(at + S.NodeModulesSegment.length).split(S.Slash)
+        const length = rest[0].startsWith(S.ScopePrefix) ? 2 : 1
+        if (rest.length <= length)
+        {
+            return undefined
+        }
+        return relativePath.slice(0, at + S.NodeModulesSegment.length) + rest.slice(0, length).join(S.Slash)
+    }
+
+    /** The lock keys of every third-party package a production install of the given workspaces (e.g. `packages/x`) places. */
+    public Of(workspaces: readonly string[]): Set<string>
+    {
+        const placed = new Set<string>()
+        const visited = new Set<string>(workspaces)
+        const pending = [...workspaces]
+        while (pending.length > 0)
+        {
+            const at = pending.pop() as string
+            for (const name of this.DependencyNames(at))
+            {
+                const found = this.Resolve(at, name)
+                if (found === undefined)
+                {
+                    continue
+                }
+                const entry = this.packages[found]
+                let next = found
+                if (entry.link === true)
+                {
+                    if (entry.resolved === undefined || entry.resolved.startsWith(SharedLockClosure.OutsidePrefix))
+                    {
+                        continue
+                    }
+                    next = entry.resolved
+                }
+                else
+                {
+                    placed.add(found)
+                }
+                if (!visited.has(next))
+                {
+                    visited.add(next)
+                    pending.push(next)
+                }
+            }
+        }
+        return placed
+    }
+
+    private DependencyNames(key: string): string[]
+    {
+        const entry = this.packages[key]
+        if (entry === undefined)
+        {
+            return []
+        }
+        const optionalPeer = entry.peerDependenciesMeta ?? {}
+        const peers = Object.keys(entry.peerDependencies ?? {}).filter(p => optionalPeer[p]?.optional !== true)
+        return [...Object.keys(entry.dependencies ?? {}), ...Object.keys(entry.optionalDependencies ?? {}), ...peers]
+    }
+
+    /** The lock key `name` resolves to from the package at `from`: its own node_modules, then each enclosing one. */
+    private Resolve(from: string, name: string): string | undefined
+    {
+        const S = SharedLockClosure
+        let dir = from
+        for (;;)
+        {
+            const candidate = (dir === '' ? '' : dir + S.Slash) + S.NodeModulesSegment + name
+            if (this.packages[candidate] !== undefined)
+            {
+                return candidate
+            }
+            if (dir === '')
+            {
+                return undefined
+            }
+            const at = dir.lastIndexOf(S.NodeModulesSegment)
+            dir = at <= 0 ? '' : dir.slice(0, at - 1)
+        }
     }
 }
 
@@ -186,7 +380,10 @@ export class ClosureManifestError extends Error
  * result the same on a dev box with npm-linked siblings and in CI / the image build with registry copies. Reaching any
  * sibling (linked from the server's node_modules) or a third-party package installed there requires
  * `pragmatic-server/node_modules` in `files`, and every
- * entry point must sit inside a copied `files` dir.
+ * entry point must sit inside a copied `files` dir. Reaching a pragmatic-shared package requires
+ * `pragmatic-shared/node_modules`, which the image installs in its own stage for exactly its listed shared packages
+ * (production deps only); so every third-party package loaded from the shared workspace must be in the lock closure of
+ * those packages (SharedLockClosure), and the stage's `--workspace=` filters must equal them.
  */
 export class ClosureCheck
 {
@@ -204,7 +401,19 @@ export class ClosureCheck
     public static readonly ServerModules = 'pragmatic-server/node_modules'
     /** The pragmatic-shared workspace: its packages' third-party dependencies and sibling links are hoisted into its root node_modules. */
     public static readonly SharedModules = 'pragmatic-shared/node_modules'
+    /**
+     * An image's pragmatic-shared/node_modules comes from its own stage, `<app>` + this suffix: an `npm ci --omit=dev`
+     * filtered with `--workspace=` to exactly the shared packages the app lists, never the build's install of all of them.
+     */
+    public static readonly SharedModulesStageSuffix = '-shared-modules'
+    public static readonly BuildStage = 'build'
+    private static readonly SharedDir = 'pragmatic-shared'
     private static readonly SharedPrefix = 'pragmatic-shared/'
+    private static readonly SharedLock = 'pragmatic-shared/package-lock.json'
+    private static readonly UndeclaredSharedPrefix = 'not a production dependency of the listed shared packages: '
+    private static readonly DockerfileCopyFromPrefix = 'Dockerfile: COPY --from='
+    private static readonly DockerfileWorkspacePrefix = 'Dockerfile: npm ci --workspace='
+    private static readonly DockerfileInstallPrefix = 'Dockerfile: npm ci --omit=dev in '
     private static readonly ServerDir = 'pragmatic-server'
     private static readonly ManifestPath = 'docker/images/closure.json'
     private static readonly DockerfilePath = 'docker/images/Dockerfile'
@@ -214,6 +423,7 @@ export class ClosureCheck
     private static readonly NodeModules = 'node_modules'
     private static readonly Utf8 = 'utf8'
     private static readonly Slash = '/'
+    private static readonly Space = ' '
     private static readonly ParentSegment = '..'
     /**
      * Each compiled tree and the source dir it mirrors: dist/ is the server build of src/, dist-tenant-admin/ (the control
@@ -312,6 +522,8 @@ export class ClosureCheck
         const compiled = new Set<string>()
         let serverModules = false
         let sharedModules = false
+        const sharedThirdParty = new Set<string>()
+        const sharedRoot = join(root, C.SharedDir)
         const serverModulesDir = join(server, C.NodeModules) + sep
         const sharedModulesDir = join(root, ...C.SharedModules.split(C.Slash)) + sep
         const serverDir = server + sep
@@ -336,6 +548,11 @@ export class ClosureCheck
             else if (file.startsWith(sharedModulesDir))
             {
                 sharedModules = true
+                C.NoteSharedPackage(relative(sharedRoot, file), sharedThirdParty)
+            }
+            else if (file.startsWith(sharedRoot + sep))
+            {
+                C.NoteSharedPackage(relative(sharedRoot, file), sharedThirdParty)
             }
             else if (file.startsWith(serverDir) && C.TsSourceExtension.test(file))
             {
@@ -367,6 +584,8 @@ export class ClosureCheck
         {
             extra.push(C.SharedModules)
         }
+        // Each image installs only its shared packages' production deps, so every third-party file it reaches must be one.
+        missing.push(...C.UndeclaredShared(root, entry, sharedThirdParty))
         for (const run of runs)
         {
             const path = C.ServerDir + C.Slash + run
@@ -392,11 +611,19 @@ export class ClosureCheck
         return { App: app, Reached: [...reached].sort(), Missing: missing, Extra: extra }
     }
 
-    /** The app's Dockerfile stage must copy exactly its packages and files, and start its entrypoint. */
+    /**
+     * The app's Dockerfile stage must copy exactly its packages and files, and start its entrypoint. Its
+     * pragmatic-shared/node_modules must come from its own modules stage, whose `npm ci --omit=dev` is filtered to exactly
+     * the shared packages it lists: one more pulls that package's dependencies (a cloud SDK) into the image, one fewer
+     * leaves a reached package without its dependencies.
+     */
     private static CompareTarget(app: string, entry: IClosureEntry, targets: DockerfileTargets, missing: string[], extra: string[]): void
     {
         const C = ClosureCheck
-        const copied = targets.Copies(app)
+        const modulesStage = app + C.SharedModulesStageSuffix
+        const fromBuild = targets.Copies(app, C.BuildStage)
+        const fromModules = targets.Copies(app, modulesStage)
+        const copied = [...fromBuild, ...fromModules]
         const listed = [...entry.packages, ...entry.files]
         missing.push(...listed.filter(p => !copied.includes(p)).map(p => C.DockerfileCopyLabel + p))
         extra.push(...copied.filter(p => !listed.includes(p)).map(p => C.DockerfileCopyLabel + p))
@@ -405,6 +632,55 @@ export class ClosureCheck
         {
             missing.push(C.DockerfileEntrypointLabel + expected)
         }
+        const fromStage = C.DockerfileCopyFromPrefix + modulesStage + C.Space
+        extra.push(...fromModules.filter(p => p !== C.SharedModules).map(p => fromStage + p))
+        if (!entry.files.includes(C.SharedModules))
+        {
+            return
+        }
+        if (!fromModules.includes(C.SharedModules))
+        {
+            missing.push(fromStage + C.SharedModules)
+        }
+        const workspaces = targets.Workspaces(modulesStage)
+        if (workspaces === undefined || !targets.OmitsDev(modulesStage))
+        {
+            missing.push(C.DockerfileInstallPrefix + modulesStage)
+        }
+        const installed = workspaces ?? []
+        const wanted = C.SharedWorkspaces(entry)
+        missing.push(...wanted.filter(w => !installed.includes(w)).map(w => C.DockerfileWorkspacePrefix + w))
+        extra.push(...installed.filter(w => !wanted.includes(w)).map(w => C.DockerfileWorkspacePrefix + w))
+    }
+
+    /** The workspace dirs (relative to pragmatic-shared, e.g. `packages/x`) of the shared packages the entry lists. */
+    private static SharedWorkspaces(entry: IClosureEntry): string[]
+    {
+        const C = ClosureCheck
+        return entry.packages.filter(p => p.startsWith(C.SharedPrefix)).map(p => p.slice(C.SharedPrefix.length))
+    }
+
+    /** Records the third-party package dir (a pragmatic-shared lock key) a reached file lies in. */
+    private static NoteSharedPackage(relativePath: string, packages: Set<string>): void
+    {
+        const dir = SharedLockClosure.PackageDirOf(relativePath.split(sep).join(ClosureCheck.Slash))
+        if (dir !== undefined)
+        {
+            packages.add(dir)
+        }
+    }
+
+    /** The reached pragmatic-shared third-party packages a production install of the entry's shared packages does not place. */
+    private static UndeclaredShared(root: string, entry: IClosureEntry, reached: Set<string>): string[]
+    {
+        const C = ClosureCheck
+        if (reached.size === 0)
+        {
+            return []
+        }
+        const lock = SharedLockClosure.Load(join(root, ...C.SharedLock.split(C.Slash)))
+        const placed = lock?.Of(C.SharedWorkspaces(entry)) ?? new Set<string>()
+        return [...reached].filter(p => !placed.has(p)).sort().map(p => C.UndeclaredSharedPrefix + C.SharedPrefix + p)
     }
 
     /** True when the workspace path is one of the entry's `files` or lies inside one. */

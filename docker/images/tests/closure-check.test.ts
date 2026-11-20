@@ -3,13 +3,18 @@ import { after, describe, it } from 'node:test'
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { ClosureCheck, type ClosureReport } from '../closure-check.js'
+import { ClosureCheck, type ClosureReport, SharedLockClosure } from '../closure-check.js'
 
 /** A throwaway workspace: three tiny sibling packages a, b, c and a server whose one app imports `a`. */
 class FixtureWorkspace
 {
     public static readonly App = 'app'
     public static readonly Siblings: readonly string[] = ['a', 'b', 'c']
+    public static readonly SharedDir = 'pragmatic-shared'
+    public static readonly SharedSiblings: readonly string[] = ['a', 'b', 'c', 'pragmatic-shared/packages/s', 'pragmatic-shared/packages/cloud']
+    public static readonly SharedS = 'pragmatic-shared/packages/s'
+    public static readonly SharedModules = 'pragmatic-shared/node_modules'
+    private static readonly ImportsShared = "import { Value } from 's'\nconsole.log(Value)\n"
     private static readonly Roots: string[] = []
 
     public static Make(packages: readonly string[], files: readonly string[], entrySource: string, dockerfile?: string): string
@@ -50,6 +55,59 @@ class FixtureWorkspace
     public static Report(root: string): ClosureReport
     {
         return ClosureCheck.Run(root, { Siblings: FixtureWorkspace.Siblings, Apps: [FixtureWorkspace.App] })
+    }
+
+    /**
+     * Adds a pragmatic-shared workspace: package `s` (linked into the server's node_modules) importing the hoisted third-party
+     * `dep`, a second workspace package `cloud` with its own hoisted `sdk`, and a lock whose `packages/s` entry declares the
+     * given dependencies.
+     */
+    public static AddShared(root: string, lockEntry: Record<string, unknown>): void
+    {
+        const shared = join(root, FixtureWorkspace.SharedDir)
+        FixtureWorkspace.Package(join(shared, 'packages', 's'), 's', "export { Dep as Value } from 'dep'\n")
+        FixtureWorkspace.Package(join(shared, 'packages', 'cloud'), 'cloud', "export { Sdk } from 'sdk'\n")
+        FixtureWorkspace.Package(join(shared, 'node_modules', 'dep'), 'dep', 'export const Dep = 4\n')
+        FixtureWorkspace.Package(join(shared, 'node_modules', 'sdk'), 'sdk', 'export const Sdk = 5\n')
+        symlinkSync(join(shared, 'packages', 's'), join(root, 'pragmatic-server', 'node_modules', 's'), 'junction')
+        const lock = {
+            packages: {
+                'packages/s': lockEntry,
+                'packages/cloud': { dependencies: { sdk: '^1.0.0' } },
+                'node_modules/s': { link: true, resolved: 'packages/s' },
+                'node_modules/cloud': { link: true, resolved: 'packages/cloud' },
+                'node_modules/dep': { version: '1.0.0' },
+                'node_modules/sdk': { version: '1.0.0' },
+            },
+        }
+        writeFileSync(join(shared, 'package-lock.json'), JSON.stringify(lock))
+    }
+
+    /** The report for an app importing shared package `s`, whose lock entry is `lockEntry`, against the given Dockerfile. */
+    public static SharedReport(lockEntry: Record<string, unknown>, dockerfile?: string): ClosureReport
+    {
+        const F = FixtureWorkspace
+        const root = F.Make([F.SharedS], [F.SharedModules, Dist, Modules], F.ImportsShared, dockerfile)
+        F.AddShared(root, lockEntry)
+        return ClosureCheck.Run(root, { Siblings: F.SharedSiblings, Apps: [F.App] })
+    }
+
+    /** The app's Dockerfile: its shared modules stage runs `install`, and the app copies `modulesFrom`'s pragmatic-shared/node_modules. */
+    public static SharedTarget(install: string, modulesFrom: string): string
+    {
+        return [
+            'FROM node AS build',
+            'FROM build AS app-shared-modules',
+            'RUN cd pragmatic-shared && ' + install,
+            'FROM node AS runtime',
+            'FROM runtime AS app',
+            'COPY --from=build /workspace/pragmatic-shared/packages/s /workspace/pragmatic-shared/packages/s',
+            'COPY --from=' + modulesFrom + ' /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules',
+            'COPY --from=build /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules',
+            'COPY --from=build /workspace/pragmatic-server/dist /workspace/pragmatic-server/dist',
+            'ENTRYPOINT ["node", "dist/bin/app.js"]',
+            '',
+        ].join('\n')
     }
 
     public static Cleanup(): void
@@ -154,5 +212,80 @@ describe('ClosureCheck', () =>
         const covered = FixtureWorkspace.Make([], [DistBin, DistLib], ImportsLib)
         FixtureWorkspace.Source(covered, LibSource, LibText)
         assert.equal(FixtureWorkspace.Report(covered).Ok, true)
+    })
+})
+
+const DeclaresDep = { dependencies: { dep: '^1.0.0' } }
+const Filtered = 'npm ci --omit=dev --ignore-scripts --workspace=packages/s'
+const OwnStage = 'app-shared-modules'
+
+describe('ClosureCheck: pragmatic-shared dependencies', () =>
+{
+    after(() => FixtureWorkspace.Cleanup())
+
+    it('passes when every third-party package a shared package loads is its production dependency in the shared lock', () =>
+    {
+        const report = FixtureWorkspace.SharedReport(DeclaresDep)
+        assert.deepEqual(report.Apps[0].Missing, [])
+        assert.equal(report.Ok, true)
+    })
+
+    it('reports a reached third-party package the listed shared packages do not depend on (only hoisting made it resolve)', () =>
+    {
+        const undeclared = ['not a production dependency of the listed shared packages: pragmatic-shared/node_modules/dep']
+        assert.deepEqual(FixtureWorkspace.SharedReport({}).Apps[0].Missing, undeclared)
+        assert.deepEqual(FixtureWorkspace.SharedReport({ devDependencies: { dep: '^1.0.0' } }).Apps[0].Missing, undeclared, 'a dev dependency is not installed')
+    })
+
+    it('requires the image to copy pragmatic-shared/node_modules from its own install, filtered to exactly its shared packages', () =>
+    {
+        assert.equal(FixtureWorkspace.SharedReport(DeclaresDep, FixtureWorkspace.SharedTarget(Filtered, OwnStage)).Ok, true)
+
+        const fromBuild = FixtureWorkspace.SharedReport(DeclaresDep, FixtureWorkspace.SharedTarget(Filtered, 'build')).Apps[0]
+        assert.deepEqual(fromBuild.Missing, ['Dockerfile: COPY --from=app-shared-modules pragmatic-shared/node_modules'])
+
+        const withCloud = FixtureWorkspace.SharedReport(DeclaresDep, FixtureWorkspace.SharedTarget(Filtered + ' --workspace=packages/cloud', OwnStage)).Apps[0]
+        assert.deepEqual(withCloud.Extra, ['Dockerfile: npm ci --workspace=packages/cloud'], 'an unlisted package would bring its SDKs')
+
+        const unfiltered = FixtureWorkspace.SharedReport(DeclaresDep, FixtureWorkspace.SharedTarget('npm ci --omit=dev', OwnStage)).Apps[0]
+        assert.deepEqual(unfiltered.Missing, ['Dockerfile: npm ci --workspace=packages/s'], 'an unfiltered install brings every package')
+
+        const withDev = FixtureWorkspace.SharedReport(DeclaresDep, FixtureWorkspace.SharedTarget('npm ci --workspace=packages/s', OwnStage)).Apps[0]
+        assert.deepEqual(withDev.Missing, ['Dockerfile: npm ci --omit=dev in app-shared-modules'])
+    })
+})
+
+describe('SharedLockClosure', () =>
+{
+    it('resolves nearest-first, follows links inside the workspace, and stops at links out of it, dev deps and optional peers', () =>
+    {
+        const lock = SharedLockClosure.FromPackages({
+            'packages/x': { dependencies: { y: '1', '@s/a': '1', sib: '1', out: '1' }, peerDependencies: { p: '1', q: '1' }, peerDependenciesMeta: { q: { optional: true } } },
+            'packages/x/node_modules/@s/a': { dependencies: { b: '1' } },
+            'packages/y': { dependencies: { c: '1' }, devDependencies: { d: '1' } },
+            'node_modules/y': { link: true, resolved: 'packages/y' },
+            'node_modules/sib': { link: true, resolved: '../sib' },
+            'node_modules/out': { version: '1' },
+            'node_modules/b': { dependencies: { e: '1' } },
+            'node_modules/b/node_modules/e': {},
+            'node_modules/e': {},
+            'node_modules/c': {},
+            'node_modules/d': {},
+            'node_modules/p': {},
+            'node_modules/q': {},
+            'node_modules/@s/a': {},
+        })
+        assert.deepEqual([...lock.Of(['packages/x'])].sort(), [
+            'node_modules/b', 'node_modules/b/node_modules/e', 'node_modules/c', 'node_modules/out', 'node_modules/p',
+            'packages/x/node_modules/@s/a',
+        ])
+    })
+
+    it('names the package dir a file lies in, scoped or nested', () =>
+    {
+        assert.equal(SharedLockClosure.PackageDirOf('node_modules/jose/dist/index.js'), 'node_modules/jose')
+        assert.equal(SharedLockClosure.PackageDirOf('node_modules/@aws-sdk/client-s3/dist/index.js'), 'node_modules/@aws-sdk/client-s3')
+        assert.equal(SharedLockClosure.PackageDirOf('node_modules/a/node_modules/b/index.js'), 'node_modules/a/node_modules/b')
+        assert.equal(SharedLockClosure.PackageDirOf('packages/s/index.js'), undefined)
     })
 })

@@ -96,6 +96,59 @@ RUN set -e; mkdir /todl-dev-stash; for pkg in esbuild typescript; do \
     sh /workspace/pragmatic-server/docker/link-graph-engine.sh /workspace; \
     find /workspace -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete 2>/dev/null || true
 
+# Per-image pragmatic-shared dependencies. The build's hoisted pragmatic-shared/node_modules holds the third-party deps of
+# all twelve shared packages (the realm adapters' cloud SDKs among them), so no image copies it. Each image that reaches a
+# shared package copies instead the node_modules of its own stage below: a fresh install from the same lock, of production
+# deps only, filtered with --workspace to the shared packages its closure.json entry lists (npm installs only those
+# workspaces and what they depend on). The tarballs come from the build's npm cache; nothing installed here runs a script.
+# Source maps and build info are dropped, as the build stage drops them everywhere else.
+# closure-check.ts holds each --workspace list to closure.json and every third-party file an entry reaches to the lock
+# closure of those workspaces.
+FROM build AS pragmatic-platform-admin-shared-modules
+RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
+    --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
+    --workspace=packages/pragmatic-identity-source-entra --workspace=packages/pragmatic-identity-source-google \
+    --workspace=packages/pragmatic-identity-source-local --workspace=packages/pragmatic-identity-source-oidc \
+    --workspace=packages/pragmatic-identity-store \
+    && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
+
+FROM build AS pragmatic-platform-edge-shared-modules
+RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
+    --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
+    --workspace=packages/pragmatic-identity-source-entra --workspace=packages/pragmatic-identity-source-google \
+    --workspace=packages/pragmatic-identity-source-local --workspace=packages/pragmatic-identity-source-oidc \
+    --workspace=packages/pragmatic-identity-store \
+    && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
+
+FROM build AS pragmatic-env-server-shared-modules
+RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
+    --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
+    --workspace=packages/pragmatic-identity-source-entra --workspace=packages/pragmatic-identity-source-google \
+    --workspace=packages/pragmatic-identity-source-local --workspace=packages/pragmatic-identity-source-oidc \
+    --workspace=packages/pragmatic-identity-store --workspace=packages/pragmatic-realm-adapters \
+    --workspace=packages/pragmatic-realm-aws --workspace=packages/pragmatic-realm-azure \
+    --workspace=packages/pragmatic-realm-custom --workspace=packages/pragmatic-realm-gcp \
+    && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
+
+FROM build AS pragmatic-env-gateway-shared-modules
+RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
+    --workspace=packages/pragmatic-identity \
+    && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
+
+FROM build AS pragmatic-tenant-admin-shared-modules
+RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
+    --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
+    --workspace=packages/pragmatic-identity-source-entra --workspace=packages/pragmatic-identity-source-google \
+    --workspace=packages/pragmatic-identity-source-local --workspace=packages/pragmatic-identity-source-oidc \
+    --workspace=packages/pragmatic-identity-store \
+    && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
+
+FROM build AS pragmatic-tenant-idp-shared-modules
+RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
+    --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
+    --workspace=packages/pragmatic-identity-source-local --workspace=packages/pragmatic-identity-store \
+    && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
+
 # Shared runtime base: the app images below differ only in what they copy and how they start.
 FROM node:22-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS runtime
 ENV NODE_ENV=production
@@ -155,7 +208,7 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store /workspace/pragmatic-shared/packages/pragmatic-identity-store
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
+COPY --from=pragmatic-platform-admin-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane
@@ -186,7 +239,7 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store /workspace/pragmatic-shared/packages/pragmatic-identity-store
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
+COPY --from=pragmatic-platform-edge-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane
@@ -222,7 +275,7 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragm
 COPY --from=build --chown=10001:10001 /workspace/todl-connectors-host /workspace/todl-connectors-host
 COPY --from=build --chown=10001:10001 /workspace/todl-identity-engine /workspace/todl-identity-engine
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
+COPY --from=pragmatic-env-server-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist /workspace/pragmatic-server/dist
@@ -236,7 +289,7 @@ FROM runtime AS pragmatic-env-gateway
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-protocol /workspace/pragmatic-protocol
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity /workspace/pragmatic-shared/packages/pragmatic-identity
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
+COPY --from=pragmatic-env-gateway-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist /workspace/pragmatic-server/dist
@@ -265,7 +318,7 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store /workspace/pragmatic-shared/packages/pragmatic-identity-store
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
+COPY --from=pragmatic-tenant-admin-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane
@@ -288,7 +341,7 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local /workspace/pragmatic-shared/packages/pragmatic-identity-source-local
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store /workspace/pragmatic-shared/packages/pragmatic-identity-store
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
+COPY --from=pragmatic-tenant-idp-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist /workspace/pragmatic-server/dist
