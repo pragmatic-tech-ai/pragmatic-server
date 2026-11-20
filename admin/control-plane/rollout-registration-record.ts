@@ -1,4 +1,5 @@
 import { JsonRecordStore } from './json-record-store.js'
+import type { IRecordMap } from './record-map.js'
 
 export type RolloutRegistrationRecord = {
     id: string
@@ -11,8 +12,8 @@ export class RolloutRegistrationRegistry extends JsonRecordStore<RolloutRegistra
 {
     private static readonly RootKey = 'rolloutRegistrations'
 
-    public constructor(filePath: string)
+    public constructor(location: string | IRecordMap<RolloutRegistrationRecord>)
     {
-        super(filePath, RolloutRegistrationRegistry.RootKey)
+        super(location, RolloutRegistrationRegistry.RootKey)
     }
 }

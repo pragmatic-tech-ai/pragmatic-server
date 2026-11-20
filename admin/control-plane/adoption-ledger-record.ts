@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { JsonRecordStore } from './json-record-store.js'
+import type { IRecordMap } from './record-map.js'
 
 export type LedgerAction = 'gated' | 'ungated' | 'withdrawn' | 'restored' | 'selected' | 'adopted'
 
@@ -20,9 +21,9 @@ export class AdoptionLedgerRegistry extends JsonRecordStore<AdoptionLedgerRecord
     private static readonly WithdrawnAction: LedgerAction = 'withdrawn'
     private static readonly RestoredAction: LedgerAction = 'restored'
 
-    public constructor(filePath: string)
+    public constructor(location: string | IRecordMap<AdoptionLedgerRecord>)
     {
-        super(filePath, AdoptionLedgerRegistry.RootKey)
+        super(location, AdoptionLedgerRegistry.RootKey)
     }
 
     public async Append(entry: Omit<AdoptionLedgerRecord, 'id' | 'at'>): Promise<void>

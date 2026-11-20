@@ -1,4 +1,5 @@
 import { JsonRecordStore } from './json-record-store.js'
+import type { IRecordMap } from './record-map.js'
 import type { Channel } from './channel.js'
 import type { ReleaseApp } from './release/release-tag.js'
 
@@ -45,8 +46,8 @@ export class ManifestRegistry extends JsonRecordStore<ManifestRecord>
 {
     private static readonly RootKey = 'manifests'
 
-    public constructor(filePath: string)
+    public constructor(location: string | IRecordMap<ManifestRecord>)
     {
-        super(filePath, ManifestRegistry.RootKey)
+        super(location, ManifestRegistry.RootKey)
     }
 }

@@ -1,6 +1,7 @@
 import { DomainApprovalState, DomainVerificationRecord } from './domain-verification-record.js'
 import { EmailDomainPolicy } from './email-domain-policy.js'
 import { JsonRecordStore } from './json-record-store.js'
+import type { IRecordMap } from './record-map.js'
 
 /** One domain's DNS verification: the platform-issued token, whether its TXT record was seen at the last check, and when that was. */
 export type DomainVerificationEntry = { token: string; verified: boolean; lastCheckedAt?: string }
@@ -39,9 +40,9 @@ export class ConsoleDomainApprovals extends JsonRecordStore<ConsoleDomainApprova
     private static readonly RootKey = 'approvals'
     private static readonly EffectiveStates: ReadonlySet<DomainApprovalState> = new Set([DomainApprovalState.Approved, DomainApprovalState.Verified])
 
-    public constructor(filePath: string)
+    public constructor(location: string | IRecordMap<ConsoleDomainApprovalRecord>)
     {
-        super(filePath, ConsoleDomainApprovals.RootKey)
+        super(location, ConsoleDomainApprovals.RootKey)
     }
 
     /** The tenant's approved domains, sorted. */

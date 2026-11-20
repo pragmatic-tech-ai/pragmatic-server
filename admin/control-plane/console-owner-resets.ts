@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises'
-import { AtomicJsonFile, SerialRuns } from './atomic-json-file.js'
+import { SerialRuns } from './atomic-json-file.js'
+import { FileRecordMap, RecordMapFormatError, type IRecordMap } from './record-map.js'
 import type { IOwnerResetSource } from './console-advert-receiver.js'
 import { OwnerResetTime } from './tenant-owner.js'
 
@@ -21,36 +21,39 @@ export interface IOwnerResetRecorder
 export class ConsoleOwnerResets implements IOwnerResetRecorder, IOwnerResetSource
 {
     public static readonly FileName = 'console-owner-resets.json'
-    private static readonly Utf8 = 'utf8'
-    private static readonly NotFoundCode = 'ENOENT'
-    private static readonly JsonIndent = 2
     private static readonly MalformedPrefix = 'Invalid Owner reset file (expected { [tenantId]: ISO time }): '
 
     private resets = new Map<string, string>()
     private readonly writes = new SerialRuns()
+    private readonly map: IRecordMap<string>
 
-    public constructor(private readonly filePath: string, private readonly now: () => Date = () => new Date())
+    /** `location`: the `{ [tenantId]: iso }` file, or a record map (the platform admin console's Postgres table). */
+    public constructor(location: string | IRecordMap<string>, private readonly now: () => Date = () => new Date())
     {
+        this.map = typeof location === 'string' ? new FileRecordMap<string>(location) : location
     }
 
-    /** A missing file is empty; a malformed one throws naming the file. Never writes. */
+    /** A missing file is empty; a malformed one throws naming where the records live. Never writes. */
     public async Load(): Promise<void>
     {
-        let text: string
+        let stored: ReadonlyMap<string, string>
         try
         {
-            text = await readFile(this.filePath, ConsoleOwnerResets.Utf8)
+            stored = await this.map.Load()
         }
         catch (err)
         {
-            if ((err as NodeJS.ErrnoException).code !== ConsoleOwnerResets.NotFoundCode)
+            if (err instanceof RecordMapFormatError)
             {
-                throw err
+                throw new Error(ConsoleOwnerResets.MalformedPrefix + this.map.Location)
             }
-            this.resets = new Map()
-            return
+            throw err
         }
-        this.resets = ConsoleOwnerResets.Parse(text, this.filePath)
+        if (![...stored.values()].every(v => OwnerResetTime.IsWellFormed(v)))
+        {
+            throw new Error(ConsoleOwnerResets.MalformedPrefix + this.map.Location)
+        }
+        this.resets = new Map(stored)
     }
 
     /**
@@ -68,7 +71,7 @@ export class ConsoleOwnerResets implements IOwnerResetRecorder, IOwnerResetSourc
                 at = Date.parse(previous) + 1
             }
             const iso = new Date(at).toISOString()
-            await this.Commit(new Map(this.resets).set(tenantId, iso))
+            await this.Commit(new Map(this.resets).set(tenantId, iso), tenantId)
             return iso
         })
     }
@@ -89,7 +92,7 @@ export class ConsoleOwnerResets implements IOwnerResetRecorder, IOwnerResetSourc
             }
             const next = new Map(this.resets)
             next.delete(tenantId)
-            await this.Commit(next)
+            await this.Commit(next, tenantId)
         })
     }
 
@@ -98,32 +101,9 @@ export class ConsoleOwnerResets implements IOwnerResetRecorder, IOwnerResetSourc
         return this.writes.Run(change)
     }
 
-    private async Commit(next: Map<string, string>): Promise<void>
+    private async Commit(next: Map<string, string>, tenantId: string): Promise<void>
     {
-        await AtomicJsonFile.Write(this.filePath, Object.fromEntries(next), ConsoleOwnerResets.JsonIndent)
+        await this.map.Save(next, new Set([tenantId]))
         this.resets = next
-    }
-
-    private static Parse(text: string, filePath: string): Map<string, string>
-    {
-        let body: unknown
-        try
-        {
-            body = JSON.parse(text)
-        }
-        catch
-        {
-            throw new Error(ConsoleOwnerResets.MalformedPrefix + filePath)
-        }
-        if (body === null || typeof body !== 'object' || Array.isArray(body))
-        {
-            throw new Error(ConsoleOwnerResets.MalformedPrefix + filePath)
-        }
-        const entries = Object.entries(body as Record<string, unknown>)
-        if (!entries.every(([, v]) => OwnerResetTime.IsWellFormed(v)))
-        {
-            throw new Error(ConsoleOwnerResets.MalformedPrefix + filePath)
-        }
-        return new Map(entries as Array<[string, string]>)
     }
 }

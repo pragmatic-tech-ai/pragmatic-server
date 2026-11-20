@@ -1,39 +1,40 @@
-import { readFile } from 'node:fs/promises'
 import { AtomicJsonFile } from './atomic-json-file.js'
+import { FileRecordMap, type IRecordMap } from './record-map.js'
 
+/**
+ * A registry of records by id, held in memory (reads are synchronous copies) and persisted through a record map: the
+ * `{ <root>: { <id>: record } }` JSON file when constructed from a path, or any IRecordMap (the Postgres table of the
+ * platform admin console). Writes are write-behind batches of the ids changed since the last write.
+ */
 export abstract class JsonRecordStore<TRecord extends { id: string }>
 {
-    private static readonly Encoding = 'utf8'
-    private static readonly NotFoundCode = 'ENOENT'
-    private static readonly JsonIndent = 2
-
     private readonly records = new Map<string, TRecord>()
+    /** Ids staged or unstaged since the last write that included them. */
+    private readonly changed = new Set<string>()
+    private readonly map: IRecordMap<TRecord>
+    private readonly filePath: string | undefined
     private waiters: Array<{ resolve: () => void; reject: (err: unknown) => void }> = []
     private draining = false
 
-    protected constructor(private readonly filePath: string, private readonly rootKey: string)
+    protected constructor(location: string | IRecordMap<TRecord>, rootKey: string)
     {
+        if (typeof location === 'string')
+        {
+            this.filePath = location
+            this.map = new FileRecordMap<TRecord>(location, { RootKey: rootKey, WriteText: (_path, text) => this.WriteText(text) })
+        }
+        else
+        {
+            this.filePath = undefined
+            this.map = location
+        }
     }
 
     public async Load(): Promise<void>
     {
         this.records.clear()
-        let text: string
-        try
-        {
-            text = await readFile(this.filePath, JsonRecordStore.Encoding)
-        }
-        catch (err)
-        {
-            if ((err as NodeJS.ErrnoException).code === JsonRecordStore.NotFoundCode)
-            {
-                return
-            }
-            throw err
-        }
-        const parsed = JSON.parse(text) as Record<string, Record<string, TRecord> | undefined>
-        const stored = parsed[this.rootKey] ?? {}
-        for (const [id, record] of Object.entries(stored))
+        this.changed.clear()
+        for (const [id, record] of await this.map.Load())
         {
             this.records.set(id, structuredClone(record))
         }
@@ -76,12 +77,18 @@ export abstract class JsonRecordStore<TRecord extends { id: string }>
     protected Stage(record: TRecord): void
     {
         this.records.set(record.id, structuredClone(record))
+        this.changed.add(record.id)
     }
 
     /** Mutates memory only; pair with Flush() to persist. */
     protected Unstage(id: string): boolean
     {
-        return this.records.delete(id)
+        const removed = this.records.delete(id)
+        if (removed)
+        {
+            this.changed.add(id)
+        }
+        return removed
     }
 
     /**
@@ -127,15 +134,28 @@ export abstract class JsonRecordStore<TRecord extends { id: string }>
         }
     }
 
-    /** The single file-write primitive (temp + rename); overridable for observation. */
+    /** The file form's write primitive (temp + rename); overridable for observation. Unused over another record map. */
     protected WriteText(text: string): Promise<void>
     {
-        return AtomicJsonFile.WriteText(this.filePath, text)
+        return AtomicJsonFile.WriteText(this.filePath as string, text)
     }
 
+    /** Writes the ids changed since the last write; on failure they stay pending, so the next Flush retries them. */
     private async persist(): Promise<void>
     {
-        const body = { [this.rootKey]: Object.fromEntries(this.records) }
-        await this.WriteText(JSON.stringify(body, null, JsonRecordStore.JsonIndent))
+        const batch = new Set(this.changed)
+        this.changed.clear()
+        try
+        {
+            await this.map.Save(this.records, batch)
+        }
+        catch (err)
+        {
+            for (const id of batch)
+            {
+                this.changed.add(id)
+            }
+            throw err
+        }
     }
 }

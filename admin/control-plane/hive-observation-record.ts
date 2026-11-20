@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { JsonRecordStore } from './json-record-store.js'
+import type { IRecordMap } from './record-map.js'
 import type { HiveHealthDto } from './hive-health-producer.js'
 
 export type HiveObservationRecord = {
@@ -14,9 +15,9 @@ export class HiveObservationRegistry extends JsonRecordStore<HiveObservationReco
     private static readonly RootKey = 'hiveObservations'
     private static readonly MaxPerHive = 50
 
-    public constructor(filePath: string)
+    public constructor(location: string | IRecordMap<HiveObservationRecord>)
     {
-        super(filePath, HiveObservationRegistry.RootKey)
+        super(location, HiveObservationRegistry.RootKey)
     }
 
     public async RecordSnapshot(hiveId: string, environments: HiveHealthDto[]): Promise<void>

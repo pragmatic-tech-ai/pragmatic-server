@@ -1,6 +1,6 @@
-import { readFile } from 'node:fs/promises'
 import { EncryptedSecretStore } from '@pragmatic-tech-ai/pragmatic-identity-source-local'
-import { AtomicJsonFile, SerialRuns } from './atomic-json-file.js'
+import { SerialRuns } from './atomic-json-file.js'
+import { FileRecordMap, RecordMapFormatError, type IRecordMap } from './record-map.js'
 
 export class SealedSecretUnreadableError extends Error
 {
@@ -28,7 +28,8 @@ export class SealedSecretFileError extends Error
 
 /**
  * Byte secrets sealed with the master key (AES-256-GCM via EncryptedSecretStore) and persisted
- * as { "sealed": { "<ref>": "<blob>" } }. Get/Put/Delete run one at a time through a SerialRuns, so
+ * as { "sealed": { "<ref>": "<blob>" } } (or as one row per ref in a record map: the platform admin console's Postgres
+ * table, where the blobs stay sealed exactly as in the file). Get/Put/Delete run one at a time through a SerialRuns, so
  * concurrent callers never interleave or share a temp file. Values never appear in errors or JSON. Writes are fsynced; a
  * parent-directory sync that fails after the rename landed does not fail the Put/Delete (the new content is in place, so
  * memory follows the disk) and is logged as a fixed sentence plus the error's name.
@@ -36,12 +37,9 @@ export class SealedSecretFileError extends Error
 export class SealedSecretStore
 {
     public static readonly FileName = 'sealed-secrets.json'
-    private static readonly RootKey = 'sealed'
-    private static readonly Encoding = 'utf8'
+    public static readonly RootKey = 'sealed'
     private static readonly ValueEncoding = 'base64'
-    private static readonly NotFoundCode = 'ENOENT'
     private static readonly FileMode = 0o600
-    private static readonly JsonIndent = 2
     private static readonly Separator = '\u0000'
     private static readonly BadRefText = 'A sealed secret reference is invalid.'
     private static readonly Redacted = '[SealedSecretStore: values redacted]'
@@ -51,49 +49,27 @@ export class SealedSecretStore
     private readonly runs = new SerialRuns()
 
     private constructor(
-        private readonly filePath: string,
+        private readonly map: IRecordMap<string>,
         private readonly masterKey: Buffer,
         private entries: Map<string, string>)
     {
     }
 
-    public static async Open(filePath: string, masterKey: Buffer): Promise<SealedSecretStore>
+    /** `location`: the sealed file (a missing one is empty), or a record map of sealed blobs by ref. */
+    public static async Open(location: string | IRecordMap<string>, masterKey: Buffer): Promise<SealedSecretStore>
     {
-        let text: string | undefined
+        const map = typeof location === 'string' ? SealedSecretStore.FileMap(location) : location
+        let stored: ReadonlyMap<string, unknown>
         try
         {
-            text = await readFile(filePath, SealedSecretStore.Encoding)
+            stored = await map.Load()
         }
         catch (err)
         {
-            if ((err as NodeJS.ErrnoException).code !== SealedSecretStore.NotFoundCode)
-            {
-                throw err
-            }
-        }
-        const entries = text === undefined ? new Map<string, string>() : SealedSecretStore.ParseEntries(text)
-        return new SealedSecretStore(filePath, Buffer.from(masterKey), entries)
-    }
-
-    private static ParseEntries(text: string): Map<string, string>
-    {
-        let parsed: unknown
-        try
-        {
-            parsed = JSON.parse(text)
-        }
-        catch
-        {
-            throw new SealedSecretFileError()
-        }
-        const root = SealedSecretStore.AsRecord(parsed)
-        const sealed = root === undefined ? undefined : SealedSecretStore.AsRecord(root[SealedSecretStore.RootKey])
-        if (sealed === undefined)
-        {
-            throw new SealedSecretFileError()
+            throw err instanceof RecordMapFormatError ? new SealedSecretFileError() : err
         }
         const entries = new Map<string, string>()
-        for (const [ref, blob] of Object.entries(sealed))
+        for (const [ref, blob] of stored)
         {
             if (typeof blob !== 'string')
             {
@@ -101,7 +77,17 @@ export class SealedSecretStore
             }
             entries.set(ref, blob)
         }
-        return entries
+        return new SealedSecretStore(map, Buffer.from(masterKey), entries)
+    }
+
+    /** The file form: `{ sealed: { <ref>: blob } }`, written 0600 and fsynced (a failed directory sync is only logged). */
+    public static FileMap(filePath: string): FileRecordMap<string>
+    {
+        return new FileRecordMap<string>(filePath, {
+            RootKey: SealedSecretStore.RootKey,
+            RequireRoot: true,
+            Write: { mode: SealedSecretStore.FileMode, fsync: true, onDirectorySyncFailure: err => SealedSecretStore.ReportDirectorySyncFailure(err) },
+        })
     }
 
     private static CheckRef(ref: string): void
@@ -110,11 +96,6 @@ export class SealedSecretStore
         {
             throw new Error(SealedSecretStore.BadRefText)
         }
-    }
-
-    private static AsRecord(value: unknown): Record<string, unknown> | undefined
-    {
-        return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : undefined
     }
 
     /** Undefined when absent; throws SealedSecretUnreadableError when present but tampered, wrong-key or bound to another ref. */
@@ -145,7 +126,7 @@ export class SealedSecretStore
             const next = new Map(this.entries)
             const plain = `${ref}${SealedSecretStore.Separator}${value.toString(SealedSecretStore.ValueEncoding)}`
             await new EncryptedSecretStore(this.masterKey, next).Put(ref, plain)
-            await this.Persist(next)
+            await this.map.Save(next, new Set([ref]))
             this.entries = next
         })
     }
@@ -157,7 +138,7 @@ export class SealedSecretStore
         {
             const next = new Map(this.entries)
             next.delete(ref)
-            await this.Persist(next)
+            await this.map.Save(next, new Set([ref]))
             this.entries = next
         })
     }
@@ -170,13 +151,6 @@ export class SealedSecretStore
     public toString(): string
     {
         return SealedSecretStore.Redacted
-    }
-
-    private Persist(entries: Map<string, string>): Promise<void>
-    {
-        const body = { [SealedSecretStore.RootKey]: Object.fromEntries(entries) }
-        return AtomicJsonFile.Write(this.filePath, body, SealedSecretStore.JsonIndent,
-            { mode: SealedSecretStore.FileMode, fsync: true, onDirectorySyncFailure: err => SealedSecretStore.ReportDirectorySyncFailure(err) })
     }
 
     /** The sealed file is already in place (the rename landed), so the write still succeeds; only the sentence and the error's name are logged. */

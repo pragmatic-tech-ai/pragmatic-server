@@ -1,4 +1,5 @@
 import { JsonRecordStore } from './json-record-store.js'
+import type { IRecordMap } from './record-map.js'
 import type { PlatformDirectory } from './platform-directory.js'
 
 export type TenantAccountRecord = {
@@ -21,9 +22,9 @@ export class TenantAccountIndex extends JsonRecordStore<TenantAccountRecord>
     private static readonly RootKey = 'accounts'
     private static readonly IdSeparator = '/'
 
-    public constructor(filePath: string)
+    public constructor(location: string | IRecordMap<TenantAccountRecord>)
     {
-        super(filePath, TenantAccountIndex.RootKey)
+        super(location, TenantAccountIndex.RootKey)
     }
 
     /** Emails are matched trimmed and case-insensitively. */

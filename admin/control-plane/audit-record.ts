@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { JsonRecordStore } from './json-record-store.js'
+import type { IRecordMap } from './record-map.js'
 
 export type AuditRecord = {
     id: string
@@ -20,9 +21,9 @@ export class AuditRegistry extends JsonRecordStore<AuditRecord>
     // Audit-domain sentinel for an unauthenticated / pre-principal actor.
     public static readonly AnonymousActor = '(anonymous)'
 
-    public constructor(filePath: string)
+    public constructor(location: string | IRecordMap<AuditRecord>)
     {
-        super(filePath, AuditRegistry.RootKey)
+        super(location, AuditRegistry.RootKey)
     }
 
     public async Append(entry: Omit<AuditRecord, 'id'>): Promise<void>

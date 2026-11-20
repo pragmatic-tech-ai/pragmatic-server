@@ -1,43 +1,29 @@
-import { readFile } from 'node:fs/promises'
-import { AtomicJsonFile, SerialRuns } from './atomic-json-file.js'
+import { SerialRuns } from './atomic-json-file.js'
 import { EnvStatus, EnvType, type EnvironmentRecord, type IContainerProbe } from './environment-record.js'
+import { FileRecordMap, type IRecordMap } from './record-map.js'
 
-type PersistedEnvironmentRecord = Omit<EnvironmentRecord, 'type'> & { type?: EnvType }
+/** An environment as stored: records from before environment types read as Development. */
+export type PersistedEnvironmentRecord = Omit<EnvironmentRecord, 'type'> & { type?: EnvType }
 
 export class EnvironmentRegistry
 {
-    private static readonly Encoding = 'utf8'
-    private static readonly RootKey = 'environments'
-    private static readonly NotFoundCode = 'ENOENT'
-    private static readonly JsonIndent = 2
+    public static readonly RootKey = 'environments'
     private static readonly NoContainerName = ''
 
     private readonly records = new Map<string, EnvironmentRecord>()
     private readonly writes = new SerialRuns()
+    private readonly map: IRecordMap<PersistedEnvironmentRecord>
 
-    public constructor(private readonly filePath: string, private readonly probe: IContainerProbe)
+    /** `location`: the `{ environments: { <name>: record } }` file, or a record map (the console's Postgres table). */
+    public constructor(location: string | IRecordMap<PersistedEnvironmentRecord>, private readonly probe: IContainerProbe)
     {
+        this.map = typeof location === 'string' ? new FileRecordMap<PersistedEnvironmentRecord>(location, { RootKey: EnvironmentRegistry.RootKey }) : location
     }
 
     public async Load(): Promise<void>
     {
         this.records.clear()
-        let text: string
-        try
-        {
-            text = await readFile(this.filePath, EnvironmentRegistry.Encoding)
-        }
-        catch (err)
-        {
-            if ((err as NodeJS.ErrnoException).code === EnvironmentRegistry.NotFoundCode)
-            {
-                return
-            }
-            throw err
-        }
-        const parsed = JSON.parse(text) as Record<string, Record<string, PersistedEnvironmentRecord> | undefined>
-        const envs = parsed[EnvironmentRegistry.RootKey] ?? {}
-        for (const [name, record] of Object.entries(envs))
+        for (const [name, record] of await this.map.Load())
         {
             this.records.set(name, { ...record, type: record.type ?? EnvType.Development })
         }
@@ -72,13 +58,13 @@ export class EnvironmentRegistry
     public async Put(record: EnvironmentRecord): Promise<void>
     {
         this.records.set(record.name, { ...record })
-        await this.persist()
+        await this.persist(new Set([record.name]))
     }
 
     public async Remove(name: string): Promise<void>
     {
         this.records.delete(name)
-        await this.persist()
+        await this.persist(new Set([name]))
     }
 
     /** Docker-probes unbound records only; a hive-bound (in-cluster) record's status is owned by the hive agent, so it is left untouched. */
@@ -93,23 +79,18 @@ export class EnvironmentRegistry
             const running = await this.probe.Running(record.containerName ?? EnvironmentRegistry.NoContainerName)
             this.records.set(record.name, { ...record, status: running ? EnvStatus.Running : EnvStatus.Stopped })
         }
-        await this.persist()
+        await this.persist(new Set(this.records.keys()))
     }
 
-    /** Writes run one at a time; each snapshots the records when it starts, so a later write carries every earlier change. */
-    private persist(): Promise<void>
+    /** Writes run one at a time; each saves the current records of the names it changed, so a later write carries every earlier change. */
+    private persist(changed: ReadonlySet<string>): Promise<void>
     {
-        return this.writes.Run(() => this.WriteFile(this.Body()))
+        return this.writes.Run(() => this.Commit(changed))
     }
 
-    /** Writes the file atomically; overridable so a test can hold a write. */
-    protected WriteFile(body: object): Promise<void>
+    /** One write of the changed names (the file form rewrites the whole map); overridable so a test can hold a write. */
+    protected Commit(changed: ReadonlySet<string>): Promise<void>
     {
-        return AtomicJsonFile.Write(this.filePath, body, EnvironmentRegistry.JsonIndent)
-    }
-
-    private Body(): object
-    {
-        return { [EnvironmentRegistry.RootKey]: Object.fromEntries(this.records) }
+        return this.map.Save(new Map(this.records), changed)
     }
 }

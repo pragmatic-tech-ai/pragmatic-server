@@ -9,7 +9,7 @@ import { KindClusterName } from './kind-cluster-name.js'
 import { KindHiveOrchestrator } from './kind-hive-orchestrator.js'
 import { NodeExecFile } from './kubectl.js'
 import type { HiveRecord } from './platform-records.js'
-import { FileSignatureStore } from './signature-store.js'
+import { FileSignatureStore, type ISignatureStore } from './signature-store.js'
 
 /**
  * The platform's (dev-box) orchestrator factory: everything HiveOrchestratorFactory drives, with a kubectl-driven hive's images
@@ -23,23 +23,25 @@ export class PlatformHiveOrchestratorFactory extends HiveOrchestratorFactory
     /** The data-root directory of the key store (trust-root public keys, the platform signing pair). */
     public static readonly KeysDirName = 'keys'
 
-    /** The control plane's image verifier: local docker digests, the data root's signature store and key store. */
-    public static VerifierFor(dataRoot: string, digests: IImageDigest = new DockerImageDigest()): CryptoImageVerifier
+    /** The control plane's image verifier: the given digests, signature store (the data root's file when none is given:
+     *  development tools) and the data root's key store. */
+    public static VerifierFor(dataRoot: string, digests: IImageDigest = new DockerImageDigest(), signatures?: ISignatureStore): CryptoImageVerifier
     {
         return new CryptoImageVerifier(
             digests,
-            new FileSignatureStore(join(dataRoot, PlatformHiveOrchestratorFactory.SignaturesFileName)),
+            signatures ?? new FileSignatureStore(join(dataRoot, PlatformHiveOrchestratorFactory.SignaturesFileName)),
             new FileKeyStore(join(dataRoot, PlatformHiveOrchestratorFactory.KeysDirName)))
     }
 
-    public constructor(localContext?: string, dataRoot?: string, private readonly digests: IImageDigest = new DockerImageDigest())
+    /** `signatures`: the platform's signature store (the console's Postgres store); omitted, the data root's file. */
+    public constructor(localContext?: string, dataRoot?: string, private readonly digests: IImageDigest = new DockerImageDigest(), private readonly signatures?: ISignatureStore)
     {
         super(localContext, dataRoot)
     }
 
     protected override Verifier(): IImageVerifier
     {
-        return PlatformHiveOrchestratorFactory.VerifierFor(this.dataRoot, this.digests)
+        return PlatformHiveOrchestratorFactory.VerifierFor(this.dataRoot, this.digests, this.signatures)
     }
 
     protected override ForProvisionedLocal(hive: HiveRecord): IHiveOrchestrator

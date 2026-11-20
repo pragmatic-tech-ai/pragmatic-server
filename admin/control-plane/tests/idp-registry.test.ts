@@ -12,9 +12,9 @@ class HeldWriteIdpRegistry extends IdpRegistry
 {
     public readonly Gate = new WriteGate()
 
-    protected override WriteFile(body: object): Promise<void>
+    protected override Commit(changed: ReadonlySet<string>): Promise<void>
     {
-        return this.Gate.Around(() => super.WriteFile(body))
+        return this.Gate.Around(() => super.Commit(changed))
     }
 }
 

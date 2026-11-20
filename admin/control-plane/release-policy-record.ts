@@ -1,4 +1,5 @@
 import { JsonRecordStore } from './json-record-store.js'
+import type { IRecordMap } from './record-map.js'
 import type { Channel } from './channel.js'
 
 export type ReleasePolicyRecord = {
@@ -14,8 +15,8 @@ export class ReleasePolicyRegistry extends JsonRecordStore<ReleasePolicyRecord>
 {
     private static readonly RootKey = 'releasePolicies'
 
-    public constructor(filePath: string)
+    public constructor(location: string | IRecordMap<ReleasePolicyRecord>)
     {
-        super(filePath, ReleasePolicyRegistry.RootKey)
+        super(location, ReleasePolicyRegistry.RootKey)
     }
 }

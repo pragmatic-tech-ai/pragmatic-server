@@ -1,4 +1,5 @@
 import { JsonRecordStore } from './json-record-store.js'
+import type { IRecordMap } from './record-map.js'
 import type { HiveRecord } from './platform-records.js'
 
 /** The one console advert a tenant's in-hive console last reported; the record id is the tenant id. */
@@ -29,9 +30,9 @@ export class ConsoleAdvertRegistry extends JsonRecordStore<ConsoleAdvertRecord> 
 
     private readonly fingerprintSets = new Map<string, ReadonlySet<string>>()
 
-    public constructor(filePath: string)
+    public constructor(location: string | IRecordMap<ConsoleAdvertRecord>)
     {
-        super(filePath, ConsoleAdvertRegistry.RootKey)
+        super(location, ConsoleAdvertRegistry.RootKey)
     }
 
     public override async Load(): Promise<void>

@@ -1,4 +1,5 @@
 import { JsonRecordStore } from './json-record-store.js'
+import type { IRecordMap } from './record-map.js'
 
 export type GatingRecord = {
     id: string
@@ -11,8 +12,8 @@ export class GatingRegistry extends JsonRecordStore<GatingRecord>
 {
     private static readonly RootKey = 'gating'
 
-    public constructor(filePath: string)
+    public constructor(location: string | IRecordMap<GatingRecord>)
     {
-        super(filePath, GatingRegistry.RootKey)
+        super(location, GatingRegistry.RootKey)
     }
 }

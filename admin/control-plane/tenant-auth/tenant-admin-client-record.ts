@@ -1,4 +1,5 @@
 import { JsonRecordStore } from '../json-record-store.js'
+import type { IRecordMap } from '../record-map.js'
 
 export type TenantAdminClientRecord = {
     id: string
@@ -12,8 +13,8 @@ export class TenantAdminClientRegistry extends JsonRecordStore<TenantAdminClient
 {
     private static readonly RootKey = 'tenant-admin-clients'
 
-    public constructor(filePath: string)
+    public constructor(location: string | IRecordMap<TenantAdminClientRecord>)
     {
-        super(filePath, TenantAdminClientRegistry.RootKey)
+        super(location, TenantAdminClientRegistry.RootKey)
     }
 }

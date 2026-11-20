@@ -1,40 +1,25 @@
-import { readFile } from 'node:fs/promises'
-import { AtomicJsonFile, SerialRuns } from './atomic-json-file.js'
+import { SerialRuns } from './atomic-json-file.js'
 import type { IdpRecord } from './idp-record.js'
+import { FileRecordMap, type IRecordMap } from './record-map.js'
 
 export class IdpRegistry
 {
-    private static readonly Encoding = 'utf8'
-    private static readonly RootKey = 'idps'
-    private static readonly NotFoundCode = 'ENOENT'
-    private static readonly JsonIndent = 2
+    public static readonly RootKey = 'idps'
 
     private readonly records = new Map<string, IdpRecord>()
     private readonly writes = new SerialRuns()
+    private readonly map: IRecordMap<IdpRecord>
 
-    public constructor(private readonly filePath: string)
+    /** `location`: the `{ idps: { <tenantId>: record } }` file, or a record map (the console's Postgres table). */
+    public constructor(location: string | IRecordMap<IdpRecord>)
     {
+        this.map = typeof location === 'string' ? new FileRecordMap<IdpRecord>(location, { RootKey: IdpRegistry.RootKey }) : location
     }
 
     public async Load(): Promise<void>
     {
         this.records.clear()
-        let text: string
-        try
-        {
-            text = await readFile(this.filePath, IdpRegistry.Encoding)
-        }
-        catch (err)
-        {
-            if ((err as NodeJS.ErrnoException).code === IdpRegistry.NotFoundCode)
-            {
-                return
-            }
-            throw err
-        }
-        const parsed = JSON.parse(text) as Record<string, Record<string, IdpRecord> | undefined>
-        const idps = parsed[IdpRegistry.RootKey] ?? {}
-        for (const [tenantId, record] of Object.entries(idps))
+        for (const [tenantId, record] of await this.map.Load())
         {
             this.records.set(tenantId, { ...record })
         }
@@ -53,29 +38,24 @@ export class IdpRegistry
     public async Put(record: IdpRecord): Promise<void>
     {
         this.records.set(record.tenantId, { ...record })
-        await this.persist()
+        await this.persist(new Set([record.tenantId]))
     }
 
     public async Delete(tenantId: string): Promise<void>
     {
         this.records.delete(tenantId)
-        await this.persist()
+        await this.persist(new Set([tenantId]))
     }
 
-    /** Writes run one at a time; each snapshots the records when it starts, so a later write carries every earlier change. */
-    private persist(): Promise<void>
+    /** Writes run one at a time; each saves the current records of the tenants it changed, so a later write carries every earlier change. */
+    private persist(changed: ReadonlySet<string>): Promise<void>
     {
-        return this.writes.Run(() => this.WriteFile(this.Body()))
+        return this.writes.Run(() => this.Commit(changed))
     }
 
-    /** Writes the file atomically; overridable so a test can hold a write. */
-    protected WriteFile(body: object): Promise<void>
+    /** One write of the changed tenants (the file form rewrites the whole map); overridable so a test can hold a write. */
+    protected Commit(changed: ReadonlySet<string>): Promise<void>
     {
-        return AtomicJsonFile.Write(this.filePath, body, IdpRegistry.JsonIndent)
-    }
-
-    private Body(): object
-    {
-        return { [IdpRegistry.RootKey]: Object.fromEntries(this.records) }
+        return this.map.Save(new Map(this.records), changed)
     }
 }
