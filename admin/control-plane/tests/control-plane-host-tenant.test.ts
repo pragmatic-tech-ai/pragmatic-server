@@ -16,7 +16,7 @@ import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal, type Oper
 import { HostSessions } from './host-sessions.js'
 
 /**
- * The operator listener's structural isolation: with the tenant plane split onto its own `TenantPlaneHost`, the
+ * The operator listener's structural isolation: with the tenant plane split onto its own `TenantConsoleHost`, the
  * operator host has no tenant routes at all. A `/tenant-api/*` request is just an unmatched path (operator
  * static/404), never a tenant surface.
  */

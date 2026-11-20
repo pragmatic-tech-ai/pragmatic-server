@@ -16,7 +16,7 @@ import type { IDesktopSessionConnections } from './desktop-endpoint.js'
 import type { IPrincipalConnections } from './tenant-principal-sessions.js'
 import { TenantAuditEntry } from './tenant-audit-entry.js'
 import { TenantClientAddress } from './tenant-client-address.js'
-import type { TenantSession } from './tenant-session.js'
+import type { TenantSession } from './tenant-sessions.js'
 
 /** Opens the onward WebSocket to an environment server with a bearer credential; resolves once it is open. */
 export interface IUpstreamDialer
@@ -318,14 +318,14 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         }
     }
 
-    /** Closes the principal's relays (its password changed) except those under `keepSessionId`; returns how many. */
-    public ClosePrincipal(tenantId: string, principalId: string, keepSessionId?: string): number
+    /** Closes the principal's relays (an Owner reset ended its sessions); returns how many. */
+    public ClosePrincipal(tenantId: string, principalId: string): number
     {
         let closed = 0
         for (const pipe of [...this.pipes])
         {
             const s = pipe.context.session
-            if (s.tenantId === tenantId && s.principalId === principalId && s.id !== keepSessionId)
+            if (s.tenantId === tenantId && s.principalId === principalId)
             {
                 pipe.Close(RelayPipe.PolicyViolation)
                 closed++
@@ -384,18 +384,6 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
     public Reinstate(): void
     {
         this.retiredWith = undefined
-    }
-
-    /** Re-homes relays opened under a rotated session so a later ClosePrincipal keeps them. */
-    public MoveSession(oldSessionId: string, newSessionId: string): void
-    {
-        for (const pipe of this.pipes)
-        {
-            if (pipe.context.session.id === oldSessionId)
-            {
-                pipe.context.session = { ...pipe.context.session, id: newSessionId }
-            }
-        }
     }
 
     /**

@@ -1,6 +1,6 @@
-import { readFile } from 'node:fs/promises'
 import { Signal, type IDisposable } from '@pragmatic-tech-ai/todl-runtime'
-import { AtomicJsonFile, SerialRuns } from './atomic-json-file.js'
+import { SerialRuns } from './atomic-json-file.js'
+import { RecordSlot, type IRecordMap } from './record-map.js'
 
 /** Whether the platform still takes this console's adverts. The values are the persisted `state` field. */
 export enum ConsoleRegistrationState
@@ -54,9 +54,9 @@ class ListenerIsolatingSignal<T> extends Signal<T>
 }
 
 /**
- * The in-hive console's registration with the platform, kept in `<dataRoot>/console-registration.json`
- * (`{ "state": "registered" | "refused" }`). A missing, empty, unreadable or malformed file opens Registered, so a bad file
- * never locks the desktop out. Observe applies each advert outcome: an Accepted answer from any send restores Registered;
+ * The in-hive console's registration with the platform: the record `state` (`"registered" | "refused"`) of the console's
+ * database (`records_console_registration`), or of `<dataRoot>/console-registration.json` (the pre-A5 file the importer
+ * reads). A missing, unreadable or malformed record opens Registered, so a bad record never locks the desktop out. Observe applies each advert outcome: an Accepted answer from any send restores Registered;
  * RefusalThreshold consecutive Refused answers on Timer sends make it Refused; a Transient Timer answer resets that streak;
  * Start and Change sends that are refused or transient change nothing. The streak lives in memory only: a restarted console
  * keeps its state but counts again from 0. Writes are atomic and serialised; a failed write keeps the in-memory state, is
@@ -74,8 +74,8 @@ export class ConsoleRegistration
     public static readonly RefusedMessage = 'This console is no longer registered with the platform. Ask your administrator.'
     public static readonly RefusedBody: Readonly<{ error: string; message: string }> =
         Object.freeze({ error: ConsoleRegistration.RefusedError, message: ConsoleRegistration.RefusedMessage })
-    private static readonly StateKey = 'state'
-    private static readonly Utf8 = 'utf8'
+    /** The record's key (and the pre-A5 file's root member). */
+    public static readonly StateKey = 'state'
     private static readonly WriteFailedPrefix = '[console-registration] state not saved: '
     private static readonly ListenerFailedPrefix = '[console-registration] a Changed listener failed: '
     private static readonly UnknownErrorName = 'unknown error'
@@ -88,7 +88,7 @@ export class ConsoleRegistration
     private streak = 0
 
     private constructor(
-        private readonly filePath: string,
+        private readonly slot: RecordSlot<unknown>,
         state: ConsoleRegistrationState,
         private readonly log: (line: string) => void)
     {
@@ -98,28 +98,32 @@ export class ConsoleRegistration
             err => this.Report(ConsoleRegistration.ListenerFailedPrefix + ConsoleRegistration.NameOf(err)))
     }
 
-    /** Never throws and never writes: a missing, empty, unreadable or malformed file opens Registered. `log` takes failure lines. */
-    public static async Open(path: string, log: (line: string) => void = line => console.error(line)): Promise<ConsoleRegistration>
+    /**
+     * Never throws and never writes: a missing, unreadable or malformed record opens Registered. `location` is a record map
+     * or the path of the pre-A5 file; `log` takes failure lines.
+     */
+    public static async Open(location: string | IRecordMap<unknown>, log: (line: string) => void = line => console.error(line)): Promise<ConsoleRegistration>
     {
-        let text: string
+        const slot = RecordSlot.Of<unknown>(location, ConsoleRegistration.StateKey)
+        let stored: unknown
         try
         {
-            text = await readFile(path, ConsoleRegistration.Utf8)
+            stored = await slot.Read()
         }
         catch
         {
-            return new ConsoleRegistration(path, ConsoleRegistrationState.Registered, log)
+            return new ConsoleRegistration(slot, ConsoleRegistrationState.Registered, log)
         }
-        return new ConsoleRegistration(path, ConsoleRegistration.StateIn(text), log)
+        return new ConsoleRegistration(slot, ConsoleRegistration.StateOf(stored), log)
     }
 
     /**
-     * Opens Registered without reading the file, for a console with no advert sender: only an advert answer could ever
+     * Opens Registered without reading the record, for a console with no advert sender: only an advert answer could ever
      * restore Registered there, so a saved refusal must not be honoured. Writes nothing until an observation changes the state.
      */
-    public static OpenRegistered(path: string, log: (line: string) => void = line => console.error(line)): ConsoleRegistration
+    public static OpenRegistered(location: string | IRecordMap<unknown>, log: (line: string) => void = line => console.error(line)): ConsoleRegistration
     {
-        return new ConsoleRegistration(path, ConsoleRegistrationState.Registered, log)
+        return new ConsoleRegistration(RecordSlot.Of<unknown>(location, ConsoleRegistration.StateKey), ConsoleRegistrationState.Registered, log)
     }
 
     public get State(): ConsoleRegistrationState
@@ -144,24 +148,10 @@ export class ConsoleRegistration
         await this.Persist()
     }
 
-    /** The persisted state when `text` is `{ "state": "registered" | "refused" }`; Registered otherwise. */
-    private static StateIn(text: string): ConsoleRegistrationState
+    /** The persisted state when the record is `"refused"`; Registered otherwise. */
+    private static StateOf(stored: unknown): ConsoleRegistrationState
     {
-        let parsed: unknown
-        try
-        {
-            parsed = JSON.parse(text)
-        }
-        catch
-        {
-            return ConsoleRegistrationState.Registered
-        }
-        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
-        {
-            return ConsoleRegistrationState.Registered
-        }
-        const value = (parsed as Record<string, unknown>)[ConsoleRegistration.StateKey]
-        return value === ConsoleRegistrationState.Refused ? ConsoleRegistrationState.Refused : ConsoleRegistrationState.Registered
+        return stored === ConsoleRegistrationState.Refused ? ConsoleRegistrationState.Refused : ConsoleRegistrationState.Registered
     }
 
     /** Updates the streak and returns the state the outcome leads to. */
@@ -231,7 +221,7 @@ export class ConsoleRegistration
             }
             try
             {
-                await AtomicJsonFile.Write(this.filePath, { [ConsoleRegistration.StateKey]: state })
+                await this.slot.Write(state)
                 this.persisted = state
             }
             catch (err)

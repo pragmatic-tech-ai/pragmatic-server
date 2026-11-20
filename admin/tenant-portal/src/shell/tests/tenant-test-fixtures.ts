@@ -4,11 +4,14 @@ import { ClipboardService } from '@pragmatic-tech-ai/mural/framework/shell/servi
 import { ContentHostService } from '@pragmatic-tech-ai/mural/framework/shell/services/content-host-service.js'
 import { DialogService, type DialogOptions } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
-import { TenantApiError, type TenantApiClient } from '../../tenant-api-client.js'
-import { EnvStatus, EnvType, Template } from '../../tenant-types.js'
-import type { AdminCapabilitiesDto, AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, CreateGraphParams, EmailDomainsDto, EnvironmentDto, GrantMutationDto, GraphDto, HiveDto, HiveHealthDto, HiveRolloutDto, IssueTokenParams, ManifestDto, PasswordChangedDto, SecurityCatalogDto, SecurityChangesDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TeamMemberDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from '../../tenant-types.js'
-import type { IPageReloader } from '../page-reloader.js'
+import { ApiError, type TenantApiClient } from '../../tenant-api-client.js'
+import { ConfigurationApplyOutcome, EnvStatus, EnvType, Template } from '../../tenant-types.js'
+import type { ConfigurationApplyDto, ConfigurationComponentDetailDto, ConfigurationComponentDto, ConfigurationDiffDto, ConfigurationOptionDto, ConfigurationTargetDto, ConfigurationVersionDto, ConfigurationVersionSummaryDto } from '../../tenant-types.js'
+import type { AdminCapabilitiesDto, AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, CreateGraphParams, EmailDomainsDto, EnvironmentDto, GrantMutationDto, GraphDto, HiveDto, HiveHealthDto, HiveRolloutDto, IssueTokenParams, ManifestDto, SecurityCatalogDto, SecurityChangesDto, SecurityModelDto, ServiceTokenSummaryDto, TeamMemberDto, TenantEvent, TenantProfileDto, TokenIssuedDto } from '../../tenant-types.js'
+import { AppSession, type IPageReloader } from '@pragmatic-tech-ai/pragmatic-app-shell'
+import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import { TenantSessionService } from '../tenant-session-service.js'
+import { TenantShell } from '../tenant-shell.js'
 
 // Counts reloads instead of touching window.location.
 export class FakeReloader implements IPageReloader
@@ -163,13 +166,118 @@ export class FakeTenantApi
     // frame already in flight); ServerClose closes it from the server side.
     public readonly LogStreams: Array<{ Name: string, Push: (text: string) => void, Late: (text: string) => void, ServerClose: () => void, Closed: boolean }> = []
     public readonly EventHandlers: Array<(ev: TenantEvent) => void> = []
-    public BeginLoginCount = 0
-    public PasswordReply: PasswordChangedDto = { ok: true, otherSessionsEnded: true }
-    // While set, a password change waits for it (a submit in flight).
-    public PasswordChangeHold: Promise<void> | undefined
-    // False: the session probe answers null (no session).
-    public SessionAlive = true
     public LogoutCount = 0
+    // What the shell's session service subscribes to and reads, as the real client (an AppSessionClient) has them.
+    public readonly Unauthorized = new Signal<ApiError>()
+    public readonly Forbidden = new Signal<ApiError>()
+    public readonly Config = TenantShell.Config
+    public readonly ChangesPassword = false
+
+    // The configuration repository: each component's descriptor options, its versions' documents (version n at
+    // index n - 1), its targets and its applies. SaveRefusal, when set, refuses the next save with it.
+    public readonly ConfigurationOptions = new Map<string, ConfigurationOptionDto[]>()
+    public readonly ConfigurationDocuments = new Map<string, unknown[]>()
+    public readonly ConfigurationTargets = new Map<string, ConfigurationTargetDto[]>()
+    public readonly ConfigurationApplies = new Map<string, ConfigurationApplyDto[]>()
+    public ConfigurationDiff: ConfigurationDiffDto = { from: 0, to: 1, changes: [] }
+    public ApplyOutcome = ConfigurationApplyOutcome.Applied
+    public ApplyDetail: string | null = null
+
+    // Seeds a component with its documents (versions 1..n) and its target environments (nothing applied yet).
+    public WithConfiguration(component: string, documents: unknown[], environments: string[] = [], options: ConfigurationOptionDto[] = []): this
+    {
+        this.ConfigurationDocuments.set(component, [...documents])
+        this.ConfigurationOptions.set(component, options)
+        this.ConfigurationTargets.set(component, environments.map(environment => ({
+            environment, hive: 'hive-1', namespace: 'tenant-' + environment, deployment: component, applied: null,
+        })))
+        this.ConfigurationApplies.set(component, [])
+        return this
+    }
+
+    public async ListConfigurationComponents(): Promise<ConfigurationComponentDto[]>
+    {
+        await this.Enter('ListConfigurationComponents')
+        return [...this.ConfigurationDocuments.keys()].map(component => ({
+            component, componentVersion: '1.0.0', descriptorDigest: 'sha256:' + component,
+            head: this.HeadOf(component), targets: (this.ConfigurationTargets.get(component) ?? []).map(t => ({ ...t })),
+        }))
+    }
+
+    public async GetConfigurationComponent(component: string): Promise<ConfigurationComponentDetailDto>
+    {
+        await this.Enter('GetConfigurationComponent', component)
+        const documents = this.ConfigurationDocuments.get(component)
+        if (documents === undefined)
+        {
+            throw new ApiError(404, 'unknown component')
+        }
+        return {
+            component, componentVersion: '1.0.0', descriptorDigest: 'sha256:' + component,
+            options: this.ConfigurationOptions.get(component) ?? [],
+            versions: documents.map((_, i) => this.Summary(i + 1)),
+            applies: [...(this.ConfigurationApplies.get(component) ?? [])],
+        }
+    }
+
+    public async GetConfigurationVersion(component: string, version: number): Promise<ConfigurationVersionDto>
+    {
+        await this.Enter('GetConfigurationVersion', component, version)
+        const document = this.ConfigurationDocuments.get(component)?.[version - 1]
+        if (document === undefined)
+        {
+            throw new ApiError(404, 'unknown version')
+        }
+        return { ...this.Summary(version), document }
+    }
+
+    public async DiffConfigurationVersions(component: string, from: number, to: number): Promise<ConfigurationDiffDto>
+    {
+        await this.Enter('DiffConfigurationVersions', component, from, to)
+        return { ...this.ConfigurationDiff, from, to }
+    }
+
+    // Recorded as ['SaveConfigurationVersion', component, basedOn, document, comment]; a basedOn that is not the head is a 409.
+    public async SaveConfigurationVersion(component: string, basedOn: number, document: unknown, comment: string): Promise<ConfigurationVersionSummaryDto>
+    {
+        await this.Enter('SaveConfigurationVersion', component, basedOn, document, comment)
+        const head = this.HeadOf(component) ?? 0
+        if (basedOn !== head)
+        {
+            throw new ApiError(409, 'The head moved.', undefined, { error: 'The head moved.', head })
+        }
+        const documents = this.ConfigurationDocuments.get(component) ?? []
+        documents.push(document)
+        this.ConfigurationDocuments.set(component, documents)
+        return this.Summary(documents.length)
+    }
+
+    public async ApplyConfigurationVersion(component: string, version: number, environment: string): Promise<ConfigurationApplyDto>
+    {
+        await this.Enter('ApplyConfigurationVersion', component, version, environment)
+        const record: ConfigurationApplyDto = {
+            id: 'apply-' + String(this.Calls.length), version, environment, outcome: this.ApplyOutcome, requestedBy: 'owner@example.test',
+            requestedAt: '2026-11-20T10:00:00.000Z', completedAt: '2026-11-20T10:00:01.000Z', detail: this.ApplyDetail,
+        }
+        this.ConfigurationApplies.get(component)?.unshift(record)
+        const target = this.ConfigurationTargets.get(component)?.find(t => t.environment === environment)
+        if (target !== undefined && this.ApplyOutcome === ConfigurationApplyOutcome.Applied)
+        {
+            target.applied = version
+        }
+        return record
+    }
+
+    private HeadOf(component: string): number | null
+    {
+        const count = this.ConfigurationDocuments.get(component)?.length ?? 0
+        return count === 0 ? null : count
+    }
+
+    private Summary(version: number): ConfigurationVersionSummaryDto
+    {
+        return { version, componentVersion: '1.0.0', descriptorDigest: 'sha256:d', author: 'owner@example.test', createdAt: '2026-11-0' + String(version % 10) + 'T09:00:00.000Z', comment: 'v' + String(version) }
+    }
 
     public WithHive(id: string, displayName: string = 'Hive ' + id): this
     {
@@ -219,18 +327,12 @@ export class FakeTenantApi
         }
     }
 
-    public async Session(): Promise<SessionDto | null>
-    {
-        await this.Enter('Session')
-        return this.SessionAlive ? { tenantId: 'tenant-1', principalId: 'principal-1', email: 'owner@example.test' } : null
-    }
-
     public async Profile(): Promise<TenantProfileDto>
     {
         await this.Enter('Profile')
         if (this.ProfileDto === undefined)
         {
-            throw new TenantApiError(404, 'no profile')
+            throw new ApiError(404, 'no profile')
         }
         return this.ProfileDto
     }
@@ -276,23 +378,10 @@ export class FakeTenantApi
         return copy
     }
 
-    public BeginLogin(): void
-    {
-        this.BeginLoginCount++
-    }
-
     public async Logout(): Promise<void>
     {
         await this.Enter('Logout')
         this.LogoutCount++
-    }
-
-    // The own-password change: recorded as ['ChangeOwnPassword', current, new, confirm]; answers PasswordReply.
-    public async ChangeOwnPassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<PasswordChangedDto>
-    {
-        await this.Enter('ChangeOwnPassword', currentPassword, newPassword, confirmPassword)
-        await this.PasswordChangeHold
-        return this.PasswordReply
     }
 
     public async ListHives(): Promise<HiveDto[]>
@@ -312,7 +401,7 @@ export class FakeTenantApi
         await this.Enter('CreateEnvironment', params)
         if (this.Environments.some(e => e.name === params.name))
         {
-            throw new TenantApiError(409, 'environment exists')
+            throw new ApiError(409, 'environment exists')
         }
         this.WithEnvironment(params.name, EnvStatus.Unknown)
         return { ...this.Environments[this.Environments.length - 1] }
@@ -483,7 +572,7 @@ export class FakeTenantApi
         const list = this.Graphs.get(env) ?? []
         if (list.some(g => g.name === params.name))
         {
-            throw new TenantApiError(409, 'A graph with that name already exists in this environment.')
+            throw new ApiError(409, 'A graph with that name already exists in this environment.')
         }
         const graph: GraphDto = { name: params.name, description: params.description, createdAt: '2026-11-06T12:00:00.000Z', packageCount: 0 }
         list.push(graph)
@@ -541,7 +630,7 @@ export class FakeTenantApi
         const env = this.Environments.find(e => e.name === name)
         if (env === undefined)
         {
-            throw new TenantApiError(404, 'no such environment')
+            throw new ApiError(404, 'no such environment')
         }
         env.status = status
         return { ...env }
@@ -564,6 +653,9 @@ export class FakeTenantApi
 export class TenantTestHost
 {
     public static readonly AllCapabilities: AdminCapabilitiesDto = { envs: true, adopt: true, access: true, settings: true }
+    public static readonly Subject = 'principal-1'
+    public static readonly TenantId = 'tenant-1'
+    public static readonly Email = 'owner@example.test'
 
     public readonly Provider = new ServiceProvider()
     public readonly Reloader = new FakeReloader()
@@ -574,15 +666,26 @@ export class TenantTestHost
     {
         this.Provider.register(ContentHostService.Key, (p) => new ContentHostService(p))
         this.Session = new TenantSessionService(this.Provider)
-        this.Session.Initialize(api.AsClient(), { tenantId: 'tenant-1', principalId: 'principal-1', email: 'owner@example.test' },
-            capabilities === null ? undefined : TenantTestHost.Profile(capabilities), this.Reloader)
+        this.Session.Initialize(api.AsClient(), TenantTestHost.SessionFor(), this.Reloader,
+            capabilities === null ? undefined : TenantTestHost.Profile(capabilities))
         this.Provider.registerInstance(TenantSessionService.Key, this.Session)
+    }
+
+    // The session the console's host reports: the realm's subject with the tenant, email and role claims.
+    public static SessionFor(email: string | null = TenantTestHost.Email, roles: readonly string[] = ['admin']): AppSession
+    {
+        const claims: Record<string, readonly string[]> = { tenant: [TenantTestHost.TenantId], roles, app_roles: [] }
+        if (email !== null)
+        {
+            claims.email = [email]
+        }
+        return AppSession.FromWire({ subject: TenantTestHost.Subject, claims }, TenantShell.Config)
     }
 
     public static Profile(capabilities: AdminCapabilitiesDto): TenantProfileDto
     {
         return {
-            principalId: 'principal-1', email: 'owner@example.test', roleLabel: 'Tenant owner',
+            principalId: 'principal-1', email: 'owner@example.test', roleLabel: 'Tenant admin',
             tenant: { id: 'tenant-1', displayName: 'Example Tenant', organisation: 'Example Org' },
             hive: { id: 'hive-1', displayName: 'Example Hive' }, capabilities, ownerContact: 'owner@example.test',
         }

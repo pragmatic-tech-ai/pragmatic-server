@@ -23,7 +23,7 @@
  * environment is invisible to the hive's orchestrator and would make the hive-detail health 500. This mirrors the
  * proven rollout-push-smoke.ts, which is the real-cluster model for an observable roll.
  */
-import { generateKeyPairSync, randomBytes } from 'node:crypto'
+import { generateKeyPairSync } from 'node:crypto'
 import { SmokeCluster } from './smoke-cluster.js'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -80,8 +80,11 @@ import { FileKeyStore } from './key-store.js'
 import { FileSignatureStore } from './signature-store.js'
 import { TenantAdminClientRegistry } from './tenant-auth/tenant-admin-client-record.js'
 import { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
-import { TenantPlaneHost } from './tenant-plane-host.js'
-import { ControlPlaneServer } from './server.js'
+import { TenantConsoleHost } from './tenant-console-host.js'
+import { TenantPlaneComposer } from './tenant-plane-composer.js'
+import { TenantSessions } from './tenant-auth/tenant-sessions.js'
+import { InMemoryOidcFlowStateStore } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
+import { MapSecretStore } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc/testing'
 import { InProcessRolloutClient } from './tenant-api/in-process-rollout-client.js'
 
 /**
@@ -148,7 +151,6 @@ export class TenantLoginE2eSmoke
     private static readonly EnvPortFloor = 8100
     private static readonly IdpPortFloor = 12100
     private static readonly SecretTtlHours = 168
-    private static readonly MasterKeyBytes = 32
     // Smoke-only: the plane is served over loopback http, so the browser must send a non-Secure pts_session cookie.
     private static readonly SecureCookie = false
 
@@ -190,9 +192,6 @@ export class TenantLoginE2eSmoke
 
     private static readonly SeedDirPrefix = 'tenant-login-seed-'
 
-    private static readonly TenantPortEnvKey = 'PRAGMATIC_TENANT_ADMIN_PORT'
-    private static readonly TenantPortEnvValue = '1'
-    private static readonly TenantBaseDomainEnvKey = 'PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN'
 
     private static readonly TenantPortalRel = '../tenant-portal/dist'
     private static readonly HostResolverRules = '--host-resolver-rules=MAP *.admin.localtest 127.0.0.1, MAP host.docker.internal 127.0.0.1'
@@ -238,7 +237,6 @@ export class TenantLoginE2eSmoke
     private static readonly InfoPublished = 'published + gated versions: '
     private static readonly InfoRunningImage = 'hive running image after roll: '
     private static readonly VersionSep = ', '
-    private static readonly PlaneUndefined = 'ComposeTenantPlane returned undefined'
 
     private static readonly HostSep = '.'
     private static readonly PortSep = ':'
@@ -387,23 +385,29 @@ export class TenantLoginE2eSmoke
         return plane.service.List().find(r => r.name === this.envName)
     }
 
-    /** Composes the real tenant plane and starts its host on an ephemeral loopback port. [listener up] */
-    private async Listen(plane: ComposedPlane): Promise<TenantPlaneHost | undefined>
+    /**
+     * Composes the real tenant plane (the app-host relying party over the console's clients; sessions, flow state and the
+     * client secrets in memory: the smoke keeps nothing) and starts its host on an ephemeral loopback port. [listener up]
+     */
+    private async Listen(plane: ComposedPlane): Promise<TenantConsoleHost | undefined>
     {
         const S = TenantLoginE2eSmoke
-        const env: NodeJS.ProcessEnv = { [S.TenantPortEnvKey]: S.TenantPortEnvValue, [S.TenantBaseDomainEnvKey]: S.BaseDomain }
-        const masterKey = randomBytes(S.MasterKeyBytes)
-        const tenantPlane = ControlPlaneServer.ComposeTenantPlane(
-            env, this.dataRoot, plane.idpService, plane.directory, S.SecureCookie, plane.service, new InProcessRolloutClient(plane.deployments),
-            plane.orchestrators, plane.placement, masterKey, plane.adminClientRegistry, S.SecretTtlHours)
-        if (tenantPlane === undefined)
-        {
-            this.Check(S.M_ListenerUp, false, S.PlaneUndefined)
-            return undefined
-        }
         const resolver = new PortedTenantHostResolver(S.BaseDomain, S.ExternalScheme, plane.directory)
+        const tenantPlane = TenantPlaneComposer.BuildTenantPlane({
+            Idp: plane.idpService,
+            Directory: plane.directory,
+            Service: plane.service,
+            Rollout: new InProcessRolloutClient(plane.deployments),
+            Orchestrators: plane.orchestrators,
+            Placement: plane.placement,
+            Sessions: new TenantSessions(TenantSessions.InMemory(), S.SecureCookie),
+            Resolver: resolver,
+            FlowStates: new InMemoryOidcFlowStateStore(),
+            ClientSecrets: { Store: new MapSecretStore(), Registry: plane.adminClientRegistry, TtlMs: TenantPlaneComposer.SecretTtlMsOf(S.SecretTtlHours) },
+            Desktop: true,
+        })
         const here = dirname(fileURLToPath(import.meta.url))
-        const host = new TenantPlaneHost(tenantPlane, resolver, join(here, S.TenantPortalRel), plane.service)
+        const host = new TenantConsoleHost({ Plane: tenantPlane, Resolver: resolver, Service: plane.service, PortalRoot: join(here, S.TenantPortalRel) })
         await host.Listen(0, S.BindHost)
         const port = host.Address().port
         this.Check(S.M_ListenerUp, Number.isInteger(port) && port > 0, S.PortDetail + String(port))

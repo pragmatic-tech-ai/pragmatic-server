@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { ApiError, ControlPlaneClient } from '../src/api-client.js'
+import { ApiError, ControlPlaneClient, ControlPlaneErrors } from '../src/api-client.js'
 import { AgentInstallState, AgentInstallStep } from '../src/portal-types.js'
 import type { AgentInstallStatusDto, GatingDto, HiveDto, HiveRolloutDto, ManifestDto, OperatorSummaryDto, ReleaseRefreshDto, SelectionDto, TenantDto } from '../src/portal-types.js'
 
@@ -36,7 +36,7 @@ describe('ControlPlaneClient platform records', () =>
         FetchStub.Install([{ id: 'c1', displayName: 'Acme' }])
         const clients = await new ControlPlaneClient().ListClients()
         assert.equal(FetchStub.Calls[0]!.route, '/api/clients')
-        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'GET')
         assert.deepEqual(clients, [{ id: 'c1', displayName: 'Acme' }])
     })
 
@@ -190,7 +190,7 @@ describe('ControlPlaneClient platform records', () =>
         const manifests = await new ControlPlaneClient().ListManifests()
         const call = FetchStub.Calls[0]!
         assert.equal(call.route, '/api/manifests')
-        assert.equal(call.init?.method, undefined)
+        assert.equal(call.init?.method, 'GET')
         assert.equal(call.init?.body, undefined)
         assert.equal(call.init?.credentials, 'same-origin')
         assert.deepEqual(manifests, payload)
@@ -263,7 +263,7 @@ describe('ControlPlaneClient platform records', () =>
         await new ControlPlaneClient().SetManifestWithdrawn('1.0.0', false)
         assert.equal(FetchStub.Calls[0]!.route, '/api/manifests/1.0.0/withdrawn')
         assert.equal(FetchStub.Calls[0]!.init?.method, 'DELETE')
-        assert.equal(FetchStub.Calls[0]!.init?.body, undefined)
+        assert.equal(FetchStub.Calls[0]!.init?.body, '{}')
     })
 
     it('SetManifestWithdrawn path-encodes the version', async () =>
@@ -280,7 +280,7 @@ describe('ControlPlaneClient platform records', () =>
         const operators = await new ControlPlaneClient().ListOperators()
         const call = FetchStub.Calls[0]!
         assert.equal(call.route, '/api/operators')
-        assert.equal(call.init?.method, undefined)
+        assert.equal(call.init?.method, 'GET')
         assert.equal(call.init?.body, undefined)
         assert.equal(call.init?.credentials, 'same-origin')
         assert.deepEqual(operators, payload)
@@ -293,7 +293,7 @@ describe('ControlPlaneClient platform records', () =>
         const gating = await new ControlPlaneClient().ListGating()
         const call = FetchStub.Calls[0]!
         assert.equal(call.route, '/api/gating')
-        assert.equal(call.init?.method, undefined)
+        assert.equal(call.init?.method, 'GET')
         assert.equal(call.init?.body, undefined)
         assert.equal(call.init?.credentials, 'same-origin')
         assert.deepEqual(gating, payload)
@@ -306,7 +306,7 @@ describe('ControlPlaneClient platform records', () =>
         const selections = await new ControlPlaneClient().ListSelections()
         const call = FetchStub.Calls[0]!
         assert.equal(call.route, '/api/selections')
-        assert.equal(call.init?.method, undefined)
+        assert.equal(call.init?.method, 'GET')
         assert.equal(call.init?.body, undefined)
         assert.equal(call.init?.credentials, 'same-origin')
         assert.deepEqual(selections, payload)
@@ -319,7 +319,7 @@ describe('ControlPlaneClient platform records', () =>
         const rollouts = await new ControlPlaneClient().ListRollouts()
         const call = FetchStub.Calls[0]!
         assert.equal(call.route, '/api/rollouts')
-        assert.equal(call.init?.method, undefined)
+        assert.equal(call.init?.method, 'GET')
         assert.equal(call.init?.body, undefined)
         assert.equal(call.init?.credentials, 'same-origin')
         assert.deepEqual(rollouts, payload)
@@ -342,7 +342,7 @@ describe('ControlPlaneClient platform records', () =>
         FetchStub.Install(payload)
         assert.deepEqual(await new ControlPlaneClient().GetAgentInstall('h1'), payload)
         assert.equal(FetchStub.Calls[0]!.route, '/api/hives/h1/agent-install')
-        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'GET')
         globalThis.fetch = (async () => ({ ok: false, status: 404, json: async () => ({ error: 'Not found' }) }) as Response) as typeof fetch
         assert.equal(await new ControlPlaneClient().GetAgentInstall('h1'), null)
         globalThis.fetch = (async () => ({ ok: false, status: 500, json: async () => ({ error: 'boom' }) }) as Response) as typeof fetch
@@ -363,7 +363,7 @@ describe('ControlPlaneClient platform records', () =>
         globalThis.fetch = (async () => ({ ok: false, status: 409, json: async () => ({ error: 'Could not remove', code: 'agent-uninstall-failed' }) }) as Response) as typeof fetch
         const err = await new ControlPlaneClient().DeleteHive('h1').then(() => undefined, (e: unknown) => e)
         assert.ok(err instanceof ApiError)
-        assert.equal(err.Code, ApiError.AgentUninstallFailedCode)
+        assert.equal(err.Code, ControlPlaneErrors.AgentUninstallFailedCode)
         assert.equal(err.message, 'Could not remove')
     })
 

@@ -45,7 +45,7 @@ describe('ControlPlaneClient graphs', () =>
         FetchStub.Install([])
         await new ControlPlaneClient().ListGraphs('dev1')
         assert.equal(FetchStub.Calls[0]!.route, '/api/environments/dev1/graphs')
-        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'GET')
     })
 
     it('DeleteGraph DELETEs the graph under the nested env graphs route', async () =>
@@ -79,7 +79,7 @@ describe('ControlPlaneClient promotion', () =>
         FetchStub.Install(loaded)
         const dto = await new ControlPlaneClient().GetLoadedGraph('rt1')
         assert.equal(FetchStub.Calls[0]!.route, '/api/environments/rt1/loaded-graph')
-        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'GET')
         assert.deepEqual(dto, loaded)
     })
 
@@ -130,7 +130,7 @@ describe('ControlPlaneClient release policy', () =>
         FetchStub.Install([{ tenantId: 't1' }])
         const out = await new ControlPlaneClient().ListPolicies()
         assert.equal(FetchStub.Calls[0]!.route, '/api/policies')
-        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'GET')
         assert.deepEqual(out, [{ tenantId: 't1' }])
     })
 
@@ -156,14 +156,14 @@ describe('ControlPlaneClient release policy', () =>
         assert.deepEqual(out, { tenantId: 't1', minVersion: '1.2.0' })
     })
 
-    it('ClearTenantMinVersion DELETEs without body', async () =>
+    it('ClearTenantMinVersion DELETEs with an empty JSON body', async () =>
     {
         FetchStub.Install({ tenantId: 't1' })
         const out = await new ControlPlaneClient().ClearTenantMinVersion('t1')
         const call = FetchStub.Calls[0]!
         assert.equal(call.route, '/api/tenants/t1/policy/min-version')
         assert.equal(call.init?.method, 'DELETE')
-        assert.equal(call.init?.body, undefined)
+        assert.equal(call.init?.body, '{}')
         assert.deepEqual(out, { tenantId: 't1' })
     })
 
@@ -179,14 +179,14 @@ describe('ControlPlaneClient release policy', () =>
         assert.deepEqual(out, { tenantId: 't1', hold })
     })
 
-    it('ClearTenantHold DELETEs without body', async () =>
+    it('ClearTenantHold DELETEs with an empty JSON body', async () =>
     {
         FetchStub.Install({ tenantId: 't1' })
         const out = await new ControlPlaneClient().ClearTenantHold('t1')
         const call = FetchStub.Calls[0]!
         assert.equal(call.route, '/api/tenants/t1/policy/hold')
         assert.equal(call.init?.method, 'DELETE')
-        assert.equal(call.init?.body, undefined)
+        assert.equal(call.init?.body, '{}')
         assert.deepEqual(out, { tenantId: 't1' })
     })
 })
@@ -200,7 +200,7 @@ describe('ControlPlaneClient activity and history', () =>
         FetchStub.Install([{ id: 'a1', actor: 'x', method: 'POST', path: '/p', status: 200, at: 't' }])
         const rows = await new ControlPlaneClient().ListActivity()
         assert.equal(FetchStub.Calls[0]!.route, '/api/activity')
-        assert.equal(FetchStub.Calls[0]!.init?.method, undefined)
+        assert.equal(FetchStub.Calls[0]!.init?.method, 'GET')
         assert.equal(rows[0]!.actor, 'x')
         await new ControlPlaneClient().ListActivity(25)
         assert.equal(FetchStub.Calls[1]!.route, '/api/activity?limit=25')

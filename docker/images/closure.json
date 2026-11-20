@@ -1,7 +1,7 @@
 {
   "pragmatic-platform-admin": {
     "entrypoint": ["node", "dist-tenant-admin/admin/control-plane/server.js"],
-    "packages": ["Mural", "TODL", "pragmatic-protocol", "pragmatic-shared/packages/pragmatic-app-host", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-entra", "pragmatic-shared/packages/pragmatic-identity-source-google", "pragmatic-shared/packages/pragmatic-identity-source-local", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-identity-store", "pragmatic-shared/packages/pragmatic-realm-adapters", "pragmatic-shared/packages/pragmatic-realm-custom", "todl-runtime"],
+    "packages": ["Mural", "TODL", "pragmatic-protocol", "pragmatic-shared/packages/pragmatic-app-host", "pragmatic-shared/packages/pragmatic-component", "pragmatic-shared/packages/pragmatic-configuration", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-local", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-identity-store", "pragmatic-shared/packages/pragmatic-realm-adapters", "pragmatic-shared/packages/pragmatic-realm-custom", "todl-runtime"],
     "files": [
       "pragmatic-shared/node_modules",
       "pragmatic-server/package.json",
@@ -17,7 +17,7 @@
   },
   "pragmatic-platform-edge": {
     "entrypoint": ["node", "dist-tenant-admin/admin/control-plane/server.js"],
-    "packages": ["Mural", "TODL", "pragmatic-protocol", "pragmatic-shared/packages/pragmatic-app-host", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-entra", "pragmatic-shared/packages/pragmatic-identity-source-google", "pragmatic-shared/packages/pragmatic-identity-source-local", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-identity-store", "pragmatic-shared/packages/pragmatic-realm-adapters", "pragmatic-shared/packages/pragmatic-realm-custom", "todl-runtime"],
+    "packages": ["Mural", "TODL", "pragmatic-protocol", "pragmatic-shared/packages/pragmatic-app-host", "pragmatic-shared/packages/pragmatic-component", "pragmatic-shared/packages/pragmatic-configuration", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-local", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-identity-store", "pragmatic-shared/packages/pragmatic-realm-adapters", "pragmatic-shared/packages/pragmatic-realm-custom", "todl-runtime"],
     "files": [
       "pragmatic-shared/node_modules",
       "pragmatic-server/package.json",
@@ -45,7 +45,7 @@
   },
   "pragmatic-tenant-admin": {
     "entrypoint": ["node", "dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-admind.js"],
-    "packages": ["Mural", "TODL", "pragmatic-protocol", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-entra", "pragmatic-shared/packages/pragmatic-identity-source-google", "pragmatic-shared/packages/pragmatic-identity-source-local", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-identity-store", "todl-runtime"],
+    "packages": ["Mural", "TODL", "pragmatic-protocol", "pragmatic-shared/packages/pragmatic-app-host", "pragmatic-shared/packages/pragmatic-component", "pragmatic-shared/packages/pragmatic-configuration", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-realm-adapters", "pragmatic-shared/packages/pragmatic-realm-custom", "todl-runtime"],
     "files": [
       "pragmatic-shared/node_modules",
       "pragmatic-server/package.json",

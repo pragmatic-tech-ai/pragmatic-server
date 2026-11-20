@@ -14,12 +14,13 @@ import { EnvironmentUnreachableError } from '../environment-endpoints.js'
 import { EnvironmentNotDevelopmentError, EnvironmentNotFoundError } from '../environment-service.js'
 import { GraphErrorCode } from '../graph-error-code.js'
 import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError, GraphService } from '../graph-service.js'
-import { TenantAdminCapabilities } from '../tenant-api/tenant-admin-capabilities.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import { TenantGraphAccess } from '../tenant-api/tenant-graph-access.js'
-import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import type { TenantSession } from '../tenant-auth/tenant-sessions.js'
+import type { TenantRecord } from '../platform-records.js'
 import { ResRecorder } from './res-recorder.js'
+import { TenantApiDispatch } from './tenant-test-sessions.js'
 
 /** A graph service that records every call and answers fixed DTOs, or throws `Throw` when it is set. */
 class FakeGraphs implements IGraphService
@@ -116,6 +117,8 @@ class Fixtures
     public static readonly BadJsonMessage = 'Request body must be valid JSON'
     public static readonly BodyObjectMessage = 'Request body must be a JSON object'
     public static readonly Session: TenantSession = { id: 's1', tenantId: 't1', principalId: 'p1', email: 'o@acme.test', expiresAt: '2099-01-01T00:00:00Z' }
+    /** The session's tenant, owned by its principal (the role bridge makes it `admin`). */
+    public static readonly Tenant = { id: 't1', clientId: 'c1', displayName: 'T1', createdAt: '2026-01-01T00:00:00Z', ownerPrincipalId: 'p1' } as TenantRecord
 
     public static Env(name: string, type: EnvType, tenantId: string): EnvironmentRecord
     {
@@ -144,14 +147,14 @@ class Fixtures
     public static Endpoint(access: TenantGraphAccess | undefined): TenantApiEndpoint
     {
         const service = { List: () => Fixtures.Envs } as unknown as IEnvironmentService
-        const directory = { GetTenant: () => undefined, ListHives: () => [] } as unknown as ITenantDirectory
+        const directory = { GetTenant: () => Fixtures.Tenant, ListHives: () => [] } as unknown as ITenantDirectory
         return new TenantApiEndpoint(service, directory, undefined as never, undefined as never, undefined as never, undefined, access)
     }
 
     public static async Send(endpoint: TenantApiEndpoint, method: string, path: string, raw?: string): Promise<ResRecorder>
     {
         const res = new ResRecorder()
-        assert.equal(await endpoint.Handle(Fixtures.Req(method, raw), res as unknown as ServerResponse, path, Fixtures.Session), true)
+        assert.equal(await TenantApiDispatch.Handle(endpoint, Fixtures.Req(method, raw), res as unknown as ServerResponse, path, Fixtures.Session, { GetTenant: () => Fixtures.Tenant }), true)
         return res
     }
 
@@ -252,18 +255,21 @@ describe('TenantApiEndpoint graph routes', () =>
         assert.deepEqual(await Fixtures.Audit(auditFile), [])
     })
 
-    it('needs the envs capability for reads and writes', async () =>
+    it('writes need admin or environment-admin (403 from the host, never audited here); reads are open to any session', async () =>
     {
-        mock.method(TenantAdminCapabilities, 'For', () => ({ roleLabel: 'x', capabilities: { envs: false, adopt: true, access: true, settings: true } }))
-        for (const [method, path, raw] of [['GET', Fixtures.DevGraphs, undefined], ['POST', Fixtures.DevGraphs, '{"name":"sales"}'], ['DELETE', Fixtures.DevGraphs + '/sales', undefined]] as const)
+        const roleless: TenantSession = { ...Fixtures.Session, roles: [], appRoles: [] }
+        for (const [method, path, raw] of [['POST', Fixtures.DevGraphs, '{"name":"sales"}'], ['DELETE', Fixtures.DevGraphs + '/sales', undefined]] as const)
         {
-            const res = await Fixtures.Send(endpoint, method, path, raw)
+            const res = new ResRecorder()
+            assert.equal(await TenantApiDispatch.Handle(endpoint, Fixtures.Req(method, raw), res as unknown as ServerResponse, path, roleless), true)
             assert.equal(res.status, 403, method)
-            assert.deepEqual(res.Json(), { error: 'forbidden' })
+            assert.deepEqual(res.Json(), { error: 'Forbidden' })
         }
         assert.deepEqual(graphs.Calls, [])
-        const entries = await Fixtures.Audit(auditFile)
-        assert.deepEqual(entries.map(e => [e.method, e.status]), [['POST', 403], ['DELETE', 403]])
+        assert.deepEqual(await Fixtures.Audit(auditFile), [])
+        const read = new ResRecorder()
+        assert.equal(await TenantApiDispatch.Handle(endpoint, Fixtures.Req('GET', undefined), read as unknown as ServerResponse, Fixtures.DevGraphs, roleless), true)
+        assert.equal(read.status, 200)
     })
 
     it('answers 400 for a Runtime environment', async () =>
@@ -321,7 +327,7 @@ describe('TenantApiEndpoint graph routes', () =>
         const failing = new Readable({ read(): void { this.destroy(new Error('client aborted')) } }) as unknown as IncomingMessage & { method?: string }
         failing.method = 'POST'
         const res = new ResRecorder()
-        await assert.rejects(endpoint.Handle(failing, res as unknown as ServerResponse, Fixtures.DevGraphs, Fixtures.Session))
+        await assert.rejects(TenantApiDispatch.Handle(endpoint, failing, res as unknown as ServerResponse, Fixtures.DevGraphs, Fixtures.Session, { GetTenant: () => Fixtures.Tenant }))
         assert.deepEqual(graphs.Calls, [])
         const entries = await Fixtures.Audit(auditFile)
         assert.deepEqual(entries.map(e => [e.method, e.status, e.note]), [['POST', 500, 'environment=dev1 graph=']])
@@ -407,13 +413,13 @@ describe('TenantApiEndpoint graph routes', () =>
         assert.equal(graphs.Calls.length, 1)
     })
 
-    it('other method and path shapes answer 404', async () =>
+    it('other methods on the graph paths answer 405', async () =>
     {
         for (const [method, path] of [['PUT', Fixtures.DevGraphs], ['GET', Fixtures.DevGraphs + '/sales'], ['POST', Fixtures.DevGraphs + '/sales'], ['DELETE', Fixtures.DevGraphs]] as const)
         {
             const res = await Fixtures.Send(endpoint, method, path, '{"name":"sales"}')
-            assert.equal(res.status, 404, method + ' ' + path)
-            assert.deepEqual(res.Json(), { error: 'Not found' })
+            assert.equal(res.status, 405, method + ' ' + path)
+            assert.deepEqual(res.Json(), { error: 'Method not allowed' })
         }
         assert.deepEqual(graphs.Calls, [])
         assert.deepEqual(await Fixtures.Audit(auditFile), [])

@@ -4,8 +4,9 @@ import { readFile } from 'node:fs/promises'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { WebSocketServer, type WebSocket } from 'ws'
+import type { AppSessionWire } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { EnvStatus, EnvType, SecurityRoleKind, Template, TeamMemberOrigin, TenantEventType } from '../src/tenant-types.js'
-import type { AccountDto, EnvironmentDto, GrantDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, ManifestDto, SecurityCatalogDto, SecurityChangesDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TeamMemberDto, TenantEvent, TenantProfileDto } from '../src/tenant-types.js'
+import type { AccountDto, EnvironmentDto, GrantDto, GrantMutationDto, HiveDto, HiveHealthDto, HiveRolloutDto, ManifestDto, SecurityCatalogDto, SecurityChangesDto, SecurityModelDto, ServiceTokenSummaryDto, TeamMemberDto, TenantEvent, TenantProfileDto } from '../src/tenant-types.js'
 
 // Serves the built dist/ statically and fakes the 7a tenant surface with canned
 // data, recording every mutating call. GATED: used only by the Playwright spec.
@@ -24,7 +25,7 @@ export class FakeTenantControlPlane
     public static readonly PrincipalId = 'principal-1'
     public static readonly UserEmail = 'owner@example.com'
     public static readonly OrganisationName = 'Example Org'
-    public static readonly OwnerRoleLabel = 'Tenant owner'
+    public static readonly OwnerRoleLabel = 'Tenant admin'
     public static readonly OwnerContact = 'owner-contact@example.com'
     public static readonly TenantDisplayName = 'Example Tenant'
     public static readonly HiveDisplayName = 'Example Hive'
@@ -36,10 +37,12 @@ export class FakeTenantControlPlane
 
     private static readonly SessionPath = '/tenant-auth/session'
     public static readonly LogoutPath = '/tenant-auth/logout'
-    // The own-password change: WrongCurrentPassword is refused (403), ThrottledPassword throttled (429), any other accepted.
-    public static readonly PasswordPath = '/tenant-auth/password'
-    public static readonly WrongCurrentPassword = 'e2e-not-the-password'
-    public static readonly WrongPasswordError = 'The current password is not correct.'
+    // POST: a single-use ticket; each socket upgrade must carry an unused one as its subprotocol.
+    public static readonly WsTicketPath = '/tenant-api/ws-ticket'
+    private static readonly ProtocolHeader = 'sec-websocket-protocol'
+    private static readonly TicketPrefix = 'e2e-ticket-'
+    private static readonly ProtocolSeparator = ','
+    private static readonly AdminRole = 'admin'
     public static readonly BeginLoginPath = '/tenant-auth/oidc/begin'
     public static readonly IdpPageText = 'Identity provider sign-in (e2e stub)'
     private static readonly IdpPage = '<!doctype html><title>IdP</title><p>Identity provider sign-in (e2e stub)</p>'
@@ -114,8 +117,10 @@ export class FakeTenantControlPlane
     public static readonly SessionFailureMessage = 'session store unavailable'
     public LogoutCalls = 0
     public BeginLoginCalls = 0
-    // Each own-password change body, in call order.
-    public readonly PasswordCalls: unknown[] = []
+    // The socket tickets minted and not yet used, and how many upgrades came without a valid one.
+    private readonly tickets = new Set<string>()
+    private ticketCount = 0
+    public RefusedUpgrades = 0
     public readonly DeletedEnvironments: string[] = []
     // Every static file requested but missing from dist/, and every theme font served.
     public readonly NotFound: string[] = []
@@ -260,6 +265,12 @@ export class FakeTenantControlPlane
     private Upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): void
     {
         const path = (req.url ?? FakeTenantControlPlane.RootPath).split(FakeTenantControlPlane.QuerySeparator)[0]!
+        if (!this.TakeTicket(req))
+        {
+            this.RefusedUpgrades++
+            socket.destroy()
+            return
+        }
         if (path === FakeTenantControlPlane.EventsPath)
         {
             this.eventServer.handleUpgrade(req, socket, head, ws =>
@@ -282,6 +293,18 @@ export class FakeTenantControlPlane
             return
         }
         socket.destroy()
+    }
+
+    // The upgrade's lone subprotocol must be a minted, unused ticket; it is spent either way.
+    private TakeTicket(req: IncomingMessage): boolean
+    {
+        const offered = String(req.headers[FakeTenantControlPlane.ProtocolHeader] ?? FakeTenantControlPlane.Empty)
+            .split(FakeTenantControlPlane.ProtocolSeparator).map(p => p.trim()).filter(p => p.length > 0)
+        if (offered.length !== 1)
+        {
+            return false
+        }
+        return this.tickets.delete(offered[0]!)
     }
 
     private LogEnvName(path: string): string | undefined
@@ -395,12 +418,18 @@ export class FakeTenantControlPlane
             FakeTenantControlPlane.Json(res, 200, {})
             return
         }
-        if (path === FakeTenantControlPlane.PasswordPath && method === FakeTenantControlPlane.MethodPost)
+        if (path === FakeTenantControlPlane.WsTicketPath && method === FakeTenantControlPlane.MethodPost)
         {
-            const body = JSON.parse(await FakeTenantControlPlane.ReadBody(req)) as { currentPassword?: string }
-            this.PasswordCalls.push(body)
-            const wrong = body.currentPassword === FakeTenantControlPlane.WrongCurrentPassword
-            FakeTenantControlPlane.Json(res, wrong ? 403 : 200, wrong ? { error: FakeTenantControlPlane.WrongPasswordError } : { ok: true, otherSessionsEnded: true })
+            await FakeTenantControlPlane.ReadBody(req)
+            if (!this.Authenticated)
+            {
+                FakeTenantControlPlane.Json(res, 401, { error: FakeTenantControlPlane.UnauthorizedMessage })
+                return
+            }
+            this.ticketCount++
+            const ticket = FakeTenantControlPlane.TicketPrefix + String(this.ticketCount)
+            this.tickets.add(ticket)
+            FakeTenantControlPlane.Json(res, 200, { ticket })
             return
         }
         if (path === FakeTenantControlPlane.BeginLoginPath)
@@ -422,7 +451,10 @@ export class FakeTenantControlPlane
         }
         if (path === FakeTenantControlPlane.SessionPath)
         {
-            const session: SessionDto = { tenantId: FakeTenantControlPlane.TenantId, principalId: FakeTenantControlPlane.PrincipalId, email: FakeTenantControlPlane.UserEmail }
+            const session: AppSessionWire = {
+                subject: FakeTenantControlPlane.PrincipalId,
+                claims: { tenant: [FakeTenantControlPlane.TenantId], email: [FakeTenantControlPlane.UserEmail], roles: [FakeTenantControlPlane.AdminRole], app_roles: [] },
+            }
             FakeTenantControlPlane.Json(res, 200, session)
             return
         }

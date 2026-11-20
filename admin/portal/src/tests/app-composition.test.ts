@@ -8,7 +8,12 @@ import { EditorShell } from '@pragmatic-tech-ai/mural/framework/shell/editor-she
 import { NavigationDestination, NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import { ClipboardService } from '@pragmatic-tech-ai/mural/framework/shell/services/clipboard-service.js'
 import { ContentHostService } from '@pragmatic-tech-ai/mural/framework/shell/services/content-host-service.js'
+import { ContentControl } from '@pragmatic-tech-ai/mural/framework/base/content-control.js'
+import { Border } from '@pragmatic-tech-ai/mural/basic'
+import { ChangePasswordDialogViewModel, SignInPageViewModel } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { app } from '../app.mu.js'
+import { app as signIn } from '../sign-in.mu.js'
+import { PlatformSignInHost } from '../shell/platform-sign-in-host.js'
 import { PortalNavigationService } from '../shell/portal-navigation-service.js'
 import { PortalSessionService } from '../shell/portal-session-service.js'
 import { FleetSectionService } from '../sections/fleet/fleet-section-service.js'
@@ -70,5 +75,26 @@ describe('app.mu composition', () =>
         const host = (shell as EditorShell).Services.get(ContentHostService.Key)
         assert.equal(host, app.Services.get(ContentHostService.Key))
         assert.ok(host?.Content instanceof FleetPageViewModel)
+    })
+
+    it("merges the shared shell's views (the change-password dialog renders through them)", () =>
+    {
+        assert.ok(app.Resources.Get(ChangePasswordDialogViewModel) !== undefined)
+        assert.ok(app.Resources.Get(PortalSessionService) !== undefined, 'the console keeps its own header')
+    })
+})
+
+// The compiled sign-in.mu: the shell's sign-in page over the console's host, password only.
+describe('sign-in.mu composition', () =>
+{
+    it('registers the sign-in host and presents its page through the shell view', () =>
+    {
+        const host = signIn.Services.getRequired(PlatformSignInHost.Key)
+        assert.ok(host.Page instanceof SignInPageViewModel)
+        assert.equal(host.Page.OffersPassword, true)
+        assert.equal(host.Page.OffersOidc, false)
+        assert.ok(signIn.Resources.Get(SignInPageViewModel) !== undefined)
+        assert.ok(signIn.Resources.Root instanceof Border)
+        assert.ok((signIn.Resources.Root as Border).ContentChild instanceof ContentControl, 'a root ContentControl would render empty')
     })
 })

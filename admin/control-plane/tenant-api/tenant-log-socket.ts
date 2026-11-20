@@ -1,7 +1,7 @@
 import { WebSocket } from 'ws'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import type { ILogProcess } from '../../../environments/seed/docker.js'
-import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import type { TenantSession } from '../tenant-auth/tenant-sessions.js'
 
 /**
  * Serves a single tenant log-follow websocket. Given an already-gated session, the host keeps its upgrade handler

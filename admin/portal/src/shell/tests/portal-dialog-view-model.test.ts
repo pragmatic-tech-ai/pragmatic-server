@@ -1,23 +1,24 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { DialogService, type DialogOptions } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
+import type { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
+import { ShellDialogViewModel } from '@pragmatic-tech-ai/pragmatic-app-shell'
+import { OperatorContext } from '../../operator-context.js'
+import type { ControlPlaneClient } from '../../api-client.js'
 import type { PortalSessionService } from '../portal-session-service.js'
 import { PortalDialogViewModel } from '../portal-dialog-view-model.js'
-import { PortalTestHost, Tick } from './portal-test-fixtures.js'
+import { PortalTestHost } from './portal-test-fixtures.js'
 
-// A dialog whose submit waits until Release.
-class HeldDialog extends PortalDialogViewModel<string>
+// A complete dialog; `mutates` says whether it needs the Operator role.
+class ReadyDialog extends PortalDialogViewModel<string>
 {
-    private release: (() => void) | undefined
-
-    public constructor(session: PortalSessionService, dialogs: DialogService)
+    public constructor(session: PortalSessionService, dialogs: DialogService, private readonly mutates: boolean)
     {
         super(session, dialogs)
     }
 
-    public Release(): void
+    protected override get RequiresMutate(): boolean
     {
-        this.release?.()
+        return this.mutates
     }
 
     protected override get CanConfirm(): boolean
@@ -27,74 +28,31 @@ class HeldDialog extends PortalDialogViewModel<string>
 
     protected override async SubmitCore(): Promise<string>
     {
-        await new Promise<void>(resolve => { this.release = resolve })
         return 'done'
     }
 }
 
-// A service whose superseded dialog settles late: a newer Show takes over at
-// once, but the older Show's promise resolves only on a later tick.
-class LateSettlingDialogs extends DialogService
-{
-    public readonly Closes: unknown[] = []
-    private settle: ((value: unknown) => void) | undefined
-    private superseded: ((value: unknown) => void) | undefined
-
-    public override Show<T = unknown>(_options: DialogOptions): Promise<T | undefined>
-    {
-        this.superseded = this.settle
-        return new Promise<T | undefined>(resolve => { this.settle = resolve as (value: unknown) => void })
-    }
-
-    // Settles the superseded dialog's Show, on the test's cue.
-    public SettleSuperseded(): void
-    {
-        this.superseded?.(undefined)
-        this.superseded = undefined
-    }
-
-    public override Close(result?: unknown): void
-    {
-        this.Closes.push(result)
-        const settle = this.settle
-        this.settle = undefined
-        settle?.(result)
-    }
-}
-
+// The console's dialogs are the shell's dialog (open / submit / dismiss, tested in pragmatic-app-shell) with the
+// console's permission rule.
 describe('PortalDialogViewModel', () =>
 {
-    it('a submit settling while a superseding dialog is open does not close it, even before the old Show settles', async () =>
+    it('is the shell dialog', () =>
     {
-        const host = PortalTestHost.WithoutClient()
-        const dialogs = new LateSettlingDialogs(host.Provider)
-        const first = new HeldDialog(host.Session, dialogs)
-        const firstOpened = first.Open('First')
-        first.ConfirmCommand.Execute()
-        await Tick.Next()
-        const second = new HeldDialog(host.Session, dialogs)
-        const secondOpened = second.Open('Second')
-        first.Release()
-        await Tick.Settle()
-        // The first submit has settled while its own Show is still unsettled.
-        assert.deepEqual(dialogs.Closes, [])
-        dialogs.SettleSuperseded()
-        assert.equal(await firstOpened, 'done')
-        assert.deepEqual(dialogs.Closes, [])
-        dialogs.Close(undefined)
-        assert.equal(await secondOpened, undefined)
+        const host = new PortalTestHost({} as ControlPlaneClient)
+        assert.ok(new ReadyDialog(host.Session, host.UseDialogs(), true) instanceof ShellDialogViewModel)
     })
 
-    it('a submit settling while its own dialog is open closes it with the result', async () =>
+    it('a mutating dialog confirms for an Operator only', () =>
     {
-        const host = PortalTestHost.WithoutClient()
-        const dialogs = new LateSettlingDialogs(host.Provider)
-        const dialog = new HeldDialog(host.Session, dialogs)
-        const opened = dialog.Open('Only')
-        dialog.ConfirmCommand.Execute()
-        await Tick.Next()
-        dialog.Release()
-        assert.equal(await opened, 'done')
-        assert.deepEqual(dialogs.Closes, ['done'])
+        const operator = new PortalTestHost({} as ControlPlaneClient)
+        const observer = new PortalTestHost({} as ControlPlaneClient, OperatorContext.ReadOnlyWireRole)
+        assert.equal(new ReadyDialog(operator.Session, operator.UseDialogs(), true).ConfirmCommand.CanExecute(), true)
+        assert.equal(new ReadyDialog(observer.Session, observer.UseDialogs(), true).ConfirmCommand.CanExecute(), false)
+    })
+
+    it('a dialog that does not mutate confirms for an Observer too', () =>
+    {
+        const observer = new PortalTestHost({} as ControlPlaneClient, OperatorContext.ReadOnlyWireRole)
+        assert.equal(new ReadyDialog(observer.Session, observer.UseDialogs(), false).ConfirmCommand.CanExecute(), true)
     })
 })

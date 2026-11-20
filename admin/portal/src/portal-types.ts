@@ -92,16 +92,8 @@ export type GraphLoadedDto =
     promotedAt: string
 }
 
-// The reply to an own-password change: changed; whether the other sessions were signed out; why to look (warning) when
-// they were not, or when no fresh session could be issued (sign in again).
-export type PasswordChangedDto = { ok: boolean; otherSessionsEnded: boolean; warning?: string }
-
-export type OperatorDto =
-{
-    email: string
-    principalId: string
-    role: string
-}
+// What a failed provision undid and what it left behind, carried as `rollback` on the error reply.
+export type ProvisionRollbackDto = { rolledBack: string[]; residue: string[] }
 
 export type GatingDto = { tenantId: string; version: string; gatedAt: string }
 export type SelectionDto = { hiveId: string; targetVersion: string; selectedAt: string }

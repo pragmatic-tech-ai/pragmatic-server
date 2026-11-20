@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { UserSeeder } from '../../environments/seed/users.js'
 import { AdminProxy, WsAdminConnector } from './admin-proxy.js'
@@ -20,8 +20,7 @@ import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import type { InClusterOrchestration } from './in-cluster-hive-orchestrator.js'
 import { IngressTlsPolicy, type IngressTls } from './ingress-tls.js'
 import { HttpsKubeTransport, InClusterServiceAccount, KubeApiClient } from './kube-api-client.js'
-import { PinnedImageVerifier } from './pinned-image-verifier.js'
-import { TenantAdminBootstrap } from './tenant-admin-bootstrap.js'
+import type { PinnedImageVerifier } from './pinned-image-verifier.js'
 import { IdpAdminClient } from './idp-admin-client.js'
 import type { IIdpService } from './idp-service.js'
 import { InjectedIdpService } from './injected-idp-service.js'
@@ -36,7 +35,11 @@ import { ConsoleEmailDomainStore } from './console-email-domain-store.js'
 import { ConsoleOwnerResetFollower } from './console-owner-reset-follower.js'
 import { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
 import { ConsoleRegistration } from './console-registration.js'
-import { SeededTenantDirectory, type TenantDirectorySeed } from './tenant-api/seeded-tenant-directory.js'
+import type { SeededTenantDirectory } from './tenant-api/seeded-tenant-directory.js'
+import { ConsoleDelivery } from './console-delivery.js'
+import { TenantAdminDatabase, TenantAdminRegistry } from './tenant-admin-database.js'
+import { TenantAdminImport } from './tenant-admin-import.js'
+import type { IRecordMap } from './record-map.js'
 import type { IRolloutClient } from './tenant-api/rollout-client.js'
 import { UnconfiguredRolloutClient } from './tenant-api/unconfigured-rollout-client.js'
 import { TenantAdminEnv } from './tenant-admin-env.js'
@@ -44,8 +47,13 @@ import { HttpRolloutClient } from './tenant-api/http-rollout-client.js'
 import { TenantAdminClientRegistry } from './tenant-auth/tenant-admin-client-record.js'
 import { TenantHostResolver, type ConsoleHostAlias } from './tenant-auth/tenant-host-resolver.js'
 import type { TenantPlane } from './tenant-auth/tenant-plane.js'
+import { TenantSessions } from './tenant-auth/tenant-sessions.js'
 import { TenantHealthMonitor } from './tenant-health-monitor.js'
-import { TenantPlaneHost } from './tenant-plane-host.js'
+import { TenantConsoleHost } from './tenant-console-host.js'
+import { ConfigurationService } from './configuration/configuration-service.js'
+import { ConfigurationTargets } from './configuration/configuration-targets.js'
+import { ConsoleComponents } from './configuration/console-components.js'
+import { KubeConfigurationApplier, UnavailableConfigurationApplier } from './configuration/kube-configuration-applier.js'
 
 export type TenantAdminConfig = {
     readonly dataRoot: string
@@ -82,25 +90,27 @@ export type TenantAdminComposition = {
     readonly directory: SeededTenantDirectory
     readonly rollout: IRolloutClient
     readonly plane: TenantPlane
-    readonly host: TenantPlaneHost
+    readonly host: TenantConsoleHost
     readonly monitor: TenantHealthMonitor | undefined
     readonly config: TenantAdminConfig
     /** How this console reaches environments in its own hive; undefined outside a pod. */
     readonly reach: IEnvironmentReach | undefined
-    /** The console's own email domains (`<dataRoot>/email-domains.json`, seeded from the tenant record). */
+    /** The console's own email domains (seeded from the tenant record until first saved). */
     readonly emailDomains: ConsoleEmailDomainStore
     /** Tells the control plane about this console; undefined unless every advert setting is present (a real console pod). */
     readonly advert: ConsoleAdvertSender | undefined
-    /** The desktop relay's audit (`<dataRoot>/tenant-desktop-audit.json`), loaded before the plane is built. */
+    /** The desktop relay's audit, loaded before the plane is built. */
     readonly desktopAudit: AuditRegistry
-    /** The graph routes' audit (`<dataRoot>/tenant-graph-audit.json`), loaded before the plane is built. */
+    /** The graph routes' audit, loaded before the plane is built. */
     readonly graphAudit: AuditRegistry
     /**
-     * Whether the platform still takes this console's adverts (`<dataRoot>/console-registration.json`): the advert sender
+     * Whether the platform still takes this console's adverts (stored in the console's database): the advert sender
      * feeds it, and the host refuses the desktop surface and the relay while it is Refused. Without an advert sender it opens
      * Registered regardless of the file and does not gate the host (nothing could ever restore Registered).
      */
     readonly registration: ConsoleRegistration
+    /** The console's own Postgres database; closed with the console. */
+    readonly database: TenantAdminDatabase
 }
 
 /**
@@ -113,18 +123,11 @@ export type TenantAdminComposition = {
 export class TenantAdminServer
 {
     private static readonly MissingEnvPrefix = 'Missing required environment variable: '
-    private static readonly MissingSeedPrefix = 'Tenant-admin seed file not found: '
-    private static readonly BadSeedMessage = 'Invalid seed.json: expected { tenant, hives[] }'
     private static readonly MissingMasterKeyPrefix = 'Tenant-admin master key file not found: '
-    private static readonly SeedFile = 'seed.json'
     private static readonly ListeningTemplate = 'Tenant plane listening on {scheme}://{domain}:{port}/'
     private static readonly SchemeToken = '{scheme}'
     private static readonly DomainToken = '{domain}'
     private static readonly PortToken = '{port}'
-    private static readonly BadHiveMessage = 'Invalid seed.json: every hive needs string id, tenantId, displayName, createdAt and object cluster, registry'
-    private static readonly HiveStringFields = ['id', 'tenantId', 'displayName', 'createdAt'] as const
-    private static readonly HiveObjectFields = ['cluster', 'registry'] as const
-    private static readonly Utf8 = 'utf8'
     private static readonly EmptyString = ''
     private static readonly NoIdentityMessage = 'The seed names no hive for the in-cluster console.'
     private static readonly ConsoleUrlScheme = 'https://'
@@ -136,6 +139,8 @@ export class TenantAdminServer
     private static readonly BytesSuffix = ' bytes'
 
     private running: TenantAdminComposition | undefined
+    /** Whether Run opened the running composition's database (and Close therefore ends it). */
+    private ownsDatabase = false
 
     public constructor(
         private readonly config: TenantAdminConfig,
@@ -260,15 +265,15 @@ export class TenantAdminServer
      * an advert sender a saved Refused state could never clear: the registration then opens Registered without reading the
      * file (which is left alone), does not gate the desktop, and one fixed line says so.
      */
-    private static async RegistrationOf(dataRoot: string, advertConfigured: boolean, log: (line: string) => void): Promise<ConsoleRegistration>
+    private static async RegistrationOf(stored: IRecordMap<unknown>, advertConfigured: boolean, log: (line: string) => void): Promise<ConsoleRegistration>
     {
         if (advertConfigured)
         {
-            // Never throws: a missing or bad file opens Registered, so the desktop is never locked out by it.
-            return ConsoleRegistration.Open(join(dataRoot, ConsoleRegistration.FileName), log)
+            // Never throws: a missing or bad record opens Registered, so the desktop is never locked out by it.
+            return ConsoleRegistration.Open(stored, log)
         }
         log(TenantAdminServer.RegistrationGateOffLine)
-        return ConsoleRegistration.OpenRegistered(join(dataRoot, ConsoleRegistration.FileName), log)
+        return ConsoleRegistration.OpenRegistered(stored, log)
     }
 
     /**
@@ -284,63 +289,79 @@ export class TenantAdminServer
     /**
      * What the console needs to orchestrate its own hive through the Kubernetes API: the API client over the pod's service
      * account, the identity from the seed (tenant + the hive it was installed into) and the pinned-image allow-list the
-     * platform left in the data root. No network call.
+     * platform delivered. No network call.
      */
-    public static InClusterOrchestrationOf(account: InClusterServiceAccount, directory: SeededTenantDirectory, dataRoot: string): InClusterOrchestration
+    public static InClusterOrchestrationOf(account: InClusterServiceAccount, directory: SeededTenantDirectory, verifier: PinnedImageVerifier): InClusterOrchestration
     {
         const hive = TenantAdminServer.FirstHiveOf(directory)
         return {
             client: new KubeApiClient(new HttpsKubeTransport(account)),
             identity: { tenantId: hive.tenantId, hiveId: hive.id },
-            verifier: PinnedImageVerifier.Load(join(dataRoot, TenantAdminBootstrap.VerifiedImagesKey)),
+            verifier,
         }
     }
 
-    /** Reads `<dataRoot>/seed.json` and builds the single-tenant directory view from it. */
-    public static LoadSeed(dataRoot: string): SeededTenantDirectory
+    /** The tenant portal bundle folder: PRAGMATIC_TENANT_ADMIN_PORTAL_DIR (resolved) when set, else the shipped `admin/tenant-portal/dist`. */
+    public static PortalRootOf(env: NodeJS.ProcessEnv): string
     {
-        const path = join(dataRoot, TenantAdminServer.SeedFile)
-        if (!existsSync(path))
+        const raw = env[TenantAdminEnv.PortalDir]?.trim() ?? TenantAdminServer.EmptyString
+        if (raw !== TenantAdminServer.EmptyString)
         {
-            throw new Error(TenantAdminServer.MissingSeedPrefix + path)
+            return resolve(raw)
         }
-        const seed = JSON.parse(readFileSync(path, TenantAdminServer.Utf8)) as Partial<TenantDirectorySeed> | null
-        if (seed === null || typeof seed !== 'object' || seed.tenant === undefined || typeof seed.tenant.id !== 'string' || !Array.isArray(seed.hives))
-        {
-            throw new Error(TenantAdminServer.BadSeedMessage)
-        }
-        if (!seed.hives.every(h => TenantAdminServer.IsHive(h)))
-        {
-            throw new Error(TenantAdminServer.BadHiveMessage)
-        }
-        return new SeededTenantDirectory({ tenant: seed.tenant, hives: seed.hives })
+        return join(dirname(fileURLToPath(import.meta.url)), TenantPlaneComposer.ParentSegment, TenantPlaneComposer.TenantPortalSegment, TenantPlaneComposer.DistSegment)
     }
 
     /**
-     * Builds the whole tenant plane over this process's own data root without binding anything: seeded directory,
-     * stores, services, plane (with the desktop surface; its relay only in a pod), host, health monitor, the console's email
-     * domains, the desktop audit, the console registration (gating the host only when there is an advert sender) and (in a configured console) its advert sender.
+     * Builds the whole tenant plane over the console's own database (opened from PRAGMATIC_TENANT_ADMIN_DATABASE_URL_FILE,
+     * or the one given) without binding anything: the platform's delivery (seed, verified images), every store, services,
+     * plane (with the desktop surface; its relay only in a pod), host, health monitor, the console's email domains, the
+     * desktop and graph audits, the console registration (gating the host only when there is an advert sender) and (in a
+     * configured console) its advert sender. A database that holds none of the console's records while the data root still
+     * holds pre-A5 ones is imported first (TenantAdminImport.ImportIfPending; the files stay as the backup).
      */
-    public async Compose(env: NodeJS.ProcessEnv = process.env, serviceAccountRoot?: string, log: (line: string) => void = TenantAdminServer.LogLine): Promise<TenantAdminComposition>
+    public async Compose(env: NodeJS.ProcessEnv = process.env, serviceAccountRoot?: string, log: (line: string) => void = TenantAdminServer.LogLine, database?: TenantAdminDatabase): Promise<TenantAdminComposition>
     {
         const cfg = this.config
         const dataRoot = cfg.dataRoot
-        const directory = TenantAdminServer.LoadSeed(dataRoot)
         const keyPath = join(dataRoot, TenantPlaneComposer.MasterKeyFileName)
         if (!existsSync(keyPath))
         {
             throw new Error(TenantAdminServer.MissingMasterKeyPrefix + keyPath)
         }
         const masterKey = MasterKeyFile.Load(keyPath)
+        const db = database ?? await TenantAdminDatabase.Open(env)
+        try
+        {
+            await TenantAdminImport.ImportIfPending(dataRoot, db, log)
+            return await this.ComposeOver(db, masterKey, env, serviceAccountRoot, log)
+        }
+        catch (err)
+        {
+            if (database === undefined)
+            {
+                await db.Close()
+            }
+            throw err
+        }
+    }
+
+    private async ComposeOver(db: TenantAdminDatabase, masterKey: Buffer, env: NodeJS.ProcessEnv, serviceAccountRoot: string | undefined, log: (line: string) => void): Promise<TenantAdminComposition>
+    {
+        const cfg = this.config
+        const dataRoot = cfg.dataRoot
+        const R = TenantAdminRegistry
+        const directory = await ConsoleDelivery.Seed(dataRoot, await db.Map(R.DirectorySeed))
+        const verifier = await ConsoleDelivery.VerifiedImages(dataRoot, await db.Map(R.VerifiedImages))
         // No host (Docker) backend: the console runs environments only in its own hive, so an unbound record never runs here.
         const noHost = new NoHostEnvironmentRuntime()
-        const registry = new EnvironmentRegistry(join(dataRoot, TenantPlaneComposer.RegistryFile), noHost)
+        const registry = new EnvironmentRegistry(await db.Map(R.Environments), noHost)
         await registry.Load()
-        const adminClients = new TenantAdminClientRegistry(join(dataRoot, TenantPlaneComposer.TenantAdminClientsFile))
+        const adminClients = new TenantAdminClientRegistry(await db.Map(R.TenantAdminClients))
         await adminClients.Load()
         const idpService = TenantAdminServer.BuildIdpService(env)
         const account = InClusterServiceAccount.Detect(env, serviceAccountRoot)
-        const inCluster = account === undefined ? undefined : TenantAdminServer.InClusterOrchestrationOf(account, directory, dataRoot)
+        const inCluster = account === undefined ? undefined : TenantAdminServer.InClusterOrchestrationOf(account, directory, verifier)
         const orchestrators = inCluster === undefined ? new HiveOrchestratorFactory() : new HiveOrchestratorFactory(undefined, dataRoot, inCluster)
         const placement = new EnvironmentPlacement(directory, cfg.ingressTls)
         const reach = inCluster === undefined ? undefined : new InClusterEnvironmentReach(orchestrators.For(TenantAdminServer.FirstHiveOf(directory)).Kubectl)
@@ -349,53 +370,94 @@ export class TenantAdminServer
         const proxy = new AdminProxy(new WsAdminConnector())
         const service = new EnvironmentService(registry, new PortAllocator(TenantPlaneComposer.EnvPortFloor, new NetPortProbe()), new EnvironmentRuntimeResolver(noHost, new InClusterEnvironmentRuntime(orchestrators, placement, directory, new BundleBuilderAdapter()), directory, orchestrators), new UserSeederAdapter(new UserSeeder()), dataRoot, proxy, directory, idpService, conn => new IdpAdminClient(conn), undefined, reach)
         const tenant = directory.Tenant
-        const emailDomains = await ConsoleEmailDomainStore.Open(join(dataRoot, ConsoleEmailDomainStore.FileName), tenant.id, tenant.emailDomains)
-        const desktopAudit = new AuditRegistry(join(dataRoot, TenantPlaneComposer.DesktopAuditFile))
+        const emailDomains = await ConsoleEmailDomainStore.Open(await db.Map(R.EmailDomains), tenant.id, tenant.emailDomains)
+        const desktopAudit = new AuditRegistry(await db.Map(R.DesktopAudit))
         await desktopAudit.Load()
-        const graphAudit = new AuditRegistry(join(dataRoot, TenantPlaneComposer.TenantGraphAuditFile))
+        const graphAudit = new AuditRegistry(await db.Map(R.GraphAudit))
         await graphAudit.Load()
         // Graphs live in the environments, so outside a pod (no reach) the routes answer 503 instead of calling out.
         const graphs = new TenantGraphAccess(reach === undefined ? undefined : new GraphService(registry, proxy, service), graphAudit)
         // The desktop surface is always served; the relay only when this console can reach its environments (in a pod).
         const relay = reach === undefined ? undefined : { endpoints: reach, audit: desktopAudit }
-        const plane = TenantPlaneComposer.BuildTenantPlane(
-            dataRoot, idpService, directory, cfg.secureCookie, service, this.rollout, orchestrators, placement,
-            masterKey, adminClients, cfg.secretTtlHours, undefined, undefined, cfg.trustedProxy, true, relay, emailDomains, tenant.id, graphs)
         const resolver = new TenantHostResolver(cfg.baseDomain, cfg.scheme, directory, cfg.externalPort, TenantAdminServer.ConsoleAliasOf(cfg, directory))
-        const staticRoot = join(dirname(fileURLToPath(import.meta.url)), TenantPlaneComposer.ParentSegment, TenantPlaneComposer.TenantPortalSegment, TenantPlaneComposer.DistSegment)
+        const sessions = new TenantSessions(await db.SessionRepositories(), cfg.secureCookie)
+        const plane = TenantPlaneComposer.BuildTenantPlane({
+            Idp: idpService,
+            Directory: directory,
+            Service: service,
+            Rollout: this.rollout,
+            Orchestrators: orchestrators,
+            Placement: placement,
+            Sessions: sessions,
+            Resolver: resolver,
+            FlowStates: await db.FlowStates(),
+            ClientSecrets: { Store: await db.Secrets(masterKey), Registry: adminClients, TtlMs: TenantPlaneComposer.SecretTtlMsOf(cfg.secretTtlHours) },
+            TrustedProxy: cfg.trustedProxy,
+            Desktop: true,
+            Relay: relay,
+            EmailDomains: emailDomains,
+            ConsoleTenantId: tenant.id,
+            Graphs: graphs,
+            // The console writes configurations next to its environments' deployments through its own cluster access.
+            Configuration: new ConfigurationService(await db.Configuration(), ConsoleComponents.Release(), new ConfigurationTargets(registry),
+                inCluster === undefined ? new UnavailableConfigurationApplier() : new KubeConfigurationApplier(inCluster.client)),
+        })
         const monitor = cfg.probeMs > 0
             ? new TenantHealthMonitor(directory, new HiveHealthProducer(service, orchestrators, placement), plane.events, cfg.probeMs, cfg.probeTimeoutMs, service)
             : undefined
         const advertSettings = TenantAdminServer.AdvertSettingsOf(env, cfg, log)
-        const registration = await TenantAdminServer.RegistrationOf(dataRoot, advertSettings !== undefined, log)
+        const registration = await TenantAdminServer.RegistrationOf(await db.Map(R.Registration), advertSettings !== undefined, log)
         // No advert sender, no gate: nothing could ever lift a refusal.
-        const host = new TenantPlaneHost(plane, resolver, staticRoot, service, monitor, advertSettings === undefined ? undefined : registration)
+        const host = new TenantConsoleHost({
+            Plane: plane,
+            Resolver: resolver,
+            Service: service,
+            PortalRoot: TenantAdminServer.PortalRootOf(env),
+            Monitor: monitor,
+            Registration: advertSettings === undefined ? undefined : registration,
+            Audit: await db.Audit(),
+            TrustedProxy: cfg.trustedProxy,
+        })
         // An operator Owner reset reaches this console in the advert answer; the follower then ends the Owner's sessions, sockets
         // and relays (the host has attached both to plane.principals above).
-        const follower = plane.principals === undefined
-            ? undefined
-            : new ConsoleOwnerResetFollower(plane.principals, tenant, join(dataRoot, ConsoleOwnerResetFollower.FileName))
+        const follower = new ConsoleOwnerResetFollower(plane.principals, tenant, await db.Map(R.OwnerResetApplied))
         const advert = advertSettings === undefined ? undefined : TenantAdminServer.SenderFrom(advertSettings, tenant, emailDomains, log, follower, registration)
-        return { directory, rollout: this.rollout, plane, host, monitor, config: cfg, reach, emailDomains, advert, desktopAudit, graphAudit, registration }
+        return { directory, rollout: this.rollout, plane, host, monitor, config: cfg, reach, emailDomains, advert, desktopAudit, graphAudit, registration, database: db }
     }
 
-    /** Composes, binds the tenant listener, then starts the advert (its first send awaited; a failure is logged, never thrown). */
-    public async Run(env: NodeJS.ProcessEnv = process.env, log: (line: string) => void = TenantAdminServer.LogLine): Promise<TenantAdminComposition>
+    /**
+     * Composes, binds the tenant listener, then starts the advert (its first send awaited; a failure is logged, never thrown).
+     * `database` replaces the one the environment names (tests).
+     */
+    public async Run(env: NodeJS.ProcessEnv = process.env, log: (line: string) => void = TenantAdminServer.LogLine, database?: TenantAdminDatabase): Promise<TenantAdminComposition>
     {
-        const composition = await this.Compose(env, undefined, log)
+        const composition = await this.Compose(env, undefined, log, database)
         const cfg = composition.config
-        await composition.host.Listen(cfg.port, cfg.bind)
+        try
+        {
+            await composition.host.Listen(cfg.port, cfg.bind)
+        }
+        catch (err)
+        {
+            if (database === undefined)
+            {
+                await composition.database.Close()
+            }
+            throw err
+        }
         // Only a listener that bound counts as running, so Close after a failed Listen has nothing to stop.
         this.running = composition
+        this.ownsDatabase = database === undefined
         console.log(TenantAdminServer.ListeningLine(cfg))
         await composition.advert?.Start()
         return composition
     }
 
     /**
-     * Stops the advert (aborting a send in flight and waiting for it to end, so nothing is logged afterwards) and closes the
-     * tenant listener started by Run, which also closes the desktop relay and awaits its pending audit writes; a no-op when
-     * nothing runs.
+     * Stops the advert (aborting a send in flight and waiting for it to end, so nothing is logged afterwards), closes the
+     * tenant listener started by Run (which also closes the desktop relay and awaits its pending audit writes), then the
+     * database Run opened (even when closing the listener failed; a database the caller passed stays theirs); a no-op
+     * when nothing runs.
      */
     public async Close(): Promise<void>
     {
@@ -407,7 +469,17 @@ export class TenantAdminServer
         }
         composition.advert?.Stop()
         await composition.advert?.Idle()
-        await composition.host.Close()
+        try
+        {
+            await composition.host.Close()
+        }
+        finally
+        {
+            if (this.ownsDatabase)
+            {
+                await composition.database.Close()
+            }
+        }
     }
 
     private static AdvertOff(log: (line: string) => void, reason: string): undefined
@@ -427,18 +499,6 @@ export class TenantAdminServer
             .replace(TenantAdminServer.SchemeToken, cfg.scheme)
             .replace(TenantAdminServer.DomainToken, cfg.baseDomain)
             .replace(TenantAdminServer.PortToken, String(cfg.port))
-    }
-
-    /** True when the value is a well-formed HiveRecord: required string fields non-empty, cluster/registry objects. */
-    private static IsHive(value: unknown): boolean
-    {
-        if (value === null || typeof value !== 'object')
-        {
-            return false
-        }
-        const rec = value as Record<string, unknown>
-        return TenantAdminServer.HiveStringFields.every(f => typeof rec[f] === 'string' && rec[f] !== TenantAdminServer.EmptyString)
-            && TenantAdminServer.HiveObjectFields.every(f => typeof rec[f] === 'object' && rec[f] !== null)
     }
 
     private static ConsoleAliasOf(cfg: TenantAdminConfig, directory: SeededTenantDirectory): ConsoleHostAlias | undefined

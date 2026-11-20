@@ -24,6 +24,52 @@ export interface TenantAdminWorkloadSpec
     console?: TenantConsoleExposure
     /** Secret holding the account-email fingerprint key under key `fingerprint.key`; mounted read-only at /fingerprint. */
     fingerprintKeySecretName?: string
+    /** The console's own Postgres (a pragmatic-postgres sidecar in its pod); its passwords and URL arrive by Secret mount only. */
+    database?: TenantAdminDatabaseSpec
+}
+
+/**
+ * The console's Postgres: the pragmatic-postgres image run beside the console in its pod (reachable on the pod's loopback
+ * only), its data on the console's volume, and the Secret holding the superuser password, the console's role password
+ * and the console's database URL (keys TenantAdminDatabaseSecret.*).
+ */
+export interface TenantAdminDatabaseSpec
+{
+    image: string
+    secretName: string
+}
+
+/** The keys of the console's database Secret and what its sidecar reconciles: the one home of their names. */
+export class TenantAdminDatabaseSecret
+{
+    public static readonly SuperuserKey = 'superuser'
+    public static readonly PasswordKey = 'password'
+    public static readonly UrlKey = 'database-url'
+    /** The application, database and role the pragmatic-postgres sidecar creates for the console. */
+    public static readonly Application = 'pragmatic-tenant-admin'
+    public static readonly Database = 'pragmatic_tenant_admin'
+    public static readonly Role = 'pragmatic_tenant_admin'
+    public static readonly Host = '127.0.0.1'
+    public static readonly Port = 5432
+    private static readonly UrlScheme = 'postgres://'
+    private static readonly UserSeparator = ':'
+    private static readonly HostSeparator = '@'
+    private static readonly PathSeparator = '/'
+    private static readonly Space = ' '
+
+    /** The console's database URL for a role password (on the pod's loopback). */
+    public static UrlOf(password: string): string
+    {
+        const S = TenantAdminDatabaseSecret
+        return S.UrlScheme + S.Role + S.UserSeparator + encodeURIComponent(password) + S.HostSeparator + S.Host + S.UserSeparator + String(S.Port) + S.PathSeparator + S.Database
+    }
+
+    /** The sidecar's applications.conf line. */
+    public static ApplicationsLine(): string
+    {
+        const S = TenantAdminDatabaseSecret
+        return [S.Application, S.Database, S.Role].join(S.Space)
+    }
 }
 
 /** The console's browser host and the Ingress TLS choice it is served with. */

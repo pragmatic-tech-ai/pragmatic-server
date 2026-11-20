@@ -6,8 +6,9 @@
 // PortalNavigationService replaces the stock NavigationService (EditorShell
 // skips its default when one is registered) so the side pane stays hidden.
 // The header (HeaderContent) presents PortalSessionService through the
-// ShellResources template. Importing this module composes the shell and
-// activates the first section before any session exists; PortalBoot then
+// ShellResources template; AppShellResources (the shared client shell's views)
+// renders the change-password dialog. Importing this module composes the shell
+// and activates the first section before any session exists; the boot then
 // initializes PortalSessionService and refreshes the active section before it
 // mounts the shell.
 
@@ -27,6 +28,7 @@ import ReleasesModule from "./sections/releases/releases.module.mu.js"
 import ReleasePolicyModule from "./sections/release-policy/release-policy.module.mu.js"
 import ActivityModule from "./sections/activity/activity.module.mu.js"
 import SettingsModule from "./sections/settings/settings.module.mu.js"
+import AppShellResources from "@pragmatic-tech-ai/pragmatic-app-shell"
 import ShellResources from "./shell/shell.resources.mu.js"
 import PortalIcons from "./shell/portal-icons.mu.js"
 
@@ -61,6 +63,7 @@ Application [ Theme = Pragmatic, Scheme = PragmaticDark ] {
     }
 
     resources: {
+        merge AppShellResources
         merge ShellResources
 
         // Rail icons, merged app-global so each capability's

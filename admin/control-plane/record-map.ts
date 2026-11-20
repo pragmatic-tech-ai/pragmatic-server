@@ -209,3 +209,39 @@ export class MemoryRecordMap<T> implements IRecordMap<T>
         }
     }
 }
+
+/**
+ * One record under a fixed key of a record map: the form of a store that keeps a single value (a state, a marker, a list).
+ * Over a file path the file is `{ <key>: value }`, the layout those stores wrote before A5; over a Postgres map the value
+ * is the one row `<key>` of its table. Reads load the whole map (one row); writes save that key alone.
+ */
+export class RecordSlot<T>
+{
+    private constructor(private readonly map: IRecordMap<T>, private readonly key: string)
+    {
+    }
+
+    /** The slot `key` of `location`: a record map, or the path of a JSON file whose root object is the map. */
+    public static Of<T>(location: string | IRecordMap<T>, key: string): RecordSlot<T>
+    {
+        return new RecordSlot<T>(typeof location === 'string' ? new FileRecordMap<T>(location) : location, key)
+    }
+
+    public get Location(): string
+    {
+        return this.map.Location
+    }
+
+    /** The stored value, or undefined when there is none (a missing file, an empty table). */
+    public async Read(): Promise<T | undefined>
+    {
+        return (await this.map.Load()).get(this.key)
+    }
+
+    /** Stores `value` under the key (refused before anything changes when it holds a NUL; see RecordDocuments). */
+    public async Write(value: T): Promise<void>
+    {
+        RecordDocuments.AssertStorable(value)
+        await this.map.Save(new Map([[this.key, value]]), new Set([this.key]))
+    }
+}

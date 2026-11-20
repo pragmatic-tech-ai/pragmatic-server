@@ -1,33 +1,27 @@
+import type { SessionStore } from '@pragmatic-tech-ai/pragmatic-app-host'
 import type { IOwnerSessionRevoker } from '../tenant-provisioning-service.js'
-import type { TenantSession, TenantSessionStore } from './tenant-session.js'
 
-/** Something holding live connections per tenant principal (the tenant plane's WebSocket registry). */
+/** Something holding live connections per tenant principal (the tenant plane's WebSocket registry, the desktop relay). */
 export interface IPrincipalConnections
 {
-    /**
-     * Closes the principal's open connections in the tenant; returns how many. Connections opened under the session
-     * `keepSessionId` (when given) stay open.
-     */
-    ClosePrincipal(tenantId: string, principalId: string, keepSessionId?: string): number
-
-    /** Re-homes every connection opened under session `oldSessionId` to `newSessionId` (its session was rotated). */
-    MoveSession(oldSessionId: string, newSessionId: string): void
+    /** Closes the principal's open connections in the tenant; returns how many. */
+    ClosePrincipal(tenantId: string, principalId: string): number
 
     /** Closes every open connection of the tenant, any principal and any session kind (the tenant is gone); returns how many. */
     CloseTenant(tenantId: string): number
 }
 
 /**
- * Ends a tenant principal's tenant-portal access after its password changed: every tenant-plane session of that
- * principal, and its open tenant-plane WebSocket connections (attached once the tenant listener exists). A self-service
- * change rotates the caller onto a fresh session and moves its connections there (RotateFor); a reset by someone else
- * keeps nothing (RevokeAllFor).
+ * Ends a tenant principal's access (an Owner reset by an operator): every session of that principal in the session store,
+ * console and desktop, and its open tenant-plane sockets and desktop relays (attached once the tenant listener exists).
+ * A tenant-wide end (the tenant deleted or its provisioning rolled back) closes the tenant's connections; its stored
+ * sessions are refused by the gates from then on (TenantSessionRules: the tenant is gone, or re-created later).
  */
 export class TenantPrincipalSessions implements IOwnerSessionRevoker
 {
     private readonly connections: IPrincipalConnections[] = []
 
-    public constructor(private readonly sessions: TenantSessionStore)
+    public constructor(private readonly sessions: SessionStore)
     {
     }
 
@@ -40,60 +34,28 @@ export class TenantPrincipalSessions implements IOwnerSessionRevoker
         }
     }
 
-    /** Ends the stored sessions; the open sockets are closed even when that fails (its error is then rethrown). */
+    /** Ends the stored sessions; the open sockets are closed even when that fails (the store refuses them in process anyway, and its error is rethrown). */
     public async RevokeAllFor(tenantId: string, principalId: string): Promise<void>
     {
         try
         {
-            await this.sessions.RevokeAllFor(tenantId, principalId)
-        }
-        finally
-        {
-            this.CloseConnections(tenantId, principalId, undefined)
-        }
-    }
-
-    /**
-     * Ends every stored session of the tenant, both kinds (it was deleted, or its provisioning rolled back), and closes all
-     * of its open sockets and desktop relays even when the store change fails (its error is then rethrown).
-     */
-    public async RevokeTenant(tenantId: string): Promise<void>
-    {
-        try
-        {
-            await this.sessions.RevokeTenant(tenantId)
+            await this.sessions.RevokeSubject(principalId)
         }
         finally
         {
             for (const connections of this.connections)
             {
-                connections.CloseTenant(tenantId)
+                connections.ClosePrincipal(tenantId, principalId)
             }
         }
     }
 
-    /**
-     * Ends every stored session of the principal (the caller's `oldSessionId` too) and issues the caller a fresh one; the
-     * caller's open sockets move to the fresh session and every other socket of the principal closes. The store change is
-     * atomic, so when it fails nothing changed: no socket is closed, every session (the caller's too) stays valid, and the
-     * error is rethrown.
-     */
-    public async RotateFor(tenantId: string, principalId: string, oldSessionId: string, email?: string): Promise<TenantSession>
-    {
-        const fresh = await this.sessions.RotateFor(tenantId, principalId, email)
-        for (const connections of this.connections)
-        {
-            connections.MoveSession(oldSessionId, fresh.id)
-        }
-        this.CloseConnections(tenantId, principalId, fresh.id)
-        return fresh
-    }
-
-    private CloseConnections(tenantId: string, principalId: string, keepSessionId: string | undefined): void
+    /** Closes every open socket and desktop relay of the tenant (its sessions are refused by the gates once it is gone). */
+    public async RevokeTenant(tenantId: string): Promise<void>
     {
         for (const connections of this.connections)
         {
-            connections.ClosePrincipal(tenantId, principalId, keepSessionId)
+            connections.CloseTenant(tenantId)
         }
     }
 }

@@ -116,8 +116,11 @@ class FakeControlPlane
     private static readonly ObservationId = 'o-1'
     private static readonly PublishedAt = '2026-10-10T00:00:00.000Z'
     private static readonly AdoptedAt = '2026-10-12T00:00:00.000Z'
-    private static readonly FullRole = 'full'
+    private static readonly FullAppRole = 'operator.full'
+    private static readonly PasswordMethod = 'pwd'
     private static readonly PrincipalId = 'p-1'
+    public static readonly WsTicketPath = '/api/ws-ticket'
+    private static readonly NoSocketsError = 'no event sockets in the e2e fake'
     private static readonly CreatedAt = '2026-01-01T00:00:00.000Z'
     private static readonly ClusterBackend = 'aks'
     private static readonly ClusterMode = 'attach'
@@ -184,7 +187,8 @@ class FakeControlPlane
     // Every refused mutating call: all but login/logout and the played-through stand-up writes.
     public get Mutations(): Call[]
     {
-        return this.Calls.filter(c => c.path !== FakeControlPlane.LoginPath && c.path !== FakeControlPlane.LogoutPath && !FakeControlPlane.IsPlayedWrite(c.path))
+        return this.Calls.filter(c => c.path !== FakeControlPlane.LoginPath && c.path !== FakeControlPlane.LogoutPath && c.path !== FakeControlPlane.WsTicketPath
+            && !FakeControlPlane.IsPlayedWrite(c.path))
     }
 
     private static IsPlayedWrite(path: string): boolean
@@ -195,7 +199,7 @@ class FakeControlPlane
 
     private Operator(): Record<string, unknown>
     {
-        return { email: FakeControlPlane.OperatorEmail, principalId: FakeControlPlane.PrincipalId, role: FakeControlPlane.FullRole }
+        return { subject: FakeControlPlane.PrincipalId, claims: { email: [FakeControlPlane.OperatorEmail], app_roles: [FakeControlPlane.FullAppRole], amr: [FakeControlPlane.PasswordMethod] } }
     }
 
     private Clients(): unknown[]
@@ -471,7 +475,8 @@ class FakeControlPlane
 
     // Lists for the pages the spec visits, [] for every other read, and a
     // refusal for every write (recorded so a test can assert none happened).
-    // The events ticket is refused too, so the client opens no socket.
+    // The events ticket is unavailable (503), so the client opens no socket; a refused write is a 403 (a 401 would end
+    // the session in the shell).
     private async Api(method: string, path: string, req: IncomingMessage, res: ServerResponse): Promise<void>
     {
         if (!this.Authenticated)
@@ -517,7 +522,12 @@ class FakeControlPlane
                 FakeControlPlane.Json(res, 202, FakeControlPlane.InstallStatus(FakeControlPlane.InstallingState, FakeControlPlane.PreparingStep))
                 return
             }
-            FakeControlPlane.Json(res, 401, { error: FakeControlPlane.RefusedError })
+            if (path === FakeControlPlane.WsTicketPath)
+            {
+                FakeControlPlane.Json(res, 503, { error: FakeControlPlane.NoSocketsError })
+                return
+            }
+            FakeControlPlane.Json(res, 403, { error: FakeControlPlane.RefusedError })
             return
         }
         switch (path)
@@ -595,8 +605,8 @@ class FakeControlPlane
 // The new app's visible text, as its .mu markup spells it.
 class PortalText
 {
-    public static readonly SignInText = 'Operator sign in'
-    public static readonly LoginLabel = 'Log in'
+    public static readonly SignInText = 'Sign in to continue.'
+    public static readonly LoginLabel = 'Sign in with password'
     public static readonly EmailPlaceholder = 'Email'
     public static readonly PasswordPlaceholder = 'Password'
     public static readonly LogoutLabel = 'Log out'

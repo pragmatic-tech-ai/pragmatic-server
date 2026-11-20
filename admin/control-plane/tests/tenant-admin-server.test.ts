@@ -22,7 +22,15 @@ import { PinnedImageVerifier } from '../pinned-image-verifier.js'
 import { EnvironmentPlacement } from '../environment-placement.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
-import { TenantSessionKind, type TenantSession } from '../tenant-auth/tenant-session.js'
+import { SessionStore, SignedInIdentity } from '@pragmatic-tech-ai/pragmatic-app-host'
+import { PgSession } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
+import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
+import { TenantSessionClaims, TenantSessions, type TenantSession } from '../tenant-auth/tenant-sessions.js'
+import { TenantAdminDatabase, TenantAdminRegistry } from '../tenant-admin-database.js'
+import { ConsoleDelivery, ConsoleSeedInvalidError, ConsoleSeedMissingError } from '../console-delivery.js'
+import { MemoryRecordMap, RecordSlot } from '../record-map.js'
+import { RouteTable, RequestContext } from '@pragmatic-tech-ai/pragmatic-app-host'
+import { TenantApiDispatch } from './tenant-test-sessions.js'
 import { TenantPlaneComposer } from '../tenant-plane-composer.js'
 import { TenantAdminEnv } from '../tenant-admin-env.js'
 import { ConsoleAdvertSender } from '../console-advert-sender.js'
@@ -155,6 +163,29 @@ class Names
     public static readonly EmailDomainsVerifyPath = '/tenant-api/settings/email-domains/verify'
     public static readonly VerifyToken = 'A'.repeat(43)
     public static readonly NoChannelMessage = 'Domain verification is not available on this console.'
+    /** The line the start-time import of a pre-A5 data root logs. */
+    public static readonly ImportLinePrefix = '[tenant-admin-import]'
+}
+
+/** A fresh console database (pg-mem) per test: the composition's stores, as production opens them. */
+class ConsoleDb
+{
+    public static Fresh(): TenantAdminDatabase
+    {
+        return TenantAdminDatabase.Over(new PgSession(SqlTestSessions.MemPool()))
+    }
+
+    /** Whether a registry table holds no row. */
+    public static async IsEmpty(db: TenantAdminDatabase, registry: TenantAdminRegistry): Promise<boolean>
+    {
+        return await (await db.Map(registry)).IsEmpty()
+    }
+
+    /** The one record `key` of a registry table. */
+    public static async Read(db: TenantAdminDatabase, registry: TenantAdminRegistry, key: string): Promise<unknown>
+    {
+        return await RecordSlot.Of<unknown>(await db.Map<unknown>(registry), key).Read()
+    }
 }
 
 /**
@@ -195,7 +226,7 @@ class NetworkTrap
     }
 }
 
-/** Holds one AuditRegistry's file writes inside WriteText until Release (as tests/held-audit.ts, on an existing instance). */
+/** Holds one AuditRegistry's record-map writes inside Save until Release (on an existing instance). */
 class HeldWrite
 {
     public Written = false
@@ -207,13 +238,13 @@ class HeldWrite
     {
         this.Entered = new Promise<void>(res => { this.enter = res })
         const gate = new Promise<void>(res => { this.release = res })
-        const target = audit as unknown as { WriteText(text: string): Promise<void> }
-        const write = target.WriteText.bind(audit)
-        target.WriteText = async (text: string) =>
+        const map = (audit as unknown as { map: { Save(all: unknown, changed: unknown): Promise<void> } }).map
+        const save = map.Save.bind(map)
+        map.Save = async (all: unknown, changed: unknown) =>
         {
             this.enter()
             await gate
-            await write(text)
+            await save(all, changed)
             this.Written = true
         }
     }
@@ -268,7 +299,7 @@ class HostProbe
     }
 }
 
-/** Drives `/desktop/*` requests straight through a composed plane's desktop endpoint, as Plexus would (no Origin header). */
+/** Drives a `/desktop/*` GET through a composed plane's declared desktop routes, as Plexus would (no Origin header). */
 class DesktopProbe
 {
     public static async Get(composition: TenantAdminComposition, path: string): Promise<{ handled: boolean; status: number; body: unknown }>
@@ -276,11 +307,15 @@ class DesktopProbe
         const req = Object.assign(Readable.from([]), { method: Names.Get, headers: {}, socket: { remoteAddress: Names.ClientAddress } })
         let status = 0
         let text = Names.EmptyJson
-        const res = { writeHead: (s: number) => { status = s }, end: (b: string) => { text = b } }
+        const res = { writeHead: (s: number) => { status = s }, end: (b: string) => { text = b }, setHeader: () => undefined }
         const desktop = composition.plane.desktop
         assert.ok(desktop !== undefined, 'the console plane carries the desktop surface')
-        const handled = await desktop.Handle(req as unknown as IncomingMessage, res as unknown as ServerResponse, path)
-        return { handled, status, body: JSON.parse(text) }
+        const table = new RouteTable()
+        desktop.Register(table)
+        const match = table.Match(Names.Get, path)
+        assert.ok(match.Route !== undefined)
+        await match.Route.Definition.Handler(new RequestContext(req as unknown as IncomingMessage, res as unknown as ServerResponse, path, match.Params, new URLSearchParams(), null, Names.ClientAddress, 16384))
+        return { handled: true, status, body: JSON.parse(text) }
     }
 }
 
@@ -293,6 +328,7 @@ describe('TenantAdminServer', () =>
         registry: { kind: Names.RegistryKind } as unknown as HiveRecord['registry'],
     }
     let root = ''
+    let db = ConsoleDb.Fresh()
 
     const env = (): NodeJS.ProcessEnv => ({ [Names.DataRootVar]: root, [Names.PortVar]: Names.Port, [Names.DomainVar]: Names.Domain })
     const writeSeedJson = (body: unknown): void => writeFileSync(join(root, Names.SeedFile), JSON.stringify(body))
@@ -301,6 +337,7 @@ describe('TenantAdminServer', () =>
     beforeEach(() =>
     {
         root = mkdtempSync(join(tmpdir(), Names.TempPrefix))
+        db = ConsoleDb.Fresh()
     })
 
     afterEach(() =>
@@ -355,12 +392,12 @@ describe('TenantAdminServer', () =>
         assert.equal(cfg.ingressTls?.source, 'development')
     })
 
-    it('InClusterOrchestrationOf takes the identity from the seed', () =>
+    it('InClusterOrchestrationOf takes the identity from the seed', async () =>
     {
         writeSeed()
-        const directory = TenantAdminServer.LoadSeed(root)
+        const directory = await ConsoleDelivery.Seed(root, new MemoryRecordMap<unknown>())
         const account = new InClusterServiceAccount('/t', '/c')
-        const setup = TenantAdminServer.InClusterOrchestrationOf(account, directory, root)
+        const setup = TenantAdminServer.InClusterOrchestrationOf(account, directory, new PinnedImageVerifier([]))
         assert.deepEqual(setup.identity, { tenantId: Names.TenantId, hiveId: Names.HiveId })
         assert.ok(setup.verifier instanceof PinnedImageVerifier)
     })
@@ -370,7 +407,7 @@ describe('TenantAdminServer', () =>
         writeSeed()
         writeFileSync(join(root, Names.MasterKeyFile), randomBytes(Names.KeyBytes))
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient())
-        const composition = await server.Compose({})
+        const composition = await server.Compose({}, undefined, undefined, db)
         assert.equal(composition.reach, undefined)
     })
 
@@ -383,7 +420,7 @@ describe('TenantAdminServer', () =>
         writeFileSync(join(saRoot, 'token'), 't')
         writeFileSync(join(saRoot, 'ca.crt'), 'c')
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient())
-        const composition = await server.Compose({ ...env(), KUBERNETES_SERVICE_HOST: '10.0.0.1' }, saRoot)
+        const composition = await server.Compose({ ...env(), KUBERNETES_SERVICE_HOST: '10.0.0.1' }, saRoot, undefined, db)
         assert.ok(composition.reach instanceof InClusterEnvironmentReach)
     })
 
@@ -404,12 +441,12 @@ describe('TenantAdminServer', () =>
         writeSeed()
         writeFileSync(join(root, Names.MasterKeyFile), randomBytes(Names.KeyBytes))
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient())
-        const composition = await server.Compose({}, undefined, () => undefined)
+        const composition = await server.Compose({}, undefined, () => undefined, db)
         assert.ok(composition.plane.desktop !== undefined, 'sign-in and targets are still served')
         assert.equal(composition.plane.relay, undefined)
     })
 
-    it('Compose in a pod mounts the relay over the composition\'s reach and audits under the data root', async () =>
+    it('Compose in a pod mounts the relay over the composition\'s reach and audits into the console database', async () =>
     {
         const saRoot = writePod()
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient())
@@ -418,7 +455,7 @@ describe('TenantAdminServer', () =>
         let composition: TenantAdminComposition
         try
         {
-            composition = await server.Compose({ ...env(), [Names.ServiceHostVar]: Names.ServiceHost }, saRoot, () => undefined)
+            composition = await server.Compose({ ...env(), [Names.ServiceHostVar]: Names.ServiceHost }, saRoot, () => undefined, db)
             await new Promise<void>(res => setTimeout(res, Names.SettleMs))
         }
         finally
@@ -428,16 +465,17 @@ describe('TenantAdminServer', () =>
         assert.deepEqual(trap.Calls, [], 'no Kubernetes API call and no kubectl process at compose')
         assert.ok(composition.reach instanceof InClusterEnvironmentReach)
         assert.ok(composition.plane.relay !== undefined)
-        assert.equal(existsSync(join(root, Names.DesktopAuditFile)), false, 'nothing is written at compose')
+        assert.equal(await ConsoleDb.IsEmpty(db, TenantAdminRegistry.DesktopAudit), true, 'nothing is written at compose')
         await composition.desktopAudit.Append({ actor: Names.AuditActor, method: Names.AuditMethod, path: Names.AuditPath, status: Names.Ok, at: Names.Created })
-        assert.ok(existsSync(join(root, Names.DesktopAuditFile)))
+        assert.equal(await ConsoleDb.IsEmpty(db, TenantAdminRegistry.DesktopAudit), false)
+        assert.equal(existsSync(join(root, Names.DesktopAuditFile)), false, 'no file in the data root')
     })
 
     it('closing the composed host closes the listener, then the relay, and waits for its audit writes', async () =>
     {
         const saRoot = writePod()
         const cfg = TenantAdminServer.ReadConfig({ ...env(), [Names.ProbeVar]: Names.ProbeOff })
-        const composition = await new TenantAdminServer(cfg, new FakeRolloutClient()).Compose({ ...env(), [Names.ServiceHostVar]: Names.ServiceHost }, saRoot, () => undefined)
+        const composition = await new TenantAdminServer(cfg, new FakeRolloutClient()).Compose({ ...env(), [Names.ServiceHostVar]: Names.ServiceHost }, saRoot, () => undefined, db)
         const relay = composition.plane.relay
         assert.ok(relay !== undefined)
         const held = new HeldWrite(composition.desktopAudit)
@@ -470,13 +508,13 @@ describe('TenantAdminServer', () =>
         }
     })
 
-    it('Compose loads the desktop audit file before building the plane', async () =>
+    it('Compose loads the stored desktop audit before building the plane', async () =>
     {
         const saRoot = writePod()
         const podEnv = { ...env(), [Names.ServiceHostVar]: Names.ServiceHost }
-        const first = await new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient()).Compose(podEnv, saRoot, () => undefined)
+        const first = await new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient()).Compose(podEnv, saRoot, () => undefined, db)
         await first.desktopAudit.Append({ actor: Names.AuditActor, method: Names.AuditMethod, path: Names.AuditPath, status: Names.Ok, at: Names.Created })
-        const second = await new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient()).Compose(podEnv, saRoot, () => undefined)
+        const second = await new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient()).Compose(podEnv, saRoot, () => undefined, db)
         assert.deepEqual(second.desktopAudit.List().map(r => r.actor), [Names.AuditActor])
     })
 
@@ -500,10 +538,14 @@ describe('TenantAdminServer', () =>
         })
     }
 
-    it('LoadSeed builds a SeededTenantDirectory resolving the seeded tenant and hive', () =>
+    it('the delivered seed builds a SeededTenantDirectory resolving the seeded tenant and hive, and is stored', async () =>
     {
         writeSeed()
-        const dir = TenantAdminServer.LoadSeed(root)
+        const stored = new MemoryRecordMap<unknown>()
+        const dir = await ConsoleDelivery.Seed(root, stored)
+        assert.deepEqual(await RecordSlot.Of<unknown>(stored, ConsoleDelivery.SeedKey).Read(), { tenant, hives: [hive] })
+        rmSync(join(root, Names.SeedFile))
+        assert.equal((await ConsoleDelivery.Seed(root, stored)).GetTenant(Names.TenantId)?.displayName, Names.TenantName, 'a start without a delivery serves the stored seed')
         assert.ok(dir instanceof SeededTenantDirectory)
         assert.equal(dir.GetTenant(Names.TenantId)?.displayName, Names.TenantName)
         assert.equal(dir.GetTenant(Names.OtherTenantId), undefined)
@@ -517,32 +559,32 @@ describe('TenantAdminServer', () =>
         assert.equal(dir.ListHives(Names.OtherTenantId).length, 0)
     })
 
-    it('LoadSeed throws a clear error when seed.json is missing or malformed', () =>
+    it('no delivered and no stored seed is a clear error naming seed.json; a malformed one is refused', async () =>
     {
-        assert.throws(() => TenantAdminServer.LoadSeed(root), new RegExp(Names.SeedFile))
+        await assert.rejects(ConsoleDelivery.Seed(root, new MemoryRecordMap<unknown>()), (e: Error) => e instanceof ConsoleSeedMissingError && e.message.includes(Names.SeedFile))
         writeSeedJson({ hives: [] })
-        assert.throws(() => TenantAdminServer.LoadSeed(root), new RegExp(Names.SeedFile))
+        await assert.rejects(ConsoleDelivery.Seed(root, new MemoryRecordMap<unknown>()), ConsoleSeedInvalidError)
     })
 
-    it('LoadSeed rejects malformed hive elements', () =>
+    it('a seed with malformed hive elements is refused', async () =>
     {
         writeSeedJson({ tenant, hives: [{ id: Names.HiveId }] })
-        assert.throws(() => TenantAdminServer.LoadSeed(root), Names.HivePattern)
+        await assert.rejects(ConsoleDelivery.Seed(root, new MemoryRecordMap<unknown>()), Names.HivePattern)
         writeSeedJson({ tenant, hives: [null] })
-        assert.throws(() => TenantAdminServer.LoadSeed(root), Names.HivePattern)
+        await assert.rejects(ConsoleDelivery.Seed(root, new MemoryRecordMap<unknown>()), Names.HivePattern)
     })
 
-    it('Compose fails on a missing seed or master key and leaves no data dir behind', async () =>
+    it('Compose fails on a missing master key or seed and leaves no data dir behind', async () =>
     {
         const fresh = join(root, Names.FreshDir)
         const e = env()
         e[Names.DataRootVar] = fresh
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(e), new FakeRolloutClient())
-        await assert.rejects(() => server.Compose(), new RegExp(Names.SeedFile))
+        await assert.rejects(() => server.Compose({}, undefined, undefined, db), new RegExp(Names.MasterKeyFile))
         assert.equal(existsSync(fresh), false)
-        writeSeed()
-        const second = new TenantAdminServer(TenantAdminServer.ReadConfig(env()), new FakeRolloutClient())
-        await assert.rejects(() => second.Compose(), new RegExp(Names.MasterKeyFile))
+        mkdirSync(fresh)
+        writeFileSync(join(fresh, Names.MasterKeyFile), randomBytes(Names.KeyBytes))
+        await assert.rejects(() => server.Compose({}, undefined, undefined, db), new RegExp(Names.SeedFile))
     })
 
     it('Compose wires the seeded directory and injected rollout client under its own data root', async () =>
@@ -551,13 +593,14 @@ describe('TenantAdminServer', () =>
         writeFileSync(join(root, Names.MasterKeyFile), randomBytes(Names.KeyBytes))
         const rollout = new FakeRolloutClient()
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env()), rollout)
-        const composition = await server.Compose()
+        const composition = await server.Compose({}, undefined, undefined, db)
         assert.equal(composition.rollout, rollout)
         assert.ok(composition.directory instanceof SeededTenantDirectory)
         assert.equal(composition.directory.GetTenant(Names.TenantId)?.id, Names.TenantId)
-        assert.ok(composition.plane.endpoint)
+        assert.ok(composition.plane.relyingParty)
+        assert.ok(composition.plane.clients)
         assert.ok(composition.plane.api)
-        assert.ok(composition.plane.isDurable)
+        assert.equal(composition.database, db)
         assert.ok(composition.host)
         assert.ok(composition.monitor)
     })
@@ -602,6 +645,7 @@ describe('TenantAdminServer console advert', () =>
     }
     const runEnv = async (url: string): Promise<NodeJS.ProcessEnv> => ({ ...advertEnv(url), [Names.PortVar]: String(await freePort()), [Names.ProbeVar]: Names.ProbeOff })
     let root = ''
+    let db = ConsoleDb.Fresh()
     let keyFile = ''
     let channel: Server | undefined
     let posts: Array<{ url: string | undefined; body: unknown }> = []
@@ -619,11 +663,12 @@ describe('TenantAdminServer console advert', () =>
         [TenantAdminEnv.RolloutToken]: Names.RolloutToken,
         [TenantAdminEnv.RolloutHiveId]: Names.HiveId,
     })
-    const store = (): Promise<ConsoleEmailDomainStore> => ConsoleEmailDomainStore.Open(join(root, ConsoleEmailDomainStore.FileName), Names.TenantId, tenant.emailDomains)
+    const store = (): Promise<ConsoleEmailDomainStore> => ConsoleEmailDomainStore.Open(new MemoryRecordMap<unknown>(), Names.TenantId, tenant.emailDomains)
 
     beforeEach(() =>
     {
         root = mkdtempSync(join(tmpdir(), Names.TempPrefix))
+        db = ConsoleDb.Fresh()
         keyFile = join(root, Names.FingerprintKeyName)
         writeFileSync(keyFile, randomBytes(Names.KeyBytes))
         posts = []
@@ -728,7 +773,7 @@ describe('TenantAdminServer console advert', () =>
         let status = 0
         let text = ''
         const res = { writeHead: (s: number) => { status = s }, end: (b: string) => { text = b } }
-        await composition.plane.api.Handle(req as unknown as IncomingMessage, res as unknown as ServerResponse, path, session)
+        await TenantApiDispatch.Handle(composition.plane.api, req as unknown as IncomingMessage, res as unknown as ServerResponse, path, session, composition.directory)
         return { status, body: JSON.parse(text) }
     }
 
@@ -737,15 +782,15 @@ describe('TenantAdminServer console advert', () =>
         writeConsoleSeed()
         const lines: string[] = []
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
-        const composition = await server.Compose({}, undefined, line => lines.push(line))
+        const composition = await server.Compose({}, undefined, line => lines.push(line), db)
         assert.deepEqual(composition.emailDomains.Domains, [Names.EmailDomain])
-        assert.equal(existsSync(join(root, ConsoleEmailDomainStore.FileName)), false)
+        assert.equal(await ConsoleDb.IsEmpty(db, TenantAdminRegistry.EmailDomains), true)
         assert.equal(composition.advert, undefined, 'no advert outside a configured console')
         assert.equal(lines.length, 2, 'the advert-off line and the gate-off line')
         assert.equal(lines[1], TenantAdminServer.RegistrationGateOffLine)
     })
 
-    it('a console outside a pod answers 503 on the graph routes and audits to tenant-graph-audit.json', async () =>
+    it('a console outside a pod answers 503 on the graph routes and audits to its database (a pre-A5 registry imported at start)', async () =>
     {
         writeConsoleSeed()
         const record = {
@@ -755,7 +800,7 @@ describe('TenantAdminServer console advert', () =>
         }
         writeFileSync(join(root, TenantPlaneComposer.RegistryFile), JSON.stringify({ environments: { [Names.GraphEnvName]: record } }))
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
-        const composition = await server.Compose({}, undefined, () => undefined)
+        const composition = await server.Compose({}, undefined, () => undefined, db)
         assert.equal(composition.reach, undefined)
         const get = await handle(composition, Names.Get, undefined, Names.GraphsPath)
         assert.equal(get.status, Names.Unavailable)
@@ -763,9 +808,8 @@ describe('TenantAdminServer console advert', () =>
         assert.equal(composition.graphAudit.List().length, 0, 'a read is not audited')
         const post = await handle(composition, Names.Post, { name: Names.GraphName }, Names.GraphsPath)
         assert.equal(post.status, Names.Unavailable)
-        const file = join(root, TenantPlaneComposer.TenantGraphAuditFile)
-        assert.ok(existsSync(file))
-        const reloaded = new AuditRegistry(file)
+        assert.equal(existsSync(join(root, TenantPlaneComposer.TenantGraphAuditFile)), false)
+        const reloaded = new AuditRegistry(await db.Map(TenantAdminRegistry.GraphAudit))
         await reloaded.Load()
         assert.deepEqual(reloaded.List().map(r => r.status), [Names.Unavailable])
         assert.equal(composition.graphAudit.List().length, 1)
@@ -776,7 +820,7 @@ describe('TenantAdminServer console advert', () =>
     {
         writeConsoleSeed()
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
-        const composition = await server.Compose({}, undefined, () => undefined)
+        const composition = await server.Compose({}, undefined, () => undefined, db)
         assert.deepEqual(await handle(composition, Names.Get), { status: Names.Ok, body: { domains: [Names.EmailDomain], editable: true, inHive: true, pending: [], verifications: [] } })
     })
 
@@ -784,22 +828,22 @@ describe('TenantAdminServer console advert', () =>
     {
         writeConsoleSeed()
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
-        const composition = await server.Compose({}, undefined, () => undefined)
+        const composition = await server.Compose({}, undefined, () => undefined, db)
         assert.deepEqual(await DesktopProbe.Get(composition, Names.ConsolePath), { handled: true, status: Names.Ok, body: { tenantId: Names.TenantId, tenantName: Names.TenantName } })
         assert.deepEqual(await handle(composition, Names.Get), { status: Names.Ok, body: { domains: [Names.EmailDomain], editable: true, inHive: true, pending: [], verifications: [] } })
     })
 
-    it('Compose opens the console registration from the data root and passes it to the host when the advert is configured', async () =>
+    it('Compose opens the console registration (a pre-A5 file imported at start) and passes it to the host when the advert is configured', async () =>
     {
         writeConsoleSeed()
         writeFileSync(join(root, ConsoleRegistration.FileName), JSON.stringify({ state: 'refused' }))
         const env = advertEnv()
         const lines: string[] = []
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient())
-        const composition = await server.Compose(env, undefined, line => lines.push(line))
+        const composition = await server.Compose(env, undefined, line => lines.push(line), db)
         assert.ok(composition.advert !== undefined)
         assert.equal(composition.registration.IsRefused, true)
-        assert.deepEqual(lines, [])
+        assert.deepEqual(lines.filter(l => !l.startsWith(Names.ImportLinePrefix)), [])
         await composition.host.Listen(0, Names.DefaultBind)
         try
         {
@@ -831,11 +875,11 @@ describe('TenantAdminServer console advert', () =>
             }
             const lines: string[] = []
             const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient())
-            const composition = await server.Compose(env, undefined, line => lines.push(line))
+            const composition = await server.Compose(env, undefined, line => lines.push(line), db)
             assert.equal(composition.advert, undefined)
             assert.equal(composition.registration.IsRefused, false)
             assert.deepEqual(lines.filter(l => l === TenantAdminServer.RegistrationGateOffLine), [TenantAdminServer.RegistrationGateOffLine])
-            assert.equal(lines.length, 2, 'the advert-off line and the gate-off line')
+            assert.equal(lines.filter(l => !l.startsWith(Names.ImportLinePrefix)).length, 2, 'the advert-off line and the gate-off line')
             await composition.host.Listen(0, Names.DefaultBind)
             try
             {
@@ -849,6 +893,7 @@ describe('TenantAdminServer console advert', () =>
                 await composition.host.Close()
             }
             assert.equal(readFileSync(join(root, ConsoleRegistration.FileName), Names.Utf8), Names.RefusedFileBody, 'the saved file is left alone')
+            assert.equal(await ConsoleDb.Read(db, TenantAdminRegistry.Registration, ConsoleRegistration.StateKey), 'refused', 'and so is the stored state')
         })
     }
 
@@ -858,12 +903,12 @@ describe('TenantAdminServer console advert', () =>
         writeFileSync(join(root, ConsoleRegistration.FileName), JSON.stringify({ state: 'refused' }))
         const env = await runEnv(await listenChannel())
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient())
-        const composition = await server.Run(env, () => undefined)
+        const composition = await server.Run(env, () => undefined, db)
         try
         {
             assert.equal(posts.length, 1)
             assert.equal(composition.registration.IsRefused, false)
-            assert.deepEqual(JSON.parse(readFileSync(join(root, ConsoleRegistration.FileName), Names.Utf8)), { state: 'registered' })
+            assert.equal(await ConsoleDb.Read(db, TenantAdminRegistry.Registration, ConsoleRegistration.StateKey), 'registered')
         }
         finally
         {
@@ -878,7 +923,7 @@ describe('TenantAdminServer console advert', () =>
         answerBody = JSON.stringify({ verification })
         const env = advertEnv(await listenChannel())
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient())
-        const composition = await server.Compose(env, undefined, () => undefined)
+        const composition = await server.Compose(env, undefined, () => undefined, db)
         assert.ok(composition.advert !== undefined)
         const view = await composition.emailDomains.Verify(Names.TenantId, Names.EmailDomain)
         assert.deepEqual(posts, [{ url: Names.VerifyPath, body: { domain: Names.EmailDomain } }], 'Verify reached the agent channel, not the no-channel sentence')
@@ -892,14 +937,14 @@ describe('TenantAdminServer console advert', () =>
     {
         writeConsoleSeed()
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
-        const composition = await server.Compose({}, undefined, () => undefined)
+        const composition = await server.Compose({}, undefined, () => undefined, db)
         await assert.rejects(() => composition.emailDomains.Verify(Names.TenantId, Names.EmailDomain),
             (e: Error) => e instanceof DomainVerificationUnavailableError && e.message === Names.NoChannelMessage)
     })
 
     it('AdvertSenderOf hands each outcome to the registration it is given', async () =>
     {
-        const registration = await ConsoleRegistration.Open(join(root, ConsoleRegistration.FileName), () => undefined)
+        const registration = await ConsoleRegistration.Open(new MemoryRecordMap<unknown>(), () => undefined)
         await registration.Observe(AdvertOutcome.Refused, AdvertTrigger.Timer)
         await registration.Observe(AdvertOutcome.Refused, AdvertTrigger.Timer)
         const env = advertEnv(await listenChannel())
@@ -917,15 +962,15 @@ describe('TenantAdminServer console advert', () =>
         }
     })
 
-    it('a PUT on the console route writes the console store and its file, never the seeded record', async () =>
+    it('a PUT on the console route writes the console store and its record, never the seeded record', async () =>
     {
         writeConsoleSeed()
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(baseEnv()), new FakeRolloutClient())
-        const composition = await server.Compose({}, undefined, () => undefined)
+        const composition = await server.Compose({}, undefined, () => undefined, db)
         const answer = await handle(composition, Names.Put, { domains: [Names.NewEmailDomain] })
         assert.deepEqual(answer, { status: Names.Ok, body: { domains: [Names.NewEmailDomain], editable: true, inHive: true, pending: [], verifications: [] } })
         assert.deepEqual(composition.emailDomains.Domains, [Names.NewEmailDomain])
-        assert.deepEqual(JSON.parse(readFileSync(join(root, ConsoleEmailDomainStore.FileName), Names.Utf8)), { domains: [Names.NewEmailDomain] })
+        assert.deepEqual(await ConsoleDb.Read(db, TenantAdminRegistry.EmailDomains, ConsoleEmailDomainStore.DomainsKey), [Names.NewEmailDomain])
         assert.deepEqual(composition.directory.Tenant.emailDomains, [Names.EmailDomain], 'the seeded record is untouched')
         assert.deepEqual((JSON.parse(readFileSync(join(root, Names.SeedFile), Names.Utf8)) as { tenant: TenantRecord }).tenant.emailDomains, [Names.EmailDomain])
     })
@@ -940,7 +985,7 @@ describe('TenantAdminServer console advert', () =>
         {
             const env = { ...(await runEnv(url)), [Names.PortVar]: String((blocker.address() as AddressInfo).port) }
             const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient())
-            await assert.rejects(() => server.Run(env, () => undefined))
+            await assert.rejects(() => server.Run(env, () => undefined, db))
             assert.equal(posts.length, 0, 'no advert from a console that never listened')
             await server.Close()
         }
@@ -957,7 +1002,7 @@ describe('TenantAdminServer console advert', () =>
         const env = await runEnv(url)
         const lines: string[] = []
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient())
-        const composition = await server.Run(env, line => lines.push(line))
+        const composition = await server.Run(env, line => lines.push(line), db)
         await composition.emailDomains.Set(Names.TenantId, [Names.NewEmailDomain])
         await Waits.Until(() => posts.length === 2)
         await server.Close()
@@ -970,23 +1015,23 @@ describe('TenantAdminServer console advert', () =>
     {
         writeConsoleSeed()
         // Sessions the console's own store holds before it starts: the Owner's (console and desktop) and someone else's.
-        const before = TenantPlaneComposer.TenantSessionsOf(root)
-        const ownerConsole = await before.Issue(Names.TenantId, Names.PrincipalId, Names.OwnerEmail)
-        const ownerDesktop = await before.Issue(Names.TenantId, Names.PrincipalId, Names.OwnerEmail, TenantSessionKind.Desktop)
-        const other = await before.Issue(Names.TenantId, Names.OtherPrincipalId)
+        const before = new TenantSessions(await db.SessionRepositories(), false)
+        const ownerConsole = (await before.Store.Issue(Names.PrincipalId, TenantSessionClaims.Of(Names.TenantId, Names.OwnerEmail))).Token
+        const ownerDesktop = (await before.IssueDesktop(new SignedInIdentity(Names.PrincipalId, TenantSessionClaims.Of(Names.TenantId, Names.OwnerEmail)))).Token
+        const other = (await before.Store.Issue(Names.OtherPrincipalId, TenantSessionClaims.Of(Names.TenantId, undefined))).Token
         await new Promise<void>(res => setTimeout(res, Names.TickMs))
         answerBody = JSON.stringify({ refusedEmailDomains: [], ownerResetAt: Names.OwnerResetAt })
         const url = await listenChannel()
         const env = await runEnv(url)
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient())
-        await server.Run(env, () => undefined)
+        await server.Run(env, () => undefined, db)
         try
         {
-            assert.deepEqual(JSON.parse(readFileSync(join(root, ConsoleOwnerResetFollower.FileName), Names.Utf8)), { appliedAt: Names.OwnerResetAt })
-            const after = TenantPlaneComposer.TenantSessionsOf(root)
-            assert.equal(await after.Validate(ownerConsole.id), null, 'the Owner console session is refused')
-            assert.equal(await after.Validate(ownerDesktop.id), null, 'the Owner desktop session is refused')
-            assert.notEqual(await after.Validate(other.id), null, 'another principal keeps its session')
+            assert.equal(await ConsoleDb.Read(db, TenantAdminRegistry.OwnerResetApplied, ConsoleOwnerResetFollower.AppliedKey), Names.OwnerResetAt)
+            const after = new TenantSessions(await db.SessionRepositories(), false)
+            assert.equal(await after.Store.Validate(ownerConsole), null, 'the Owner console session is refused')
+            assert.equal(await after.Store.Validate(ownerDesktop), null, 'the Owner desktop session is refused')
+            assert.notEqual(await after.Store.Validate(other), null, 'another principal keeps its session')
         }
         finally
         {
@@ -1007,7 +1052,7 @@ describe('TenantAdminServer console advert', () =>
         const env = { ...(await runEnv(await listenChannel())), [Names.ServiceHostVar]: Names.ServiceHost }
         const trap = new NetworkTrap()
         trap.Install()
-        const composition = await new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient()).Compose(env, saRoot, () => undefined)
+        const composition = await new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient()).Compose(env, saRoot, () => undefined, db)
         try
         {
             const relay = composition.plane.relay
@@ -1016,15 +1061,15 @@ describe('TenantAdminServer console advert', () =>
             // prove each open pipe closes). Spied here, so a follower built over any other principal registry fails this.
             const closed: Array<[string, string]> = []
             const close = relay.ClosePrincipal.bind(relay)
-            relay.ClosePrincipal = (tenantId: string, principalId: string, keep?: string) =>
+            relay.ClosePrincipal = (tenantId: string, principalId: string) =>
             {
                 closed.push([tenantId, principalId])
-                return close(tenantId, principalId, keep)
+                return close(tenantId, principalId)
             }
             await composition.host.Listen(0, Names.DefaultBind)
             await composition.advert?.Start()
             assert.ok(composition.advert !== undefined, 'the configured console adverts')
-            assert.deepEqual(JSON.parse(readFileSync(join(root, ConsoleOwnerResetFollower.FileName), Names.Utf8)), { appliedAt: Names.OwnerResetAt })
+            assert.equal(await ConsoleDb.Read(db, TenantAdminRegistry.OwnerResetApplied, ConsoleOwnerResetFollower.AppliedKey), Names.OwnerResetAt)
             assert.deepEqual(closed, [[Names.TenantId, Names.PrincipalId]], 'the Owner relays of the served relay are closed')
             assert.deepEqual(trap.Calls, [], 'no Kubernetes API call and no kubectl process')
         }
@@ -1043,7 +1088,7 @@ describe('TenantAdminServer console advert', () =>
         const url = await listenChannel()
         const env = await runEnv(url)
         const server = new TenantAdminServer(TenantAdminServer.ReadConfig(env), new FakeRolloutClient())
-        const composition = await server.Run(env)
+        const composition = await server.Run(env, undefined, db)
         try
         {
             assert.ok(composition.advert instanceof ConsoleAdvertSender)
@@ -1087,7 +1132,7 @@ describe('UnconfiguredRolloutClient', () =>
             let status = 0
             let body = ''
             const res = { writeHead: (s: number) => { status = s }, end: (b: string) => { body = b } }
-            await endpoint.Handle({ method: Names.Get } as unknown as IncomingMessage, res as unknown as ServerResponse, path, session)
+            await TenantApiDispatch.Handle(endpoint, { method: Names.Get } as unknown as IncomingMessage, res as unknown as ServerResponse, path, session, directory as unknown as { GetTenant: () => undefined })
             assert.equal(status, Names.Unavailable)
             assert.match(body, Names.NoRolloutPattern)
         }

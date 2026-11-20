@@ -24,8 +24,8 @@ import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal } from './
 
 /**
  * The operator roles as session claims: the platform admin console's application roles (declared in its component
- * descriptor), carried in the `app_roles` claim beside the operator's `email`. ClaimsAuthorizer checks a route's role
- * against `app_roles`.
+ * descriptor), carried in the `app_roles` claim beside the operator's `email`. The console's routes name them as their
+ * `AppRole` and ClaimsAuthorizer checks them against `app_roles`.
  */
 export class OperatorRoleClaims
 {
@@ -38,6 +38,8 @@ export class OperatorRoleClaims
     /** The claim the roles travel in (the application-roles claim of the realm's sessions). */
     public static readonly RoleClaim = 'app_roles'
     public static readonly EmailClaim = 'email'
+    /** The claim a tenant-plane session names its tenant by (TenantSessionClaims.TenantClaim): never on an operator session. */
+    public static readonly TenantClaim = 'tenant'
     /** How the session was signed in (the OIDC `amr` claim): `pwd` for the console's own operator accounts. */
     public static readonly MethodClaim = 'amr'
     public static readonly PasswordMethod = 'pwd'
@@ -88,9 +90,17 @@ export class OperatorSessionGate extends SessionGate
         return session === null ? null : await this.Refreshed(session)
     }
 
-    /** The session with its claims as the operator's account says now; null when the operator is gone or disabled. */
+    /**
+     * The session with its claims as the operator's account says now; null when the operator is gone or disabled, or when
+     * it is not an operator session at all (a session of the co-hosted tenant plane, which shares the session table, names
+     * its tenant: it never authenticates here).
+     */
     public async Refreshed(session: SessionRecord): Promise<SessionRecord | null>
     {
+        if (session.Claims.First(OperatorRoleClaims.TenantClaim) !== undefined)
+        {
+            return null
+        }
         if (!OperatorRoleClaims.IsOperatorAccount(session))
         {
             return session

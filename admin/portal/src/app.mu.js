@@ -20,6 +20,7 @@ import { NavigationService } from "@pragmatic-tech-ai/mural/framework/shell/serv
 import { ToolTipService } from "@pragmatic-tech-ai/mural/framework/tooltips/tooltip-service.js";
 import { Pragmatic, PragmaticDark } from "@pragmatic-tech-ai/mural/resources/pragmatic";
 import { Application, DataContextBinding, DynamicResource, NameScope, ServiceBinding, ServiceProvider, Setter, SetterFactory, Style } from "@pragmatic-tech-ai/mural/runtime";
+import { AppShellResources } from "@pragmatic-tech-ai/pragmatic-app-shell";
 
 export const app = (() => {
     const _app0 = new Application();
@@ -38,6 +39,7 @@ export const app = (() => {
     _app0.AddModule(ActivityModule);
     _app0.AddModule(SettingsModule);
     const _rd1 = _app0.Resources;
+    for (const [_k, _v] of AppShellResources.Clone().Entries()) _rd1.Set(_k, _v);
     for (const [_k, _v] of ShellResources.Clone().Entries()) _rd1.Set(_k, _v);
     for (const [_k, _v] of PortalIcons.Clone().Entries()) _rd1.Set(_k, _v);
     const _setter2 = new Setter(NavigationItem, "Template", new SetterFactory((_t) => DynamicResource(_t, "ActivityBarItemTemplate")));

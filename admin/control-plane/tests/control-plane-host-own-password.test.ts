@@ -78,7 +78,7 @@ class OwnPasswordFixture
 
     public static async Open(host: ControlPlaneHost, token: string): Promise<WebSocket>
     {
-        const t = await OwnPasswordFixture.Send(host, 'GET', '/api/events-ticket', token)
+        const t = await OwnPasswordFixture.Send(host, 'POST', '/api/ws-ticket', token, {})
         assert.equal(t.status, 200)
         const ticket = (JSON.parse(t.body) as { ticket: string }).ticket
         const ws = new WebSocket(`ws://127.0.0.1:${host.Address().port}/api/events`, [ticket])

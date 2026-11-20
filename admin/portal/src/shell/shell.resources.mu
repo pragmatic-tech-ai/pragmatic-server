@@ -1,13 +1,13 @@
 // shell.resources.mu - the shell's own views.
 //
 // The header: EditorShell's HeaderContent is a ContentControl whose Content is
-// the PortalSessionService, rendered through this implicit-by-type template.
-// It shows who is signed in, their role, the Observer read-only notice
-// (collapsed for Operators), Change password (any role: their own account)
-// and Log out; a failed logout, and what a password change did, report here.
-//
-// The change-password dialog: current, new and confirm, all masked native
-// password inputs; why Confirm is still off shows under the field at fault.
+// the PortalSessionService (the shell's AppSessionService with the operator's
+// role), rendered through this implicit-by-type template, more specific than
+// the shell's own header. It shows who is signed in, their role, the Observer
+// read-only notice (collapsed for Operators), Change password (any role: their
+// own account; the dialog is the shell's, from AppShellResources) and Log out;
+// a failed logout, a refused request (403) and what a password change did
+// report here.
 //
 // Shared section views: the name-to-confirm dialog every irreversible action
 // opens (rendered inside the shell's DialogService surface; its buttons live
@@ -24,7 +24,6 @@
 
 import PortalSessionService from "./portal-session-service.js"
 import NameConfirmDialogViewModel from "./name-confirm-dialog-view-model.js"
-import ChangePasswordDialogViewModel from "./change-password-dialog-view-model.js"
 import ObservedEnvironmentsViewModel from "./observed-environments-view-model.js"
 import ObservedEnvironmentRowViewModel from "./observed-environments-view-model.js"
 
@@ -89,7 +88,8 @@ resources ShellResources {
                 Button [ DockPanel.Dock = Right, Variant = Text, Command = $LogoutCommand, Margin = (12,0,0,0) ] {
                     TextBlock [ Text = "Log out" ]
                 }
-                Button [ DockPanel.Dock = Right, Variant = Text, Command = $ChangePasswordCommand, Margin = (12,0,0,0) ] {
+                Button [ DockPanel.Dock = Right, Variant = Text, Command = $ChangePasswordCommand, Margin = (12,0,0,0),
+                         Visibility = $ShowsChangePassword << ToVisibility ] {
                     TextBlock [ Text = "Change password" ]
                 }
                 StackPanel [ DockPanel.Dock = Right, Orientation = Horizontal, VerticalAlignment = Center ] {
@@ -97,11 +97,13 @@ resources ShellResources {
                     TextBlock [ Text = $RoleLabel, Style = @UiCaption, Foreground = @Fg2 ]
                 }
                 StackPanel [ Orientation = Horizontal, VerticalAlignment = Center ] {
-                    TextBlock [ Text = "Platform Admin", Style = @UiLabel, Foreground = @Fg0, Margin = (0,0,16,0) ]
+                    TextBlock [ Text = $ProductName, Style = @UiLabel, Foreground = @Fg0, Margin = (0,0,16,0) ]
                     TextBlock [ Text = $ReadOnlyNotice, Style = @UiCaption, Foreground = @StateWarningInk,
                                 Margin = (0,0,16,0), Visibility = $ReadOnlyNotice << ToVisibility ]
                     TextBlock [ Text = $AccountNotice, Style = @UiCaption, Foreground = @StateSuccessInk,
                                 Margin = (0,0,16,0), Visibility = $AccountNotice << ToVisibility ]
+                    TextBlock [ Text = $AccessNotice, Style = @UiCaption, Foreground = @StateWarningInk,
+                                Margin = (0,0,16,0), Visibility = $AccessNotice << ToVisibility ]
                     TextBlock [ Text = $LogoutError, Style = @UiCaption, Foreground = @StateDangerInk,
                                 Visibility = $LogoutError << ToVisibility ]
                 }
@@ -133,38 +135,6 @@ resources ShellResources {
                 }
                 Button [ Variant = Danger, Command = $ConfirmCommand ] {
                     TextBlock [ Text = $ConfirmLabel ]
-                }
-            }
-        }
-    }
-
-    // Change your own password. Every box is a masked native password input.
-    DataTemplate [ DataType = ChangePasswordDialogViewModel ] {
-        StackPanel [ Orientation = Vertical, Margin = (0,4,0,0) ] {
-            TextBlock [ Text = "Your other sessions will be signed out. This one stays signed in.", TextWrapping = Wrap,
-                        Foreground = @Fg1, Margin = (0,0,0,12) ]
-            TextBlock [ Text = "Current password", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ UsesNativeInput = true, InputPurpose = CurrentPassword, IsPassword = true, Text = $CurrentPassword, Margin = (0,0,0,12) ]
-            TextBlock [ Text = "New password", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            StackPanel [ Orientation = Vertical, Margin = (0,0,0,12) ] {
-                TextBox [ UsesNativeInput = true, InputPurpose = NewPassword, IsPassword = true, Text = $NewPassword ]
-                TextBlock [ Text = $NewPasswordText, Style = @UiCaption, Foreground = @StateDangerInk, Margin = (0,4,0,0),
-                            Visibility = $NewPasswordText << ToVisibility ]
-            }
-            TextBlock [ Text = "Confirm new password", Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            StackPanel [ Orientation = Vertical, Margin = (0,0,0,12) ] {
-                TextBox [ UsesNativeInput = true, InputPurpose = NewPassword, IsPassword = true, Text = $ConfirmPassword ]
-                TextBlock [ Text = $MismatchText, Style = @UiCaption, Foreground = @StateDangerInk, Margin = (0,4,0,0),
-                            Visibility = $MismatchText << ToVisibility ]
-            }
-            TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,12),
-                        Visibility = $ErrorText << ToVisibility ]
-            StackPanel [ Orientation = Horizontal, HorizontalAlignment = Right ] {
-                Button [ Variant = Secondary, Command = $CancelCommand, Margin = (0,0,8,0) ] {
-                    TextBlock [ Text = "Cancel" ]
-                }
-                Button [ Variant = Primary, Command = $ConfirmCommand ] {
-                    TextBlock [ Text = "Change password" ]
                 }
             }
         }

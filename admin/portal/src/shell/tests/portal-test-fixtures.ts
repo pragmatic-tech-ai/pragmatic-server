@@ -5,13 +5,15 @@ import { ClipboardService } from '@pragmatic-tech-ai/mural/framework/shell/servi
 import { ContentHostService } from '@pragmatic-tech-ai/mural/framework/shell/services/content-host-service.js'
 import { DialogService, type DialogOptions } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
+import { AppSession, type IPageReloader } from '@pragmatic-tech-ai/pragmatic-app-shell'
+import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 import { ApiError, type ControlPlaneClient } from '../../api-client.js'
+import { PlatformShell } from '../platform-shell.js'
 import { OperatorContext } from '../../operator-context.js'
 import { AgentInstallState, AgentInstallStep, ConsoleInstallState, ConsoleInstallStep, DomainApprovalState, EmailDomainSource, type AgentInstallStatusDto, type ConsoleInstallStatusDto, type TenantEmailDomainsDto } from '../../portal-types.js'
-import type { ConsoleRemovalDto, HiveConsoleSpecDto, HiveDeleteOutcomeDto, InHiveOwnerPasswordDto, OwnerPasswordResetDto, PasswordChangedDto } from '../../portal-types.js'
+import type { ConsoleRemovalDto, HiveConsoleSpecDto, HiveDeleteOutcomeDto, InHiveOwnerPasswordDto, OwnerPasswordResetDto } from '../../portal-types.js'
 import type { ActivityDto, ClientDto, CreatedTenantDto, FleetHiveDto, GatingDto, HiveBootstrapDto, HiveDto, HiveRolloutDto, LedgerDto, ManifestDto, ObservationDto, OperatorSummaryDto, PolicyDto, ProvisionInputDto, ProvisionResultDto, ReleaseRefreshDto, SelectionDto, TenantDto } from '../../portal-types.js'
 import { DownloadService } from '../download-service.js'
-import type { IPageReloader } from '../page-reloader.js'
 import { PollScheduling, type IPollScheduler } from '../poll-scheduler.js'
 import { PortalSessionService } from '../portal-session-service.js'
 
@@ -268,13 +270,6 @@ export class FakeControlPlane
     public FailPolicyCall: string | undefined
     // Each operator-management write as 'Method email [argument]', in call order.
     public readonly OperatorCalls: string[] = []
-    // The own-password changes asked for, as [current, new, confirm]; a set PasswordChangeFailure fails the next ones.
-    public readonly PasswordChanges: Array<[string, string, string]> = []
-    public PasswordChangeFailure: Error | undefined
-    public PasswordChangeHold: Promise<void> | undefined
-    public PasswordReply: PasswordChangedDto = { ok: true, otherSessionsEnded: true }
-    public SessionAlive = true
-    public SessionChecks = 0
     public readonly CreatedClients: Array<[string, string, string | undefined]> = []
     public readonly CreatedTenants: Array<[string, string, string, string]> = []
     public readonly CreatedHives: HiveDto[] = []
@@ -535,25 +530,6 @@ export class FakeControlPlane
     {
         this.ThrowIfFailing()
         this.OperatorCalls.push('RevokeOperatorSessions ' + email)
-    }
-
-    // Answers PasswordReply; while PasswordChangeHold is set, the reply waits for it (a submit in flight).
-    public async ChangeOwnPassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<PasswordChangedDto>
-    {
-        await this.PasswordChangeHold
-        if (this.PasswordChangeFailure !== undefined)
-        {
-            throw this.PasswordChangeFailure
-        }
-        this.PasswordChanges.push([currentPassword, newPassword, confirmPassword])
-        return this.PasswordReply
-    }
-
-    // The session probe: the signed-in operator while SessionAlive, else null (401).
-    public async Session(): Promise<{ email: string; principalId: string; role: string } | null>
-    {
-        this.SessionChecks++
-        return this.SessionAlive ? { email: 'op@example.test', principalId: 'p1', role: OperatorContext.FullWireRole } : null
     }
 
     // Held by HoldCreates, like a create.
@@ -1003,17 +979,39 @@ export class FakeControlPlane
 export class PortalTestHost
 {
     public static readonly Email = 'op@example.test'
+    public static readonly Subject = 'operator-1'
 
     public readonly Provider = new ServiceProvider()
     public readonly Reloader = new FakeReloader()
     public readonly Session: PortalSessionService
 
+    // `wireRole` is the operator record's role (full / readonly); the session carries it as its app role.
     public constructor(client: ControlPlaneClient, wireRole: string = OperatorContext.FullWireRole)
     {
         this.Provider.register(ContentHostService.Key, (p) => new ContentHostService(p))
         this.Session = new PortalSessionService(this.Provider)
-        this.Session.Initialize(client, PortalTestHost.Email, OperatorContext.FromWire(wireRole), this.Reloader)
+        this.Session.Initialize(PortalTestHost.Equip(client), PortalTestHost.SessionFor(wireRole), this.Reloader)
         this.Provider.registerInstance(PortalSessionService.Key, this.Session)
+    }
+
+    // The session the host reports for an operator with this record role.
+    public static SessionFor(wireRole: string, email: string = PortalTestHost.Email): AppSession
+    {
+        return AppSession.FromWire({
+            subject: PortalTestHost.Subject,
+            claims: { email: [email], app_roles: [OperatorContext.AppRoleFor(wireRole)], amr: ['pwd'] },
+        }, PlatformShell.Config)
+    }
+
+    // Gives a fake client what the shell's session service subscribes to (its 401 / 403 signals and configuration),
+    // unless it already has them.
+    public static Equip(client: ControlPlaneClient): ControlPlaneClient
+    {
+        const target = client as unknown as Record<string, unknown>
+        target.Unauthorized ??= new Signal()
+        target.Forbidden ??= new Signal()
+        target.Config ??= PlatformShell.Config
+        return client
     }
 
     // A host whose client is never called.

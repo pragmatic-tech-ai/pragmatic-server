@@ -12,7 +12,21 @@
           "type": "string",
           "required": true,
           "secret": false,
-          "description": "PRAGMATIC_TENANT_ADMIN_DATA_ROOT: The state folder (its master.key decrypts the data)."
+          "description": "PRAGMATIC_TENANT_ADMIN_DATA_ROOT: The state folder: master.key (seals the stored secrets) and the platform delivery (seed, verified images)."
+        },
+        {
+          "name": "databaseUrl",
+          "type": "string",
+          "required": true,
+          "secret": true,
+          "description": "PRAGMATIC_TENANT_ADMIN_DATABASE_URL_FILE: The console Postgres URL (a mounted secret file); every record of the console lives there."
+        },
+        {
+          "name": "portalDir",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_PORTAL_DIR: The tenant portal bundle (defaults to the shipped admin/tenant-portal/dist)."
         },
         {
           "name": "port",
@@ -196,7 +210,12 @@
       ]
     }
   ],
-  "roles": [],
+  "roles": [
+    {
+      "name": "environment-admin",
+      "description": "A tenant member who manages the tenant environments and their rollout (not access or settings)."
+    }
+  ],
   "storage": {
     "postgres": true
   },

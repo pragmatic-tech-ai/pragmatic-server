@@ -1,14 +1,11 @@
 import { strict as assert } from 'node:assert'
 import { createHash, randomBytes } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
-import { createServer, request, type IncomingHttpHeaders, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
-import type { AddressInfo } from 'node:net'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { request, type IncomingHttpHeaders, type IncomingMessage } from 'node:http'
 import { afterEach, beforeEach, describe, it } from 'node:test'
+import { AppHost, AppHostConfig, OidcLoginError, OidcRelyingParty, RouteTable, SessionClaims, SessionStore, SignedInIdentity, type IOidcClientConfig } from '@pragmatic-tech-ai/pragmatic-app-host'
+import { InMemoryOidcFlowStateStore } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
-import { LoginThrottle } from '../login-throttle.js'
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
 import { TenantAdminCapabilities } from '../tenant-api/tenant-admin-capabilities.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
@@ -17,50 +14,69 @@ import { DesktopAuthGate } from '../tenant-auth/desktop-auth-gate.js'
 import { DesktopEndpoint } from '../tenant-auth/desktop-endpoint.js'
 import { DesktopSignInFlows } from '../tenant-auth/desktop-sign-in-flows.js'
 import { DesktopTargets } from '../tenant-auth/desktop-targets.js'
-import { TenantAuthGate } from '../tenant-auth/tenant-auth-gate.js'
-import { TenantLoginError, TenantOidcClientKind, type ITenantOidcRelyingParty } from '../tenant-auth/tenant-oidc-relying-party.js'
-import { TenantSessionCookie } from '../tenant-auth/tenant-session-cookie.js'
-import { TenantSessionKind, TenantSessionStore } from '../tenant-auth/tenant-session.js'
-import { TenantOidcRelyingParty } from '../tenant-auth/tenant-oidc-relying-party.js'
+import { TenantOidcClientKind, TenantOidcClients, type ITenantOidcClients } from '../tenant-auth/tenant-oidc-clients.js'
+import { TenantSessionGate } from '../tenant-auth/tenant-session-gate.js'
+import { TenantSessionClaims, TenantSessionKind, TenantSessions } from '../tenant-auth/tenant-sessions.js'
 import { IdpClientStore } from '../../../src/idp/idp-client-store.js'
 
 type Reply = { status: number; body: Record<string, unknown> | undefined; text: string; headers: IncomingHttpHeaders }
 
-/** Records what the endpoint passes and answers a fixed principal; each Begin hands out a fresh RP state. */
-class FakeRelyingParty implements ITenantOidcRelyingParty
+/** The console's clients for the desktop: records the kind, tenant and callback of every client asked for. */
+class FakeClients implements ITenantOidcClients
+{
+    public LastKind: TenantOidcClientKind | undefined
+    public LastCallback: string | undefined
+    public LastTenant: string | undefined
+
+    public async ClientFor(_req: IncomingMessage): Promise<IOidcClientConfig>
+    {
+        throw new OidcLoginError()
+    }
+
+    public async For(kind: TenantOidcClientKind, tenantId: string, callbackUrl: string): Promise<IOidcClientConfig>
+    {
+        this.LastKind = kind
+        this.LastTenant = tenantId
+        this.LastCallback = callbackUrl
+        return { Issuer: 'https://idp.example/acme', DiscoveryUrl: 'https://idp.example/acme/.well-known/openid-configuration', ClientId: 'pragmatic-desktop', RedirectUri: callbackUrl, ClientSecret: 's', FixedClaims: SessionClaims.From({ [TenantSessionClaims.TenantClaim]: tenantId }) }
+    }
+}
+
+/** The app-host relying party with its exchange faked: each Begin hands out a fresh state; Complete answers a fixed subject. */
+class FakeRelyingParty extends OidcRelyingParty
 {
     public static readonly AuthorizeUrl = 'https://idp.example/acme/authorize'
     public static readonly PrincipalId = 'sub-1'
     public static readonly Email = 'ann@acme.test'
     public Fail = false
-    public BeginKind: TenantOidcClientKind | undefined
-    public BeginCallback: string | undefined
-    public CompleteKind: TenantOidcClientKind | undefined
-    public CompleteCallback: string | undefined
-    public CompleteTenant: string | undefined
+    public Begins = 0
     public Completions = 0
+    public CompleteCallback: string | undefined
     private counter = 0
 
-    public async Begin(_tenantId: string, callbackUrl: string, kind: TenantOidcClientKind = TenantOidcClientKind.Console): Promise<{ Url: string; State: string }>
+    public constructor()
     {
-        this.BeginKind = kind
-        this.BeginCallback = callbackUrl
+        super(new InMemoryOidcFlowStateStore())
+    }
+
+    public override async Begin(_client: IOidcClientConfig): Promise<{ Url: string; State: string }>
+    {
+        this.Begins++
         this.counter++
         const state = 'rp-state-' + String(this.counter) + '-0123456789abcdef'
         return { Url: FakeRelyingParty.AuthorizeUrl + '?state=' + state, State: state }
     }
 
-    public async Complete(tenantId: string, _code: string, _state: string, callbackUrl: string, kind: TenantOidcClientKind = TenantOidcClientKind.Console): Promise<{ principalId: string; email?: string }>
+    public override async Complete(client: IOidcClientConfig, _code: string, _state: string): Promise<SignedInIdentity>
     {
         this.Completions++
-        this.CompleteTenant = tenantId
-        this.CompleteKind = kind
-        this.CompleteCallback = callbackUrl
+        this.CompleteCallback = client.RedirectUri
         if (this.Fail)
         {
-            throw new TenantLoginError()
+            throw new OidcLoginError()
         }
-        return { principalId: FakeRelyingParty.PrincipalId, email: FakeRelyingParty.Email }
+        const claims = (client.FixedClaims ?? SessionClaims.Empty).With(TenantSessionClaims.EmailClaim, [FakeRelyingParty.Email])
+        return new SignedInIdentity(FakeRelyingParty.PrincipalId, claims)
     }
 }
 
@@ -117,7 +133,7 @@ class EndpointKit
     }
 }
 
-/** A movable millisecond clock for the login throttle. */
+/** A movable millisecond clock for the throttles. */
 class ThrottleClock
 {
     private current = Date.now()
@@ -130,57 +146,42 @@ class ThrottleClock
     }
 }
 
+/** The desktop endpoint registered on an AppHost of its own (public routes, the host's client address and body limit). */
 class EndpointHarness
 {
     public static readonly LockoutMs = 1000
-    public readonly Dir = mkdtempSync(join(tmpdir(), 'desktop-endpoint-'))
     public readonly Rp = new FakeRelyingParty()
-    public readonly Sessions = new TenantSessionStore(join(this.Dir, 'sessions.json'), 3600000)
-    public readonly DesktopGate = new DesktopAuthGate(this.Sessions)
-    public readonly ConsoleGate = new TenantAuthGate(this.Sessions)
+    public readonly Clients = new FakeClients()
     public readonly Clock = new ThrottleClock()
-    public readonly Throttle = new LoginThrottle({ maxAttempts: 3, lockoutMs: EndpointHarness.LockoutMs, now: this.Clock.Now })
+    public readonly Sessions = new TenantSessions(TenantSessions.InMemory(this.Clock.Now), false, { Login: { MaxAttempts: 3, LockoutMs: EndpointHarness.LockoutMs, Now: this.Clock.Now }, NowMs: this.Clock.Now })
     private readonly directory = new EndpointDirectory()
+    public readonly DesktopGate = new DesktopAuthGate(this.Sessions.Store, this.directory)
+    public readonly ConsoleGate = new TenantSessionGate(this.Sessions.Store, this.Sessions.Cookie, { TenantFor: () => EndpointKit.TenantId }, this.directory)
     public readonly Endpoint: DesktopEndpoint
     /** The sessions whose connections a sign-out asked to close (stands in for the relay). */
     public readonly ClosedSessions: string[] = []
-    private server: Server | undefined
+    private readonly host: AppHost
 
     public constructor(trustedProxy: boolean = false, consoleTenantId?: string)
     {
         this.Endpoint = new DesktopEndpoint(
-            this.Rp, this.Sessions, this.DesktopGate, new DesktopSignInFlows(),
-            new DesktopTargets(new EndpointListing() as unknown as IEnvironmentService, this.directory), this.directory,
-            s => TenantProfileMapper.ToDto(s, this.directory.GetTenant(s.tenantId), undefined, undefined, TenantAdminCapabilities.For(s, this.directory.GetTenant(s.tenantId))),
-            this.Throttle, DesktopEndpoint.NewBeginThrottle(), trustedProxy,
+            { RelyingParty: this.Rp, Clients: this.Clients }, this.Sessions, this.DesktopGate, new DesktopSignInFlows(),
+            new DesktopTargets(new EndpointListing() as unknown as IEnvironmentService), this.directory,
+            s => TenantProfileMapper.ToDto(s, this.directory.GetTenant(s.tenantId), undefined, undefined, TenantAdminCapabilities.For(s)),
             { CloseSession: id => { this.ClosedSessions.push(id); return 1 } }, consoleTenantId)
+        const table = new RouteTable()
+        this.Endpoint.Register(table)
+        this.host = new AppHost(new AppHostConfig({ TrustedProxy: trustedProxy }), { Routes: table })
     }
 
     public async Start(): Promise<void>
     {
-        this.server = createServer((req, res) =>
-        {
-            const path = new URL(req.url ?? '/', 'http://localhost').pathname
-            void this.Endpoint.Handle(req, res, path).then(handled =>
-            {
-                if (!handled)
-                {
-                    res.writeHead(404)
-                    res.end()
-                }
-            }, () =>
-            {
-                res.writeHead(500)
-                res.end()
-            })
-        })
-        await new Promise<void>(r => this.server!.listen(0, EndpointKit.Loopback, () => r()))
+        await this.host.Listen(0, EndpointKit.Loopback)
     }
 
     public async Dispose(): Promise<void>
     {
-        await new Promise<void>(r => this.server === undefined ? r() : this.server.close(() => r()))
-        rmSync(this.Dir, { recursive: true, force: true })
+        await this.host.Close()
     }
 
     public Send(method: string, path: string, body: unknown, headers: Record<string, string> = {}): Promise<Reply>
@@ -190,10 +191,11 @@ class EndpointHarness
 
     public SendRaw(method: string, path: string, payload: string, headers: Record<string, string> = {}): Promise<Reply>
     {
-        const port = (this.server!.address() as AddressInfo).port
+        const port = this.host.Address().port
         return new Promise((resolve, reject) =>
         {
-            const req = request({ host: EndpointKit.Loopback, port, method, path, headers: { 'content-type': 'application/json', ...headers } }, res =>
+            const typed = payload.length === 0 ? headers : { 'content-type': 'application/json', ...headers }
+            const req = request({ host: EndpointKit.Loopback, port, method, path, headers: typed }, res =>
             {
                 const chunks: Buffer[] = []
                 res.on('data', (c: Buffer) => chunks.push(c))
@@ -265,8 +267,8 @@ describe('DesktopEndpoint', () =>
         const r = await h.Begin(EndpointKit.RedirectUri, EndpointKit.Challenge(EndpointKit.Verifier()))
         assert.equal(r.status, 200)
         assert.ok((r.body!['authorizeUrl'] as string).startsWith(FakeRelyingParty.AuthorizeUrl))
-        assert.equal(h.Rp.BeginKind, TenantOidcClientKind.Desktop)
-        assert.equal(h.Rp.BeginCallback, EndpointKit.RedirectUri)
+        assert.equal(h.Clients.LastKind, TenantOidcClientKind.Desktop)
+        assert.equal(h.Clients.LastCallback, EndpointKit.RedirectUri)
     })
 
     it('begin rejects a non-loopback, port-0, port-80, wrong-path or zero-padded redirect, and a bad challenge', async () =>
@@ -280,14 +282,14 @@ describe('DesktopEndpoint', () =>
         assert.equal((await h.Begin(EndpointKit.RedirectUri, 'too-short')).status, 400)
         assert.equal((await h.Begin(EndpointKit.RedirectUri, challenge.slice(0, 42) + '='))
             .status, 400)
-        assert.equal(h.Rp.BeginKind, undefined)
+        assert.equal(h.Rp.Begins, 0)
     })
 
     it('refuses any request carrying an Origin header with 403', async () =>
     {
         const r = await h.Begin(EndpointKit.RedirectUri, EndpointKit.Challenge(EndpointKit.Verifier()), { origin: 'http://evil.test' })
         assert.equal(r.status, 403)
-        assert.equal(h.Rp.BeginKind, undefined)
+        assert.equal(h.Rp.Begins, 0)
         const token = await h.SignIn()
         assert.equal((await h.Send('GET', EndpointKit.ProfilePath, undefined, { ...h.Bearer(token), origin: 'http://127.0.0.1:7002' })).status, 403)
     })
@@ -312,7 +314,7 @@ describe('DesktopEndpoint', () =>
         assert.equal(h.Rp.Completions, 0)
     })
 
-    it('complete succeeds with a Desktop session that DesktopAuthGate accepts and TenantAuthGate rejects', async () =>
+    it('complete succeeds with a desktop session that DesktopAuthGate accepts and the console gate rejects', async () =>
     {
         const verifier = EndpointKit.Verifier()
         const state = await h.BeginFlow(verifier)
@@ -326,16 +328,16 @@ describe('DesktopEndpoint', () =>
         assert.deepEqual(Object.keys(body).sort(), ['email', 'expiresAt', 'tenantId', 'tenantName', 'token'])
         assert.ok(!done.text.includes(verifier))
         assert.ok(!done.text.includes(state))
-        assert.equal(h.Rp.CompleteKind, TenantOidcClientKind.Desktop)
+        assert.equal(h.Clients.LastKind, TenantOidcClientKind.Desktop)
         assert.equal(h.Rp.CompleteCallback, EndpointKit.RedirectUri)
-        assert.equal(h.Rp.CompleteTenant, EndpointKit.TenantId)
+        assert.equal(h.Clients.LastTenant, EndpointKit.TenantId)
 
         const token = body['token'] as string
         const desktop = await h.DesktopGate.Principal(h.RequestWith(h.Bearer(token)))
         assert.equal(desktop?.kind, TenantSessionKind.Desktop)
         assert.equal(desktop?.principalId, FakeRelyingParty.PrincipalId)
-        const cookie = TenantSessionCookie.Name + '=' + EndpointKit.TenantId + '.' + token
-        assert.equal(await h.ConsoleGate.Principal(h.RequestWith({ cookie })), null)
+        const cookie = TenantSessions.CookieName + '=' + token
+        assert.equal(await h.ConsoleGate.Current(h.RequestWith({ cookie })), null)
     })
 
     it('complete for an unknown state, or a failing RP, is 401 sign-in-failed', async () =>
@@ -372,7 +374,7 @@ describe('DesktopEndpoint', () =>
         const first = await h.SignIn()
         await h.SignIn()
         assert.equal((await h.Send('POST', EndpointKit.SignOutPath, undefined, h.Bearer(first))).status, 204)
-        assert.deepEqual(h.ClosedSessions, [first])
+        assert.deepEqual(h.ClosedSessions, [SessionStore.DigestOf(first)])
     })
 
     it('profile and targets answer for a desktop bearer', async () =>
@@ -381,7 +383,7 @@ describe('DesktopEndpoint', () =>
         const profile = await h.Send('GET', EndpointKit.ProfilePath, undefined, h.Bearer(token))
         assert.equal(profile.status, 200)
         assert.equal(profile.body!['principalId'], FakeRelyingParty.PrincipalId)
-        assert.equal(profile.body!['roleLabel'], TenantAdminCapabilities.OwnerRoleLabel)
+        assert.equal(profile.body!['roleLabel'], TenantAdminCapabilities.AdminRoleLabel)
         assert.ok(!profile.text.includes(token))
         const targets = await h.Send('GET', EndpointKit.TargetsPath, undefined, h.Bearer(token))
         assert.equal(targets.status, 200)
@@ -390,21 +392,24 @@ describe('DesktopEndpoint', () =>
 
     it('a missing, unknown or console bearer is 401 signed-out on the bearer routes', async () =>
     {
-        const console = await h.Sessions.Issue(EndpointKit.TenantId, FakeRelyingParty.PrincipalId)
-        const consoleTargets = await h.Send('GET', EndpointKit.TargetsPath, undefined, h.Bearer(console.id))
+        const console = (await h.Sessions.Store.Issue(FakeRelyingParty.PrincipalId, TenantSessionClaims.Of(EndpointKit.TenantId, undefined))).Token
+        const consoleTargets = await h.Send('GET', EndpointKit.TargetsPath, undefined, h.Bearer(console))
         assert.equal(consoleTargets.status, 401)
         assert.deepEqual(consoleTargets.body, { error: 'signed-out' })
         assert.equal((await h.Send('GET', EndpointKit.ProfilePath, undefined)).status, 401)
         assert.equal((await h.Send('GET', EndpointKit.ProfilePath, undefined, h.Bearer('unknown'))).status, 401)
-        assert.equal((await h.Send('POST', EndpointKit.SignOutPath, undefined, h.Bearer(console.id))).status, 401)
-        assert.notEqual(await h.Sessions.Validate(console.id), null)
+        assert.equal((await h.Send('POST', EndpointKit.SignOutPath, undefined, h.Bearer(console))).status, 401)
+        assert.notEqual(await h.Sessions.Store.Validate(console), null)
     })
 
-    it('a wrong method is 405 and an unknown desktop path is not handled', async () =>
+    it('a wrong method is 405 with Allow and an unknown desktop path a JSON 404', async () =>
     {
-        assert.equal((await h.Send('GET', EndpointKit.BeginPath, undefined)).status, 405)
+        const wrong = await h.Send('GET', EndpointKit.BeginPath, undefined)
+        assert.equal(wrong.status, 405)
+        assert.equal(wrong.headers['allow'], 'POST')
         assert.equal((await h.Send('POST', EndpointKit.TargetsPath, undefined)).status, 405)
-        assert.equal((await h.Send('GET', '/desktop/other', undefined)).status, 404)
+        const unknown = await h.Send('GET', '/desktop/other', undefined)
+        assert.deepEqual([unknown.status, unknown.body], [404, { error: 'not-found' }])
     })
 
     it('a throttled complete does not burn the flow: once the lock lifts the same flow completes', async () =>
@@ -422,7 +427,7 @@ describe('DesktopEndpoint', () =>
 
     it('begin is rate limited per address: the 11th begin in a minute is 429, whatever its body', async () =>
     {
-        for (let i = 0; i < DesktopEndpoint.MaxBeginsPerWindow; i++)
+        for (let i = 0; i < TenantSessions.MaxBeginsPerWindow; i++)
         {
             const body = i % 2 === 0 ? { tenantId: 'nope' } : { tenantId: EndpointKit.TenantId, redirectUri: EndpointKit.RedirectUri, bindingChallenge: EndpointKit.Challenge(EndpointKit.Verifier()) }
             assert.notEqual((await h.Send('POST', EndpointKit.BeginPath, body)).status, 429)
@@ -437,7 +442,7 @@ describe('DesktopEndpoint', () =>
         const huge = JSON.stringify({ tenantId: EndpointKit.TenantId, pad: 'x'.repeat(20000) })
         const r = await h.SendRaw('POST', EndpointKit.BeginPath, huge)
         assert.equal(r.status, 413)
-        assert.equal(h.Rp.BeginKind, undefined)
+        assert.equal(h.Rp.Begins, 0)
     })
 })
 
@@ -484,18 +489,13 @@ describe('DesktopEndpoint console lookup', () =>
         })
     })
 
-    it('is not a route without a served tenant', async () =>
+    it('is not a route without a served tenant (a JSON 404)', async () =>
     {
-        const h = new EndpointHarness()
-        try
+        await AddressKit.With(false, async h =>
         {
-            const handled = await h.Endpoint.Handle({ headers: {}, method: 'GET' } as unknown as IncomingMessage, {} as ServerResponse, EndpointKit.ConsolePath)
-            assert.equal(handled, false)
-        }
-        finally
-        {
-            await h.Dispose()
-        }
+            assert.equal(h.Endpoint.Serves(EndpointKit.ConsolePath), false)
+            assert.equal((await h.Send('GET', EndpointKit.ConsolePath, undefined)).status, 404)
+        })
     })
 
     it('refuses an Origin with 403 and a POST with 405', async () =>
@@ -573,7 +573,7 @@ describe('DesktopEndpoint redirect rule agrees with the IdP loopback rule', () =
     it('accepts exactly the redirects the IdP accepts for the registered desktop redirect', async () =>
     {
         const idp = new IdpClientStore()
-        await idp.Register('acme', 'plexus-desktop', [TenantOidcRelyingParty.DesktopRegisteredRedirect], 'secret')
+        await idp.Register('acme', 'plexus-desktop', [TenantOidcClients.DesktopRegisteredRedirect], 'secret')
         const path = '/pragmatic-desktop/callback'
         const candidates = [1, 79, 80, 81, 443, 8080, 53111, 65535].map(port => 'http://127.0.0.1:' + String(port) + path)
             .concat(['http://127.0.0.1:080' + path, 'http://127.0.0.1:0' + path, 'http://127.0.0.1:65536' + path, 'http://127.0.0.1:05' + path,

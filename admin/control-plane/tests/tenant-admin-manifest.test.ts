@@ -447,7 +447,9 @@ describe('K8sManifestBuilder.RenderTenantAdmin console exposure and RBAC', () =>
             'Secret/pragmatic-system/pragmatic-tenant-admin-acme-fingerprint',
             'Secret/pragmatic-system/pragmatic-tenant-admin-acme-idp-ca',
             'Secret/pragmatic-system/pragmatic-tenant-admin-acme-idp-token',
+            'Secret/pragmatic-system/pragmatic-tenant-admin-acme-postgres',
             'Secret/pragmatic-system/pragmatic-tenant-admin-acme-dev-tls',
+            'ConfigMap/pragmatic-system/pragmatic-tenant-admin-acme-postgres',
             'Deployment/pragmatic-idp-acme/pragmatic-idp-acme',
             'Service/pragmatic-idp-acme/pragmatic-idp-acme',
             'Ingress/pragmatic-idp-acme/pragmatic-idp-acme',
@@ -592,5 +594,52 @@ describe('K8sManifestBuilder.RenderTenantAdmin admission fence', () =>
         assert.ok(ids.includes('ValidatingAdmissionPolicyBinding/-/pragmatic-tenant-admin-acme'))
         const policy = ConsoleFixture.Removal().find((i: any) => i.kind === 'ValidatingAdmissionPolicy')
         assert.equal(policy.apiVersion, 'admissionregistration.k8s.io/v1')
+    })
+})
+
+describe('K8sManifestBuilder.RenderTenantAdmin database (the pragmatic-postgres sidecar)', () =>
+{
+    const spec = (): TenantAdminWorkloadSpec => ({ ...TenantAdminFixture.Spec(), database: { image: 'ghcr.io/pragmatic-tech-ai/pragmatic-postgres@sha256:' + 'd'.repeat(64), secretName: K8sManifestBuilder.ConsolePostgresNameOf('acme') } })
+
+    it('renders no sidecar, ConfigMap or database URL without a database', () =>
+    {
+        const items = TenantAdminFixture.Items()
+        assert.equal(items.some(i => i.kind === 'ConfigMap'), false)
+        const pod = items.find(i => i.kind === 'Deployment').spec.template.spec
+        assert.equal(pod.containers.length, 1)
+        assert.equal(pod.containers[0].env.some((e: { name: string }) => e.name === 'PRAGMATIC_TENANT_ADMIN_DATABASE_URL_FILE'), false)
+    })
+
+    it('runs pragmatic-postgres beside the console: hardened, its data in the console volume, its passwords and applications file mounted', () =>
+    {
+        const items = TenantAdminFixture.Items(spec())
+        const config = items.find(i => i.kind === 'ConfigMap')
+        assert.equal(config.metadata.name, 'pragmatic-tenant-admin-acme-postgres')
+        assert.deepEqual(config.data, { 'applications.conf': 'pragmatic-tenant-admin pragmatic_tenant_admin pragmatic_tenant_admin\n' })
+        assert.ok(items.findIndex(i => i.kind === 'ConfigMap') < items.findIndex(i => i.kind === 'Deployment'))
+        const pod = items.find(i => i.kind === 'Deployment').spec.template.spec
+        const postgres = pod.containers.find((c: { name: string }) => c.name === 'postgres')
+        assert.equal(postgres.image, spec().database?.image)
+        assert.deepEqual(postgres.args, ['postgres', '-c', 'listen_addresses=127.0.0.1'], 'the database answers on the pod loopback only')
+        assert.deepEqual([postgres.securityContext.runAsUser, postgres.securityContext.runAsGroup, postgres.securityContext.runAsNonRoot, postgres.securityContext.readOnlyRootFilesystem], [999, 999, true, true])
+        assert.deepEqual(postgres.securityContext.capabilities, { drop: ['ALL'] })
+        assert.deepEqual(postgres.env, [{ name: 'PGDATA', value: '/var/lib/postgresql/data/pgdata' }])
+        const mounts = new Map(postgres.volumeMounts.map((m: { name: string; mountPath: string; subPath?: string }) => [m.mountPath, m]))
+        assert.deepEqual(mounts.get('/var/lib/postgresql/data'), { name: 'data', mountPath: '/var/lib/postgresql/data', subPath: 'postgres' })
+        assert.ok(mounts.has('/run/secrets/pragmatic-postgres') && mounts.has('/etc/pragmatic-postgres') && mounts.has('/var/run/postgresql') && mounts.has('/tmp'))
+        const secrets = pod.volumes.find((v: { name: string }) => v.name === 'postgres-secrets').secret
+        assert.equal(secrets.secretName, 'pragmatic-tenant-admin-acme-postgres')
+        assert.deepEqual(secrets.items, [{ key: 'superuser', path: 'superuser' }, { key: 'password', path: 'applications/pragmatic-tenant-admin' }])
+    })
+
+    it('hands the console only its database URL, as a mounted file named by PRAGMATIC_TENANT_ADMIN_DATABASE_URL_FILE', () =>
+    {
+        const pod = TenantAdminFixture.Items(spec()).find(i => i.kind === 'Deployment').spec.template.spec
+        const consoleContainer = pod.containers[0]
+        assert.deepEqual(consoleContainer.env.find((e: { name: string }) => e.name === 'PRAGMATIC_TENANT_ADMIN_DATABASE_URL_FILE'), { name: 'PRAGMATIC_TENANT_ADMIN_DATABASE_URL_FILE', value: K8sManifestBuilder.ConsoleDatabaseUrlFile })
+        const url = pod.volumes.find((v: { name: string }) => v.name === 'database-url').secret
+        assert.deepEqual(url.items, [{ key: 'database-url', path: 'database-url' }])
+        assert.ok(consoleContainer.volumeMounts.some((m: { name: string; mountPath: string; readOnly?: boolean }) => m.name === 'database-url' && m.readOnly === true && K8sManifestBuilder.ConsoleDatabaseUrlFile.startsWith(m.mountPath)))
+        assert.equal(JSON.stringify(consoleContainer).includes('superuser'), false)
     })
 })

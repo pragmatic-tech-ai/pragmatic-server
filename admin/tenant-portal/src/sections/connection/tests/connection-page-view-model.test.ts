@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { TenantApiError } from '../../../tenant-api-client.js'
+import { ApiError } from '../../../tenant-api-client.js'
 import { PageState } from '../../../shell/tenant-page-view-model.js'
 import { FakeTenantApi, TenantTestHost } from '../../../shell/tests/tenant-test-fixtures.js'
 import { ConnectionPageViewModel } from '../connection-page-view-model.js'
@@ -25,7 +25,7 @@ describe('ConnectionPageViewModel', () =>
     it('reports a quiet link (503) as a state, not an error', async () =>
     {
         const api = new FakeTenantApi()
-        api.FailOn.set('GetRollout', new TenantApiError(503, 'unavailable'))
+        api.FailOn.set('GetRollout', new ApiError(503, 'unavailable'))
         const page = new ConnectionPageViewModel(new TenantTestHost(api).Session)
         await page.Refresh()
         assert.equal(page.State, PageState.Populated)
@@ -41,7 +41,7 @@ describe('ConnectionPageViewModel', () =>
         await page.Refresh()
         assert.equal(page.State, PageState.Empty)
         const denied = new FakeTenantApi()
-        denied.FailOn.set('GetRollout', new TenantApiError(403, 'forbidden'))
+        denied.FailOn.set('GetRollout', new ApiError(403, 'forbidden'))
         const deniedPage = new ConnectionPageViewModel(new TenantTestHost(denied).Session)
         await deniedPage.Refresh()
         assert.equal(deniedPage.State, PageState.Denied)

@@ -7,7 +7,7 @@ import { GraphExistsError, GraphNameInvalidError, GraphNotFoundError } from '../
 import { PlaneHttp } from '../plane-http.js'
 import { TransportFailure } from '../transport-failure.js'
 import { TenantAuditEntry } from '../tenant-auth/tenant-audit-entry.js'
-import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import type { TenantSession } from '../tenant-auth/tenant-sessions.js'
 
 /** What a graph operation's failure was; StatusOf and MessageOf each map it to the wire. */
 enum GraphFailureKind

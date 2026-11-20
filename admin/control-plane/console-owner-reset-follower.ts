@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises'
-import { AtomicJsonFile, SerialRuns } from './atomic-json-file.js'
+import { SerialRuns } from './atomic-json-file.js'
+import { RecordSlot, type IRecordMap } from './record-map.js'
 import { OwnerResetTime, TenantOwner, type OwnedTenant } from './tenant-owner.js'
 
 /**
@@ -15,31 +15,34 @@ export interface IOwnerSessionEnder
  * The in-hive console's side of an operator Owner reset. The control plane answers each advert with the tenant's last reset
  * time; when that value is well formed and differs from the one this console last applied (or none was), the follower ends
  * every session of the Owner (console cookies and desktop bearers) and closes its sockets and relays, then records the value
- * in `<dataRoot>/owner-reset-applied.json` (`{ appliedAt }`, temp file + unique name + rename). The marker is written only
+ * as the record `appliedAt` of the console's database (`records_owner_reset_applied`; the pre-A5 file
+ * `<dataRoot>/owner-reset-applied.json`, `{ appliedAt }`, is what the importer reads). The marker is written only
  * after the revoke resolved, so a failed revoke is retried on the next advert; an unreadable marker counts as none (one extra
  * revoke, never a missed one). Any difference counts, not only a later time, so a control-plane clock that moved back still
  * ends the sessions. A session the Owner opened between the reset and the advert ends too.
  * Once the revoke resolved the value counts as applied in memory, so a marker write that fails is reported (the caller logs
  * it) without signing the Owner out again at later adverts of this process; only a restart, finding no durable marker,
  * revokes once more (never a missed reset). A failed revoke itself leaves the value unapplied and is retried at every advert.
- * Kept free of control-plane imports: only the Owner rules (tenant-owner.ts), the atomic file write (atomic-json-file.ts)
- * and node built-ins.
+ * Kept free of control-plane imports: only the Owner rules (tenant-owner.ts), the record maps (record-map.ts) and the
+ * serial runner (atomic-json-file.ts).
  */
 export class ConsoleOwnerResetFollower
 {
     public static readonly FileName = 'owner-reset-applied.json'
-    private static readonly AppliedKey = 'appliedAt'
-    private static readonly Utf8 = 'utf8'
+    /** The record's key (and the pre-A5 file's root member). */
+    public static readonly AppliedKey = 'appliedAt'
 
     /** The applied value once read or written; undefined until the marker is first read. */
     private applied: { value: string | undefined } | undefined
     private readonly runs = new SerialRuns()
+    private readonly slot: RecordSlot<unknown>
 
     public constructor(
         private readonly principals: IOwnerSessionEnder,
         private readonly tenant: OwnedTenant,
-        private readonly path: string)
+        location: string | IRecordMap<unknown>)
     {
+        this.slot = RecordSlot.Of<unknown>(location, ConsoleOwnerResetFollower.AppliedKey)
     }
 
     /**
@@ -81,10 +84,7 @@ export class ConsoleOwnerResetFollower
     {
         try
         {
-            const body = JSON.parse(await readFile(this.path, ConsoleOwnerResetFollower.Utf8)) as unknown
-            const value = body !== null && typeof body === 'object' && !Array.isArray(body)
-                ? (body as Record<string, unknown>)[ConsoleOwnerResetFollower.AppliedKey]
-                : undefined
+            const value = await this.slot.Read()
             return typeof value === 'string' ? value : undefined
         }
         catch
@@ -95,6 +95,6 @@ export class ConsoleOwnerResetFollower
 
     private WriteMarker(value: string): Promise<void>
     {
-        return AtomicJsonFile.Write(this.path, { [ConsoleOwnerResetFollower.AppliedKey]: value })
+        return this.slot.Write(value)
     }
 }

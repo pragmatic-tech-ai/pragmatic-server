@@ -1,6 +1,6 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import { TenantApiError } from '../../tenant-api-client.js'
+import { ApiError } from '../../tenant-api-client.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
 import { DomainApprovalState, type DomainVerificationDto, type EmailDomainsDto } from '../../tenant-types.js'
 
@@ -327,7 +327,7 @@ export class EmailDomainsEditorViewModel extends Observable
         }
         catch (e)
         {
-            if (e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus)
+            if (e instanceof ApiError && e.Status === ApiError.UnauthorizedStatus)
             {
                 this.session.Expire()
             }
@@ -369,7 +369,7 @@ export class EmailDomainsEditorViewModel extends Observable
         }
         catch (e)
         {
-            if (e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus)
+            if (e instanceof ApiError && e.Status === ApiError.UnauthorizedStatus)
             {
                 this.session.Expire()
             }

@@ -99,13 +99,14 @@ describe('ReleasePlatformImages', () =>
 
 describe('DevPlatformImages', () =>
 {
-    it('returns pragmatic-server:dev for every app', () =>
+    it('returns pragmatic-server:dev for every app but pragmatic-postgres, which is the locally built pragmatic-postgres:local', () =>
     {
         const images = new DevPlatformImages()
         for (const app of ReleaseApps.All)
         {
-            assert.equal(images.ImageOf(app), K8sManifestBuilder.AgentImage)
+            assert.equal(images.ImageOf(app), app === ReleaseApp.Postgres ? DevPlatformImages.PostgresImage : K8sManifestBuilder.AgentImage, app)
         }
+        assert.equal(DevPlatformImages.PostgresImage, 'pragmatic-postgres:local')
         assert.equal(K8sManifestBuilder.AgentImage, 'pragmatic-server:dev')
     })
 })

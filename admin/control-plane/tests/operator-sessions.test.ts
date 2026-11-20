@@ -91,6 +91,16 @@ describe('OperatorSessions', () =>
         const current = await gate.Current(SessionFixture.Request(`cp_session=${issued.Token}`))
         assert.deepEqual(current?.Claims.ToJson(), realmClaims.ToJson())
     })
+
+    it('a session of the co-hosted tenant plane (it names its tenant) never authenticates an operator, whatever its roles', async () =>
+    {
+        const operators = new LiveOperators()
+        const sessions = new OperatorSessions(OperatorSessions.InMemory(), false)
+        const gate = sessions.GateOver(operators)
+        const tenantClaims = SessionClaims.From({ tenant: 'acme', email: 'ann@acme.test', app_roles: ['operator.full'], amr: ['pwd'] })
+        const issued = await sessions.Store.Issue('ann', tenantClaims)
+        assert.equal(await gate.Current(SessionFixture.Request(`cp_session=${issued.Token}`)), null)
+    })
 })
 
 describe('OperatorPasswordAuthenticator', () =>

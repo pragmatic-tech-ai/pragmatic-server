@@ -23,7 +23,8 @@ import type { TenantRecord } from '../platform-records.js';
 import { IdpAdminTransportError } from '../idp-admin-client.js';
 import { TenantAccountIndex } from '../tenant-account-index.js';
 import { TenantIdpMode } from '../tenant-idp-mode.js';
-import { TenantSessionKind, TenantSessionStore } from '../tenant-auth/tenant-session.js';
+import { SignedInIdentity } from '@pragmatic-tech-ai/pragmatic-app-host';
+import { TenantSessionClaims, TenantSessions } from '../tenant-auth/tenant-sessions.js';
 import { TenantPrincipalSessions } from '../tenant-auth/tenant-principal-sessions.js';
 
 class FakeIdp implements IIdpService
@@ -188,31 +189,17 @@ test('Provision records the Owner in the account index, and ForgetTenant removes
     });
 });
 
-test('ForgetTenant ends every session of the tenant, console and desktop, and closes its connections', async () =>
+test('ForgetTenant closes every connection of the tenant (its stored sessions are refused by the gates once it is gone)', async () =>
 {
     await ProvFixture.WithHost(async (conn, _realms, directory) =>
     {
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), ProvFixture.DirPrefix));
-        try
-        {
-            const sessions = new TenantSessionStore(path.join(dir, 'sessions.json'), 60000);
-            const principals = new TenantPrincipalSessions(sessions);
-            const closedTenants: string[] = [];
-            principals.Attach({ ClosePrincipal: () => 0, MoveSession: () => undefined, CloseTenant: (t: string) => { closedTenants.push(t); return 1; } });
-            const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c), principals);
-            const consoleSession = await sessions.Issue(ProvFixture.TenantId, 'owner');
-            const desktop = await sessions.Issue(ProvFixture.TenantId, 'owner', undefined, TenantSessionKind.Desktop);
-            const other = await sessions.Issue('other-tenant', 'owner', undefined, TenantSessionKind.Desktop);
-            await service.ForgetTenant(ProvFixture.TenantId);
-            assert.equal(await sessions.Validate(consoleSession.id), null);
-            assert.equal(await sessions.Validate(desktop.id), null);
-            assert.notEqual(await sessions.Validate(other.id), null);
-            assert.deepEqual(closedTenants, [ProvFixture.TenantId]);
-        }
-        finally
-        {
-            fs.rmSync(dir, { recursive: true, force: true });
-        }
+        const sessions = new TenantSessions(TenantSessions.InMemory(), false);
+        const principals = new TenantPrincipalSessions(sessions.Store);
+        const closedTenants: string[] = [];
+        principals.Attach({ ClosePrincipal: () => 0, CloseTenant: (t: string) => { closedTenants.push(t); return 1; } });
+        const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c), principals);
+        await service.ForgetTenant(ProvFixture.TenantId);
+        assert.deepEqual(closedTenants, [ProvFixture.TenantId]);
     });
 });
 
@@ -399,24 +386,18 @@ test('ResetOwnerPassword ends the Owner\'s tenant-portal sessions after the IdP 
 {
     await ProvFixture.WithHost(async (conn, _realms, directory) =>
     {
-        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'owner-sessions-'));
-        try
-        {
-            const sessions = new TenantSessionStore(path.join(dir, 'sessions.json'), 60000);
-            const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c), new TenantPrincipalSessions(sessions));
-            await service.Provision(ProvFixture.Input());
-            const before = await sessions.Issue(ProvFixture.TenantId, ProvFixture.OwnerPrincipal);
-            const someoneElse = await sessions.Issue(ProvFixture.TenantId, 'user-2');
-            const reset = await service.ResetOwnerPassword(ProvFixture.TenantId);
-            assert.equal(reset.sessionsRevoked, true);
-            assert.equal(reset.warning, undefined);
-            assert.equal(await sessions.Validate(before.id), null);
-            assert.notEqual(await sessions.Validate(someoneElse.id), null);
-        }
-        finally
-        {
-            fs.rmSync(dir, { recursive: true, force: true });
-        }
+        const sessions = new TenantSessions(TenantSessions.InMemory(), false);
+        const service = new TenantProvisioningService(new FakeIdp(conn), directory, c => new IdpAdminClient(c), new TenantPrincipalSessions(sessions.Store));
+        await service.Provision(ProvFixture.Input());
+        const before = (await sessions.Store.Issue(ProvFixture.OwnerPrincipal, TenantSessionClaims.Of(ProvFixture.TenantId, undefined))).Token;
+        const desktop = (await sessions.IssueDesktop(new SignedInIdentity(ProvFixture.OwnerPrincipal, TenantSessionClaims.Of(ProvFixture.TenantId, undefined)))).Token;
+        const someoneElse = (await sessions.Store.Issue('user-2', TenantSessionClaims.Of(ProvFixture.TenantId, undefined))).Token;
+        const reset = await service.ResetOwnerPassword(ProvFixture.TenantId);
+        assert.equal(reset.sessionsRevoked, true);
+        assert.equal(reset.warning, undefined);
+        assert.equal(await sessions.Store.Validate(before), null);
+        assert.equal(await sessions.Store.Validate(desktop), null);
+        assert.notEqual(await sessions.Store.Validate(someoneElse), null);
     });
 });
 

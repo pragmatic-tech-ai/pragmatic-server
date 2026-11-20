@@ -1,6 +1,6 @@
 import { ObservableCollection } from '@pragmatic-tech-ai/mural/runtime'
 import type { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
-import { TenantApiError } from '../../tenant-api-client.js'
+import { ApiError } from '../../tenant-api-client.js'
 import { EnvType, Template, type EnvironmentDto } from '../../tenant-types.js'
 import { AdminCapability } from '../../shell/admin-capability.js'
 import { OptionViewModel } from '../../shell/option-view-model.js'
@@ -135,11 +135,11 @@ export class CreateEnvironmentDialogViewModel extends TenantDialogViewModel<Envi
         }
         catch (e)
         {
-            if (e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus)
+            if (e instanceof ApiError && e.Status === ApiError.UnauthorizedStatus)
             {
                 throw e
             }
-            if (e instanceof TenantApiError)
+            if (e instanceof ApiError)
             {
                 throw new Error(e.Status === C.DuplicateStatus ? C.DuplicateMessage : e.message)
             }

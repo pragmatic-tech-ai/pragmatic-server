@@ -1,10 +1,10 @@
 import { ObservableCollection, type RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { AdminCapabilities, AdminCapability } from '../../shell/admin-capability.js'
-import { PendingWork } from '../../shell/holds-pending-work.js'
+import { PendingWork } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { OptionViewModel } from '../../shell/option-view-model.js'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
-import { TenantApiError } from '../../tenant-api-client.js'
+import { ApiError } from '../../tenant-api-client.js'
 import { EnvType } from '../../tenant-types.js'
 import type { EnvironmentScopedPageViewModel } from './environment-scoped-page-view-model.js'
 import { SecurityModelEditorViewModel } from './security-model/security-model-editor-view-model.js'
@@ -257,7 +257,7 @@ export class UsersAccessPageViewModel extends TenantPageViewModel
     {
         if (!this.Session.Can(AdminCapability.Access))
         {
-            throw new TenantApiError(TenantApiError.ForbiddenStatus, this.DeniedPageText)
+            throw new ApiError(ApiError.ForbiddenStatus, this.DeniedPageText)
         }
         const generation = this.LoadGeneration
         const environments = await this.Session.Client.ListEnvironments()

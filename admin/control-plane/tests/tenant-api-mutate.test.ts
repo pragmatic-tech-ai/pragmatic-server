@@ -24,8 +24,9 @@ import { RolloutFixture } from './rollout-fixture.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { TenantApiEndpoint, TenantEnvAction } from '../tenant-api/tenant-api-endpoint.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
-import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import type { TenantSession } from '../tenant-auth/tenant-sessions.js'
 import { ResRecorder } from './res-recorder.js'
+import { TenantApiDispatch } from './tenant-test-sessions.js'
 
 /** A fake environment service whose lifecycle methods record their calls and flip status, so a test can prove which action ran (and that cross-tenant actions never do). */
 class FakeService
@@ -229,7 +230,7 @@ describe('TenantApiEndpoint mutation routes', () =>
     async function Handle(req: IncomingMessage, path: string, session: TenantSession): Promise<ResRecorder>
     {
         const res = new ResRecorder()
-        const handled = await endpoint.Handle(req, res as unknown as ServerResponse, path, session)
+        const handled = await TenantApiDispatch.Handle(endpoint, req, res as unknown as ServerResponse, path, session, directory)
         assert.equal(handled, true)
         return res
     }
@@ -290,7 +291,7 @@ describe('TenantApiEndpoint mutation routes', () =>
         await real.SetWithdrawn('v1', true, 'bad-release-reason', 'actor')
         const res = new ResRecorder()
         const req = { method: 'GET' } as unknown as IncomingMessage
-        assert.equal(await endpoint.Handle(req, res as unknown as ServerResponse, '/tenant-api/manifests', Fixtures.Session(TenantA)), true)
+        assert.equal(await TenantApiDispatch.Handle(endpoint, req, res as unknown as ServerResponse, '/tenant-api/manifests', Fixtures.Session(TenantA), directory), true)
         assert.equal(res.status, 200)
         assert.deepEqual((res.Json() as Array<{ id: string }>).map(m => m.id), ['v3'])
     })
@@ -365,10 +366,10 @@ describe('TenantApiEndpoint mutation routes', () =>
             assert.deepEqual(service.Deletes, [])
         })
 
-        it('404s a lifecycle-shaped path and never deletes', async () =>
+        it('405s a lifecycle-shaped path (it is a POST route) and never deletes', async () =>
         {
             const res = await Handle(Fixtures.Delete(), '/tenant-api/environments/a-env/start', Fixtures.Session(TenantA))
-            assert.equal(res.status, 404)
+            assert.equal(res.status, 405)
             assert.deepEqual(service.Deletes, [])
         })
 

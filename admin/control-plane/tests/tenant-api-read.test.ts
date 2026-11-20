@@ -21,8 +21,9 @@ import { RolloutFixture } from './rollout-fixture.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import { InProcessRolloutClient } from '../tenant-api/in-process-rollout-client.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
-import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import type { TenantSession } from '../tenant-auth/tenant-sessions.js'
 import { ResRecorder } from './res-recorder.js'
+import { TenantApiDispatch } from './tenant-test-sessions.js'
 
 /** A minimal environment service: only List/ListReconciled are exercised by the read endpoint. */
 class FakeService
@@ -179,7 +180,7 @@ describe('TenantApiEndpoint read routes', () =>
     async function Get(path: string, session: TenantSession): Promise<ResRecorder>
     {
         const res = new ResRecorder()
-        const handled = await endpoint.Handle(Fixtures.Req('GET'), res as unknown as ServerResponse, path, session)
+        const handled = await TenantApiDispatch.Handle(endpoint, Fixtures.Req('GET'), res as unknown as ServerResponse, path, session, directory)
         assert.equal(handled, true)
         return res
     }

@@ -4,20 +4,50 @@ import type { IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
 import { ApplicationService, ServiceKey, ServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
 import { NavigationDestination } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
 import { Capability } from '@pragmatic-tech-ai/mural/framework/shell/module.js'
-import { TenantApiError } from '../../tenant-api-client.js'
+import { AppSessionService, type IPageLocation } from '@pragmatic-tech-ai/pragmatic-app-shell'
+import { ApiError, TenantApiClient } from '../../tenant-api-client.js'
+import type { IWebSocketFactory, IWebSocketLike } from '../../tenant-types.js'
 import { TenantEventType } from '../../tenant-types.js'
 import { AdminCapability } from '../admin-capability.js'
 import { ConfirmDialogViewModel } from '../confirm-dialog-view-model.js'
 import { LiveUpdateBridge } from '../live-update-bridge.js'
-import { LoginPageViewModel } from '../login-page-view-model.js'
 import { NameConfirmDialogViewModel } from '../name-confirm-dialog-view-model.js'
 import { ShownPage, type IShownPage } from '../shown-page.js'
-import { BootTarget, TenantBoot } from '../tenant-boot.js'
+import { TenantApplications } from '../tenant-boot.js'
 import { TenantNavigationService } from '../tenant-navigation-service.js'
 import { PageState, TenantPageViewModel } from '../tenant-page-view-model.js'
 import { TenantSectionService } from '../tenant-section-service.js'
-import type { TenantSessionService } from '../tenant-session-service.js'
+import { TenantSessionService } from '../tenant-session-service.js'
+import { TenantSignInHost } from '../tenant-sign-in-host.js'
 import { FakeReloader, FakeTenantApi, TenantTestHost, TestRail, Tick, type FakeDialogService } from './tenant-test-fixtures.js'
+
+// No sockets (a boot test never opens one).
+class NoSockets implements IWebSocketFactory
+{
+    public readonly Location: IPageLocation = { protocol: 'http:', host: 'host' }
+
+    public Open(): IWebSocketLike
+    {
+        throw new Error('no sockets in this test')
+    }
+}
+
+// Records where the boot sends the browser and whether it reloads.
+class RecordingPage
+{
+    public readonly Assigned: string[] = []
+    public Reloads = 0
+
+    public Assign(url: string): void
+    {
+        this.Assigned.push(url)
+    }
+
+    public Reload(): void
+    {
+        this.Reloads++
+    }
+}
 
 // A page whose load is scripted per test.
 class StubPage extends TenantPageViewModel implements IShownPage
@@ -238,7 +268,7 @@ describe('TenantPageViewModel', () =>
     {
         const f = new Fixture()
         const page = f.A.Page('p')
-        page.Next = async () => { throw new TenantApiError(401, 'unauthorized') }
+        page.Next = async () => { throw new ApiError(401, 'unauthorized') }
         await page.Refresh()
         await page.Refresh()
         assert.equal(f.Host.Reloader.Count, 1)
@@ -248,7 +278,7 @@ describe('TenantPageViewModel', () =>
     {
         const f = new Fixture()
         const page = f.A.Page('p')
-        page.Next = async () => { throw new TenantApiError(403, 'forbidden') }
+        page.Next = async () => { throw new ApiError(403, 'forbidden') }
         await page.Refresh()
         assert.equal(page.State, PageState.Denied)
         assert.ok(page.IsDenied)
@@ -345,7 +375,7 @@ describe('TenantSessionService', () =>
         assert.equal(s.TenantLabel, 'Example Tenant')
         assert.equal(s.OrganisationLabel, 'Example Org')
         assert.equal(s.HiveLabel, 'Example Hive')
-        assert.equal(s.RoleLabel, 'Tenant owner')
+        assert.equal(s.RoleLabel, 'Tenant admin')
         assert.equal(s.Can(AdminCapability.Adopt), false)
         assert.equal(s.DeniedReason(AdminCapability.Environments), '')
         assert.equal(s.DeniedReason(AdminCapability.Adopt), 'Needs the Adopt versions permission. Ask owner@example.test.')
@@ -377,6 +407,36 @@ describe('TenantSessionService', () =>
         await f.Host.Session.Logout()
         assert.equal(f.Host.Reloader.Count, 0)
         assert.equal(f.Host.Session.LogoutError, 'down')
+    })
+
+    it('is the shell session service, and hides Change password (the console offers no own-password change)', () =>
+    {
+        const f = new Fixture()
+        assert.ok(f.Host.Session instanceof AppSessionService)
+        assert.equal(f.Host.Session.ShowsChangePassword, false)
+        assert.equal(f.Host.Session.ChangePasswordCommand.CanExecute(), false)
+    })
+
+    it('reads the tenant from the session claim and who is signed in from the profile, else the session', () =>
+    {
+        const withProfile = new Fixture().Host.Session
+        assert.equal(withProfile.TenantId, 'tenant-1')
+        assert.equal(withProfile.PrincipalId, 'principal-1')
+        const session = new TenantSessionService(new ServiceProvider())
+        session.Initialize(new FakeTenantApi().AsClient(), TenantTestHost.SessionFor('someone@example.test'), new FakeReloader(), undefined)
+        assert.equal(session.Email, 'someone@example.test')
+        assert.equal(session.PrincipalId, TenantTestHost.Subject)
+        const noEmail = new TenantSessionService(new ServiceProvider())
+        noEmail.Initialize(new FakeTenantApi().AsClient(), TenantTestHost.SessionFor(null), new FakeReloader(), undefined)
+        assert.equal(noEmail.Email, 'tenant-1')
+    })
+
+    it('a 401 on any request expires the session once (the shell listens to the client)', () =>
+    {
+        const f = new Fixture()
+        f.Api.Unauthorized.emit(new ApiError(401, 'gone'))
+        f.Api.Unauthorized.emit(new ApiError(401, 'gone'))
+        assert.equal(f.Host.Reloader.Count, 1)
     })
 
     it('counts recorded activity', () =>
@@ -449,38 +509,33 @@ describe('LiveUpdateBridge', () =>
     })
 })
 
-describe('TenantBoot', () =>
+describe('TenantApplications', () =>
 {
-    it('signs in on no session or a 401, the shell on a session, and rethrows anything else', async () =>
-    {
-        assert.equal((await TenantBoot.Decide(async () => null)).Target, BootTarget.SignIn)
-        assert.equal((await TenantBoot.Decide(async () => { throw new TenantApiError(401, 'x') })).Target, BootTarget.SignIn)
-        assert.equal((await TenantBoot.Decide(async () => ({ id: 1 }))).Target, BootTarget.Shell)
-        await assert.rejects(TenantBoot.Decide(async () => { throw new TenantApiError(500, 'down') }), /down/)
-    })
-
     it('reads the profile permissively, except a 401', async () =>
     {
-        assert.equal(await TenantBoot.ReadProfile(async () => { throw new TenantApiError(500, 'x') }), undefined)
-        await assert.rejects(TenantBoot.ReadProfile(async () => { throw new TenantApiError(401, 'gone') }), /gone/)
+        assert.equal(await TenantApplications.ReadProfile(async () => { throw new ApiError(500, 'x') }), undefined)
+        await assert.rejects(TenantApplications.ReadProfile(async () => { throw new ApiError(401, 'gone') }), /gone/)
     })
-})
 
-describe('LoginPageViewModel', () =>
-{
-    it('starts the identity-provider sign-in once, or retries by reloading', () =>
+    it('a 401 on the profile sends the browser back to the identity provider instead of starting the shell', async () =>
     {
-        const starter = { Count: 0, BeginLogin(): void { this.Count++ } }
-        const reloader = new FakeReloader()
-        const page = new LoginPageViewModel(starter, reloader)
-        page.ShowError('down')
-        assert.equal(page.ErrorText, 'down')
-        page.SignInCommand.Execute()
-        page.SignInCommand.Execute()
-        assert.equal(starter.Count, 1)
-        assert.equal(page.RetryCommand.CanExecute(), false)
-        const other = new LoginPageViewModel(starter, reloader)
-        other.RetryCommand.Execute()
-        assert.equal(reloader.Count, 1)
+        const client = new TenantApiClient(new NoSockets(), async () => ({ ok: false, status: 401, json: async () => ({ error: 'gone' }) }) as Response)
+        const page = new RecordingPage()
+        const apps = new TenantApplications(client, page)
+        const app = await apps.LoadShell()
+        apps.StartShell(app, TenantTestHost.SessionFor())
+        assert.deepEqual(page.Assigned, ['/tenant-auth/oidc/begin'])
+        assert.equal(app.Services.getRequired(TenantSessionService.Key).IsSignedIn, false)
+    })
+
+    it("shows the boot's reason on the sign-in page, which offers the identity provider only", () =>
+    {
+        const provider = new ServiceProvider()
+        provider.register(TenantSignInHost.Key, (p) => new TenantSignInHost(p))
+        TenantApplications.ShowSignInError(provider, "Can't reach Tenant Admin: down")
+        const page = provider.getRequired(TenantSignInHost.Key).Page
+        assert.equal(page.ErrorText, "Can't reach Tenant Admin: down")
+        assert.equal(page.OffersOidc, true)
+        assert.equal(page.OffersPassword, false)
     })
 })

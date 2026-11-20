@@ -4,13 +4,12 @@ import { ServiceProvider, type IServiceProvider } from '@pragmatic-tech-ai/mural
 import { ContentHostService } from '@pragmatic-tech-ai/mural/framework/shell/services/content-host-service.js'
 import { ApiError, type ControlPlaneClient } from '../../api-client.js'
 import { OperatorContext } from '../../operator-context.js'
-import type { OperatorDto } from '../../portal-types.js'
-import { LoginHostService } from '../login-host-service.js'
-import { BootTarget, PortalBoot } from '../portal-boot.js'
+import { PlatformSignInHost } from '../platform-sign-in-host.js'
+import { PortalApplications } from '../portal-boot.js'
 import { PageState, PortalPageViewModel } from '../portal-page-view-model.js'
 import { PortalSectionService } from '../portal-section-service.js'
 import { PortalSessionService } from '../portal-session-service.js'
-import { FakeReloader, TestRail, Tick } from './portal-test-fixtures.js'
+import { FakeReloader, PortalTestHost, TestRail, Tick } from './portal-test-fixtures.js'
 
 // A client with one list call plus the change-notification registration.
 class FakeShellClient
@@ -31,7 +30,7 @@ class FakeShellClient
 
     public AsClient(): ControlPlaneClient
     {
-        return this as unknown as ControlPlaneClient
+        return PortalTestHost.Equip(this as unknown as ControlPlaneClient)
     }
 }
 
@@ -66,7 +65,7 @@ class HomeSection extends PortalSectionService
 // the rail before the session is initialized (as importing app.mu.js does).
 class ShellFixture
 {
-    public static readonly Operator: OperatorDto = { email: 'op@example.test', principalId: 'p-1', role: OperatorContext.ReadOnlyWireRole }
+    public static readonly Operator = PortalTestHost.SessionFor(OperatorContext.ReadOnlyWireRole)
 
     public readonly Provider = new ServiceProvider()
     public readonly Client = new FakeShellClient()
@@ -93,35 +92,7 @@ class ShellFixture
     }
 }
 
-describe('PortalBoot.Decide', () =>
-{
-    it('a 401 probe boots into login', async () =>
-    {
-        const decision = await PortalBoot.Decide(() => Promise.reject(new ApiError(ApiError.UnauthorizedStatus, 'unauthorized')))
-        assert.equal(decision.Target, BootTarget.Login)
-    })
-
-    it('a probe with no session boots into login', async () =>
-    {
-        const decision = await PortalBoot.Decide(() => Promise.resolve(null))
-        assert.equal(decision.Target, BootTarget.Login)
-    })
-
-    it('a successful probe boots into the shell', async () =>
-    {
-        const decision = await PortalBoot.Decide(() => Promise.resolve(ShellFixture.Operator))
-        assert.equal(decision.Target, BootTarget.Shell)
-        assert.equal(decision.Target === BootTarget.Shell ? decision.Session : undefined, ShellFixture.Operator)
-    })
-
-    it('any other probe failure rethrows', async () =>
-    {
-        const failure = new ApiError(500, 'boom')
-        await assert.rejects(PortalBoot.Decide(() => Promise.reject(failure)), (e) => e === failure)
-    })
-})
-
-describe('PortalBoot.StartShell', () =>
+describe('PortalApplications.StartShell', () =>
 {
     it('initializes the session and reloads the active section page with it', async () =>
     {
@@ -130,9 +101,9 @@ describe('PortalBoot.StartShell', () =>
         assert.equal(f.Home.Root?.State, PageState.Error)
         assert.equal(f.Client.Lists, 0)
 
-        await PortalBoot.StartShell(f.Provider, f.Client.AsClient(), ShellFixture.Operator, f.Reloader)
+        await PortalApplications.StartShell(f.Provider, f.Client.AsClient(), ShellFixture.Operator, f.Reloader)
 
-        assert.equal(f.Session.Email, ShellFixture.Operator.email)
+        assert.equal(f.Session.Email, PortalTestHost.Email)
         assert.equal(f.Session.CanMutate, false)
         assert.equal(f.Client.Lists, 1)
         assert.equal(f.Home.Root?.State, PageState.Populated)
@@ -141,7 +112,7 @@ describe('PortalBoot.StartShell', () =>
     it('subscribes change notifications to refresh the active section', async () =>
     {
         const f = new ShellFixture()
-        await PortalBoot.StartShell(f.Provider, f.Client.AsClient(), ShellFixture.Operator, f.Reloader)
+        await PortalApplications.StartShell(f.Provider, f.Client.AsClient(), ShellFixture.Operator, f.Reloader)
         assert.equal(f.Client.Handlers.length, 1)
         f.Client.Handlers[0]()
         await Tick.Next()
@@ -152,20 +123,28 @@ describe('PortalBoot.StartShell', () =>
     {
         const f = new ShellFixture()
         f.Client.ListFleet = () => Promise.reject(new ApiError(ApiError.UnauthorizedStatus, 'unauthorized'))
-        await PortalBoot.StartShell(f.Provider, f.Client.AsClient(), ShellFixture.Operator, f.Reloader)
+        await PortalApplications.StartShell(f.Provider, f.Client.AsClient(), ShellFixture.Operator, f.Reloader)
         f.Client.Handlers[0]()
         await Tick.Next()
         assert.equal(f.Reloader.Count, 1)
     })
 })
 
-describe('PortalBoot.ShowProbeFailure', () =>
+describe('PortalApplications.ShowSignInError', () =>
 {
-    it('gives the login page an unreachable-control-plane error', () =>
+    it("shows the boot's reason on the sign-in page", () =>
     {
         const provider = new ServiceProvider()
-        provider.register(LoginHostService.Key, (p) => new LoginHostService(p))
-        PortalBoot.ShowProbeFailure(provider, new ApiError(500, 'boom'))
-        assert.equal(provider.getRequired(LoginHostService.Key).Page.ErrorText, "Can't reach the control plane: boom")
+        provider.register(PlatformSignInHost.Key, (p) => new PlatformSignInHost(p))
+        PortalApplications.ShowSignInError(provider, "Can't reach Platform Admin: boom")
+        assert.equal(provider.getRequired(PlatformSignInHost.Key).Page.ErrorText, "Can't reach Platform Admin: boom")
+    })
+
+    it('the sign-in page offers password sign-in only', () =>
+    {
+        const host = new PlatformSignInHost(new ServiceProvider())
+        assert.equal(host.Page.OffersPassword, true)
+        assert.equal(host.Page.OffersOidc, false)
+        assert.equal(host.Page.ProductName, 'Platform Admin')
     })
 })

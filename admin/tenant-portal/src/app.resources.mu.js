@@ -36,6 +36,7 @@ export class AppResources extends ResourceDictionary {
             _button5.set_property_value(Button.VariantKey, ButtonVariant.Text);
             _button5.set_property_value(Button.CommandKey, DataContextBinding(_button5, "ChangePasswordCommand"));
             _button5.set_property_value(Button.MarginKey, new Thickness(12, 0, 0, 0));
+            _button5.set_property_value(Button.VisibilityKey, DataContextBinding(_button5, "ShowsChangePassword", ToVisibility));
             const _textBlock6 = new TextBlock();
             _textBlock6.set_property_value(TextBlock.TextKey, "Change password");
             _button5.Content = _textBlock6;
@@ -69,7 +70,7 @@ export class AppResources extends ResourceDictionary {
             _stackPanel12.set_property_value(StackPanel.OrientationKey, Orientation.Horizontal);
             _stackPanel12.set_property_value(StackPanel.VerticalAlignmentKey, VerticalAlignment.Center);
             const _textBlock13 = new TextBlock();
-            _textBlock13.set_property_value(TextBlock.TextKey, "Tenant Admin");
+            _textBlock13.set_property_value(TextBlock.TextKey, DataContextBinding(_textBlock13, "ProductName"));
             _textBlock13.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock13, "UiLabel"));
             _textBlock13.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock13, "Fg0"));
             _textBlock13.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 16, 0));
@@ -104,11 +105,11 @@ export class AppResources extends ResourceDictionary {
             _textBlock18.set_property_value(TextBlock.VisibilityKey, DataContextBinding(_textBlock18, "AccountNotice", ToVisibility));
             _stackPanel12.AddChild(_textBlock18);
             const _textBlock19 = new TextBlock();
-            _textBlock19.set_property_value(TextBlock.TextKey, DataContextBinding(_textBlock19, "ChangePasswordDeniedReason"));
+            _textBlock19.set_property_value(TextBlock.TextKey, DataContextBinding(_textBlock19, "AccessNotice"));
             _textBlock19.set_property_value(TextBlock.StyleKey, DynamicResource(_textBlock19, "UiCaption"));
             _textBlock19.set_property_value(TextBlock.ForegroundKey, DynamicResource(_textBlock19, "StateWarningInk"));
             _textBlock19.set_property_value(TextBlock.MarginKey, new Thickness(0, 0, 16, 0));
-            _textBlock19.set_property_value(TextBlock.VisibilityKey, DataContextBinding(_textBlock19, "ChangePasswordDeniedReason", ToVisibility));
+            _textBlock19.set_property_value(TextBlock.VisibilityKey, DataContextBinding(_textBlock19, "AccessNotice", ToVisibility));
             _stackPanel12.AddChild(_textBlock19);
             const _textBlock20 = new TextBlock();
             _textBlock20.set_property_value(TextBlock.TextKey, DataContextBinding(_textBlock20, "LogoutError"));

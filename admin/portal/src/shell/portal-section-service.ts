@@ -7,8 +7,7 @@ import { NavigationDestination, NavigationService } from '@pragmatic-tech-ai/mur
 import type { IActivatable } from '@pragmatic-tech-ai/mural/framework/shell/services/activatable.js'
 import type { IDisposable, Observable } from '@pragmatic-tech-ai/todl-runtime'
 import { DownloadService } from './download-service.js'
-import { PendingSecret } from './holds-pending-secret.js'
-import { PendingWork } from './holds-pending-work.js'
+import { PendingSecret, PendingWork } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { PortalPageViewModel } from './portal-page-view-model.js'
 import { PortalSessionService } from './portal-session-service.js'
 

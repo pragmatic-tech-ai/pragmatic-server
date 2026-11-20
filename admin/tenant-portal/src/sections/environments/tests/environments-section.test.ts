@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { TenantApiError } from '../../../tenant-api-client.js'
+import { ApiError } from '../../../tenant-api-client.js'
 import { EnvStatus, EnvType, Template, TenantEventType } from '../../../tenant-types.js'
 import { ConfirmDialogViewModel } from '../../../shell/confirm-dialog-view-model.js'
 import { NameConfirmDialogViewModel } from '../../../shell/name-confirm-dialog-view-model.js'
@@ -89,7 +89,7 @@ describe('Create environment dialog', () =>
         void dialog.Open('Create environment')
         dialog.Name = 'training'
         const reason = 'The environment could not be created. The hive refused to run image pragmatic-server:dev (no trust root configured).'
-        api.FailOn.set('CreateEnvironment', new TenantApiError(500, reason))
+        api.FailOn.set('CreateEnvironment', new ApiError(500, reason))
         await dialog.Confirm()
         assert.equal(dialog.ErrorText, reason)
         assert.equal(dialogs.IsOpen, true)
@@ -157,13 +157,13 @@ describe('Environments list', () =>
     it('degrades a failed health read, and is Error when the list fails', async () =>
     {
         const api = new FakeTenantApi().WithEnvironment('alpha')
-        api.FailOn.set('GetHealth', new TenantApiError(500, 'health down'))
+        api.FailOn.set('GetHealth', new ApiError(500, 'health down'))
         const list = await Opened.List(new SectionsFixture(api))
         assert.equal(list.State, PageState.Populated)
         assert.equal(list.Rows.ToArray()[0]?.HealthPill.Label, 'Unknown')
 
         const failing = new FakeTenantApi()
-        failing.FailOn.set('ListEnvironments', new TenantApiError(500, 'boom'))
+        failing.FailOn.set('ListEnvironments', new ApiError(500, 'boom'))
         const failed = await Opened.List(new SectionsFixture(failing))
         assert.equal(failed.State, PageState.Error)
         assert.equal(failed.ErrorText, 'boom')
@@ -228,7 +228,7 @@ describe('Environments list', () =>
         const api = new FakeTenantApi().WithEnvironment('alpha', EnvStatus.Running).WithEnvironment('beta', EnvStatus.Running)
         const list = await Opened.List(new SectionsFixture(api))
         list.AllSelected = true
-        api.FailOn.set('RestartEnvironment', new TenantApiError(409, 'busy'))
+        api.FailOn.set('RestartEnvironment', new ApiError(409, 'busy'))
         const loadsBefore = api.Count('ListEnvironments')
         list.RestartCommand.Execute()
         await Tick.Settle()
@@ -287,8 +287,8 @@ describe('Environment detail', () =>
         assert.equal(page.NewestText, 'alpha is on the newest version offered to your hive.')
 
         const degraded = new FakeTenantApi().WithEnvironment('alpha')
-        degraded.FailOn.set('GetHealth', new TenantApiError(500, 'down'))
-        degraded.FailOn.set('ListManifests', new TenantApiError(500, 'down'))
+        degraded.FailOn.set('GetHealth', new ApiError(500, 'down'))
+        degraded.FailOn.set('ListManifests', new ApiError(500, 'down'))
         const degradedPage = await Opened.Detail(new SectionsFixture(degraded), 'alpha')
         assert.equal(degradedPage.State, PageState.Populated)
         assert.equal(degradedPage.HealthText, 'Health: unavailable')

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { ApiError } from '../../../api-client.js'
+import { ApiError, ControlPlaneErrors } from '../../../api-client.js'
 import { OperatorContext } from '../../../operator-context.js'
 import { NameConfirmDialogViewModel } from '../../../shell/name-confirm-dialog-view-model.js'
 import { FakeControlPlane, PortalTestHost, Tick, type FakeDialogService } from '../../../shell/tests/portal-test-fixtures.js'
@@ -63,7 +63,7 @@ describe('Hive delete: the agent cannot be removed from its cluster', () =>
     it('the failure shows in the dialog and the page then offers Delete anyway with the reason', async () =>
     {
         const fx = new DeleteFixture()
-        fx.Api.DeleteHiveFailure = new ApiError(409, DeleteFixture.UninstallFailure, undefined, ApiError.AgentUninstallFailedCode)
+        fx.Api.DeleteHiveFailure = new ApiError(409, DeleteFixture.UninstallFailure, ControlPlaneErrors.AgentUninstallFailedCode)
         const detail = await fx.Detail()
         assert.equal(detail.CanDeleteAnyway, false)
         assert.equal(detail.DeleteAnywayCommand.CanExecute(), false)
@@ -81,7 +81,7 @@ describe('Hive delete: the agent cannot be removed from its cluster', () =>
     it('Delete anyway confirms by name, warns the agent may remain locked out, force-deletes and returns to the list', async () =>
     {
         const fx = new DeleteFixture()
-        fx.Api.DeleteHiveFailure = new ApiError(409, DeleteFixture.UninstallFailure, undefined, ApiError.AgentUninstallFailedCode)
+        fx.Api.DeleteHiveFailure = new ApiError(409, DeleteFixture.UninstallFailure, ControlPlaneErrors.AgentUninstallFailedCode)
         const detail = await fx.Detail()
         await fx.Confirm(() => detail.DeleteCommand.Execute())
         fx.Dialogs.Dismiss()
@@ -111,7 +111,7 @@ describe('Hive delete: the agent cannot be removed from its cluster', () =>
     it('a later successful delete needs no Delete anyway (a retry after the cluster is fixed)', async () =>
     {
         const fx = new DeleteFixture()
-        fx.Api.DeleteHiveFailure = new ApiError(409, DeleteFixture.UninstallFailure, undefined, ApiError.AgentUninstallFailedCode)
+        fx.Api.DeleteHiveFailure = new ApiError(409, DeleteFixture.UninstallFailure, ControlPlaneErrors.AgentUninstallFailedCode)
         const detail = await fx.Detail()
         await fx.Confirm(() => detail.DeleteCommand.Execute())
         fx.Dialogs.Dismiss()
@@ -126,7 +126,7 @@ describe('Hive delete: the agent cannot be removed from its cluster', () =>
     it('a kind cluster that cannot be destroyed also offers Delete anyway, warning the cluster may be left behind', async () =>
     {
         const fx = new DeleteFixture()
-        fx.Api.DeleteHiveFailure = new ApiError(409, "Could not destroy the hive's kind cluster: kind failed: docker down.", undefined, ApiError.ClusterDestroyFailedCode)
+        fx.Api.DeleteHiveFailure = new ApiError(409, "Could not destroy the hive's kind cluster: kind failed: docker down.", ControlPlaneErrors.ClusterDestroyFailedCode)
         const detail = await fx.Detail()
         await fx.Confirm(() => detail.DeleteCommand.Execute())
         fx.Dialogs.Dismiss()
@@ -140,7 +140,7 @@ describe('Hive delete: the agent cannot be removed from its cluster', () =>
     it('a later delete failure for another reason withdraws Delete anyway, and so does a reload', async () =>
     {
         const fx = new DeleteFixture()
-        fx.Api.DeleteHiveFailure = new ApiError(409, DeleteFixture.UninstallFailure, undefined, ApiError.AgentUninstallFailedCode)
+        fx.Api.DeleteHiveFailure = new ApiError(409, DeleteFixture.UninstallFailure, ControlPlaneErrors.AgentUninstallFailedCode)
         const detail = await fx.Detail()
         await fx.Confirm(() => detail.DeleteCommand.Execute())
         fx.Dialogs.Dismiss()
@@ -152,7 +152,7 @@ describe('Hive delete: the agent cannot be removed from its cluster', () =>
         await Tick.Settle()
         assert.equal(detail.CanDeleteAnyway, false)
         assert.equal(detail.DeleteAnywayText, '')
-        fx.Api.DeleteHiveFailure = new ApiError(409, DeleteFixture.UninstallFailure, undefined, ApiError.AgentUninstallFailedCode)
+        fx.Api.DeleteHiveFailure = new ApiError(409, DeleteFixture.UninstallFailure, ControlPlaneErrors.AgentUninstallFailedCode)
         await fx.Confirm(() => detail.DeleteCommand.Execute())
         fx.Dialogs.Dismiss()
         await Tick.Settle()
@@ -195,7 +195,7 @@ describe('Hive delete: the agent cannot be removed from its cluster', () =>
     it('a delete anyway notice reaches the list too', async () =>
     {
         const fx = new DeleteFixture()
-        fx.Api.DeleteHiveFailure = new ApiError(409, DeleteFixture.UninstallFailure, undefined, ApiError.AgentUninstallFailedCode)
+        fx.Api.DeleteHiveFailure = new ApiError(409, DeleteFixture.UninstallFailure, ControlPlaneErrors.AgentUninstallFailedCode)
         fx.Api.DeleteOutcome = { ok: true, retained: [], notice: 'The agent was not removed: the agent may remain in the cluster, locked out.' }
         const detail = await fx.Detail()
         await fx.Confirm(() => detail.DeleteCommand.Execute())

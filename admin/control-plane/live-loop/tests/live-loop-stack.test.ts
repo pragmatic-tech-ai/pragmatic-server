@@ -196,9 +196,9 @@ describe('LiveLoopStack.ReleaseEnv', () =>
 
 describe('LiveLoopStack.Redact', () =>
 {
-    it('replaces the stack passwords in any failure text', () =>
+    it('replaces the stack passwords in any failure text (the owner one-time password joins them once minted)', () =>
     {
-        const out = new LiveLoopStack().Redact('login failed for ' + LiveLoopStackNames.OwnerPassword + ' and ' + LiveLoopStackNames.OperatorPassword)
-        assert.equal(out, 'login failed for *** and ***')
+        const out = new LiveLoopStack().Redact('login failed for ' + LiveLoopStackNames.OperatorPassword)
+        assert.equal(out, 'login failed for ***')
     })
 })

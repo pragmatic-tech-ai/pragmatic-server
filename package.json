@@ -43,6 +43,7 @@
     "@opentelemetry/semantic-conventions": "1.43.0",
     "@pragmatic-tech-ai/pragmatic-app-host": "file:../pragmatic-shared/packages/pragmatic-app-host",
     "@pragmatic-tech-ai/pragmatic-component": "file:../pragmatic-shared/packages/pragmatic-component",
+    "@pragmatic-tech-ai/pragmatic-configuration": "file:../pragmatic-shared/packages/pragmatic-configuration",
     "@pragmatic-tech-ai/pragmatic-connectors-host": "file:../todl-connectors-host",
     "@pragmatic-tech-ai/pragmatic-graph": "file:../pragmatic-graph",
     "@pragmatic-tech-ai/pragmatic-identity": "file:../pragmatic-shared/packages/pragmatic-identity",

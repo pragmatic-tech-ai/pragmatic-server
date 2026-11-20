@@ -1,23 +1,12 @@
+import { ApiError, AppSessionClient, BrowserPage, type FetchFunction, type IPageLocation } from '@pragmatic-tech-ai/pragmatic-app-shell'
+import { TenantShell } from './shell/tenant-shell.js'
 import { TenantEventType } from './tenant-types.js'
-import type { AdminSnapshotDto, AdoptionLedgerDto, CreateAccountParams, CreateEnvironmentParams, CreateGraphParams, EmailDomainsDto, EnvironmentDto, GrantMutationDto, GraphDto, HiveDto, HiveHealthDto, HiveRolloutDto, IReleasesSource, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, PasswordChangedDto, SecurityCatalogDto, SecurityChangesDto, SecurityModelDto, ServiceTokenSummaryDto, SessionDto, TenantEvent, TeamMemberDto, TenantProfileDto, TokenIssuedDto } from './tenant-types.js'
+import type { AdminSnapshotDto, AdoptionLedgerDto, ConfigurationApplyDto, ConfigurationComponentDetailDto, ConfigurationComponentDto, ConfigurationDiffDto, ConfigurationVersionDto, ConfigurationVersionSummaryDto, CreateAccountParams, CreateEnvironmentParams, CreateGraphParams, EmailDomainsDto, EnvironmentDto, GrantMutationDto, GraphDto, HiveDto, HiveHealthDto, HiveRolloutDto, IReleasesSource, IssueTokenParams, ISecurityModelSource, ITokensSource, IUsersAccessSource, IWebSocketFactory, IWebSocketLike, ManifestDto, SecurityCatalogDto, SecurityChangesDto, SecurityModelDto, ServiceTokenSummaryDto, TenantEvent, TeamMemberDto, TenantProfileDto, TokenIssuedDto } from './tenant-types.js'
 
-// Thrown for non-2xx tenant-surface responses; Message carries the server's error text.
-export class TenantApiError extends Error
-{
-    public static readonly UnauthorizedStatus = 401
-    public static readonly ForbiddenStatus = 403
-    public static readonly UnavailableStatus = 503
+// The shell's error type: thrown for every non-2xx tenant-surface answer, its message the server's error text.
+export { ApiError }
 
-    public readonly Status: number
-
-    public constructor(status: number, message: string)
-    {
-        super(message)
-        this.Status = status
-    }
-}
-
-// Real IWebSocketLike over the browser WebSocket.
+// Real IWebSocketLike over the browser WebSocket; the ticket is its lone subprotocol.
 export class BrowserWebSocket implements IWebSocketLike
 {
     private static readonly MessageEvent = 'message'
@@ -25,9 +14,9 @@ export class BrowserWebSocket implements IWebSocketLike
 
     private readonly socket: WebSocket
 
-    public constructor(url: string)
+    public constructor(url: string, ticket: string)
     {
-        this.socket = new globalThis.WebSocket(url)
+        this.socket = new globalThis.WebSocket(url, [ticket])
     }
 
     public OnMessage(cb: (data: string) => void): void
@@ -48,23 +37,23 @@ export class BrowserWebSocket implements IWebSocketLike
 
 export class BrowserWebSocketFactory implements IWebSocketFactory
 {
-    public Open(url: string): IWebSocketLike
+    public get Location(): IPageLocation
     {
-        return new BrowserWebSocket(url)
+        return BrowserPage.Location
+    }
+
+    public Open(url: string, ticket: string): IWebSocketLike
+    {
+        return new BrowserWebSocket(url, ticket)
     }
 }
 
-// fetch wrapper over the tenant REST surface plus the events and log-follow sockets.
-export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITokensSource, ISecurityModelSource
+// The tenant admin console's client: the tenant REST surface plus the events and log-follow sockets. It is the shell's
+// AppSessionClient (session probe, OIDC sign-in, logout, WebSocket tickets), so every request raises the same 401 / 403
+// signals the session service listens to. Each socket takes a fresh single-use ticket as its subprotocol.
+export class TenantApiClient extends AppSessionClient implements IReleasesSource, IUsersAccessSource, ITokensSource, ISecurityModelSource
 {
-    private static readonly SessionRoute = '/tenant-auth/session'
     private static readonly ProfileRoute = '/tenant-api/profile'
-    private static readonly LogoutRoute = '/tenant-auth/logout'
-    private static readonly PasswordRoute = '/tenant-auth/password'
-    private static readonly CurrentPasswordKey = 'currentPassword'
-    private static readonly NewPasswordKey = 'newPassword'
-    private static readonly ConfirmPasswordKey = 'confirmPassword'
-    private static readonly BeginLoginRoute = '/tenant-auth/oidc/begin'
     private static readonly EmailDomainsRoute = '/tenant-api/settings/email-domains'
     private static readonly EmailDomainsVerifyRoute = TenantApiClient.EmailDomainsRoute + '/verify'
     private static readonly DomainsKey = 'domains'
@@ -73,6 +62,11 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
     private static readonly EnvironmentsRoute = '/tenant-api/environments'
     private static readonly ManifestsRoute = '/tenant-api/manifests'
     private static readonly EventsRoute = '/tenant-api/events'
+    private static readonly ConfigurationComponentsRoute = '/tenant-api/configuration/components'
+    private static readonly VersionsLeaf = 'versions'
+    private static readonly ApplyLeaf = 'apply'
+    private static readonly DiffQuery = 'diff?from='
+    private static readonly ToParam = '&to='
     private static readonly RolloutLeaf = 'rollout'
     private static readonly HealthLeaf = 'health'
     private static readonly LedgerLeaf = 'ledger'
@@ -83,9 +77,6 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
     private static readonly StopAction = 'stop'
     private static readonly RestartAction = 'restart'
     private static readonly PathSeparator = '/'
-    private static readonly MethodPost = 'POST'
-    private static readonly MethodDelete = 'DELETE'
-    private static readonly MethodPut = 'PUT'
     private static readonly AdminSnapshotLeaf = '/admin/snapshot'
     private static readonly AdminAccountsLeaf = '/admin/accounts'
     private static readonly AdminGrantsLeaf = '/admin/grants'
@@ -94,125 +85,77 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
     private static readonly AdminSecurityCatalogLeaf = '/admin/security-catalog'
     private static readonly AdminTeamMembersLeaf = '/admin/team-members'
     private static readonly AdminSecurityChangesLeaf = '/admin/security-changes'
-    private static readonly CredentialsMode = 'same-origin'
-    private static readonly ContentTypeHeader = 'content-type'
-    private static readonly JsonType = 'application/json'
-    private static readonly EmptyBody = '{}'
-    private static readonly HttpsScheme = 'https:'
-    private static readonly WsScheme = 'ws:'
-    private static readonly WssScheme = 'wss:'
-    private static readonly SchemeSuffix = '//'
     private static readonly ReconnectDelayMs = 2000
-    private static readonly RequestFailed = 'Request failed: '
 
     private readonly sockets: IWebSocketFactory
     private readonly handlers: Array<(ev: TenantEvent) => void> = []
     private events: IWebSocketLike | undefined
+    private connecting = false
 
-    public constructor(sockets: IWebSocketFactory = new BrowserWebSocketFactory())
+    public constructor(sockets: IWebSocketFactory = new BrowserWebSocketFactory(), fetcher?: FetchFunction)
     {
+        super(TenantShell.Config, fetcher)
         this.sockets = sockets
     }
 
-    // The signed-in tenant principal, or null when there is no valid session (401).
-    public async Session(): Promise<SessionDto | null>
-    {
-        try
-        {
-            return await this.Send<SessionDto>(TenantApiClient.SessionRoute, undefined)
-        }
-        catch (e)
-        {
-            if (e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus)
-            {
-                return null
-            }
-            throw e
-        }
-    }
-
-    // The signed-in principal's profile and admin capabilities; Send throws TenantApiError on non-2xx.
+    // The signed-in principal's profile and admin capabilities (derived server-side from the roles / app_roles claims).
     public async Profile(): Promise<TenantProfileDto>
     {
-        return await this.Send<TenantProfileDto>(TenantApiClient.ProfileRoute, undefined)
+        return await this.Get<TenantProfileDto>(TenantApiClient.ProfileRoute)
     }
 
-    // The tenant's email domains (a 404 where the plane serves none); Send throws TenantApiError on non-2xx.
+    // The tenant's email domains (a 404 where the plane serves none); a non-2xx throws ApiError.
     public async GetEmailDomains(): Promise<EmailDomainsDto>
     {
-        return await this.Send<EmailDomainsDto>(TenantApiClient.EmailDomainsRoute, undefined)
+        return await this.Get<EmailDomainsDto>(TenantApiClient.EmailDomainsRoute)
     }
 
     // Replaces the tenant's email domains (Owner only); the reply is the normalised list. A refusal is a 400 with its sentence.
     public async SetEmailDomains(domains: readonly string[]): Promise<EmailDomainsDto>
     {
-        return await this.Send<EmailDomainsDto>(TenantApiClient.EmailDomainsRoute, { method: TenantApiClient.MethodPut, body: JSON.stringify({ [TenantApiClient.DomainsKey]: domains }) })
+        return await this.Put<EmailDomainsDto>(TenantApiClient.EmailDomainsRoute, { [TenantApiClient.DomainsKey]: domains })
     }
 
     // Checks the domain's DNS TXT record now (Owner only); the reply is the refreshed view. A refusal is a 400/409/429/503 with its sentence.
     public async VerifyEmailDomain(domain: string): Promise<EmailDomainsDto>
     {
-        return await this.Send<EmailDomainsDto>(TenantApiClient.EmailDomainsVerifyRoute, { method: TenantApiClient.MethodPost, body: JSON.stringify({ [TenantApiClient.DomainKey]: domain }) })
-    }
-
-    public BeginLogin(): void
-    {
-        this.Navigate(TenantApiClient.BeginLoginRoute)
-    }
-
-    public async Logout(): Promise<void>
-    {
-        await this.Send<unknown>(TenantApiClient.LogoutRoute, { method: TenantApiClient.MethodPost, body: TenantApiClient.EmptyBody })
-    }
-
-    // Changes the signed-in user's own password (the server takes who from the
-    // session, never from this body). Their other sessions are signed out; this
-    // one stays. A wrong current password is a 403; a throttled attempt a 429.
-    public async ChangeOwnPassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<PasswordChangedDto>
-    {
-        const body = {
-            [TenantApiClient.CurrentPasswordKey]: currentPassword,
-            [TenantApiClient.NewPasswordKey]: newPassword,
-            [TenantApiClient.ConfirmPasswordKey]: confirmPassword,
-        }
-        return await this.Send<PasswordChangedDto>(TenantApiClient.PasswordRoute, { method: TenantApiClient.MethodPost, body: JSON.stringify(body) })
+        return await this.Post<EmailDomainsDto>(TenantApiClient.EmailDomainsVerifyRoute, { [TenantApiClient.DomainKey]: domain })
     }
 
     public async ListHives(): Promise<HiveDto[]>
     {
-        return await this.Send<HiveDto[]>(TenantApiClient.HivesRoute, undefined)
+        return await this.Get<HiveDto[]>(TenantApiClient.HivesRoute)
     }
 
     public async ListEnvironments(): Promise<EnvironmentDto[]>
     {
-        return await this.Send<EnvironmentDto[]>(TenantApiClient.EnvironmentsRoute, undefined)
+        return await this.Get<EnvironmentDto[]>(TenantApiClient.EnvironmentsRoute)
     }
 
-    // POSTs a new environment; a duplicate name surfaces as TenantApiError with Status 409.
+    // POSTs a new environment; a duplicate name surfaces as ApiError with Status 409.
     public async CreateEnvironment(params: CreateEnvironmentParams): Promise<EnvironmentDto>
     {
-        const body = { name: params.name, template: params.template, type: params.type }
-        return await this.Send<EnvironmentDto>(TenantApiClient.EnvironmentsRoute, { method: TenantApiClient.MethodPost, body: JSON.stringify(body) })
+        return await this.Post<EnvironmentDto>(TenantApiClient.EnvironmentsRoute, { name: params.name, template: params.template, type: params.type })
     }
 
     public async ListManifests(): Promise<ManifestDto[]>
     {
-        return await this.Send<ManifestDto[]>(TenantApiClient.ManifestsRoute, undefined)
+        return await this.Get<ManifestDto[]>(TenantApiClient.ManifestsRoute)
     }
 
     public async GetRollout(hiveId: string): Promise<HiveRolloutDto>
     {
-        return await this.Send<HiveRolloutDto>(this.HiveRoute(hiveId, TenantApiClient.RolloutLeaf), undefined)
+        return await this.Get<HiveRolloutDto>(this.HiveRoute(hiveId, TenantApiClient.RolloutLeaf))
     }
 
     public async GetHealth(hiveId: string): Promise<HiveHealthDto[]>
     {
-        return await this.Send<HiveHealthDto[]>(this.HiveRoute(hiveId, TenantApiClient.HealthLeaf), undefined)
+        return await this.Get<HiveHealthDto[]>(this.HiveRoute(hiveId, TenantApiClient.HealthLeaf))
     }
 
     public async ListHiveLedger(hiveId: string): Promise<readonly AdoptionLedgerDto[]>
     {
-        return await this.Send<AdoptionLedgerDto[]>(this.HiveRoute(hiveId, TenantApiClient.LedgerLeaf), undefined)
+        return await this.Get<AdoptionLedgerDto[]>(this.HiveRoute(hiveId, TenantApiClient.LedgerLeaf))
     }
 
     public async ListLedger(hiveId: string): Promise<readonly AdoptionLedgerDto[]>
@@ -222,7 +165,7 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
 
     public async SelectTarget(hiveId: string, version: string): Promise<void>
     {
-        await this.Send<unknown>(this.HiveRoute(hiveId, TenantApiClient.TargetLeaf), { method: TenantApiClient.MethodPost, body: JSON.stringify({ version }) })
+        await this.Post<unknown>(this.HiveRoute(hiveId, TenantApiClient.TargetLeaf), { version })
     }
 
     public async StartEnvironment(name: string): Promise<EnvironmentDto>
@@ -242,99 +185,138 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
 
     public async DeleteEnvironment(name: string): Promise<void>
     {
-        await this.Send<void>(this.EnvRoute(name), { method: TenantApiClient.MethodDelete })
+        await this.Delete<void>(this.EnvRoute(name))
     }
 
     public async GetAdminSnapshot(env: string): Promise<AdminSnapshotDto>
     {
-        return await this.Send<AdminSnapshotDto>(this.EnvRoute(env) + TenantApiClient.AdminSnapshotLeaf, undefined)
+        return await this.Get<AdminSnapshotDto>(this.EnvRoute(env) + TenantApiClient.AdminSnapshotLeaf)
     }
 
     public async CreateAccount(env: string, params: CreateAccountParams): Promise<void>
     {
-        await this.Send<unknown>(this.EnvRoute(env) + TenantApiClient.AdminAccountsLeaf, { method: TenantApiClient.MethodPost, body: JSON.stringify(params) })
+        await this.Post<unknown>(this.EnvRoute(env) + TenantApiClient.AdminAccountsLeaf, params)
     }
 
     public async DisableAccount(env: string, principalId: string): Promise<void>
     {
-        await this.Send<unknown>(this.EnvRoute(env) + TenantApiClient.AdminAccountsLeaf + TenantApiClient.PathSeparator + encodeURIComponent(principalId),
-            { method: TenantApiClient.MethodDelete })
+        await this.Delete<unknown>(this.EnvRoute(env) + TenantApiClient.AdminAccountsLeaf + TenantApiClient.PathSeparator + encodeURIComponent(principalId))
     }
 
     public async GrantRole(env: string, grant: GrantMutationDto): Promise<void>
     {
-        await this.Send<unknown>(this.EnvRoute(env) + TenantApiClient.AdminGrantsLeaf, { method: TenantApiClient.MethodPost, body: JSON.stringify(grant) })
+        await this.Post<unknown>(this.EnvRoute(env) + TenantApiClient.AdminGrantsLeaf, grant)
     }
 
     public async RevokeRole(env: string, grant: GrantMutationDto): Promise<void>
     {
-        await this.Send<unknown>(this.EnvRoute(env) + TenantApiClient.AdminGrantsLeaf, { method: TenantApiClient.MethodDelete, body: JSON.stringify(grant) })
+        await this.Delete<unknown>(this.EnvRoute(env) + TenantApiClient.AdminGrantsLeaf, grant)
     }
 
     public async ListTokens(env: string): Promise<ServiceTokenSummaryDto[]>
     {
-        return await this.Send<ServiceTokenSummaryDto[]>(this.EnvRoute(env) + TenantApiClient.AdminTokensLeaf, undefined)
+        return await this.Get<ServiceTokenSummaryDto[]>(this.EnvRoute(env) + TenantApiClient.AdminTokensLeaf)
     }
 
     public async IssueToken(env: string, params: IssueTokenParams): Promise<TokenIssuedDto>
     {
-        return await this.Send<TokenIssuedDto>(this.EnvRoute(env) + TenantApiClient.AdminTokensLeaf, { method: TenantApiClient.MethodPost, body: JSON.stringify(params) })
+        return await this.Post<TokenIssuedDto>(this.EnvRoute(env) + TenantApiClient.AdminTokensLeaf, params)
     }
 
     public async RevokeToken(env: string, tokenRef: string): Promise<void>
     {
-        await this.Send<unknown>(this.EnvRoute(env) + TenantApiClient.AdminTokensLeaf, { method: TenantApiClient.MethodDelete, body: JSON.stringify({ tokenRef }) })
+        await this.Delete<unknown>(this.EnvRoute(env) + TenantApiClient.AdminTokensLeaf, { tokenRef })
     }
 
     public async GetSecurityModel(env: string): Promise<SecurityModelDto | null>
     {
-        return await this.Send<SecurityModelDto | null>(this.EnvRoute(env) + TenantApiClient.AdminSecurityModelLeaf, undefined)
+        return await this.Get<SecurityModelDto | null>(this.EnvRoute(env) + TenantApiClient.AdminSecurityModelLeaf)
     }
 
     public async SetSecurityModel(env: string, model: SecurityModelDto): Promise<void>
     {
-        await this.Send<unknown>(this.EnvRoute(env) + TenantApiClient.AdminSecurityModelLeaf, { method: TenantApiClient.MethodPut, body: JSON.stringify({ securityModel: model }) })
+        await this.Put<unknown>(this.EnvRoute(env) + TenantApiClient.AdminSecurityModelLeaf, { securityModel: model })
     }
 
     public async GetSecurityCatalog(env: string): Promise<SecurityCatalogDto>
     {
-        return await this.Send<SecurityCatalogDto>(this.EnvRoute(env) + TenantApiClient.AdminSecurityCatalogLeaf, undefined)
+        return await this.Get<SecurityCatalogDto>(this.EnvRoute(env) + TenantApiClient.AdminSecurityCatalogLeaf)
     }
 
     public async ListTeamMembers(env: string, teamId: string): Promise<TeamMemberDto[]>
     {
-        return await this.Send<TeamMemberDto[]>(this.EnvRoute(env) + TenantApiClient.AdminTeamMembersLeaf + TenantApiClient.PathSeparator + encodeURIComponent(teamId), undefined)
+        return await this.Get<TeamMemberDto[]>(this.EnvRoute(env) + TenantApiClient.AdminTeamMembersLeaf + TenantApiClient.PathSeparator + encodeURIComponent(teamId))
     }
 
     public async ListSecurityChanges(env: string): Promise<SecurityChangesDto[]>
     {
-        return await this.Send<SecurityChangesDto[]>(this.EnvRoute(env) + TenantApiClient.AdminSecurityChangesLeaf, undefined)
+        return await this.Get<SecurityChangesDto[]>(this.EnvRoute(env) + TenantApiClient.AdminSecurityChangesLeaf)
     }
 
     // A Development environment's graphs. A refusal (Runtime environment, no reach, unknown environment) is a
-    // TenantApiError carrying the route's sentence.
+    // ApiError carrying the route's sentence.
     public async ListGraphs(environment: string): Promise<GraphDto[]>
     {
-        return await this.Send<GraphDto[]>(this.GraphsRoute(environment), undefined)
+        return await this.Get<GraphDto[]>(this.GraphsRoute(environment))
     }
 
-    // POSTs a new graph; a name already used surfaces as TenantApiError with Status 409.
+    // POSTs a new graph; a name already used surfaces as ApiError with Status 409.
     public async CreateGraph(environment: string, params: CreateGraphParams): Promise<GraphDto>
     {
         const body = { name: params.name, description: params.description }
-        return await this.Send<GraphDto>(this.GraphsRoute(environment), { method: TenantApiClient.MethodPost, body: JSON.stringify(body) })
+        return await this.Post<GraphDto>(this.GraphsRoute(environment), body)
     }
 
     public async DeleteGraph(environment: string, graph: string): Promise<void>
     {
-        await this.Send<void>(this.GraphsRoute(environment) + TenantApiClient.PathSeparator + encodeURIComponent(graph), { method: TenantApiClient.MethodDelete })
+        await this.Delete<void>(this.GraphsRoute(environment) + TenantApiClient.PathSeparator + encodeURIComponent(graph))
+    }
+
+    // The configuration repository's components: each one's version head and its targets (what is applied where).
+    public async ListConfigurationComponents(): Promise<ConfigurationComponentDto[]>
+    {
+        return await this.Get<ConfigurationComponentDto[]>(TenantApiClient.ConfigurationComponentsRoute)
+    }
+
+    // One component: its descriptor's options and settings, its versions and its applies.
+    public async GetConfigurationComponent(component: string): Promise<ConfigurationComponentDetailDto>
+    {
+        return await this.Get<ConfigurationComponentDetailDto>(this.ComponentRoute(component))
+    }
+
+    public async GetConfigurationVersion(component: string, version: number): Promise<ConfigurationVersionDto>
+    {
+        return await this.Get<ConfigurationVersionDto>(this.VersionRoute(component, version))
+    }
+
+    // What changed from version `from` to version `to` (from 0: the empty document).
+    public async DiffConfigurationVersions(component: string, from: number, to: number): Promise<ConfigurationDiffDto>
+    {
+        return await this.Get<ConfigurationDiffDto>(this.ComponentRoute(component) + TenantApiClient.PathSeparator
+            + TenantApiClient.DiffQuery + String(from) + TenantApiClient.ToParam + String(to))
+    }
+
+    // Saves a new version on top of `basedOn` (the head the edit started from). A document that does not validate is a
+    // 422 whose body lists `errors` by path; a head that moved meanwhile is a 409 whose body names the `head`.
+    public async SaveConfigurationVersion(component: string, basedOn: number, document: unknown, comment: string): Promise<ConfigurationVersionSummaryDto>
+    {
+        return await this.Post<ConfigurationVersionSummaryDto>(this.ComponentRoute(component) + TenantApiClient.PathSeparator + TenantApiClient.VersionsLeaf,
+            { basedOn, document, comment })
+    }
+
+    // Applies a version to one of the component's target environments; the reply is the apply record (applied or
+    // failed with its detail).
+    public async ApplyConfigurationVersion(component: string, version: number, environment: string): Promise<ConfigurationApplyDto>
+    {
+        return await this.Post<ConfigurationApplyDto>(this.VersionRoute(component, version) + TenantApiClient.PathSeparator + TenantApiClient.ApplyLeaf,
+            { environment })
     }
 
     // Registers a handler on the shared events socket (opened lazily); returns an unsubscribe.
     public OnEvent(handler: (ev: TenantEvent) => void): () => void
     {
         this.handlers.push(handler)
-        if (this.events === undefined)
+        if (this.events === undefined && !this.connecting)
         {
             this.Connect()
         }
@@ -355,33 +337,58 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
     }
 
     // Follows an environment's logs; raw text frames go to onChunk, and onClose runs when the server (or the
-    // network) closes the stream. The returned function closes the stream.
+    // network) closes the stream, or when no ticket could be minted for it. The returned function closes the stream
+    // (before the socket opened: it never opens).
     public OpenLogStream(name: string, onChunk: (text: string) => void, onClose?: () => void): () => void
     {
-        const socket = this.sockets.Open(this.WsBase() + this.EnvRoute(name) + TenantApiClient.PathSeparator + TenantApiClient.LogStreamLeaf)
-        socket.OnMessage(data => { onChunk(data) })
-        if (onClose !== undefined)
+        const stream = new TicketedLogStream(onChunk, onClose)
+        void this.OpenLog(stream, this.EnvRoute(name) + TenantApiClient.PathSeparator + TenantApiClient.LogStreamLeaf)
+        return () => { stream.Close() }
+    }
+
+    private async OpenLog(stream: TicketedLogStream, route: string): Promise<void>
+    {
+        let ticket: string
+        try
         {
-            socket.OnClose(() => { onClose() })
+            ticket = await this.MintWsTicket()
         }
-        return () => { socket.Close() }
+        catch
+        {
+            stream.Failed()
+            return
+        }
+        stream.Attach(() => this.sockets.Open(this.SocketUrl(route, this.sockets.Location), ticket))
     }
 
-    // Seams: tests override these (no browser location / navigation in node).
-    protected Navigate(url: string): void
-    {
-        location.href = url
-    }
-
-    protected WsBase(): string
-    {
-        const scheme = location.protocol === TenantApiClient.HttpsScheme ? TenantApiClient.WssScheme : TenantApiClient.WsScheme
-        return scheme + TenantApiClient.SchemeSuffix + location.host
-    }
-
+    // Mints a single-use ticket, then opens the events socket with it; no ticket, no socket (retried via the reconnect
+    // delay, except after a 401: the session is gone and the page reloads).
     private Connect(): void
     {
-        const socket = this.sockets.Open(this.WsBase() + TenantApiClient.EventsRoute)
+        this.connecting = true
+        void this.OpenEvents().finally(() => { this.connecting = false })
+    }
+
+    private async OpenEvents(): Promise<void>
+    {
+        let ticket: string
+        try
+        {
+            ticket = await this.MintWsTicket()
+        }
+        catch (e)
+        {
+            if (!ApiError.Is(e, ApiError.UnauthorizedStatus))
+            {
+                this.ScheduleReconnect()
+            }
+            return
+        }
+        if (this.handlers.length === 0 || this.events !== undefined)
+        {
+            return
+        }
+        const socket = this.sockets.Open(this.SocketUrl(TenantApiClient.EventsRoute, this.sockets.Location), ticket)
         socket.OnMessage(data => { this.Deliver(data) })
         socket.OnClose(() => { this.OnClosed(socket) })
         this.events = socket
@@ -395,9 +402,14 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
             return
         }
         this.events = undefined
+        this.ScheduleReconnect()
+    }
+
+    private ScheduleReconnect(): void
+    {
         setTimeout(() =>
         {
-            if (this.events === undefined && this.handlers.length > 0)
+            if (this.events === undefined && !this.connecting && this.handlers.length > 0)
             {
                 this.Connect()
             }
@@ -441,6 +453,16 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
         return TenantApiClient.HivesRoute + TenantApiClient.PathSeparator + encodeURIComponent(hiveId) + TenantApiClient.PathSeparator + leaf
     }
 
+    private ComponentRoute(component: string): string
+    {
+        return TenantApiClient.ConfigurationComponentsRoute + TenantApiClient.PathSeparator + encodeURIComponent(component)
+    }
+
+    private VersionRoute(component: string, version: number): string
+    {
+        return this.ComponentRoute(component) + TenantApiClient.PathSeparator + TenantApiClient.VersionsLeaf + TenantApiClient.PathSeparator + String(version)
+    }
+
     private EnvRoute(name: string): string
     {
         return TenantApiClient.EnvironmentsRoute + TenantApiClient.PathSeparator + encodeURIComponent(name)
@@ -453,28 +475,50 @@ export class TenantApiClient implements IReleasesSource, IUsersAccessSource, ITo
 
     private async Action(name: string, action: string): Promise<EnvironmentDto>
     {
-        return await this.Send<EnvironmentDto>(this.EnvRoute(name) + TenantApiClient.PathSeparator + action,
-            { method: TenantApiClient.MethodPost, body: TenantApiClient.EmptyBody })
+        return await this.Post<EnvironmentDto>(this.EnvRoute(name) + TenantApiClient.PathSeparator + action)
+    }
+}
+
+// One log-follow stream: its socket opens once its ticket lands, unless the caller closed it first.
+export class TicketedLogStream
+{
+    private socket: IWebSocketLike | undefined
+    private closed = false
+
+    public constructor(private readonly onChunk: (text: string) => void, private readonly onClose: (() => void) | undefined)
+    {
     }
 
-    private async Send<T>(route: string, init: { method: string; body?: string } | undefined): Promise<T>
+    // Opens the socket (unless already closed) and routes its frames and its close.
+    public Attach(open: () => IWebSocketLike): void
     {
-        const response = await fetch(route, init === undefined ? { credentials: TenantApiClient.CredentialsMode } :
-            { method: init.method, body: init.body, credentials: TenantApiClient.CredentialsMode, headers: { [TenantApiClient.ContentTypeHeader]: TenantApiClient.JsonType } })
-        let payload: unknown
-        try
+        if (this.closed)
         {
-            payload = await response.json()
+            return
         }
-        catch
+        const socket = open()
+        socket.OnMessage(data => { this.onChunk(data) })
+        if (this.onClose !== undefined)
         {
-            payload = undefined
+            const onClose = this.onClose
+            socket.OnClose(() => { onClose() })
         }
-        if (!response.ok)
+        this.socket = socket
+    }
+
+    // No ticket could be minted: the stream ends before it began.
+    public Failed(): void
+    {
+        if (!this.closed)
         {
-            const message = (payload as { error?: string } | undefined)?.error
-            throw new TenantApiError(response.status, message ?? TenantApiClient.RequestFailed + String(response.status))
+            this.closed = true
+            this.onClose?.()
         }
-        return payload as T
+    }
+
+    public Close(): void
+    {
+        this.closed = true
+        this.socket?.Close()
     }
 }

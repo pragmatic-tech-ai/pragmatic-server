@@ -1,7 +1,7 @@
 import { RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import type { DialogService } from '@pragmatic-tech-ai/mural/framework/shell/services/dialog-service.js'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import { TenantApiError } from '../tenant-api-client.js'
+import { ApiError } from '../tenant-api-client.js'
 import type { AdminCapability } from './admin-capability.js'
 import { ConfirmDialogViewModel, type IConfirmRequest } from './confirm-dialog-view-model.js'
 import { NameConfirmDialogViewModel } from './name-confirm-dialog-view-model.js'
@@ -331,7 +331,7 @@ export abstract class TenantPageViewModel extends Observable
 
     private TryExpire(e: unknown): boolean
     {
-        if (e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus)
+        if (e instanceof ApiError && e.Status === ApiError.UnauthorizedStatus)
         {
             this.Session.Expire()
             return true
@@ -341,7 +341,7 @@ export abstract class TenantPageViewModel extends Observable
 
     private static IsForbidden(e: unknown): boolean
     {
-        return e instanceof TenantApiError && e.Status === TenantApiError.ForbiddenStatus
+        return e instanceof ApiError && e.Status === ApiError.ForbiddenStatus
     }
 
     private static MessageOf(e: unknown): string

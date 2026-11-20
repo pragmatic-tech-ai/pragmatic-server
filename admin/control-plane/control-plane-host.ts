@@ -10,12 +10,12 @@ import {
     HttpMethod,
     JsonApi,
     MuralBundle,
-    OriginGuard,
     PasswordLoginEndpoint,
     RateLimiter,
     RouteAuth,
     RouteTable,
     SessionStore,
+    WsTicketEndpoint,
     type IAuditRepository,
     type RequestContext,
     type SocketContext,
@@ -268,7 +268,7 @@ export interface ControlPlaneHostOptions
  * The platform admin console's HTTP server: a pragmatic-app-host AppHost (one ordered pipeline: health, allowed Host, body
  * type, Origin, authentication, authorization, route, UI bundle) with the console's declared routes. Operators sign in
  * with their password (PasswordLoginEndpoint over the operator accounts) into the console's session store; each route
- * names the operator role (operator.full, operator.read-only, as session claims) it admits; every authorized mutation is
+ * names, as its AppRole, the operator role (operator.full, operator.read-only, as session claims) it admits; every authorized mutation is
  * audited once with its final status. Domain errors answer through ControlPlaneProblems. Live updates go out on the
  * `/api/events` socket, opened with a single-use ticket.
  */
@@ -295,7 +295,7 @@ export class ControlPlaneHost
     private static readonly SessionPasswordPath = '/api/session/password'
     private static readonly DiscoverPath = '/api/desktop/discover'
     private static readonly EventsPath = '/api/events'
-    private static readonly EventsTicketPath = '/api/events-ticket'
+    private static readonly TicketPath = '/api/ws-ticket'
     private static readonly ActivityPath = '/api/activity'
     private static readonly OperatorsPath = '/api/operators'
     private static readonly OperatorMutationPath = '/api/operators/:mutation'
@@ -334,13 +334,14 @@ export class ControlPlaneHost
     private static readonly PromotePath = '/api/environments/:env/graphs/:graph/promote'
     private static readonly LoadedGraphPath = '/api/environments/:env/loaded-graph'
     // Route parameters.
+    private static readonly SubjectField = 'subject'
+    private static readonly ClaimsField = 'claims'
     private static readonly IdParam = 'id'
     private static readonly VersionParam = 'version'
     private static readonly MutationParam = 'mutation'
     private static readonly EnvParam = 'env'
     private static readonly GraphParam = 'graph'
     // Messages.
-    private static readonly BadOriginMessage = 'Origin not allowed'
     private static readonly UnauthenticatedMessage = 'Authentication required'
     private static readonly OperatorEmailMessage = 'email (non-empty string) is required'
     private static readonly OperatorRoleMessage = 'role (full|readonly) is required'
@@ -445,7 +446,6 @@ export class ControlPlaneHost
     private appHost: AppHost | undefined
     private readonly sessions: OperatorSessions
     private readonly gate: OperatorSessionGate
-    private readonly origins: OriginGuard
     private readonly audit: AuditTrail | undefined
     private readonly registry: OperatorSocketRegistry<WebSocket>
     private readonly revalidateIntervalMs: number
@@ -469,7 +469,6 @@ export class ControlPlaneHost
     {
         this.sessions = options.Sessions
         this.gate = options.Sessions.GateOver(options.Operator)
-        this.origins = new OriginGuard(options.TrustedProxy ?? false)
         this.audit = options.Audit === undefined ? undefined : new AuditTrail(options.Audit, { MaxTargetLength: ControlPlaneHost.MaxAuditTargetLength })
         this.registry = options.Sockets ?? new OperatorSocketRegistry<WebSocket>()
         this.revalidateIntervalMs = options.RevalidateIntervalMs ?? ControlPlaneHost.RevalidateIntervalMs
@@ -487,7 +486,7 @@ export class ControlPlaneHost
         }), {
             Routes: this.Routes(),
             Sessions: this.gate,
-            Authorizer: new ClaimsAuthorizer(OperatorRoleClaims.RoleClaim),
+            Authorizer: new ClaimsAuthorizer(),
             Audit: this.audit,
             Bundle: this.Bundle(),
             Problems: new ControlPlaneProblems(),
@@ -548,11 +547,11 @@ export class ControlPlaneHost
         const table = new RouteTable()
         const read = (pattern: string, handler: (ctx: RequestContext) => Promise<void> | void, role: string | readonly string[] = any): void =>
         {
-            table.Add({ Method: HttpMethod.Get, Pattern: pattern, Auth: RouteAuth.Session, Role: role, Handler: async ctx => { await handler(ctx) } })
+            table.Add({ Method: HttpMethod.Get, Pattern: pattern, Auth: RouteAuth.Session, AppRole: role, Handler: async ctx => { await handler(ctx) } })
         }
         const write = (method: HttpMethod, pattern: string, handler: (ctx: RequestContext) => Promise<void> | void, bodyLimit?: number): void =>
         {
-            table.Add({ Method: method, Pattern: pattern, Auth: RouteAuth.Session, Role: full, Handler: async ctx => { await handler(ctx) }, ...(bodyLimit === undefined ? {} : { BodyLimit: bodyLimit }) })
+            table.Add({ Method: method, Pattern: pattern, Auth: RouteAuth.Session, AppRole: full, Handler: async ctx => { await handler(ctx) }, ...(bodyLimit === undefined ? {} : { BodyLimit: bodyLimit }) })
         }
         // Public.
         table.Add({ Method: HttpMethod.Get, Pattern: C.PingPath, Auth: RouteAuth.Public, Handler: async ctx => ctx.WriteJson(C.StatusOk, { ok: true }) })
@@ -565,9 +564,9 @@ export class ControlPlaneHost
             table.Add({ Method: HttpMethod.Post, Pattern: C.DiscoverPath, Auth: RouteAuth.Public, Audited: false, Handler: ctx => discovery.Handle(ctx.Request, ctx.Response, ctx.ClientAddress) })
         }
         // The operator's own session.
-        read(C.EventsTicketPath, ctx => this.HandleEventsTicket(ctx))
-        table.Add({ Method: HttpMethod.Post, Pattern: C.SessionPasswordPath, Auth: RouteAuth.Session, Role: any, Handler: ctx => this.HandleChangeOwnPassword(ctx) })
-        table.AddSocket({ Pattern: C.EventsPath, Auth: RouteAuth.Session, Role: any, Handler: (ws, ctx) => this.AdmitClient(ws, ctx) })
+        new WsTicketEndpoint(this.sessions.Tickets).Register(table, C.TicketPath)
+        table.Add({ Method: HttpMethod.Post, Pattern: C.SessionPasswordPath, Auth: RouteAuth.Session, AppRole: any, Handler: ctx => this.HandleChangeOwnPassword(ctx) })
+        table.AddSocket({ Pattern: C.EventsPath, Auth: RouteAuth.Session, AppRole: any, Handler: (ws, ctx) => this.AdmitClient(ws, ctx) })
         // Operators.
         read(C.OperatorsPath, ctx => this.HandleListOperators(ctx), full)
         write(HttpMethod.Post, C.OperatorsPath, ctx => this.HandleCreateOperator(ctx))
@@ -658,7 +657,10 @@ export class ControlPlaneHost
         return OperatorRoleClaims.PrincipalOf(ctx.RequireSession())
     }
 
-    /** GET /api/session: the signed-in operator (email, principal id, role), or 401. Public, so it never refuses earlier. */
+    /**
+     * GET /api/session: the signed-in operator as the app-host session answer `{ subject, claims }` (claims `email`,
+     * `app_roles`, `amr`, refreshed from the operator's account by the gate), or 401. Public, so it never refuses earlier.
+     */
     private HandleSession(ctx: RequestContext): void
     {
         CacheControl.NoStore(ctx.Response)
@@ -667,8 +669,7 @@ export class ControlPlaneHost
             ctx.WriteJson(ControlPlaneHost.StatusUnauthorized, { error: ControlPlaneHost.UnauthenticatedMessage })
             return
         }
-        const who = OperatorRoleClaims.PrincipalOf(ctx.Session)
-        ctx.WriteJson(ControlPlaneHost.StatusOk, { email: who.email, principalId: who.principalId, role: ControlPlaneHost.RoleWire(who.role) })
+        ctx.WriteJson(ControlPlaneHost.StatusOk, { [ControlPlaneHost.SubjectField]: ctx.Session.Subject, [ControlPlaneHost.ClaimsField]: ctx.Session.Claims.ToJson() })
     }
 
     /** POST /api/logout: ends the cookie's session (if any) and its event sockets, clears the cookie. Public, so a stale cookie can still sign out. */
@@ -690,18 +691,6 @@ export class ControlPlaneHost
         }
         ctx.Response.setHeader(ControlPlaneHost.SetCookieHeader, this.sessions.Cookie.BuildClearing())
         ctx.WriteJson(ControlPlaneHost.StatusOk, { ok: true })
-    }
-
-    /** GET /api/events-ticket: a single-use ticket for the events socket, bound to the caller's session (own Origin only). */
-    private async HandleEventsTicket(ctx: RequestContext): Promise<void>
-    {
-        CacheControl.NoStore(ctx.Response)
-        if (!this.origins.Allows(ctx.Request))
-        {
-            ctx.WriteJson(ControlPlaneHost.StatusForbidden, { error: ControlPlaneHost.BadOriginMessage })
-            return
-        }
-        ctx.WriteJson(ControlPlaneHost.StatusOk, { ticket: await this.sessions.Tickets.Mint(ctx.RequireSession().Id) })
     }
 
     /**

@@ -37,4 +37,20 @@ describe('OperatorContext', () =>
         assert.equal(ctx.NeededRoleLabel, 'Operator')
         assert.equal(ctx.AskWhom, 'your operator lead')
     })
+
+    it('the session app role operator.full is Operator; operator.read-only, none or another role is Observer', () =>
+    {
+        assert.equal(OperatorContext.FromAppRoles(['operator.full']).CanMutate, true)
+        assert.equal(OperatorContext.FromAppRoles(['operator.read-only', 'operator.full']).Role, OperatorRole.Operator)
+        assert.equal(OperatorContext.FromAppRoles(['operator.read-only']).Role, OperatorRole.Observer)
+        assert.equal(OperatorContext.FromAppRoles([]).Role, OperatorRole.Observer)
+        assert.equal(OperatorContext.FromAppRoles(['full']).Role, OperatorRole.Observer)
+    })
+
+    it('maps an operator record role to the session app role', () =>
+    {
+        assert.equal(OperatorContext.AppRoleFor('full'), 'operator.full')
+        assert.equal(OperatorContext.AppRoleFor('readonly'), 'operator.read-only')
+        assert.equal(OperatorContext.AppRoleFor('bogus'), 'operator.read-only')
+    })
 })

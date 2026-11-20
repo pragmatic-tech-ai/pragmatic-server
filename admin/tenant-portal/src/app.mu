@@ -4,11 +4,12 @@
 // (destinations flattened from the section modules' capabilities) and its
 // content region to ContentHostService, where each section presents its pages.
 // The header (HeaderContent) presents TenantSessionService through the
-// AppResources template.
+// AppResources template; AppShellResources holds the shared client shell's
+// views.
 // TenantNavigationService replaces the stock NavigationService (EditorShell
 // skips its default when one is registered) so the side pane stays hidden.
 // Importing this module composes the shell and activates the first section
-// before any session exists; TenantBoot then initializes TenantSessionService
+// before any session exists; the boot then initializes TenantSessionService
 // and rebuilds the active section (a fresh root page, built with the
 // session's permissions) before it mounts the shell.
 
@@ -25,6 +26,8 @@ import UsersAccessModule from "./sections/users-access/users-access.module.mu.js
 import ReleasesModule from "./sections/releases/releases.module.mu.js"
 import SettingsModule from "./sections/settings/settings.module.mu.js"
 import ConnectionModule from "./sections/connection/connection.module.mu.js"
+import ConfigurationModule from "./sections/configuration/configuration.module.mu.js"
+import AppShellResources from "@pragmatic-tech-ai/pragmatic-app-shell"
 import AppResources from "./app.resources.mu.js"
 import ShellResources from "./shell/shell.resources.mu.js"
 import TenantIcons from "./shell/tenant-icons.mu.js"
@@ -52,10 +55,12 @@ Application [ Theme = Pragmatic, Scheme = PragmaticDark ] {
         UsersAccessModule
         ReleasesModule
         SettingsModule
+        ConfigurationModule
         ConnectionModule
     }
 
     resources: {
+        merge AppShellResources
         merge ShellResources
         merge AppResources
 

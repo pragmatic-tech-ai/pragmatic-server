@@ -4,7 +4,7 @@ import type { IdpWorkloadSpec } from './idp-workload-driver.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import type { VerifiedImage } from './pinned-image-verifier.js'
 import type { HiveRecord, TenantRecord } from './platform-records.js'
-import type { TenantAdminWorkloadSpec, TenantConsoleExposure } from './tenant-admin-workload.js'
+import { TenantAdminDatabaseSecret, type TenantAdminWorkloadSpec, type TenantConsoleExposure } from './tenant-admin-workload.js'
 import type { TenantDirectorySeed } from './tenant-api/seeded-tenant-directory.js'
 
 /** The slice of the platform deployment registry bootstrap needs: mint a hive's one-time agent bearer. */
@@ -62,6 +62,12 @@ export interface TenantBootstrapInput
     verifiedImages?: readonly VerifiedImage[]
     /** The console's existing 32-byte master key (reinstall keeps the data PVC readable); a fresh one is minted when omitted. */
     masterKey?: Buffer
+    /**
+     * The pragmatic-postgres image the console stores in (a sidecar in its pod). Its passwords and the console's database
+     * URL are minted here into the console's database Secret; a reinstall mints new ones (the sidecar resets every role's
+     * password from its file at each start, so the data keeps working).
+     */
+    postgresImage?: string
 }
 
 /**
@@ -220,6 +226,8 @@ export class TenantAdminBootstrap
     private static readonly DockerConfigKey = '.dockerconfigjson'
     private static readonly DockerConfigType = 'kubernetes.io/dockerconfigjson'
     private static readonly MasterKeyBytes = 32
+    private static readonly PasswordBytes = 24
+    private static readonly PasswordEncoding = 'base64url'
     private static readonly BadMasterKey = 'TenantAdminBootstrap: the console master key must be exactly 32 bytes'
     private static readonly BadFingerprintKey = 'TenantAdminBootstrap: the console fingerprint key must be exactly 32 bytes'
     private static readonly ConsoleNeedsFingerprintKey = 'TenantAdminBootstrap: a console exposure needs its account-email fingerprint key'
@@ -295,6 +303,16 @@ export class TenantAdminBootstrap
         {
             secrets.Add(input.pullCredential.secretName, { [TenantAdminBootstrap.DockerConfigKey]: input.pullCredential.dockerConfigJson }, TenantAdminBootstrap.DockerConfigType)
         }
+        if (input.postgresImage !== undefined)
+        {
+            const S = TenantAdminDatabaseSecret
+            const password = TenantAdminBootstrap.NewPassword()
+            secrets.Add(K8sManifestBuilder.ConsolePostgresNameOf(tenant.id), {
+                [S.SuperuserKey]: TenantAdminBootstrap.NewPassword(),
+                [S.PasswordKey]: password,
+                [S.UrlKey]: S.UrlOf(password),
+            })
+        }
         const material = TenantAdminBootstrap.IdpMaterial(input)
         if (material !== undefined)
         {
@@ -303,6 +321,12 @@ export class TenantAdminBootstrap
             secrets.Add(TenantAdminBootstrap.IdpTokenSecretNameOf(tenant.id), { [TenantAdminBootstrap.IdpAdminTokenKey]: material.adminToken })
         }
         return new TenantBootstrap(seed, this.AssembleManifest(input, agentTokenSecretName, seedSecretName, material !== undefined), secrets, agentTokenSecretName, seedSecretName)
+    }
+
+    /** A random database password (URL-safe, so the URL needs no escaping). */
+    private static NewPassword(): string
+    {
+        return randomBytes(TenantAdminBootstrap.PasswordBytes).toString(TenantAdminBootstrap.PasswordEncoding)
     }
 
     private static AssertKeyLength(key: Buffer | undefined, bytes: number, message: string): void
@@ -344,6 +368,7 @@ export class TenantAdminBootstrap
             imagePullSecretName: input.pullCredential?.secretName,
             console: input.console,
             fingerprintKeySecretName: input.fingerprintKey === undefined ? undefined : TenantAdminBootstrap.FingerprintKeySecretNameOf(tenant.id),
+            database: input.postgresImage === undefined ? undefined : { image: input.postgresImage, secretName: K8sManifestBuilder.ConsolePostgresNameOf(tenant.id) },
         }
         // federated implies input.idp is defined (IdpMaterial requires it); the `&& input.idp` narrows it for TS.
         if (federated && input.idp !== undefined)

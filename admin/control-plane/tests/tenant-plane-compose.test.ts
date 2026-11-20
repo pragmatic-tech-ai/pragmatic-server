@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { randomBytes } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { Readable } from 'node:stream'
+import { InMemoryAuditRepository } from '@pragmatic-tech-ai/pragmatic-app-host'
+import { InMemoryOidcFlowStateStore } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
+import { MapSecretStore } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc/testing'
 import { ControlPlaneServer } from '../server.js'
-import { TenantPlaneComposer } from '../tenant-plane-composer.js'
+import { TenantPlaneComposer, type TenantPlaneParts } from '../tenant-plane-composer.js'
 import { TenantAdminClientRegistry } from '../tenant-auth/tenant-admin-client-record.js'
 import { DesktopRelay } from '../tenant-auth/desktop-relay.js'
 import { AuditRegistry } from '../audit-record.js'
@@ -16,8 +16,15 @@ import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environ
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import { TenantGraphAccess } from '../tenant-api/tenant-graph-access.js'
 import type { TenantPlane } from '../tenant-auth/tenant-plane.js'
-import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import type { TenantSession } from '../tenant-auth/tenant-sessions.js'
+import { TenantSessions } from '../tenant-auth/tenant-sessions.js'
+import { TenantPrincipalSessions } from '../tenant-auth/tenant-principal-sessions.js'
+import { TenantHostResolver } from '../tenant-auth/tenant-host-resolver.js'
+import { TenantConsoleHost } from '../tenant-console-host.js'
+import type { IEnvStatusReconciler, IHiveLister } from '../tenant-health-monitor.js'
+import { MemoryRecordMap } from '../record-map.js'
 import { ResRecorder } from './res-recorder.js'
+import { TenantApiDispatch } from './tenant-test-sessions.js'
 
 describe('ControlPlaneServer.ExternalPortWarning', () =>
 {
@@ -149,102 +156,81 @@ describe('TenantPlaneComposer.ParseHealthProbeTimeoutMs', () =>
     })
 })
 
-describe('ControlPlaneServer.ComposeTenantPlane', () =>
+/** The parts of a tenant plane over in-memory stores; `never` stubs stand in for what composing only stores. */
+class PlaneParts
 {
-    const BaseDomain = 'admin.example.com'
-    const Port = '7100'
-    // The deps below are only stored (not called) while composing, so stubs are safe. `never` is assignable to every param.
-    const stub = {} as unknown as never
+    public static readonly BaseDomain = 'admin.example.com'
+    public static readonly Port = '7100'
+    public static readonly TenantEnv = { PRAGMATIC_TENANT_ADMIN_PORT: PlaneParts.Port, PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: PlaneParts.BaseDomain } as NodeJS.ProcessEnv
+    private static readonly Stub = {} as unknown as never
 
-    const compose = (env: NodeJS.ProcessEnv): ReturnType<typeof ControlPlaneServer.ComposeTenantPlane> =>
+    public static Of(extra: Partial<TenantPlaneParts> = {}): Omit<TenantPlaneParts, 'Resolver'>
     {
-        const dir = mkdtempSync(join(tmpdir(), 'tenant-plane-compose-'))
-        try
-        {
-            const registry = new TenantAdminClientRegistry(join(dir, 'tenant-admin-clients.json'))
-            return ControlPlaneServer.ComposeTenantPlane(env, dir, stub, stub, false, stub, stub, stub, stub, randomBytes(32), registry, 168)
-        }
-        finally
-        {
-            rmSync(dir, { recursive: true, force: true })
+        const S = PlaneParts.Stub
+        const directory = { GetTenant: () => undefined, ListHives: () => [] } as unknown as ITenantDirectory
+        return {
+            Idp: S, Directory: directory, Service: { OnChanged: () => () => undefined } as unknown as IEnvironmentService, Rollout: S, Orchestrators: S, Placement: S,
+            Sessions: new TenantSessions(TenantSessions.InMemory(), false),
+            FlowStates: new InMemoryOidcFlowStateStore(),
+            ClientSecrets: { Store: new MapSecretStore(), Registry: new TenantAdminClientRegistry(new MemoryRecordMap()), TtlMs: 1000 },
+            ...extra,
         }
     }
 
-    it('wires the relying-party with the durable secret path when the tenant env is set', () =>
+    public static Resolver(): TenantHostResolver
     {
-        const plane = compose({ PRAGMATIC_TENANT_ADMIN_PORT: Port, PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: BaseDomain } as NodeJS.ProcessEnv)
-        assert.ok(plane !== undefined)
-        // Pins the production wiring: a dropped/reordered `durability` arg would silently revert to the legacy path and flip this false.
-        assert.equal(plane.isDurable, true)
+        return new TenantHostResolver(PlaneParts.BaseDomain, 'https', { GetTenant: () => undefined } as unknown as ITenantDirectory)
+    }
+
+    public static async Start(env: NodeJS.ProcessEnv, extra: Partial<TenantPlaneParts> = {}): Promise<Awaited<ReturnType<typeof ControlPlaneServer.TenantPlaneStartOf>>>
+    {
+        return await ControlPlaneServer.TenantPlaneStartOf(env, tmpdir(), PlaneParts.Of(extra), { ListHives: () => [] } as unknown as IHiveLister, { ListReconciled: async () => [] } as unknown as IEnvStatusReconciler, new InMemoryAuditRepository())
+    }
+}
+
+describe('ControlPlaneServer.TenantPlaneStartOf', () =>
+{
+    it('composes the co-hosted tenant listener when the tenant env is set: the desktop surface on, the port and bind validated', async () =>
+    {
+        const start = await PlaneParts.Start(PlaneParts.TenantEnv)
+        assert.ok(start !== undefined)
+        assert.equal(start.port, 7100)
+        assert.equal(start.bind, '127.0.0.1')
+        assert.equal(start.baseDomain, PlaneParts.BaseDomain)
+        assert.ok(start.host instanceof TenantConsoleHost)
     })
 
-    it('mounts the desktop surface on the control plane tenant plane, and not on a default BuildTenantPlane', () =>
+    it('mounts the desktop relay only when the relay wiring is supplied, and the desktop sign-out closes that relay', async () =>
     {
-        const plane = compose({ PRAGMATIC_TENANT_ADMIN_PORT: Port, PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: BaseDomain } as NodeJS.ProcessEnv)
-        assert.ok(plane?.desktop !== undefined)
-        const dir = mkdtempSync(join(tmpdir(), 'tenant-plane-compose-'))
-        try
-        {
-            const registry = new TenantAdminClientRegistry(join(dir, 'tenant-admin-clients.json'))
-            const standalone = TenantPlaneComposer.BuildTenantPlane(dir, stub, stub, false, stub, stub, stub, stub, randomBytes(32), registry, 168)
-            assert.equal(standalone.desktop, undefined)
-        }
-        finally
-        {
-            rmSync(dir, { recursive: true, force: true })
-        }
-    })
-
-    it('mounts the desktop relay only when the relay wiring is supplied', () =>
-    {
-        const env = { PRAGMATIC_TENANT_ADMIN_PORT: Port, PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: BaseDomain } as NodeJS.ProcessEnv
-        assert.equal(compose(env)?.relay, undefined)
-        const dir = mkdtempSync(join(tmpdir(), 'tenant-plane-compose-'))
-        try
-        {
-            const registry = new TenantAdminClientRegistry(join(dir, 'tenant-admin-clients.json'))
-            const wired = ControlPlaneServer.ComposeTenantPlane(env, dir, stub, stub, false, stub, stub, stub, stub, randomBytes(32), registry, 168,
-                undefined, undefined, { endpoints: stub, audit: stub })
-            assert.ok(wired?.relay instanceof DesktopRelay)
-            // Sign-out closes the session's relays: the desktop endpoint holds the same relay as its connections.
-            assert.equal((wired?.desktop as unknown as { connections: unknown }).connections, wired?.relay)
-            assert.equal(TenantPlaneComposer.DesktopAuditFile, 'tenant-desktop-audit.json')
-        }
-        finally
-        {
-            rmSync(dir, { recursive: true, force: true })
-        }
+        const bare = TenantPlaneComposer.BuildTenantPlane({ ...PlaneParts.Of(), Resolver: PlaneParts.Resolver(), Desktop: true })
+        assert.ok(bare.desktop !== undefined)
+        assert.equal(bare.relay, undefined)
+        const wired = TenantPlaneComposer.BuildTenantPlane({ ...PlaneParts.Of(), Resolver: PlaneParts.Resolver(), Desktop: true, Relay: { endpoints: {} as never, audit: {} as never } })
+        assert.ok(wired.relay instanceof DesktopRelay)
+        assert.equal((wired.desktop as unknown as { connections: unknown }).connections, wired.relay)
+        assert.equal(TenantPlaneComposer.BuildTenantPlane({ ...PlaneParts.Of(), Resolver: PlaneParts.Resolver() }).desktop, undefined, 'no desktop surface unless asked')
     })
 
     it('hands the email-domain store to the tenant API only when one is supplied', () =>
     {
-        const env = { PRAGMATIC_TENANT_ADMIN_PORT: Port, PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: BaseDomain } as NodeJS.ProcessEnv
-        const storeOf = (plane: ReturnType<typeof ControlPlaneServer.ComposeTenantPlane>): unknown => (plane?.api as unknown as { emailDomains: unknown }).emailDomains
-        assert.equal(storeOf(compose(env)), undefined)
-        const dir = mkdtempSync(join(tmpdir(), 'tenant-plane-compose-'))
-        try
-        {
-            const registry = new TenantAdminClientRegistry(join(dir, 'tenant-admin-clients.json'))
-            const view = { domains: [], editable: false, inHive: false, pending: [], verifications: [] }
-            const store = { For: async () => view, Set: async () => view, Verify: async () => view }
-            const wired = ControlPlaneServer.ComposeTenantPlane(env, dir, stub, stub, false, stub, stub, stub, stub, randomBytes(32), registry, 168,
-                undefined, undefined, undefined, store)
-            assert.equal(storeOf(wired), store)
-        }
-        finally
-        {
-            rmSync(dir, { recursive: true, force: true })
-        }
+        const storeOf = (plane: TenantPlane): unknown => (plane.api as unknown as { emailDomains: unknown }).emailDomains
+        assert.equal(storeOf(TenantPlaneComposer.BuildTenantPlane({ ...PlaneParts.Of(), Resolver: PlaneParts.Resolver() })), undefined)
+        const view = { domains: [], editable: false, inHive: false, pending: [], verifications: [] }
+        const store = { For: async () => view, Set: async () => view, Verify: async () => view }
+        assert.equal(storeOf(TenantPlaneComposer.BuildTenantPlane({ ...PlaneParts.Of({ EmailDomains: store }), Resolver: PlaneParts.Resolver() })), store)
     })
 
-    it('returns undefined (fail-closed) when the tenant port env is unset', () =>
+    it('shares the given principal session ender (the Owner reset ends what the host serves)', () =>
     {
-        assert.equal(compose({ PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: BaseDomain } as NodeJS.ProcessEnv), undefined)
+        const parts = PlaneParts.Of()
+        const principals = new TenantPrincipalSessions(parts.Sessions.Store)
+        assert.equal(TenantPlaneComposer.BuildTenantPlane({ ...parts, Principals: principals, Resolver: PlaneParts.Resolver() }).principals, principals)
     })
 
-    it('returns undefined (fail-closed) when the base domain env is unset', () =>
+    it('is off (fail-closed) when the tenant port or the base domain env is unset', async () =>
     {
-        assert.equal(compose({ PRAGMATIC_TENANT_ADMIN_PORT: Port } as NodeJS.ProcessEnv), undefined)
+        assert.equal(await PlaneParts.Start({ PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: PlaneParts.BaseDomain } as NodeJS.ProcessEnv), undefined)
+        assert.equal(await PlaneParts.Start({ PRAGMATIC_TENANT_ADMIN_PORT: PlaneParts.Port } as NodeJS.ProcessEnv), undefined)
     })
 })
 
@@ -266,63 +252,43 @@ class GraphPlane
 
     public static readonly Graphs = { List: async () => [] } as unknown as IGraphService
 
-    public static Build(dir: string, graphs: TenantGraphAccess | undefined): TenantPlane
+    public static Build(graphs: TenantGraphAccess | undefined): TenantPlane
     {
-        const stub = {} as unknown as never
         const service = { List: () => [GraphPlane.Env('dev1', EnvType.Development), GraphPlane.Env('rt1', EnvType.Runtime)] } as unknown as IEnvironmentService
-        const directory = { GetTenant: () => undefined, ListHives: () => [] } as unknown as ITenantDirectory
-        const registry = new TenantAdminClientRegistry(join(dir, 'tenant-admin-clients.json'))
-        return TenantPlaneComposer.BuildTenantPlane(dir, stub, directory, false, service, stub, stub, stub, randomBytes(32), registry, 168,
-            undefined, undefined, false, false, undefined, undefined, undefined, graphs)
+        return TenantPlaneComposer.BuildTenantPlane({ ...PlaneParts.Of({ Service: service, Graphs: graphs }), Resolver: PlaneParts.Resolver() })
     }
 
     public static async Send(plane: TenantPlane, path: string): Promise<ResRecorder>
     {
         const req = Object.assign(Readable.from([]), { method: GraphPlane.Get, headers: {} })
         const res = new ResRecorder()
-        await plane.api.Handle(req as unknown as IncomingMessage, res as unknown as ServerResponse, path, GraphPlane.Session)
+        await TenantApiDispatch.Handle(plane.api, req as unknown as IncomingMessage, res as unknown as ServerResponse, path, GraphPlane.Session, TenantApiDispatch.OwnerlessDirectory)
         return res
     }
 }
 
 describe('ControlPlaneServer graph wiring', () =>
 {
-    it('names the tenant graph audit file in the data root', () =>
+    it('names the pre-A5 tenant graph audit file', () =>
     {
         assert.equal(TenantPlaneComposer.TenantGraphAuditFile, 'tenant-graph-audit.json')
     })
 
     it('BuildTenantPlane with graph access routes the graph paths; without it they stay 404', async () =>
     {
-        const dir = mkdtempSync(join(tmpdir(), 'tenant-plane-compose-'))
-        try
-        {
-            const access = new TenantGraphAccess(GraphPlane.Graphs, new AuditRegistry(join(dir, TenantPlaneComposer.TenantGraphAuditFile)))
-            const wired = await GraphPlane.Send(GraphPlane.Build(dir, access), GraphPlane.DevGraphs)
-            assert.equal(wired.status, 200)
-            assert.deepEqual(wired.Json(), [])
-            const unwired = await GraphPlane.Send(GraphPlane.Build(dir, undefined), GraphPlane.DevGraphs)
-            assert.equal(unwired.status, 404)
-        }
-        finally
-        {
-            rmSync(dir, { recursive: true, force: true })
-        }
+        const access = new TenantGraphAccess(GraphPlane.Graphs, new AuditRegistry(new MemoryRecordMap()))
+        const wired = await GraphPlane.Send(GraphPlane.Build(access), GraphPlane.DevGraphs)
+        assert.equal(wired.status, 200)
+        assert.deepEqual(wired.Json(), [])
+        const unwired = await GraphPlane.Send(GraphPlane.Build(undefined), GraphPlane.DevGraphs)
+        assert.equal(unwired.status, 404)
     })
 
     it('a non-Development environment answers 400 through the composed stack', async () =>
     {
-        const dir = mkdtempSync(join(tmpdir(), 'tenant-plane-compose-'))
-        try
-        {
-            const access = new TenantGraphAccess(GraphPlane.Graphs, new AuditRegistry(join(dir, TenantPlaneComposer.TenantGraphAuditFile)))
-            const res = await GraphPlane.Send(GraphPlane.Build(dir, access), GraphPlane.RuntimeGraphs)
-            assert.equal(res.status, 400)
-            assert.deepEqual(res.Json(), { error: TenantGraphAccess.NotDevelopmentMessage })
-        }
-        finally
-        {
-            rmSync(dir, { recursive: true, force: true })
-        }
+        const access = new TenantGraphAccess(GraphPlane.Graphs, new AuditRegistry(new MemoryRecordMap()))
+        const res = await GraphPlane.Send(GraphPlane.Build(access), GraphPlane.RuntimeGraphs)
+        assert.equal(res.status, 400)
+        assert.deepEqual(res.Json(), { error: TenantGraphAccess.NotDevelopmentMessage })
     })
 })

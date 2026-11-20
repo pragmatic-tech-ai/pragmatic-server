@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { HttpMethod, HttpProblem, RouteAuth, type RequestContext, type RouteTable } from '@pragmatic-tech-ai/pragmatic-app-host'
 import type { IEnvironmentService, MakerTokenDto } from '../control-plane-host.js'
 import { EnvironmentDtoMapper } from '../environment-dto.js'
-import { TenantAdminCapabilities, type AdminCapabilities } from './tenant-admin-capabilities.js'
+import { TenantAdminCapabilities } from './tenant-admin-capabilities.js'
 import { TenantProfileMapper, type TenantProfileDto } from './tenant-profile-dto.js'
 import { HiveDtoMapper } from './hive-dto.js'
 import { HiveHealthProducer } from '../hive-health-producer.js'
@@ -13,8 +14,8 @@ import { DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerify
 import { InvalidEmailDomainError } from '../email-domain-policy.js'
 import type { EnvironmentRecord } from '../environment-record.js'
 import { ChannelNotSubscribedError, ManifestNotGatedError, ManifestWithdrawnError, ReleaseNotRunnableYetError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from '../rollout-errors.js'
-import type { ITenantApiEndpoint } from '../tenant-auth/tenant-plane.js'
-import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import { TenantRoles } from '../tenant-auth/tenant-roles.js'
+import { TenantSessionClaims, type TenantSession } from '../tenant-auth/tenant-sessions.js'
 import { AdminProxyError, AdminProxyErrorKind } from '../admin-proxy.js'
 import { CreateFailedError, EnvironmentExistsError, EnvironmentNotDevelopmentError, EnvironmentNotFoundError, EnvironmentNotRuntimeError } from '../environment-service.js'
 import { EnvType, Template } from '../environment-record.js'
@@ -35,86 +36,81 @@ export enum TenantEnvAction
     Restart = 'restart'
 }
 
-/**
- * The tenant-plane API (`/tenant-api/*`). Every route is scoped to the caller's own tenant, taken ONLY from the
- * gate-validated `session.tenantId` — never from a query string or body — so a tenant-A session can neither read
- * nor mutate tenant-B's hives, environments, manifests, rollout or health. The `:id`/`:name` routes answer 404
- * (not 403) unless the resource is owned by the session's tenant (including when it does not exist), so existence
- * is never revealed and no cross-tenant action is ever reached. The gate has already authenticated the principal,
- * so this endpoint trusts the session and performs authorization (tenant scoping) only. Mutation errors from the
- * rollout engine are mapped to fixed generic bodies: the version id and other internals never reach the wire.
- */
-export class TenantApiEndpoint implements ITenantApiEndpoint
+/** Which roles a tenant API route admits (the old capabilities): any session (reads), the environments, or the tenant admin. */
+export enum TenantApiAccess
 {
-    private static readonly Prefix = '/tenant-api/'
-    private static readonly HivesSegment = 'hives'
-    private static readonly EnvironmentsSegment = 'environments'
-    private static readonly ManifestsSegment = 'manifests'
-    private static readonly RolloutSegment = 'rollout'
-    private static readonly HealthSegment = 'health'
-    private static readonly LedgerSegment = 'ledger'
+    /** Reads: any session of the host's tenant. */
+    Read = 'read',
+    /** envs / adopt: the tenant role admin or the application role environment-admin. */
+    Environments = 'environments',
+    /** access / settings: the tenant role admin. */
+    Admin = 'admin',
+}
+
+/** The per-environment identity-admin reads under .../environments/NAME/admin/LEAF. */
+enum AdminReadLeaf
+{
+    Snapshot = 'snapshot',
+    Config = 'config',
+    Tokens = 'tokens',
+    SecurityModel = 'security-model',
+    SecurityCatalog = 'security-catalog',
+    SecurityChanges = 'security-changes',
+}
+
+/**
+ * The tenant-plane API (`/tenant-api/*`), declared on the host's route table. Every route is scoped to the caller's own
+ * tenant, taken ONLY from the session's `tenant` claim (which the gate matched to the request's host) - never from a
+ * query string or body - so a tenant-A session can neither read nor mutate tenant-B's hives, environments, manifests,
+ * rollout or health. The `:id`/`:name` routes answer 404 (not 403) unless the resource is owned by the session's tenant
+ * (including when it does not exist), so existence is never revealed and no cross-tenant action is ever reached. The
+ * host authorizes each route by its roles (TenantApiAccess) before the handler runs: reads are open to any session of
+ * the tenant, environment mutations need `admin` or `environment-admin`, access and settings mutations `admin`.
+ * Mutation errors from the rollout engine are mapped to fixed generic bodies: the version id and other internals never
+ * reach the wire.
+ */
+export class TenantApiEndpoint
+{
+    public static readonly Prefix = '/tenant-api/'
+    private static readonly ProfilePath = '/tenant-api/profile'
+    private static readonly HivesPath = '/tenant-api/hives'
+    private static readonly EnvironmentsPath = '/tenant-api/environments'
+    private static readonly ManifestsPath = '/tenant-api/manifests'
+    private static readonly HiveRolloutPath = '/tenant-api/hives/:id/rollout'
+    private static readonly HiveHealthPath = '/tenant-api/hives/:id/health'
+    private static readonly HiveLedgerPath = '/tenant-api/hives/:id/ledger'
+    private static readonly HiveTargetPath = '/tenant-api/hives/:id/target'
+    private static readonly EnvPath = '/tenant-api/environments/:name'
+    private static readonly EnvActionPathPrefix = '/tenant-api/environments/:name/'
+    private static readonly AdminPathPrefix = '/tenant-api/environments/:name/admin/'
+    private static readonly AccountsPath = '/tenant-api/environments/:name/admin/accounts'
+    private static readonly AccountPath = '/tenant-api/environments/:name/admin/accounts/:principal'
+    private static readonly GrantsPath = '/tenant-api/environments/:name/admin/grants'
+    private static readonly TokensPath = '/tenant-api/environments/:name/admin/tokens'
+    private static readonly SecurityModelPath = '/tenant-api/environments/:name/admin/security-model'
+    private static readonly ConfigPath = '/tenant-api/environments/:name/admin/config'
+    private static readonly TeamMembersPath = '/tenant-api/environments/:name/admin/team-members/:team'
+    private static readonly MakerTokenPath = '/tenant-api/environments/:name/maker-token'
+    private static readonly AppReaderPath = '/tenant-api/environments/:name/app-reader-grant'
+    private static readonly GraphsPath = '/tenant-api/environments/:name/graphs'
+    private static readonly GraphPath = '/tenant-api/environments/:name/graphs/:graph'
+    /** GET reads, PUT (tenant admin) replaces the tenant's email domains; a route only when the endpoint has an email-domain store. */
+    private static readonly EmailDomainsPath = '/tenant-api/settings/email-domains'
+    /** POST (tenant admin) checks one claimed domain's DNS TXT record now. */
+    private static readonly EmailDomainsVerifyPath = '/tenant-api/settings/email-domains/verify'
+    private static readonly IdParam = 'id'
+    private static readonly NameParam = 'name'
+    private static readonly PrincipalParam = 'principal'
+    private static readonly TeamParam = 'team'
+    private static readonly GraphParam = 'graph'
     private static readonly LedgerLimit = 200
-    private static readonly TargetSegment = 'target'
-    private static readonly ProfileSegment = 'profile'
-    private static readonly ProfilePath = TenantApiEndpoint.Prefix + TenantApiEndpoint.ProfileSegment
-    private static readonly HivesPath = TenantApiEndpoint.Prefix + TenantApiEndpoint.HivesSegment
-    private static readonly EnvironmentsPath = TenantApiEndpoint.Prefix + TenantApiEndpoint.EnvironmentsSegment
-    private static readonly ManifestsPath = TenantApiEndpoint.Prefix + TenantApiEndpoint.ManifestsSegment
-    private static readonly HiveSubPathPattern = new RegExp(
-        '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.HivesSegment + '/([^/]+)/(' +
-        TenantApiEndpoint.RolloutSegment + '|' + TenantApiEndpoint.HealthSegment + '|' + TenantApiEndpoint.LedgerSegment + ')$')
-    private static readonly HiveTargetPathPattern = new RegExp(
-        '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.HivesSegment + '/([^/]+)/' + TenantApiEndpoint.TargetSegment + '$')
-    private static readonly EnvActionPathPattern = new RegExp(
-        '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.EnvironmentsSegment + '/([^/]+)/(' +
-        Object.values(TenantEnvAction).join('|') + ')$')
-    /** Matches .../environments/NAME exactly (no trailing segment), so lifecycle-shaped paths never reach Delete. */
-    private static readonly EnvNamePathPattern = new RegExp(
-        '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.EnvironmentsSegment + '/([^/]+)$')
-    private static readonly AdminSegment = 'admin'
-    private static readonly EnvsCapability = 'envs'
-    private static readonly AccessCapability = 'access'
     private static readonly SettingsCapability = 'settings'
-    private static readonly SettingsSegment = 'settings'
-    private static readonly EmailDomainsSegment = 'email-domains'
-    /** GET reads, PUT (Owner only) replaces the tenant's email domains; a route only when the endpoint has an email-domain store. */
-    private static readonly EmailDomainsPath = TenantApiEndpoint.Prefix + TenantApiEndpoint.SettingsSegment + '/' + TenantApiEndpoint.EmailDomainsSegment
     private static readonly DomainsKey = 'domains'
-    /** POST (Owner only) checks one claimed domain's DNS TXT record now. */
-    private static readonly EmailDomainsVerifyPath = TenantApiEndpoint.EmailDomainsPath + '/verify'
     private static readonly DomainKey = 'domain'
-    private static readonly SnapshotLeaf = 'snapshot'
-    private static readonly AccountsLeaf = 'accounts'
-    private static readonly GrantsLeaf = 'grants'
-    private static readonly ConfigLeaf = 'config'
-    private static readonly SecurityModelLeaf = 'security-model'
-    private static readonly SecurityCatalogLeaf = 'security-catalog'
-    private static readonly TeamMembersLeaf = 'team-members'
-    private static readonly SecurityChangesLeaf = 'security-changes'
-    private static readonly TokensLeaf = 'tokens'
-    private static readonly MakerTokenLeaf = 'maker-token'
-    private static readonly AppReaderLeaf = 'app-reader-grant'
-    /** Matches .../environments/NAME/admin/LEAF[/TAIL] for the per-environment identity-admin surface (TAIL is a principal, or the team id for team-members). */
-    private static readonly AdminPathPattern = new RegExp(
-        '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.EnvironmentsSegment + '/([^/]+)/' + TenantApiEndpoint.AdminSegment + '/(' +
-        [TenantApiEndpoint.SnapshotLeaf, TenantApiEndpoint.AccountsLeaf, TenantApiEndpoint.GrantsLeaf, TenantApiEndpoint.ConfigLeaf, TenantApiEndpoint.SecurityModelLeaf, TenantApiEndpoint.SecurityCatalogLeaf, TenantApiEndpoint.TeamMembersLeaf, TenantApiEndpoint.SecurityChangesLeaf, TenantApiEndpoint.TokensLeaf].join('|') +
-        ')(?:/([^/]+))?$')
-    /** Matches .../environments/NAME/(maker-token|app-reader-grant). */
-    private static readonly EnvCredentialPathPattern = new RegExp(
-        '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.EnvironmentsSegment + '/([^/]+)/(' +
-        TenantApiEndpoint.MakerTokenLeaf + '|' + TenantApiEndpoint.AppReaderLeaf + ')$')
-    private static readonly GraphsSegment = 'graphs'
-    /** Matches .../environments/NAME/graphs[/GRAPH]; a GRAPH holding a raw '/' never matches, so it cannot reach another route. */
-    private static readonly GraphsPathPattern = new RegExp(
-        '^' + TenantApiEndpoint.Prefix + TenantApiEndpoint.EnvironmentsSegment + '/([^/]+)/' + TenantApiEndpoint.GraphsSegment + '(?:/([^/]+))?$')
     private static readonly DescriptionKey = 'description'
     private static readonly GraphFailedLogPrefix = '[tenant-api] graph operation failed:'
     private static readonly MethodGet = 'GET'
     private static readonly MethodPost = 'POST'
-    private static readonly MethodPut = 'PUT'
-    private static readonly MethodDelete = 'DELETE'
-    /** The fallback for an absent request method: an impossible method so only a real verb matches a route (never mis-serve a methodless request). */
-    private static readonly MethodNone = ''
     private static readonly ContentTypeHeader = 'Content-Type'
     private static readonly JsonType = 'application/json; charset=utf-8'
     private static readonly VersionKey = 'version'
@@ -123,19 +119,19 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly EndEvent = 'end'
     private static readonly ErrorEvent = 'error'
     /** A target-selection body carries only { version }; nothing legitimate is larger, so anything bigger is rejected as invalid. */
-    private static readonly MaxBodyBytes = 4096
+    public static readonly MaxBodyBytes = 4096
     private static readonly StatusOk = 200
     private static readonly StatusCreated = 201
     private static readonly StatusNoContent = 204
     private static readonly StatusBadRequest = 400
+    private static readonly StatusUnauthorized = 401
     private static readonly StatusNotFound = 404
-    private static readonly StatusForbidden = 403
-    private static readonly ForbiddenMessage = 'forbidden'
     private static readonly StatusConflict = 409
     private static readonly StatusTooManyRequests = 429
     private static readonly StatusInternal = 500
     private static readonly StatusUnavailable = 503
     private static readonly NotFoundMessage = PlaneHttp.NotFoundMessage
+    private static readonly UnauthenticatedMessage = 'Not signed in'
     private static readonly BadJsonMessage = 'Request body must be valid JSON'
     private static readonly BodyObjectMessage = 'Request body must be a JSON object'
     private static readonly VersionRequiredMessage = 'version (non-empty string) is required'
@@ -171,6 +167,11 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     private static readonly SentenceSeparator = ' '
     private static readonly CreateFailedRecordedMessage = 'It is listed as failed; delete it before reusing the name.'
     private static readonly CreateFailedLogPrefix = '[tenant-api] environment create failed:'
+    private static readonly Roles: ReadonlyMap<TenantApiAccess, { Role?: string; AppRole?: string }> = new Map([
+        [TenantApiAccess.Read, {}],
+        [TenantApiAccess.Environments, { Role: TenantRoles.Admin, AppRole: TenantRoles.EnvironmentAdmin }],
+        [TenantApiAccess.Admin, { Role: TenantRoles.Admin }],
+    ])
 
     private readonly health: HiveHealthProducer
 
@@ -193,159 +194,177 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     {
         const tenant = this.directory.GetTenant(session.tenantId)
         const hive = this.directory.ListHives(session.tenantId)[0]
-        return TenantProfileMapper.ToDto(session, tenant, hive, this.directory.GetOrganisation?.(session.tenantId), TenantAdminCapabilities.For(session, tenant))
+        return TenantProfileMapper.ToDto(session, tenant, hive, this.directory.GetOrganisation?.(session.tenantId), TenantAdminCapabilities.For(session))
     }
 
-    private RouteProfile(res: ServerResponse, session: TenantSession): void
+    /** The roles a route of `access` names (the one table the route policy test checks). */
+    public static RolesOf(access: TenantApiAccess): { Role?: string; AppRole?: string }
     {
-        this.WriteJson(res, TenantApiEndpoint.StatusOk, this.Profile(session))
+        return TenantApiEndpoint.Roles.get(access) ?? {}
     }
 
-    public async Handle(req: IncomingMessage, res: ServerResponse, path: string, session: TenantSession): Promise<boolean>
+    /** Declares every tenant API route on the host's table (see the class comment for the roles). */
+    public Register(table: RouteTable): void
     {
-        const method = req.method ?? TenantApiEndpoint.MethodNone
-        if (path === TenantApiEndpoint.EmailDomainsPath && this.emailDomains !== undefined)
+        const M = TenantApiEndpoint
+        const R = TenantApiAccess
+        const add = (method: HttpMethod, pattern: string, access: TenantApiAccess, run: (ctx: RequestContext, session: TenantSession) => Promise<void>, bodyLimit?: number): void =>
         {
-            return await this.RouteEmailDomains(req, res, method, session, this.emailDomains)
+            table.Add({
+                Method: method,
+                Pattern: pattern,
+                Auth: RouteAuth.Session,
+                ...M.RolesOf(access),
+                ...(bodyLimit === undefined ? {} : { BodyLimit: bodyLimit }),
+                Handler: ctx => run(ctx, M.SessionOf(ctx)),
+            })
         }
-        if (path === TenantApiEndpoint.EmailDomainsVerifyPath && this.emailDomains !== undefined)
+        add(HttpMethod.Get, M.ProfilePath, R.Read, async (ctx, s) => this.WriteJson(ctx.Response, M.StatusOk, this.Profile(s)))
+        add(HttpMethod.Get, M.HivesPath, R.Read, async (ctx, s) => this.WriteJson(ctx.Response, M.StatusOk, this.directory.ListHives(s.tenantId).map(h => HiveDtoMapper.ToDto(h))))
+        add(HttpMethod.Get, M.EnvironmentsPath, R.Read, (ctx, s) => this.RouteEnvList(ctx.Response, s))
+        add(HttpMethod.Get, M.ManifestsPath, R.Read, (ctx, s) => this.RouteManifests(ctx.Response, s))
+        add(HttpMethod.Get, M.HiveRolloutPath, R.Read, (ctx, s) => this.RouteHiveRollout(ctx.Response, ctx.Param(M.IdParam), s))
+        add(HttpMethod.Get, M.HiveHealthPath, R.Read, (ctx, s) => this.RouteHiveHealth(ctx.Response, ctx.Param(M.IdParam), s))
+        add(HttpMethod.Get, M.HiveLedgerPath, R.Read, (ctx, s) => this.RouteHiveLedger(ctx.Response, ctx.Param(M.IdParam), s))
+        add(HttpMethod.Post, M.HiveTargetPath, R.Environments, (ctx, s) => this.RouteHiveTarget(ctx.Request, ctx.Response, ctx.Param(M.IdParam), s))
+        add(HttpMethod.Post, M.EnvironmentsPath, R.Environments, (ctx, s) => this.RouteEnvCreate(ctx.Request, ctx.Response, s))
+        for (const action of Object.values(TenantEnvAction))
         {
-            return await this.RouteEmailDomainsVerify(req, res, method, session, this.emailDomains)
+            add(HttpMethod.Post, M.EnvActionPathPrefix + action, R.Environments, (ctx, s) => this.RouteEnvAction(ctx.Response, ctx.Param(M.NameParam), action, s))
         }
-        if (method === TenantApiEndpoint.MethodGet)
+        add(HttpMethod.Delete, M.EnvPath, R.Environments, (ctx, s) => this.RouteEnvDelete(ctx.Response, ctx.Param(M.NameParam), s))
+        add(HttpMethod.Post, M.MakerTokenPath, R.Environments, (ctx, s) => this.RouteEnvCredential(ctx.Response, ctx.Param(M.NameParam), true, s))
+        add(HttpMethod.Post, M.AppReaderPath, R.Environments, (ctx, s) => this.RouteEnvCredential(ctx.Response, ctx.Param(M.NameParam), false, s))
+        for (const leaf of Object.values(AdminReadLeaf))
         {
-            if (path === TenantApiEndpoint.ProfilePath)
-            {
-                this.RouteProfile(res, session)
-                return true
-            }
-            if (path === TenantApiEndpoint.HivesPath)
-            {
-                this.WriteJson(res, TenantApiEndpoint.StatusOk, this.directory.ListHives(session.tenantId).map(h => HiveDtoMapper.ToDto(h)))
-                return true
-            }
-            if (path === TenantApiEndpoint.EnvironmentsPath)
-            {
-                const dtos = (await this.service.ListReconciled())
-                    .filter(r => r.tenantId === session.tenantId)
-                    .map(r => EnvironmentDtoMapper.ToDto(r))
-                this.WriteJson(res, TenantApiEndpoint.StatusOk, dtos)
-                return true
-            }
-            if (path === TenantApiEndpoint.ManifestsPath)
-            {
-                try
-                {
-                    this.WriteJson(res, TenantApiEndpoint.StatusOk, [...await this.rolloutClient.ManifestsFor(session.tenantId)])
-                }
-                catch (err)
-                {
-                    return this.WriteRolloutError(res, err)
-                }
-                return true
-            }
-            const m = TenantApiEndpoint.HiveSubPathPattern.exec(path)
-            if (m !== null)
-            {
-                return await this.RouteHiveSub(res, m, session)
-            }
+            add(HttpMethod.Get, M.AdminPathPrefix + leaf, R.Read, (ctx, s) => this.RouteAdmin(ctx.Response, ctx.Param(M.NameParam), s, name => this.AdminRead(ctx.Response, name, leaf)))
         }
-        if (method === TenantApiEndpoint.MethodPost)
+        add(HttpMethod.Get, M.TeamMembersPath, R.Read, (ctx, s) => this.RouteAdmin(ctx.Response, ctx.Param(M.NameParam), s,
+            async name => this.WriteJson(ctx.Response, M.StatusOk, await this.service.AdminListTeamMembers(name, ctx.Param(M.TeamParam)))))
+        add(HttpMethod.Post, M.AccountsPath, R.Admin, (ctx, s) => this.RouteAdmin(ctx.Response, ctx.Param(M.NameParam), s, name => this.AdminCreateAccount(ctx.Request, ctx.Response, name)))
+        add(HttpMethod.Delete, M.AccountPath, R.Admin, (ctx, s) => this.RouteAdmin(ctx.Response, ctx.Param(M.NameParam), s, async name =>
         {
-            if (path === TenantApiEndpoint.EnvironmentsPath)
-            {
-                return await this.RouteEnvCreate(req, res, session)
-            }
-            const tm = TenantApiEndpoint.HiveTargetPathPattern.exec(path)
-            if (tm !== null)
-            {
-                return await this.RouteHiveTarget(req, res, tm, session)
-            }
-            const em = TenantApiEndpoint.EnvActionPathPattern.exec(path)
-            if (em !== null)
-            {
-                return await this.RouteEnvAction(res, em, session)
-            }
-        }
-        if (method === TenantApiEndpoint.MethodDelete)
+            await this.service.AdminDisableAccount(name, ctx.Param(M.PrincipalParam))
+            this.WriteJson(ctx.Response, M.StatusOk, { [M.OkKey]: true })
+        }))
+        add(HttpMethod.Post, M.GrantsPath, R.Admin, (ctx, s) => this.RouteAdmin(ctx.Response, ctx.Param(M.NameParam), s, name => this.AdminGrant(ctx.Request, ctx.Response, name, true)))
+        add(HttpMethod.Delete, M.GrantsPath, R.Admin, (ctx, s) => this.RouteAdmin(ctx.Response, ctx.Param(M.NameParam), s, name => this.AdminGrant(ctx.Request, ctx.Response, name, false)))
+        add(HttpMethod.Post, M.TokensPath, R.Admin, (ctx, s) => this.RouteAdmin(ctx.Response, ctx.Param(M.NameParam), s, name => this.AdminIssueToken(ctx.Request, ctx.Response, name)))
+        add(HttpMethod.Delete, M.TokensPath, R.Admin, (ctx, s) => this.RouteAdmin(ctx.Response, ctx.Param(M.NameParam), s, name => this.AdminRevokeToken(ctx.Request, ctx.Response, name)))
+        add(HttpMethod.Put, M.SecurityModelPath, R.Admin, (ctx, s) => this.RouteAdmin(ctx.Response, ctx.Param(M.NameParam), s, name => this.AdminSetSecurityModel(ctx.Request, ctx.Response, name)))
+        add(HttpMethod.Put, M.ConfigPath, R.Admin, (ctx, s) => this.RouteAdmin(ctx.Response, ctx.Param(M.NameParam), s, name => this.AdminSetConfig(ctx.Request, ctx.Response, name)))
+        const graphs = this.graphs
+        if (graphs !== undefined)
         {
-            const dm = TenantApiEndpoint.EnvNamePathPattern.exec(path)
-            if (dm !== null)
-            {
-                return await this.RouteEnvDelete(res, dm, session)
-            }
+            add(HttpMethod.Get, M.GraphsPath, R.Read, (ctx, s) => this.RouteGraphs(ctx, s, graphs, undefined))
+            add(HttpMethod.Post, M.GraphsPath, R.Environments, (ctx, s) => this.RouteGraphs(ctx, s, graphs, undefined))
+            add(HttpMethod.Delete, M.GraphPath, R.Environments, (ctx, s) => this.RouteGraphs(ctx, s, graphs, ctx.Param(M.GraphParam)))
         }
-        const gm = this.graphs === undefined ? null : TenantApiEndpoint.GraphsPathPattern.exec(path)
-        if (gm !== null && this.graphs !== undefined)
+        const domains = this.emailDomains
+        if (domains !== undefined)
         {
-            return await this.RouteGraphs(req, res, method, gm, path, session, this.graphs)
+            add(HttpMethod.Get, M.EmailDomainsPath, R.Read, async (ctx, s) => this.WriteEmailDomains(ctx.Response, s, await domains.For(s.tenantId)))
+            add(HttpMethod.Put, M.EmailDomainsPath, R.Admin, (ctx, s) => this.RouteSetEmailDomains(ctx.Request, ctx.Response, s, domains), TenantEmailDomainsLimits.MaxBodyBytes)
+            add(HttpMethod.Post, M.EmailDomainsVerifyPath, R.Admin, (ctx, s) => this.RouteEmailDomainsVerify(ctx.Request, ctx.Response, s, domains), TenantEmailDomainsLimits.MaxBodyBytes)
         }
-        const adm = TenantApiEndpoint.AdminPathPattern.exec(path)
-        if (adm !== null)
-        {
-            return await this.RouteAdmin(req, res, method, adm, session)
-        }
-        const cm = TenantApiEndpoint.EnvCredentialPathPattern.exec(path)
-        if (cm !== null && method === TenantApiEndpoint.MethodPost)
-        {
-            return await this.RouteEnvCredential(res, cm, session)
-        }
-        // Any other method/path under /tenant-api/* is handled here (the gate expects an answer), as a 404.
-        this.WriteNotFound(res)
-        return true
     }
 
-    /** Serves the tenant's own hive rollout/health; 404 (not 403) when the hive is unknown or owned by another tenant, so existence is never revealed. */
-    private async RouteHiveSub(res: ServerResponse, m: RegExpExecArray, session: TenantSession): Promise<boolean>
+    /** The route's session as the handlers see it (the host has authenticated it; a session without a tenant is not one of ours). */
+    private static SessionOf(ctx: RequestContext): TenantSession
     {
-        const id = TenantApiEndpoint.Decode(m[1] as string)
-        const sub = m[2] as string
-        const hive = id === undefined ? undefined : this.directory.GetHive(id)
-        if (hive === undefined || hive.tenantId !== session.tenantId)
+        const view = TenantSessionClaims.ViewOf(ctx.RequireSession())
+        if (view === undefined)
+        {
+            throw new HttpProblem(TenantApiEndpoint.StatusUnauthorized, TenantApiEndpoint.UnauthenticatedMessage)
+        }
+        return view
+    }
+
+    private async RouteEnvList(res: ServerResponse, session: TenantSession): Promise<void>
+    {
+        const dtos = (await this.service.ListReconciled())
+            .filter(r => r.tenantId === session.tenantId)
+            .map(r => EnvironmentDtoMapper.ToDto(r))
+        this.WriteJson(res, TenantApiEndpoint.StatusOk, dtos)
+    }
+
+    private async RouteManifests(res: ServerResponse, session: TenantSession): Promise<void>
+    {
+        try
+        {
+            this.WriteJson(res, TenantApiEndpoint.StatusOk, [...await this.rolloutClient.ManifestsFor(session.tenantId)])
+        }
+        catch (err)
+        {
+            this.WriteRolloutError(res, err)
+        }
+    }
+
+    /** The tenant's own hive, or undefined (answered 404, not 403, when unknown or another tenant's: existence is never revealed). */
+    private OwnedHive(id: string, session: TenantSession): ReturnType<ITenantDirectory['GetHive']>
+    {
+        const hive = this.directory.GetHive(id)
+        return hive === undefined || hive.tenantId !== session.tenantId ? undefined : hive
+    }
+
+    private async RouteHiveRollout(res: ServerResponse, id: string, session: TenantSession): Promise<void>
+    {
+        const hive = this.OwnedHive(id, session)
+        if (hive === undefined)
         {
             this.WriteNotFound(res)
-            return true
+            return
         }
-        if (sub === TenantApiEndpoint.RolloutSegment)
+        try
         {
-            try
-            {
-                this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.rolloutClient.StatusFor(hive.id))
-            }
-            catch (err)
-            {
-                return this.WriteRolloutError(res, err)
-            }
-            return true
+            this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.rolloutClient.StatusFor(hive.id))
         }
-        if (sub === TenantApiEndpoint.LedgerSegment)
+        catch (err)
         {
-            this.WriteJson(res, TenantApiEndpoint.StatusOk, [...await this.rolloutClient.LedgerFor(hive.id, TenantApiEndpoint.LedgerLimit)])
-            return true
+            this.WriteRolloutError(res, err)
+        }
+    }
+
+    private async RouteHiveLedger(res: ServerResponse, id: string, session: TenantSession): Promise<void>
+    {
+        const hive = this.OwnedHive(id, session)
+        if (hive === undefined)
+        {
+            this.WriteNotFound(res)
+            return
+        }
+        this.WriteJson(res, TenantApiEndpoint.StatusOk, [...await this.rolloutClient.LedgerFor(hive.id, TenantApiEndpoint.LedgerLimit)])
+    }
+
+    private async RouteHiveHealth(res: ServerResponse, id: string, session: TenantSession): Promise<void>
+    {
+        const hive = this.OwnedHive(id, session)
+        if (hive === undefined)
+        {
+            this.WriteNotFound(res)
+            return
         }
         this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.health.Produce(hive))
-        return true
     }
 
     /**
      * Rolls the tenant's own hive to a published version. The ownership guard runs before anything else, so an unknown
      * or cross-tenant hive 404s without the body being read or `SelectTarget` ever being called. A not-gated version →
      * 409 and an unknown version → 404, both with a fixed generic body (no version id, no engine message); any other
-     * error bubbles to the host's generic error writer.
+     * error bubbles to the host's problem mapper.
      */
-    private async RouteHiveTarget(req: IncomingMessage, res: ServerResponse, m: RegExpExecArray, session: TenantSession): Promise<boolean>
+    private async RouteHiveTarget(req: IncomingMessage, res: ServerResponse, id: string, session: TenantSession): Promise<void>
     {
-        const id = TenantApiEndpoint.Decode(m[1] as string)
-        const hive = id === undefined ? undefined : this.directory.GetHive(id)
-        if (hive === undefined || hive.tenantId !== session.tenantId)
+        const hive = this.OwnedHive(id, session)
+        if (hive === undefined)
         {
             this.WriteNotFound(res)
-            return true
+            return
         }
         const version = await this.ReadVersion(req, res)
         if (version === undefined)
         {
-            return true
+            return
         }
         try
         {
@@ -353,76 +372,72 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         }
         catch (err)
         {
-            return this.WriteTargetError(res, err)
+            this.WriteTargetError(res, err)
+            return
         }
         res.writeHead(TenantApiEndpoint.StatusNoContent)
         res.end()
-        return true
     }
 
-    /** Maps the rollout engine's selection errors to fixed generic bodies; rethrows anything else so the host's generic writer answers. */
-    private WriteTargetError(res: ServerResponse, err: unknown): boolean
+    /** Maps the rollout engine's selection errors to fixed generic bodies; rethrows anything else so the host's problem mapper answers. */
+    private WriteTargetError(res: ServerResponse, err: unknown): void
     {
         if (err instanceof RolloutUnavailableError)
         {
-            return this.WriteRolloutError(res, err)
+            this.WriteRolloutError(res, err)
+            return
         }
         // A registry release (hives cannot run those yet) is refused the same way: the tenant never learns which rule failed.
         if (err instanceof ManifestNotGatedError || err instanceof RolloutAdoptionRefusedError || err instanceof ManifestWithdrawnError || err instanceof TenantOnHoldError || err instanceof ChannelNotSubscribedError || err instanceof VersionBelowFloorError
             || err instanceof ReleaseNotRunnableYetError)
         {
             this.WriteJson(res, TenantApiEndpoint.StatusConflict, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.TargetUnavailableMessage })
-            return true
+            return
         }
         if (err instanceof UnknownManifestError || err instanceof UnknownHiveError)
         {
             this.WriteNotFound(res)
-            return true
+            return
         }
         throw err
     }
 
-    /** A rollout client with no operator link answers 503 with its clear message; anything else rethrows to the host's generic writer. */
-    private WriteRolloutError(res: ServerResponse, err: unknown): boolean
+    /** A rollout client with no operator link answers 503 with its clear message; anything else rethrows to the host's problem mapper. */
+    private WriteRolloutError(res: ServerResponse, err: unknown): void
     {
         if (err instanceof RolloutUnavailableError)
         {
             this.WriteJson(res, TenantApiEndpoint.StatusUnavailable, { [TenantApiEndpoint.ErrorKey]: err.message })
-            return true
+            return
         }
         throw err
     }
 
     /** Starts/stops/restarts the tenant's own environment; 404 (not 403) when the env is unknown or owned by another tenant, so the service action is never reached. */
-    private async RouteEnvAction(res: ServerResponse, m: RegExpExecArray, session: TenantSession): Promise<boolean>
+    private async RouteEnvAction(res: ServerResponse, name: string, action: TenantEnvAction, session: TenantSession): Promise<void>
     {
-        const name = TenantApiEndpoint.Decode(m[1] as string)
-        const action = m[2] as TenantEnvAction
-        const rec = name === undefined ? undefined : this.service.List().find(r => r.name === name)
-        if (rec === undefined || rec.tenantId !== session.tenantId)
+        const rec = this.OwnedEnv(name, session)
+        if (rec === undefined)
         {
             this.WriteNotFound(res)
-            return true
+            return
         }
         const updated = await this.Perform(action, rec.name)
         this.WriteJson(res, TenantApiEndpoint.StatusOk, EnvironmentDtoMapper.ToDto(updated))
-        return true
     }
 
-    /** Deletes the tenant's own environment (204); 404 (not 403) when unknown or owned by another tenant, so existence is never revealed and the service Delete is never reached. No capability gate: every admin role has envs, same as the lifecycle routes. */
-    private async RouteEnvDelete(res: ServerResponse, m: RegExpExecArray, session: TenantSession): Promise<boolean>
+    /** Deletes the tenant's own environment (204); 404 (not 403) when unknown or owned by another tenant, so existence is never revealed and the service Delete is never reached. */
+    private async RouteEnvDelete(res: ServerResponse, name: string, session: TenantSession): Promise<void>
     {
-        const name = TenantApiEndpoint.Decode(m[1] as string)
-        const rec = name === undefined ? undefined : this.service.List().find(r => r.name === name)
-        if (rec === undefined || rec.tenantId !== session.tenantId)
+        const rec = this.OwnedEnv(name, session)
+        if (rec === undefined)
         {
             this.WriteNotFound(res)
-            return true
+            return
         }
         await this.service.Delete(rec.name)
         res.writeHead(TenantApiEndpoint.StatusNoContent)
         res.end()
-        return true
     }
 
     /**
@@ -430,12 +445,12 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
      * directory (one hive per tenant) - the body is never consulted for a hive or tenant, so it cannot steer creation
      * cross-tenant. The body is validated before anything is created; failures map to fixed generic bodies.
      */
-    private async RouteEnvCreate(req: IncomingMessage, res: ServerResponse, session: TenantSession): Promise<boolean>
+    private async RouteEnvCreate(req: IncomingMessage, res: ServerResponse, session: TenantSession): Promise<void>
     {
         const body = await this.ReadObject(req, res)
         if (body === undefined)
         {
-            return true
+            return
         }
         const name = body[TenantApiEndpoint.NameKey]
         const template = body[TenantApiEndpoint.TemplateKey]
@@ -445,13 +460,13 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             || !Object.values(EnvType).includes(type as EnvType))
         {
             this.WriteJson(res, TenantApiEndpoint.StatusBadRequest, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.CreateFieldsMessage })
-            return true
+            return
         }
         const hive = this.directory.ListHives(session.tenantId)[0]
         if (hive === undefined)
         {
             this.WriteJson(res, TenantApiEndpoint.StatusConflict, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.NoHiveMessage })
-            return true
+            return
         }
         try
         {
@@ -462,7 +477,6 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         {
             this.WriteCreateError(res, err)
         }
-        return true
     }
 
     /**
@@ -525,106 +539,42 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         }
     }
 
-    /** Resolves the env record only when it belongs to the session's tenant; undefined (to be answered 404, never 403) for unknown, malformed, or cross-tenant names. */
-    private OwnedEnv(rawName: string, session: TenantSession): EnvironmentRecord | undefined
+    /** Resolves the env record only when it belongs to the session's tenant; undefined (to be answered 404, never 403) for unknown or cross-tenant names. */
+    private OwnedEnv(name: string, session: TenantSession): EnvironmentRecord | undefined
     {
-        const name = TenantApiEndpoint.Decode(rawName)
-        const rec = name === undefined ? undefined : this.service.List().find(r => r.name === name)
+        const rec = this.service.List().find(r => r.name === name)
         return rec === undefined || rec.tenantId !== session.tenantId ? undefined : rec
     }
 
-    /** Dispatches the per-environment identity-admin routes; the ownership guard runs first, so a foreign env 404s before any body is read or service call made. */
-    private async RouteAdmin(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray, session: TenantSession): Promise<boolean>
+    /**
+     * Runs one per-environment identity-admin route: the ownership guard runs first, so a foreign env 404s before any body
+     * is read or service call made; an engine failure is answered with a fixed generic body (WriteIdentityError).
+     */
+    private async RouteAdmin(res: ServerResponse, name: string, session: TenantSession, run: (envName: string) => Promise<void>): Promise<void>
     {
-        const rec = this.OwnedEnv(m[1] as string, session)
+        const rec = this.OwnedEnv(name, session)
         if (rec === undefined)
         {
             this.WriteNotFound(res)
-            return true
+            return
         }
         try
         {
-            const required = TenantApiEndpoint.RequiredCapability(method, m[2] as string, m[3])
-            if (required !== undefined && !this.RequireCapability(res, session, required))
-            {
-                return true
-            }
-            if (!await this.DispatchAdmin(req, res, method, rec.name, m[2] as string, m[3]))
-            {
-                this.WriteNotFound(res)
-            }
+            await run(rec.name)
         }
         catch (err)
         {
             this.WriteIdentityError(res, err)
         }
-        return true
     }
 
     /**
-     * The single audit point for capability enforcement: which admin write routes need which capability. GETs, environment
-     * lifecycle/create, hive target and the env credential routes (gated separately on the envs capability in RouteEnvCredential) are deliberately absent.
+     * PUT /tenant-api/settings/email-domains for the session's own tenant (never an id from the request): the host admits the
+     * tenant admin only; a `{ domains }` body within the 16 KiB cap (400), and the store's refusals as 400 / 409 sentences.
      */
-    private static RequiredCapability(method: string, leaf: string, tail: string | undefined): keyof AdminCapabilities | undefined
+    private async RouteSetEmailDomains(req: IncomingMessage, res: ServerResponse, session: TenantSession, store: ITenantEmailDomains): Promise<void>
     {
         const M = TenantApiEndpoint
-        if (tail !== undefined)
-        {
-            return leaf === M.AccountsLeaf && method === M.MethodDelete ? M.AccessCapability : undefined
-        }
-        if (leaf === M.AccountsLeaf)
-        {
-            return method === M.MethodPost ? M.AccessCapability : undefined
-        }
-        if (leaf === M.TokensLeaf || leaf === M.GrantsLeaf)
-        {
-            return method === M.MethodPost || method === M.MethodDelete ? M.AccessCapability : undefined
-        }
-        if (leaf === M.SecurityModelLeaf)
-        {
-            return method === M.MethodPut ? M.AccessCapability : undefined
-        }
-        if (leaf === M.ConfigLeaf)
-        {
-            return method === M.MethodPut ? M.SettingsCapability : undefined
-        }
-        return undefined
-    }
-
-    /** Honesty invariant: derives capabilities via the SAME TenantAdminCapabilities.For the profile route reports; writes a generic 403 and returns false when missing. */
-    private RequireCapability(res: ServerResponse, session: TenantSession, capability: keyof AdminCapabilities): boolean
-    {
-        const caps = TenantAdminCapabilities.For(session, this.directory.GetTenant(session.tenantId)).capabilities
-        if (caps[capability])
-        {
-            return true
-        }
-        this.WriteJson(res, TenantApiEndpoint.StatusForbidden, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.ForbiddenMessage })
-        return false
-    }
-
-    /**
-     * GET / PUT /tenant-api/settings/email-domains for the session's own tenant (never an id from the request). GET reports
-     * `editable` only when the store may change them AND the caller holds the settings capability (the Owner); PUT needs that
-     * capability (403), a `{ domains }` body within the 16 KiB cap (400), and answers the store's refusals as 400 / 409 sentences.
-     */
-    private async RouteEmailDomains(req: IncomingMessage, res: ServerResponse, method: string, session: TenantSession, store: ITenantEmailDomains): Promise<boolean>
-    {
-        const M = TenantApiEndpoint
-        if (method === M.MethodGet)
-        {
-            this.WriteEmailDomains(res, session, await store.For(session.tenantId))
-            return true
-        }
-        if (method !== M.MethodPut)
-        {
-            this.WriteNotFound(res)
-            return true
-        }
-        if (!this.RequireCapability(res, session, M.SettingsCapability))
-        {
-            return true
-        }
         const raw = await M.ReadBody(req, TenantEmailDomainsLimits.MaxBodyBytes)
         let body: unknown
         try
@@ -634,12 +584,12 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         catch
         {
             this.WriteJson(res, M.StatusBadRequest, { [M.ErrorKey]: M.BadJsonMessage })
-            return true
+            return
         }
         if (body === null || typeof body !== 'object' || Array.isArray(body) || !(M.DomainsKey in body))
         {
             this.WriteJson(res, M.StatusBadRequest, { [M.ErrorKey]: TenantEmailDomainsLimits.DomainsRequiredMessage })
-            return true
+            return
         }
         let view: TenantEmailDomainsView
         try
@@ -651,36 +601,26 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             if (err instanceof InvalidEmailDomainError)
             {
                 this.WriteJson(res, M.StatusBadRequest, { [M.ErrorKey]: err.message })
-                return true
+                return
             }
             if (err instanceof EmailDomainsNotEditableError)
             {
                 this.WriteJson(res, M.StatusConflict, { [M.ErrorKey]: err.message })
-                return true
+                return
             }
             throw err
         }
         this.WriteEmailDomains(res, session, view)
-        return true
     }
 
     /**
-     * POST /tenant-api/settings/email-domains/verify for the session's own tenant (never an id from the request): the Owner (settings
-     * capability, else 403) names one claimed domain in a `{ domain }` body within the 16 KiB cap, and the store checks its DNS TXT
-     * record now. Answers the updated view (200), or the store's refusal as 400 / 409 / 429 / 503 with its sentence.
+     * POST /tenant-api/settings/email-domains/verify for the session's own tenant (never an id from the request): the tenant
+     * admin names one claimed domain in a `{ domain }` body within the 16 KiB cap, and the store checks its DNS TXT record
+     * now. Answers the updated view (200), or the store's refusal as 400 / 409 / 429 / 503 with its sentence.
      */
-    private async RouteEmailDomainsVerify(req: IncomingMessage, res: ServerResponse, method: string, session: TenantSession, store: ITenantEmailDomains): Promise<boolean>
+    private async RouteEmailDomainsVerify(req: IncomingMessage, res: ServerResponse, session: TenantSession, store: ITenantEmailDomains): Promise<void>
     {
         const M = TenantApiEndpoint
-        if (method !== M.MethodPost)
-        {
-            this.WriteNotFound(res)
-            return true
-        }
-        if (!this.RequireCapability(res, session, M.SettingsCapability))
-        {
-            return true
-        }
         const raw = await M.ReadBody(req, TenantEmailDomainsLimits.MaxBodyBytes)
         let body: unknown
         try
@@ -690,13 +630,13 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         catch
         {
             this.WriteJson(res, M.StatusBadRequest, { [M.ErrorKey]: M.BadJsonMessage })
-            return true
+            return
         }
         const domain = body === null || typeof body !== 'object' || Array.isArray(body) ? undefined : (body as Record<string, unknown>)[M.DomainKey]
         if (typeof domain !== 'string')
         {
             this.WriteJson(res, M.StatusBadRequest, { [M.ErrorKey]: TenantEmailDomainsLimits.DomainRequiredMessage })
-            return true
+            return
         }
         let view: TenantEmailDomainsView
         try
@@ -711,10 +651,9 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
                 throw err
             }
             this.WriteJson(res, status, { [M.ErrorKey]: (err as Error).message })
-            return true
+            return
         }
         this.WriteEmailDomains(res, session, view)
-        return true
     }
 
     /** The HTTP status a store's verify refusal maps to, or undefined when the error is not one of its refusals. */
@@ -740,142 +679,75 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
     }
 
     /**
-     * The view as the caller may use it: editable only when the store allows it and the caller holds the settings capability;
+     * The view as the caller may use it: editable only when the store allows it and the caller holds the settings capability (the tenant admin);
      * `pending` lists the domains not in effect yet (neither approved nor verified and uncontested, or revoked); `verifications`
      * carries each claimed domain's TXT record and state.
      */
     private WriteEmailDomains(res: ServerResponse, session: TenantSession, view: TenantEmailDomainsView): void
     {
-        const caps = TenantAdminCapabilities.For(session, this.directory.GetTenant(session.tenantId)).capabilities
+        const caps = TenantAdminCapabilities.For(session).capabilities
         this.WriteJson(res, TenantApiEndpoint.StatusOk, {
             domains: view.domains, editable: view.editable && caps[TenantApiEndpoint.SettingsCapability], inHive: view.inHive, pending: view.pending,
             verifications: view.verifications,
         })
     }
 
-    /** Runs one admin (leaf, method, tail) combination; false when the combination is not a route. */
-    private async DispatchAdmin(req: IncomingMessage, res: ServerResponse, method: string, name: string, leaf: string, tail: string | undefined): Promise<boolean>
+    /** Serves the identity-admin reads (snapshot, config, tokens, security model, security catalog, security changes). */
+    private async AdminRead(res: ServerResponse, name: string, leaf: AdminReadLeaf): Promise<void>
     {
-        if (method === TenantApiEndpoint.MethodGet && tail === undefined)
-        {
-            return await this.AdminRead(res, name, leaf)
-        }
-        if (leaf === TenantApiEndpoint.AccountsLeaf && tail !== undefined && method === TenantApiEndpoint.MethodDelete)
-        {
-            const principalId = TenantApiEndpoint.Decode(tail)
-            if (principalId === undefined)
-            {
-                this.WriteNotFound(res)
-                return true
-            }
-            await this.service.AdminDisableAccount(name, principalId)
-            this.WriteJson(res, TenantApiEndpoint.StatusOk, { [TenantApiEndpoint.OkKey]: true })
-            return true
-        }
-        if (leaf === TenantApiEndpoint.TeamMembersLeaf && tail !== undefined && method === TenantApiEndpoint.MethodGet)
-        {
-            const teamId = TenantApiEndpoint.Decode(tail)
-            if (teamId === undefined)
-            {
-                this.WriteNotFound(res)
-                return true
-            }
-            this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.service.AdminListTeamMembers(name, teamId))
-            return true
-        }
-        if (tail !== undefined)
-        {
-            return false
-        }
-        if (leaf === TenantApiEndpoint.AccountsLeaf && method === TenantApiEndpoint.MethodPost)
-        {
-            return await this.AdminCreateAccount(req, res, name)
-        }
-        if (leaf === TenantApiEndpoint.GrantsLeaf && (method === TenantApiEndpoint.MethodPost || method === TenantApiEndpoint.MethodDelete))
-        {
-            return await this.AdminGrant(req, res, name, method === TenantApiEndpoint.MethodPost)
-        }
-        if (leaf === TenantApiEndpoint.TokensLeaf && method === TenantApiEndpoint.MethodPost)
-        {
-            return await this.AdminIssueToken(req, res, name)
-        }
-        if (leaf === TenantApiEndpoint.TokensLeaf && method === TenantApiEndpoint.MethodDelete)
-        {
-            return await this.AdminRevokeToken(req, res, name)
-        }
-        if (leaf === TenantApiEndpoint.SecurityModelLeaf && method === TenantApiEndpoint.MethodPut)
-        {
-            return await this.AdminSetSecurityModel(req, res, name)
-        }
-        if (leaf === TenantApiEndpoint.ConfigLeaf && method === TenantApiEndpoint.MethodPut)
-        {
-            return await this.AdminSetConfig(req, res, name)
-        }
-        return false
-    }
-
-    /** Serves the identity-admin reads (snapshot, config, tokens, security model, security catalog, security changes); false for any other leaf. */
-    private async AdminRead(res: ServerResponse, name: string, leaf: string): Promise<boolean>
-    {
-        if (leaf === TenantApiEndpoint.SnapshotLeaf)
+        if (leaf === AdminReadLeaf.Snapshot)
         {
             this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.service.AdminSnapshot(name))
-            return true
+            return
         }
-        if (leaf === TenantApiEndpoint.ConfigLeaf)
+        if (leaf === AdminReadLeaf.Config)
         {
             this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.service.AdminGetConfig(name))
-            return true
+            return
         }
-        if (leaf === TenantApiEndpoint.TokensLeaf)
+        if (leaf === AdminReadLeaf.Tokens)
         {
             this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.service.AdminListTokens(name))
-            return true
+            return
         }
-        if (leaf === TenantApiEndpoint.SecurityModelLeaf)
+        if (leaf === AdminReadLeaf.SecurityModel)
         {
             // JSON null (not undefined) so the body is always valid JSON when no model is stored.
             this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.service.AdminGetSecurityModel(name) ?? null)
-            return true
+            return
         }
-        if (leaf === TenantApiEndpoint.SecurityCatalogLeaf)
+        if (leaf === AdminReadLeaf.SecurityCatalog)
         {
             this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.service.AdminGetSecurityCatalog(name))
-            return true
+            return
         }
-        if (leaf === TenantApiEndpoint.SecurityChangesLeaf)
-        {
-            this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.service.AdminListSecurityChanges(name))
-            return true
-        }
-        return false
+        this.WriteJson(res, TenantApiEndpoint.StatusOk, await this.service.AdminListSecurityChanges(name))
     }
 
-    private async AdminCreateAccount(req: IncomingMessage, res: ServerResponse, name: string): Promise<boolean>
+    private async AdminCreateAccount(req: IncomingMessage, res: ServerResponse, name: string): Promise<void>
     {
         const body = await this.ReadObject(req, res)
         if (body === undefined)
         {
-            return true
+            return
         }
         if (!TenantApiEndpoint.NonEmpty(body.email) || !TenantApiEndpoint.NonEmpty(body.principalId) || !TenantApiEndpoint.NonEmpty(body.password))
         {
             this.WriteJson(res, TenantApiEndpoint.StatusBadRequest, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.AccountFieldsMessage })
-            return true
+            return
         }
         const account = { email: body.email, principalId: body.principalId, password: body.password } as unknown as CreateAccountParams
         await this.service.AdminCreateAccount(name, account)
         this.WriteJson(res, TenantApiEndpoint.StatusCreated, { [TenantApiEndpoint.OkKey]: true })
-        return true
     }
 
     /** Issues a service token; the secret is returned only here, never cached. */
-    private async AdminIssueToken(req: IncomingMessage, res: ServerResponse, name: string): Promise<boolean>
+    private async AdminIssueToken(req: IncomingMessage, res: ServerResponse, name: string): Promise<void>
     {
         const body = await this.ReadObject(req, res)
         if (body === undefined)
         {
-            return true
+            return
         }
         const expires = body.expiresInSeconds
         const scopes = body.scopes
@@ -884,44 +756,42 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         if (!TenantApiEndpoint.NonEmpty(body.principalId) || !scopesOk || !expiresOk)
         {
             this.WriteJson(res, TenantApiEndpoint.StatusBadRequest, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.TokenIssueFieldsMessage })
-            return true
+            return
         }
         const params = { principalId: body.principalId, scopes: (scopes as string[]).map(x => x.trim()), expiresInSeconds: expires ?? null } as unknown as IssueTokenParams
         const issued = await this.service.AdminIssueToken(name, params)
         this.WriteJson(res, TenantApiEndpoint.StatusCreated, issued, { [TenantApiEndpoint.CacheControlHeader]: TenantApiEndpoint.NoStore })
-        return true
     }
 
     /** Revokes a service token; the tokenRef travels in the body because it contains slashes. */
-    private async AdminRevokeToken(req: IncomingMessage, res: ServerResponse, name: string): Promise<boolean>
+    private async AdminRevokeToken(req: IncomingMessage, res: ServerResponse, name: string): Promise<void>
     {
         const body = await this.ReadObject(req, res)
         if (body === undefined)
         {
-            return true
+            return
         }
         if (!TenantApiEndpoint.NonEmpty(body.tokenRef))
         {
             this.WriteJson(res, TenantApiEndpoint.StatusBadRequest, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.TokenRefMessage })
-            return true
+            return
         }
         await this.service.AdminRevokeToken(name, body.tokenRef as string)
         this.WriteJson(res, TenantApiEndpoint.StatusOk, { [TenantApiEndpoint.OkKey]: true })
-        return true
     }
 
     /** POST grants a role, DELETE revokes it; both read the same `{ subject, role, resourceKind?, resourcePath? }` body. */
-    private async AdminGrant(req: IncomingMessage, res: ServerResponse, name: string, grant: boolean): Promise<boolean>
+    private async AdminGrant(req: IncomingMessage, res: ServerResponse, name: string, grant: boolean): Promise<void>
     {
         const body = await this.ReadObject(req, res)
         if (body === undefined)
         {
-            return true
+            return
         }
         if (typeof body.subject !== 'string' || typeof body.role !== 'string')
         {
             this.WriteJson(res, TenantApiEndpoint.StatusBadRequest, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.GrantFieldsMessage })
-            return true
+            return
         }
         const mutation = {
             subject: body.subject,
@@ -938,37 +808,35 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             await this.service.AdminRevokeRole(name, mutation)
         }
         this.WriteJson(res, TenantApiEndpoint.StatusOk, { [TenantApiEndpoint.OkKey]: true })
-        return true
     }
 
-    private async AdminSetSecurityModel(req: IncomingMessage, res: ServerResponse, name: string): Promise<boolean>
+    private async AdminSetSecurityModel(req: IncomingMessage, res: ServerResponse, name: string): Promise<void>
     {
         const body = await this.ReadObject(req, res)
         if (body === undefined)
         {
-            return true
+            return
         }
         if (typeof body.securityModel !== 'object' || body.securityModel === null)
         {
             this.WriteJson(res, TenantApiEndpoint.StatusBadRequest, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.SecurityModelFieldMessage })
-            return true
+            return
         }
         await this.service.AdminSetSecurityModel(name, body.securityModel as SecurityModelDto)
         this.WriteJson(res, TenantApiEndpoint.StatusOk, { [TenantApiEndpoint.OkKey]: true })
-        return true
     }
 
-    private async AdminSetConfig(req: IncomingMessage, res: ServerResponse, name: string): Promise<boolean>
+    private async AdminSetConfig(req: IncomingMessage, res: ServerResponse, name: string): Promise<void>
     {
         const body = await this.ReadObject(req, res)
         if (body === undefined)
         {
-            return true
+            return
         }
         if (typeof body.packId !== 'string' || typeof body.delegationDepth !== 'string')
         {
             this.WriteJson(res, TenantApiEndpoint.StatusBadRequest, { [TenantApiEndpoint.ErrorKey]: TenantApiEndpoint.ConfigFieldsMessage })
-            return true
+            return
         }
         const config = {
             packId: body.packId,
@@ -980,58 +848,47 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         } as unknown as IdentityConfigDto
         await this.service.AdminSetConfig(name, config)
         this.WriteJson(res, TenantApiEndpoint.StatusOk, { [TenantApiEndpoint.OkKey]: true })
-        return true
     }
 
     /**
-     * GET lists, POST creates, DELETE .../GRAPH deletes the graphs of the tenant's own Development environment. In this
-     * order: ownership (404, never 403, not audited), the method/path shape and the graph segment's decoding (404, not
-     * audited), the envs capability (403), a Development environment (400), reach (503), the POST body (400), then the
-     * call. Every POST or DELETE past the shape check is audited once with its final status, after the answer is written.
+     * GET lists, POST creates, DELETE .../GRAPH deletes the graphs of the tenant's own Development environment (the host has
+     * already admitted the route's roles). In this order: ownership (404, never 403, not audited), a Development environment
+     * (400), reach (503), the POST body (400), then the call. Every POST or DELETE past the ownership check is audited in the
+     * graph audit once with its final status, after the answer is written.
      */
-    private async RouteGraphs(req: IncomingMessage, res: ServerResponse, method: string, m: RegExpExecArray, path: string, session: TenantSession, graphs: TenantGraphAccess): Promise<boolean>
+    private async RouteGraphs(ctx: RequestContext, session: TenantSession, graphs: TenantGraphAccess, rawGraph: string | undefined): Promise<void>
     {
         const M = TenantApiEndpoint
-        const rec = this.OwnedEnv(m[1] as string, session)
+        const req = ctx.Request
+        const res = ctx.Response
+        const method = req.method ?? M.MethodGet
+        const rec = this.OwnedEnv(ctx.Param(M.NameParam), session)
         if (rec === undefined)
         {
             this.WriteNotFound(res)
-            return true
+            return
         }
-        const rawGraph = m[2]
-        const list = method === M.MethodGet && rawGraph === undefined
-        const create = method === M.MethodPost && rawGraph === undefined
-        const remove = method === M.MethodDelete && rawGraph !== undefined
-        const graph = rawGraph === undefined ? M.NoDetail : M.Decode(rawGraph)
-        if ((!list && !create && !remove) || graph === undefined)
-        {
-            this.WriteNotFound(res)
-            return true
-        }
-        // A failure escaping AnswerGraph (the body stream errored) is answered 500 by the host's generic writer: record that.
+        const list = method === M.MethodGet
+        const graph = rawGraph ?? M.NoDetail
+        // A failure escaping AnswerGraph (the body stream errored) is answered 500 by the host's problem mapper: record that.
         let outcome: GraphOutcome = { status: M.StatusInternal, graph }
         try
         {
-            outcome = await this.AnswerGraph(req, res, method, session, rec, graph, graphs)
+            outcome = await this.AnswerGraph(req, res, method, rec, graph, graphs)
         }
         finally
         {
             if (!list)
             {
-                await graphs.Record(session, method, path, outcome.status, rec.name, outcome.graph)
+                await graphs.Record(session, method, ctx.Path, outcome.status, rec.name, outcome.graph)
             }
         }
-        return true
     }
 
-    /** Runs a shaped graph request from the capability check on; writes the answer and returns its status and the graph name to note. */
-    private async AnswerGraph(req: IncomingMessage, res: ServerResponse, method: string, session: TenantSession, rec: EnvironmentRecord, graph: string, graphs: TenantGraphAccess): Promise<GraphOutcome>
+    /** Runs a shaped graph request; writes the answer and returns its status and the graph name to note. */
+    private async AnswerGraph(req: IncomingMessage, res: ServerResponse, method: string, rec: EnvironmentRecord, graph: string, graphs: TenantGraphAccess): Promise<GraphOutcome>
     {
         const M = TenantApiEndpoint
-        if (!this.RequireCapability(res, session, M.EnvsCapability))
-        {
-            return { status: M.StatusForbidden, graph }
-        }
         if (rec.type !== EnvType.Development)
         {
             return this.WriteGraphError(res, M.StatusBadRequest, TenantGraphAccess.NotDevelopmentMessage, graph)
@@ -1094,22 +951,18 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         return { status, graph }
     }
 
-    /** POST maker-token (201 + the once-only token DTO) and POST app-reader-grant (200 { ok }, no secret) on the tenant's own environment. Both routes require the envs capability after the ownership check (403 generic otherwise). */
-    private async RouteEnvCredential(res: ServerResponse, m: RegExpExecArray, session: TenantSession): Promise<boolean>
+    /** POST maker-token (201 + the once-only token DTO) and POST app-reader-grant (200 { ok }, no secret) on the tenant's own environment (404 for a foreign one). */
+    private async RouteEnvCredential(res: ServerResponse, name: string, makerToken: boolean, session: TenantSession): Promise<void>
     {
-        const rec = this.OwnedEnv(m[1] as string, session)
+        const rec = this.OwnedEnv(name, session)
         if (rec === undefined)
         {
             this.WriteNotFound(res)
-            return true
-        }
-        if (!this.RequireCapability(res, session, TenantApiEndpoint.EnvsCapability))
-        {
-            return true
+            return
         }
         try
         {
-            if (m[2] === TenantApiEndpoint.MakerTokenLeaf)
+            if (makerToken)
             {
                 const issued = await this.service.AdminIssueMakerToken(rec.name)
                 const dto: MakerTokenDto = { token: issued.token, principalId: issued.principalId, expiresAt: issued.expiresAt }
@@ -1125,7 +978,6 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
         {
             this.WriteIdentityError(res, err)
         }
-        return true
     }
 
     /** Maps an identity-admin failure to a fixed status and a fixed generic body; the caught error (and its text) is never echoed or logged. */
@@ -1249,18 +1101,6 @@ export class TenantApiEndpoint implements ITenantApiEndpoint
             })
             req.on(TenantApiEndpoint.ErrorEvent, reject)
         })
-    }
-
-    private static Decode(segment: string): string | undefined
-    {
-        try
-        {
-            return decodeURIComponent(segment)
-        }
-        catch
-        {
-            return undefined
-        }
     }
 
     private WriteNotFound(res: ServerResponse): void

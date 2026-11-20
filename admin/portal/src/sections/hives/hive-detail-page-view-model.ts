@@ -1,6 +1,6 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import { ApiError } from '../../api-client.js'
+import { ApiError, ControlPlaneErrors } from '../../api-client.js'
 import { FleetConnection, FleetViewModel, type FleetRow } from '../../fleet-view-model.js'
 import { PortalDates } from '../../portal-dates.js'
 import type { EnvRolloutDto, FleetHiveDto, HiveDeleteOutcomeDto, HiveDto, HiveRolloutDto, LedgerDto, ObservationDto, PolicyDto } from '../../portal-types.js'
@@ -185,7 +185,7 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
     private static readonly RetainedSeparator = ', '
     private static readonly SentenceEnd = '.'
     private static readonly NoticeSeparator = ' '
-    private static readonly ForceableCodes: ReadonlySet<string> = new Set([ApiError.AgentUninstallFailedCode, ApiError.ClusterDestroyFailedCode])
+    private static readonly ForceableCodes: ReadonlySet<string> = new Set([ControlPlaneErrors.AgentUninstallFailedCode, ControlPlaneErrors.ClusterDestroyFailedCode])
     private static readonly DeleteAnywayLabel = 'Delete anyway'
     private static readonly CanDeleteAnywayProperty = 'CanDeleteAnyway'
     private static readonly DeleteAnywayTextProperty = 'DeleteAnywayText'
@@ -704,7 +704,7 @@ export class HiveDetailPageViewModel extends PortalPageViewModel
         return this.ConfirmByName(this.section.Dialogs, {
             Expected: this.Id,
             Title: HiveDetailPageViewModel.DeleteAnywayTitle,
-            Message: this.deleteAnywayCode === ApiError.ClusterDestroyFailedCode ? HiveDetailPageViewModel.DestroyAnywayMessage : HiveDetailPageViewModel.DeleteAnywayMessage,
+            Message: this.deleteAnywayCode === ControlPlaneErrors.ClusterDestroyFailedCode ? HiveDetailPageViewModel.DestroyAnywayMessage : HiveDetailPageViewModel.DeleteAnywayMessage,
             ConfirmLabel: HiveDetailPageViewModel.DeleteAnywayLabel,
             Action: async () => { this.deletedNotice = this.DeletedNotice(await this.Session.Client.DeleteHive(this.Id, true)) },
             OnConfirmed: () => this.section.BackAfterDelete(this.deletedNotice),

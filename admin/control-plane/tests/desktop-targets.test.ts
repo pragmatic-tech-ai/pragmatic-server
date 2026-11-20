@@ -5,7 +5,7 @@ import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environ
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import { DesktopAction, DesktopTargets, DesktopTargetVerdict, type DesktopCapabilitiesSource } from '../tenant-auth/desktop-targets.js'
-import { TenantSessionKind, type TenantSession } from '../tenant-auth/tenant-session.js'
+import { TenantSessionKind, type TenantSession } from '../tenant-auth/tenant-sessions.js'
 
 /** Only ListReconciled is read by DesktopTargets. */
 class ListingService
@@ -57,7 +57,7 @@ class TargetKit
 
     public static Session(): TenantSession
     {
-        return { id: 'tok', tenantId: TargetKit.TenantId, principalId: TargetKit.OwnerId, expiresAt: '2099-01-01T00:00:00.000Z', kind: TenantSessionKind.Desktop }
+        return { id: 'tok', tenantId: TargetKit.TenantId, principalId: TargetKit.OwnerId, expiresAt: '2099-01-01T00:00:00.000Z', kind: TenantSessionKind.Desktop, appRoles: ['environment-admin'] }
     }
 
     public static Targets(capabilities?: DesktopCapabilitiesSource): DesktopTargets
@@ -69,7 +69,7 @@ class TargetKit
             TargetKit.Record(TargetKit.ForeignDev, TargetKit.OtherTenantId, EnvType.Development, EnvStatus.Running),
             TargetKit.Record(TargetKit.ForeignRun, TargetKit.OtherTenantId, EnvType.Runtime, EnvStatus.Running),
         ]
-        return new DesktopTargets(new ListingService(records) as unknown as IEnvironmentService, new TargetsDirectory(), capabilities)
+        return new DesktopTargets(new ListingService(records) as unknown as IEnvironmentService, capabilities)
     }
 }
 

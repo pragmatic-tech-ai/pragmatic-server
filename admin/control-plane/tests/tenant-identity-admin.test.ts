@@ -8,8 +8,9 @@ import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environ
 import type { IEnvironmentService } from '../control-plane-host.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import { SeededTenantDirectory } from '../tenant-api/seeded-tenant-directory.js'
-import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import type { TenantSession } from '../tenant-auth/tenant-sessions.js'
 import { ResRecorder } from './res-recorder.js'
+import { TenantApiDispatch } from './tenant-test-sessions.js'
 
 /** A JSON object body, for reading one field of an answer. */
 type JsonObject = Record<string, unknown>
@@ -199,7 +200,7 @@ describe('TenantApiEndpoint identity-admin routes', () =>
         public static async Send(req: IncomingMessage, path: string, tenant: string): Promise<ResRecorder>
         {
             const res = new ResRecorder()
-            assert.equal(await endpoint.Handle(req, res as unknown as ServerResponse, path, Fixtures.Session(tenant)), true)
+            assert.equal(await TenantApiDispatch.Handle(endpoint, req, res as unknown as ServerResponse, path, Fixtures.Session(tenant), Fixtures.Directory()), true)
             return res
         }
     }
@@ -385,10 +386,10 @@ describe('TenantApiEndpoint identity-admin routes', () =>
         assert.deepEqual(params.scopes, ['read', 'write'])
     })
 
-    it('answers other methods on identity-admin paths with 404', async () =>
+    it('answers other methods on identity-admin paths with 405', async () =>
     {
         const res = await Driver.Send(Fixtures.Req('POST'), Fixtures.Base + 'a-env/admin/snapshot', Fixtures.TenantA)
-        assert.equal(res.status, 404)
+        assert.equal(res.status, 405)
         assert.equal(service.Calls.length, 0)
     })
 })

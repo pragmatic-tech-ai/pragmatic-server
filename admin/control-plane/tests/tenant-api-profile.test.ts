@@ -6,8 +6,9 @@ import { SeededTenantDirectory } from '../tenant-api/seeded-tenant-directory.js'
 import { TenantAdminCapabilities } from '../tenant-api/tenant-admin-capabilities.js'
 import type { TenantProfileDto } from '../tenant-api/tenant-profile-dto.js'
 import { HiveBackend, InfraMode, type HiveRecord, type TenantRecord } from '../platform-records.js'
-import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import type { TenantSession } from '../tenant-auth/tenant-sessions.js'
 import { ResRecorder } from './res-recorder.js'
+import { TenantApiDispatch } from './tenant-test-sessions.js'
 
 class Fx
 {
@@ -39,7 +40,7 @@ class Fx
         const unused = undefined as never
         const endpoint = new TenantApiEndpoint(unused, directory, unused, unused, unused)
         const res = new ResRecorder()
-        const handled = await endpoint.Handle({ method: 'GET' } as unknown as IncomingMessage, res as unknown as ServerResponse, '/tenant-api/profile', session)
+        const handled = await TenantApiDispatch.Handle(endpoint, { method: 'GET' } as unknown as IncomingMessage, res as unknown as ServerResponse, '/tenant-api/profile', session, directory)
         assert.equal(handled, true)
         return { res, dto: JSON.parse(res.body) as TenantProfileDto }
     }
@@ -56,7 +57,7 @@ describe('GET /tenant-api/profile', () =>
         assert.equal(dto.tenant.displayName, 'Tenant One')
         assert.equal(dto.tenant.organisation, 'Acme')
         assert.deepEqual(dto.hive, { id: 'h1', displayName: 'Hive One' })
-        assert.equal(dto.roleLabel, TenantAdminCapabilities.OwnerRoleLabel)
+        assert.equal(dto.roleLabel, TenantAdminCapabilities.AdminRoleLabel)
         assert.deepEqual(dto.capabilities, { envs: true, adopt: true, access: true, settings: true })
         assert.equal(dto.email, 'o@x.io')
         assert.equal(dto.ownerContact, 'o@x.io')
@@ -74,7 +75,7 @@ describe('GET /tenant-api/profile', () =>
     it('returns the environment-admin capabilities for a non-owner', async () =>
     {
         const { dto } = await Fx.Get(Fx.Tenant({ ownerPrincipalId: 'p1', ownerEmail: 'o@x.io' }), undefined, Fx.Session('p2'))
-        assert.equal(dto.roleLabel, TenantAdminCapabilities.AdminRoleLabel)
+        assert.equal(dto.roleLabel, TenantAdminCapabilities.EnvironmentAdminRoleLabel)
         assert.deepEqual(dto.capabilities, { envs: true, adopt: true, access: false, settings: false })
         assert.equal(dto.ownerContact, 'o@x.io')
     })

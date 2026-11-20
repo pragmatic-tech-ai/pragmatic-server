@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { OperatorRole } from '../../operator-identity.js'
+import { TenantRoles } from '../../tenant-auth/tenant-roles.js'
 import { ComponentDescriptorCli } from '../component-descriptor-cli.js'
 import { ReleaseComponents } from '../release-components.js'
 import { ReleaseApp, ReleaseApps } from '../release-tag.js'
@@ -63,12 +64,13 @@ describe('ReleaseComponents', () =>
         }
     })
 
-    it('declares application roles only where the code has them: the operator roles of the platform admin console', () =>
+    it('declares application roles only where the code has them: the operator roles of the platform admin console, environment-admin of the tenant console', () =>
     {
         for (const [app, descriptor] of ReleaseComponents.All())
         {
             const roles = descriptor.Roles.map(role => role.Name)
-            assert.deepEqual(roles, app === ReleaseApp.PlatformAdmin ? ComponentsFixture.OperatorRoles : [], app)
+            const expected = app === ReleaseApp.PlatformAdmin ? ComponentsFixture.OperatorRoles : app === ReleaseApp.TenantAdmin ? [TenantRoles.EnvironmentAdmin as string] : []
+            assert.deepEqual(roles, expected, app)
         }
         const operatorRoles = Object.values(OperatorRole).filter(value => typeof value === 'number')
         assert.equal(operatorRoles.length, ComponentsFixture.OperatorRoles.length)

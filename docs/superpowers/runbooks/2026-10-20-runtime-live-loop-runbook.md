@@ -31,7 +31,7 @@ The test runs against a dedicated stack. It never touches the developer's own co
   - tenant `e2e` with owner `o@t.io`, plus its IdP container;
   - hive `e2e-hive`, attached to the kind cluster;
   - the hive agent, installed as the platform admin's install button does it. `up` waits until the hive has checked in.
-- The owner's one-time password, replaced through the tenant plane with the short test password `e2e-password`. The tenant plane requires at least 12 characters.
+- The owner signs in once through the tenant plane with the one-time password, which stays the owner's password (the tenant console no longer changes realm passwords; the realm's sign-in service owns them). It is written to an owner-only file.
 
 `up` writes `~/.pragmatic/e2e-stack/stack.json`. It records:
 

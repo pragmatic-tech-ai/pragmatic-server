@@ -19,7 +19,8 @@ import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import { DesktopAuthGate } from '../tenant-auth/desktop-auth-gate.js'
 import { DesktopRelay, DesktopRelayAllowlist, WsUpstreamDialer, type IRelayClock, type IRelayTimer, type IUpstreamDialer } from '../tenant-auth/desktop-relay.js'
 import { DesktopAction, DesktopTargets, type DesktopCapabilitiesSource } from '../tenant-auth/desktop-targets.js'
-import { TenantSessionKind, TenantSessionStore, type TenantSession } from '../tenant-auth/tenant-session.js'
+import { SessionStore, SignedInIdentity } from '@pragmatic-tech-ai/pragmatic-app-host'
+import { TenantSessionClaims, TenantSessions, type TenantSession } from '../tenant-auth/tenant-sessions.js'
 import { TenantPrincipalSessions } from '../tenant-auth/tenant-principal-sessions.js'
 import type { IIdpService } from '../idp-service.js'
 import type { PlatformDirectory } from '../platform-directory.js'
@@ -380,7 +381,7 @@ class RelayKit
     public static readonly DevEndpoint = { httpUrl: 'http://s.pragmatic-env-acme-dev.svc.cluster.local:8080', wsUrl: 'ws://s.pragmatic-env-acme-dev.svc.cluster.local:8080/?environment=' + RelayKit.DevId }
 
     public dir = ''
-    public store!: TenantSessionStore
+    public store!: TenantSessions
     public audit!: AuditRegistry
     public service!: RelayService
     public endpoints!: RelayEndpoints
@@ -403,7 +404,7 @@ class RelayKit
     public async Start(capabilities?: DesktopCapabilitiesSource, desktopTtlMs?: number, refusalThrottle?: AuditThrottle, auditOf: (path: string) => AuditRegistry = path => new AuditRegistry(path)): Promise<void>
     {
         this.dir = await mkdtemp(join(tmpdir(), 'desktop-relay-'))
-        this.store = new TenantSessionStore(join(this.dir, 'sessions.json'), 60000, undefined, desktopTtlMs)
+        this.store = new TenantSessions(TenantSessions.InMemory(), false, { DesktopTtlMs: desktopTtlMs })
         this.audit = auditOf(join(this.dir, 'tenant-desktop-audit.json'))
         await this.audit.Load()
         this.upstream = new FakeUpstream()
@@ -421,12 +422,12 @@ class RelayKit
             this.dialer.redirectOrigin = 'ws://127.0.0.1:' + String(upstreamPort)
         }
         const service = this.service as unknown as IEnvironmentService
-        this.gate = new HoldingGate(this.store, this.directory)
-        this.relay = new DesktopRelay(this.gate, new DesktopTargets(service, this.directory, capabilities), service,
+        this.gate = new HoldingGate(this.store.Store, this.directory)
+        this.relay = new DesktopRelay(this.gate, new DesktopTargets(service, capabilities), service,
             this.reach ?? this.endpoints as unknown as EnvironmentEndpoints, this.audit, this.dialer, refusalThrottle, false, this.clock)
         this.service.clock = this.clock
-        this.desktopToken = (await this.store.Issue(RelayKit.TenantId, RelayKit.Principal, RelayKit.Email, TenantSessionKind.Desktop)).id
-        this.consoleToken = (await this.store.Issue(RelayKit.TenantId, RelayKit.Principal, RelayKit.Email)).id
+        this.desktopToken = (await this.store.IssueDesktop(new SignedInIdentity(RelayKit.Principal, TenantSessionClaims.Of(RelayKit.TenantId, RelayKit.Email)))).Token
+        this.consoleToken = (await this.store.Store.Issue(RelayKit.Principal, TenantSessionClaims.Of(RelayKit.TenantId, RelayKit.Email))).Token
         const server = createServer((_req, res) => { res.statusCode = 404; res.end() })
         server.on('upgrade', (req: IncomingMessage, socket, head: Buffer) => void this.relay.Upgrade(req, socket, head))
         this.server = server
@@ -741,7 +742,7 @@ describe('DesktopRelay credential revocation', () =>
         t.mock.method(console, 'error', (...args: unknown[]) => { logged.push(args) })
         const { ws } = await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)
         const closed = RelayKit.Closed(ws as WebSocket)
-        assert.equal(kit.relay.CloseSession(kit.desktopToken), 1)
+        assert.equal(kit.relay.CloseSession(SessionStore.DigestOf(kit.desktopToken)), 1)
         assert.equal(await closed, 1000)
         assert.equal(kit.endpoints.releases, 1)
         await RelayKit.Until(() => logged.length === 1)
@@ -950,7 +951,7 @@ describe('DesktopRelay contribute', () =>
         const { ws } = await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)
         const closed = RelayKit.Closed(ws as WebSocket)
         assert.equal(kit.relay.CloseSession('another-session'), 0)
-        assert.equal(kit.relay.CloseSession(kit.desktopToken), 1)
+        assert.equal(kit.relay.CloseSession(SessionStore.DigestOf(kit.desktopToken)), 1)
         assert.equal(await closed, 1000)
         await RelayKit.Until(() => kit.endpoints.releases === 1 && kit.upstream.closedByPeer === 1)
     })
@@ -961,8 +962,8 @@ describe('DesktopRelay contribute', () =>
         kit.dialer.gate = new Promise<void>(res => { open = res })
         const dialed = kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)
         await RelayKit.Until(() => kit.upstream.Connections() === 1)
-        await kit.store.Revoke(kit.desktopToken)
-        assert.equal(kit.relay.CloseSession(kit.desktopToken), 0)
+        await kit.store.Store.Revoke(kit.desktopToken)
+        assert.equal(kit.relay.CloseSession(SessionStore.DigestOf(kit.desktopToken)), 0)
         open()
         assert.equal((await dialed).status, 401)
         await RelayKit.Until(() => kit.endpoints.releases === 1 && kit.upstream.closedByPeer === 1)
@@ -1177,7 +1178,7 @@ describe('DesktopRelay pipe closed during the session re-check', () =>
         assert.equal(kit.endpoints.releases, 1)
         release()
         assert.equal((await dialed).status, 502)
-        assert.equal(kit.relay.CloseSession(kit.desktopToken), 0, 'the closed pipe is not tracked')
+        assert.equal(kit.relay.CloseSession(SessionStore.DigestOf(kit.desktopToken)), 0, 'the closed pipe is not tracked')
         assert.equal(kit.endpoints.leases, 1)
         assert.equal(kit.endpoints.releases, 1)
         await RelayKit.Until(() => kit.service.revokes.length === 1)
@@ -1191,7 +1192,7 @@ describe('DesktopRelay pipe closed during the session re-check', () =>
         await RelayKit.Until(() => kit.endpoints.releases === 1)
         release()
         assert.equal((await dialed).status, 502)
-        assert.equal(kit.relay.CloseSession(kit.desktopToken), 0, 'the closed pipe is not tracked')
+        assert.equal(kit.relay.CloseSession(SessionStore.DigestOf(kit.desktopToken)), 0, 'the closed pipe is not tracked')
         assert.equal(kit.endpoints.releases, 1)
         assert.equal(kit.Audit().at(-1)?.status, 502)
     })
@@ -1214,7 +1215,7 @@ describe('DesktopRelay tenant deletion', () =>
 
     it('deleting the tenant (ForgetTenant) closes its open relay, releases the lease, and its desktop bearer is then refused 401', async () =>
     {
-        const principals = new TenantPrincipalSessions(kit.store)
+        const principals = new TenantPrincipalSessions(kit.store.Store)
         principals.Attach(kit.relay)
         const provisioning = new TenantProvisioningService({} as IIdpService, {} as PlatformDirectory, () => { throw new Error('unused') }, principals)
         const { ws } = await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken)

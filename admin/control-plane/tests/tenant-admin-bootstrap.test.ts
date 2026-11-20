@@ -2,6 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { inspect } from 'node:util'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
+import { TenantAdminDatabaseSecret } from '../tenant-admin-workload.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
 import { IngressTlsSource, type IngressTls } from '../ingress-tls.js'
@@ -281,12 +282,13 @@ describe('TenantAdminBootstrap in-cluster IdP federation producer', () =>
         assert.ok(list.items.some(i => i.metadata.name === seedName))
     })
 
-    it('names the tenant-admin credential Secrets for removal (fingerprint key, IdP CA and admin-token copies), never the seed', () =>
+    it('names the tenant-admin credential Secrets for removal (fingerprint key, IdP CA and admin-token copies, database passwords), never the seed', () =>
     {
         assert.deepEqual(K8sManifestBuilder.TenantConsoleCredentialIdentitiesOf('acme'), [
             { apiVersion: 'v1', kind: 'Secret', metadata: { name: K8sManifestBuilder.TenantConsoleFingerprintSecretNameOf('acme'), namespace: 'pragmatic-system' } },
             { apiVersion: 'v1', kind: 'Secret', metadata: { name: TenantAdminBootstrap.IdpCaSecretNameOf('acme'), namespace: 'pragmatic-system' } },
             { apiVersion: 'v1', kind: 'Secret', metadata: { name: TenantAdminBootstrap.IdpTokenSecretNameOf('acme'), namespace: 'pragmatic-system' } },
+            { apiVersion: 'v1', kind: 'Secret', metadata: { name: K8sManifestBuilder.ConsolePostgresNameOf('acme'), namespace: 'pragmatic-system' } },
         ])
         assert.ok(!new K8sManifestBuilder().TenantConsoleRemovalManifest('acme', 'h1').includes(K8sManifestBuilder.TenantAdminSeedSecretNameOf('acme')))
     })
@@ -450,5 +452,31 @@ describe('TenantAdminBootstrap as the in-hive console renderer', () =>
         assert.ok(!leaked.includes(Buffer.from(ConsoleFixture.AdminToken).toString('base64')))
         // The master key leaves only through the Secret set's RenderManifest().
         assert.ok(b.secrets.RenderManifest().includes(ConsoleFixture.MasterKey.toString('base64')))
+    })
+})
+
+describe('TenantAdminBootstrap console database', () =>
+{
+    it('with a pragmatic-postgres image: mints the database Secret (superuser, role password, the URL over that password) and renders the sidecar', async () =>
+    {
+        const input = { ...BootstrapFixture.Input(), postgresImage: 'pragmatic-postgres:local' }
+        const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(input)
+        const secret = BootstrapFixture.SecretItems(b).find(s => s.metadata.name === K8sManifestBuilder.ConsolePostgresNameOf('acme'))
+        assert.ok(secret !== undefined)
+        const value = (key: string): string => Buffer.from(secret.data[key] as string, 'base64').toString('utf8')
+        assert.deepEqual(Object.keys(secret.data).sort(), [TenantAdminDatabaseSecret.UrlKey, TenantAdminDatabaseSecret.PasswordKey, TenantAdminDatabaseSecret.SuperuserKey].sort())
+        assert.equal(value(TenantAdminDatabaseSecret.UrlKey), TenantAdminDatabaseSecret.UrlOf(value(TenantAdminDatabaseSecret.PasswordKey)))
+        assert.notEqual(value(TenantAdminDatabaseSecret.SuperuserKey), value(TenantAdminDatabaseSecret.PasswordKey))
+        assert.ok(value(TenantAdminDatabaseSecret.PasswordKey).length >= 32)
+        const pod = BootstrapFixture.AdminDeployment(b.manifest).spec.template.spec
+        assert.ok(pod.containers.some((c: { name: string; image: string }) => c.name === 'postgres' && c.image === 'pragmatic-postgres:local'))
+        assert.equal(b.manifest.includes(value(TenantAdminDatabaseSecret.PasswordKey)), false, 'no password in the manifest')
+    })
+
+    it('without one, no database Secret and no sidecar', async () =>
+    {
+        const b = await new TenantAdminBootstrap(new FakeRegistrar()).GenerateBootstrap(BootstrapFixture.Input())
+        assert.equal(BootstrapFixture.SecretItems(b).some(s => s.metadata.name === K8sManifestBuilder.ConsolePostgresNameOf('acme')), false)
+        assert.equal(BootstrapFixture.AdminDeployment(b.manifest).spec.template.spec.containers.length, 1)
     })
 })

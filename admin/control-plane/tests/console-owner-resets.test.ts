@@ -8,7 +8,8 @@ import { ConsoleOwnerResetFollower, type IOwnerSessionEnder } from '../console-o
 import { TenantOwner, type OwnedTenant } from '../tenant-owner.js'
 import { TenantProvisioningService } from '../tenant-provisioning-service.js'
 import { TenantPrincipalSessions, type IPrincipalConnections } from '../tenant-auth/tenant-principal-sessions.js'
-import { TenantSessionKind, TenantSessionStore } from '../tenant-auth/tenant-session.js'
+import { SignedInIdentity } from '@pragmatic-tech-ai/pragmatic-app-host'
+import { TenantSessionClaims, TenantSessions } from '../tenant-auth/tenant-sessions.js'
 
 class Names
 {
@@ -22,7 +23,6 @@ class Names
     public static readonly Utf8 = 'utf8'
     public static readonly TempSuffix = '.tmp'
     public static readonly StoreFailure = 'disk full'
-    public static readonly SessionsFile = 'tenant-sessions.json'
     public static readonly OwnerEmail = 'owner@acme.test'
     public static readonly HourMs = 60 * 60 * 1000
 }
@@ -53,10 +53,6 @@ class CountingConnections implements IPrincipalConnections
     {
         this.Closed.push([tenantId, principalId])
         return 1
-    }
-
-    public MoveSession(): void
-    {
     }
 
     public CloseTenant(): number
@@ -254,22 +250,21 @@ describe('ConsoleOwnerResetFollower', () =>
 
     it('ends the Owner console and desktop sessions and closes its sockets and relays, keeping other principals', async () =>
     {
-        let now = new Date(Names.EarlierReset)
-        const store = new TenantSessionStore(join(root, Names.SessionsFile), Names.HourMs, () => now)
+        const sessions = new TenantSessions(TenantSessions.InMemory(), false)
+        const store = sessions.Store
         const principals = new TenantPrincipalSessions(store)
         const sockets = new CountingConnections()
         const relays = new CountingConnections()
         principals.Attach(sockets)
         principals.Attach(relays)
-        const browser = await store.Issue(Names.Tenant, Names.Principal, Names.OwnerEmail)
-        const desktop = await store.Issue(Names.Tenant, Names.Principal, Names.OwnerEmail, TenantSessionKind.Desktop)
-        const other = await store.Issue(Names.Tenant, 'someone-else')
-        now = new Date(Date.parse(Names.EarlierReset) + 1000)
+        const browser = (await store.Issue(Names.Principal, TenantSessionClaims.Of(Names.Tenant, Names.OwnerEmail))).Token
+        const desktop = (await sessions.IssueDesktop(new SignedInIdentity(Names.Principal, TenantSessionClaims.Of(Names.Tenant, Names.OwnerEmail)))).Token
+        const other = (await store.Issue('someone-else', TenantSessionClaims.Of(Names.Tenant, undefined))).Token
         const f = new ConsoleOwnerResetFollower(principals, { id: Names.Tenant, ownerPrincipalId: Names.Principal }, marker())
         assert.equal(await f.Apply(Names.Reset), true)
-        assert.equal(await store.Validate(browser.id), null)
-        assert.equal(await store.Validate(desktop.id), null)
-        assert.notEqual(await store.Validate(other.id), null)
+        assert.equal(await store.Validate(browser), null)
+        assert.equal(await store.Validate(desktop), null)
+        assert.notEqual(await store.Validate(other), null)
         assert.deepEqual(sockets.Closed, [[Names.Tenant, Names.Principal]])
         assert.deepEqual(relays.Closed, [[Names.Tenant, Names.Principal]])
     })

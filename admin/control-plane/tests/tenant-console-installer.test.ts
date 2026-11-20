@@ -105,11 +105,13 @@ describe('TenantConsoleInstaller', () =>
         assert.equal(fx.Installer.StatusFor('h1'), undefined)
     })
 
-    it('installs the tenant-admin and IdP images of the newest release, each approved', async () =>
+    it('installs the tenant-admin and IdP images of the newest release, each approved, with the release\'s pragmatic-postgres as the console\'s database', async () =>
     {
         const admin = 'ghcr.io/pragmatic-tech-ai/pragmatic-tenant-admin@sha256:' + 'e'.repeat(64)
         const idp = 'ghcr.io/pragmatic-tech-ai/pragmatic-tenant-idp@sha256:' + 'f'.repeat(64)
-        const images: IPlatformImages = { ImageOf: (app: ReleaseApp) => app === ReleaseApp.TenantAdmin ? admin : app === ReleaseApp.TenantIdp ? idp : undefined }
+        const postgres = 'ghcr.io/pragmatic-tech-ai/pragmatic-postgres@sha256:' + 'd'.repeat(64)
+        const byApp = new Map<ReleaseApp, string>([[ReleaseApp.TenantAdmin, admin], [ReleaseApp.TenantIdp, idp], [ReleaseApp.Postgres, postgres]])
+        const images: IPlatformImages = { ImageOf: (app: ReleaseApp) => byApp.get(app) }
         fx = await ConsoleInstallFixture.Create({ platformImages: images })
         fx.Installer.Start('h1')
         assert.equal((await fx.Installer.WhenSettled('h1'))?.state, ConsoleInstallState.Deployed)
@@ -117,7 +119,15 @@ describe('TenantConsoleInstaller', () =>
         const applied = fx.Kubectl.Applied.join(' ')
         assert.ok(applied.includes(admin))
         assert.ok(applied.includes(idp))
+        assert.ok(applied.includes(postgres))
         assert.ok(!applied.includes(K8sManifestBuilder.AgentImage))
+    })
+
+    it('refuses to start on a release without a pragmatic-postgres image (the console stores in it)', async () =>
+    {
+        const images: IPlatformImages = { ImageOf: (app: ReleaseApp) => app === ReleaseApp.Postgres ? undefined : 'img:' + app }
+        fx = await ConsoleInstallFixture.Create({ platformImages: images })
+        assert.throws(() => fx.Installer.Start('h1'), (err: unknown) => err instanceof ConsoleInstallUnavailableError && err.message === PlatformImages.NoReleaseMessage)
     })
 
     it('a release image that fails verification (no platform countersign) ends Failed with the refusal shown, not a crash', async () =>

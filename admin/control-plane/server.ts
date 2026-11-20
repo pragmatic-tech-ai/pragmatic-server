@@ -91,7 +91,8 @@ import { DockerIdpDriver } from './docker-idp-driver.js'
 import { IdpService, type IIdpService } from './idp-service.js'
 import { IdpAdminClient } from './idp-admin-client.js'
 import { TenantProvisioningService } from './tenant-provisioning-service.js'
-import type { TenantSessionStore } from './tenant-auth/tenant-session.js'
+import { TenantSessions } from './tenant-auth/tenant-sessions.js'
+import type { IAuditRepository } from '@pragmatic-tech-ai/pragmatic-app-host'
 import { TenantPrincipalSessions } from './tenant-auth/tenant-principal-sessions.js'
 import { TenantAdminClientRegistry } from './tenant-auth/tenant-admin-client-record.js'
 import { MasterKeyFile } from './master-key-file.js'
@@ -99,9 +100,9 @@ import { TenantAdminEnv } from './tenant-admin-env.js'
 import { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
 import { TenantGraphAccess } from './tenant-api/tenant-graph-access.js'
 import { InProcessRolloutClient } from './tenant-api/in-process-rollout-client.js'
-import { TenantPlaneComposer, type DesktopRelayWiring } from './tenant-plane-composer.js'
-import { TenantPlaneHost } from './tenant-plane-host.js'
-import { TenantHealthMonitor } from './tenant-health-monitor.js'
+import { TenantPlaneComposer, type TenantPlaneParts } from './tenant-plane-composer.js'
+import { TenantConsoleHost } from './tenant-console-host.js'
+import { TenantHealthMonitor, type IEnvStatusReconciler, type IHiveLister } from './tenant-health-monitor.js'
 import { HiveHealthProducer } from './hive-health-producer.js'
 import type { TenantPlane } from './tenant-auth/tenant-plane.js'
 import type { IEnvironmentService } from './control-plane-host.js'
@@ -115,7 +116,7 @@ import type { ReleasePoll } from './release/release-poll.js'
 /** The composed tenant listener, its port/bind already validated (so a bad tenant port fails before any socket binds). */
 interface ITenantPlaneStart
 {
-    host: TenantPlaneHost
+    host: TenantConsoleHost
     port: number
     bind: string
     scheme: string
@@ -423,9 +424,10 @@ export class ControlPlaneServer
         const channel = ControlPlaneServer.AgentChannelOf(role, agentBackend)
         const agentBind = ControlPlaneServer.ParseAgentChannelBind(process.env[ControlPlaneServer.AgentChannelBindEnvVar])
         const channelStart: IAgentChannelStart = { host: channel, port: agentChannelPort, raw: agentChannelRaw, bind: agentBind }
-        // One tenant session store for the tenant plane and the Owner password reset (which ends the Owner's sessions).
-        const tenantSessions = TenantPlaneComposer.TenantSessionsOf(dataRoot)
-        const principalSessions = new TenantPrincipalSessions(tenantSessions)
+        // One tenant session layer for the tenant plane and the Owner password reset (which ends the Owner's sessions), over the
+        // console's own session tables (each plane's gate refuses the other's sessions).
+        const tenantSessions = new TenantSessions(await database.SessionRepositories(), opts.secureCookie)
+        const principalSessions = new TenantPrincipalSessions(tenantSessions.Store)
         const provisioning = new TenantProvisioningService(idpService, directory, conn => new IdpAdminClient(conn), principalSessions, accountIndex, tenantIdpMode)
         // Installs a Local hive's agent through the same cluster access the orchestrators already hold; off with the channel.
         const agentInstaller = new HiveAgentInstaller(directory, orchestrators, deployments, observations, agentChannelUrl, new SystemInstallClock(), HiveAgentInstaller.DefaultTiming, platformImages)
@@ -453,35 +455,23 @@ export class ControlPlaneServer
             Adverts: adverts, Approvals: approvals, EmailDomains: emailDomains, Releases: releases?.Refresher, PlatformImages: platformImages,
         })
         const port = ControlPlaneServer.ResolvePort(process.env[ControlPlaneServer.PortEnvVar])
-        const tenantPlane = ControlPlaneServer.ComposeTenantPlane(process.env, dataRoot, idpService, directory, opts.secureCookie, service, new InProcessRolloutClient(deployments), orchestrators, placement,
-            masterKey, adminClientRegistry, TenantPlaneComposer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar]), tenantSessions, principalSessions,
-            { endpoints, audit: desktopAudit }, emailDomains, new TenantGraphAccess(graphService, graphAudit))
         // Resolve (and validate) the tenant port + bind BEFORE binding the operator listener, so a misconfigured
         // tenant port fails fast at startup rather than after the operator socket is already live.
-        let tenantStart: ITenantPlaneStart | undefined
-        if (tenantPlane !== undefined)
-        {
-            const baseDomain = process.env[ControlPlaneServer.TenantBaseDomainEnvVar] as string
-            const scheme = TenantPlaneComposer.TenantScheme(process.env[ControlPlaneServer.TenantSchemeEnvVar])
-            const externalPort = TenantPlaneComposer.TenantExternalPort(process.env[ControlPlaneServer.TenantExternalPortEnvVar])
-            const resolver = new TenantHostResolver(baseDomain, scheme, directory, externalPort)
-            const tenantStaticRoot = join(here, TenantPlaneComposer.ParentSegment, TenantPlaneComposer.TenantPortalSegment, TenantPlaneComposer.DistSegment)
-            const probeMs = TenantPlaneComposer.ParseHealthProbeMs(process.env[ControlPlaneServer.HealthProbeMsEnvVar])
-            const probeTimeoutMs = TenantPlaneComposer.ParseHealthProbeTimeoutMs(process.env[ControlPlaneServer.HealthProbeTimeoutMsEnvVar])
-            const monitor = probeMs > 0
-                ? new TenantHealthMonitor(directory, new HiveHealthProducer(service, orchestrators, placement), tenantPlane.events, probeMs, probeTimeoutMs, service)
-                : undefined
-            // The host attaches its sockets to tenantPlane.principals (principalSessions), which the Owner reset also ends.
-            const tenantHost = new TenantPlaneHost(tenantPlane, resolver, tenantStaticRoot, service, monitor)
-            const tenantPort = TenantPlaneComposer.ResolveTenantPort(process.env[ControlPlaneServer.TenantPortEnvVar])
-            const portWarning = ControlPlaneServer.ExternalPortWarning(tenantPort, externalPort)
-            if (portWarning !== undefined)
-            {
-                console.warn(portWarning)
-            }
-            const tenantBind = TenantPlaneComposer.TenantBind(process.env[ControlPlaneServer.TenantBindEnvVar])
-            tenantStart = { host: tenantHost, port: tenantPort, bind: tenantBind, scheme, baseDomain }
-        }
+        const tenantStart = await ControlPlaneServer.TenantPlaneStartOf(process.env, here, {
+            Idp: idpService,
+            Directory: directory,
+            Service: service,
+            Rollout: new InProcessRolloutClient(deployments),
+            Orchestrators: orchestrators,
+            Placement: placement,
+            Sessions: tenantSessions,
+            FlowStates: await database.FlowStates(),
+            ClientSecrets: { Store: await database.TenantPlaneSecrets(masterKey), Registry: adminClientRegistry, TtlMs: TenantPlaneComposer.SecretTtlMsOf(TenantPlaneComposer.ParseSecretTtlHours(process.env[ControlPlaneServer.SecretTtlEnvVar])) },
+            Principals: principalSessions,
+            Relay: { endpoints, audit: desktopAudit },
+            EmailDomains: emailDomains,
+            Graphs: new TenantGraphAccess(graphService, graphAudit),
+        }, directory, service, audit)
         // The admin role still derives the channel URL above (hive bundles point at the edge) but does not listen on it.
         await new ControlPlaneStart(role).Run(new ComposedListeners({ host, port, bind: ControlPlaneServer.AdminBindOf(process.env), tenant: tenantStart }, channelStart, internalStart))
         // The poll's timer is unref'd, so it never holds the process open; it is also stopped on shutdown, beside the tunnels.
@@ -632,39 +622,41 @@ export class ControlPlaneServer
     }
 
     /**
-     * Composes the optional tenant plane from the environment. The dedicated tenant listener activates only when
-     * both `PRAGMATIC_TENANT_ADMIN_PORT` and `PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN` are present; otherwise the plane
-     * is off (fail-closed) and only the operator listener runs, exactly as before. The callback is derived per
-     * request from the tenant subdomain host by `TenantPlaneHost`, so no callback is wired here.
+     * Composes the optional tenant plane and its listener from the environment. The dedicated tenant listener activates only
+     * when both `PRAGMATIC_TENANT_ADMIN_PORT` and `PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN` are present; otherwise the plane is
+     * off (fail-closed) and only the operator listener runs. The tenant and its OIDC callback are derived per request from
+     * the tenant subdomain host (TenantHostResolver). The control plane's tenant plane is the one Plexus talks to, so it
+     * carries the desktop surface; its mutations are audited into the console's own trail.
      */
-    public static ComposeTenantPlane(
-        env: NodeJS.ProcessEnv,
-        dataRoot: string,
-        idpService: IIdpService,
-        directory: ITenantDirectory,
-        secureCookie: boolean,
-        service: IEnvironmentService,
-        rollout: IRolloutClient,
-        orchestrators: HiveOrchestratorFactory,
-        placement: EnvironmentPlacement,
-        masterKey: Buffer,
-        adminClientRegistry: TenantAdminClientRegistry,
-        secretTtlHours: number,
-        sessions?: TenantSessionStore,
-        principals?: TenantPrincipalSessions,
-        relay?: DesktopRelayWiring,
-        emailDomains?: ITenantEmailDomains,
-        graphs?: TenantGraphAccess): TenantPlane | undefined
+    public static async TenantPlaneStartOf(env: NodeJS.ProcessEnv, here: string, parts: Omit<TenantPlaneParts, 'Resolver'>, hives: IHiveLister, reconciler: IEnvStatusReconciler, audit: IAuditRepository): Promise<ITenantPlaneStart | undefined>
     {
-        const port = env[ControlPlaneServer.TenantPortEnvVar]
-        const baseDomain = env[ControlPlaneServer.TenantBaseDomainEnvVar]
-        if (port === undefined || port === '' || baseDomain === undefined || baseDomain === '')
+        const C = ControlPlaneServer
+        const portRaw = env[C.TenantPortEnvVar]
+        const baseDomain = env[C.TenantBaseDomainEnvVar]
+        if (portRaw === undefined || portRaw === '' || baseDomain === undefined || baseDomain === '')
         {
             return undefined
         }
-        // The control plane's tenant plane is the one Plexus talks to, so it carries the desktop surface.
-        return TenantPlaneComposer.BuildTenantPlane(dataRoot, idpService, directory, secureCookie, service, rollout, orchestrators, placement,
-            masterKey, adminClientRegistry, secretTtlHours, sessions, principals, TenantPlaneComposer.ReadsTrue(env[TenantAdminEnv.TrustedProxy]), true, relay, emailDomains, undefined, graphs)
+        const scheme = TenantPlaneComposer.TenantScheme(env[C.TenantSchemeEnvVar])
+        const externalPort = TenantPlaneComposer.TenantExternalPort(env[C.TenantExternalPortEnvVar])
+        const resolver = new TenantHostResolver(baseDomain, scheme, parts.Directory, externalPort)
+        const trustedProxy = TenantPlaneComposer.ReadsTrue(env[TenantAdminEnv.TrustedProxy])
+        const plane = TenantPlaneComposer.BuildTenantPlane({ ...parts, Resolver: resolver, TrustedProxy: trustedProxy, Desktop: true })
+        const probeMs = TenantPlaneComposer.ParseHealthProbeMs(env[C.HealthProbeMsEnvVar])
+        const probeTimeoutMs = TenantPlaneComposer.ParseHealthProbeTimeoutMs(env[C.HealthProbeTimeoutMsEnvVar])
+        const monitor = probeMs > 0
+            ? new TenantHealthMonitor(hives, new HiveHealthProducer(parts.Service, parts.Orchestrators, parts.Placement), plane.events, probeMs, probeTimeoutMs, reconciler)
+            : undefined
+        // The host attaches its sockets to plane.principals (the Owner reset's), so a reset closes them.
+        const portalRoot = join(here, TenantPlaneComposer.ParentSegment, TenantPlaneComposer.TenantPortalSegment, TenantPlaneComposer.DistSegment)
+        const host = new TenantConsoleHost({ Plane: plane, Resolver: resolver, Service: parts.Service, PortalRoot: portalRoot, Monitor: monitor, Audit: audit, TrustedProxy: trustedProxy })
+        const port = TenantPlaneComposer.ResolveTenantPort(portRaw)
+        const portWarning = C.ExternalPortWarning(port, externalPort)
+        if (portWarning !== undefined)
+        {
+            console.warn(portWarning)
+        }
+        return { host, port, bind: TenantPlaneComposer.TenantBind(env[C.TenantBindEnvVar]), scheme, baseDomain }
     }
 
     /** PRAGMATIC_ADMIN_BIND: the operator listener's address. Blank or unset = loopback (the laptop's default). */

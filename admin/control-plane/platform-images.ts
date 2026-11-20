@@ -2,7 +2,7 @@ import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { ReleaseState } from './manifest-record.js'
 import type { ManifestRecord, ManifestRegistry } from './manifest-record.js'
 import { ReleaseRegistry } from './release/release-registry.js'
-import type { ReleaseApp } from './release/release-tag.js'
+import { ReleaseApp } from './release/release-tag.js'
 
 /** Where the platform's own images (the hive agent, the console's tenant-admin and IdP) come from. */
 export interface IPlatformImages
@@ -21,12 +21,15 @@ export class PlatformImages
     }
 }
 
-/** A development box: every platform app runs the locally built server image, as before releases existed. */
+/** A development box: every platform app runs the locally built server image, as before releases existed; the console's Postgres the locally built pragmatic-postgres. */
 export class DevPlatformImages implements IPlatformImages
 {
-    public ImageOf(_app: ReleaseApp): string | undefined
+    /** The locally built pragmatic-postgres (docker/postgres: `docker build -t pragmatic-postgres:local`, then `kind load`). */
+    public static readonly PostgresImage = 'pragmatic-postgres:local'
+
+    public ImageOf(app: ReleaseApp): string | undefined
     {
-        return K8sManifestBuilder.AgentImage
+        return app === ReleaseApp.Postgres ? DevPlatformImages.PostgresImage : K8sManifestBuilder.AgentImage
     }
 }
 

@@ -1,8 +1,8 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import { TenantApiError } from '../../tenant-api-client.js'
+import { ApiError } from '../../tenant-api-client.js'
 import { AdminCapability } from '../../shell/admin-capability.js'
-import { PendingWork, type IHoldsPendingWork } from '../../shell/holds-pending-work.js'
+import { PendingWork, type IHoldsPendingWork } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { OptionViewModel } from '../../shell/option-view-model.js'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
@@ -554,7 +554,7 @@ export class AdoptWizardPageViewModel extends TenantPageViewModel implements IHo
         }
         catch (e)
         {
-            if (e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus)
+            if (e instanceof ApiError && e.Status === ApiError.UnauthorizedStatus)
             {
                 this.SetSubmitting(false)
                 throw e
@@ -569,13 +569,13 @@ export class AdoptWizardPageViewModel extends TenantPageViewModel implements IHo
 
     private static OutcomeOf(e: unknown): AdoptOutcome
     {
-        if (e instanceof TenantApiError)
+        if (e instanceof ApiError)
         {
             if (e.Status === AdoptWizardPageViewModel.ConflictStatus)
             {
                 return AdoptOutcome.Refused
             }
-            if (e.Status === TenantApiError.UnavailableStatus)
+            if (e.Status === ApiError.UnavailableStatus)
             {
                 return AdoptOutcome.Unavailable
             }

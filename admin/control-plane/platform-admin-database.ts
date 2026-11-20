@@ -1,5 +1,5 @@
 import type { ISqlSession } from '@pragmatic-tech-ai/todl'
-import { PgSession } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
+import { PgSession, SqlOidcFlowStateStore, SqlSecretKeyRing, SqlSecretStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { PostgresPoolFactory } from '@pragmatic-tech-ai/pragmatic-realm-custom'
 import { SqlAuditRepository, SqlSessionRepository, SqlThrottleRepository, SqlTicketRepository } from '@pragmatic-tech-ai/pragmatic-app-host'
 import { SqlRecordMap } from './sql-record-map.js'
@@ -48,13 +48,17 @@ export class PlatformAdminDatabaseMissingError extends Error
 /**
  * The platform admin console's own Postgres database (A5): one URL, read from the secret file PRAGMATIC_ADMIN_DATABASE_URL_FILE,
  * and every store over it: a record map per registry, the signature store, the operator session repositories (sessions,
- * WebSocket tickets, throttles), the operator audit trail and the operator identity stores. Opening a store runs its
- * migrations. The edge never opens it.
+ * WebSocket tickets, throttles; shared with the co-hosted tenant plane, whose gate refuses operator sessions and the
+ * operator gate tenant ones), the operator audit trail, the operator identity stores, and the co-hosted tenant plane's
+ * OIDC flow state and sealed client secrets. Opening a store runs its migrations. The edge never opens it.
  */
 export class PlatformAdminDatabase
 {
     public static readonly UrlFileEnvVar = 'PRAGMATIC_ADMIN_DATABASE_URL_FILE'
     private static readonly ApplicationName = 'pragmatic-platform-admin'
+    /** The sealed-secret scope of the co-hosted tenant plane (the operator identity seals under `control-plane`). */
+    public static readonly TenantPlaneSecretScope = 'tenant-admin'
+    private static readonly SecretKeyId = 'master'
 
     private constructor(public readonly Session: ISqlSession, private readonly owned: PgSession | undefined)
     {
@@ -96,6 +100,18 @@ export class PlatformAdminDatabase
             Tickets: await SqlTicketRepository.Open(this.Session),
             Throttles: await SqlThrottleRepository.Open(this.Session),
         }
+    }
+
+    /** The pending OIDC sign-ins of the co-hosted tenant plane (state, nonce, PKCE verifier). */
+    public FlowStates(): Promise<SqlOidcFlowStateStore>
+    {
+        return SqlOidcFlowStateStore.Open(this.Session)
+    }
+
+    /** The co-hosted tenant plane's sealed secrets (its OIDC client secrets; scope `tenant-admin`, under the master key). */
+    public TenantPlaneSecrets(masterKey: Buffer): Promise<SqlSecretStore>
+    {
+        return SqlSecretStore.Open(this.Session, SqlSecretKeyRing.Single(PlatformAdminDatabase.SecretKeyId, masterKey), PlatformAdminDatabase.TenantPlaneSecretScope)
     }
 
     /** The operator audit trail (the activity log). */

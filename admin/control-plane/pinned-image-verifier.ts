@@ -72,11 +72,17 @@ export class PinnedImageVerifier implements IImageVerifier
         {
             throw new InvalidVerifiedImagesError(path)
         }
-        if (!Array.isArray(parsed) || !parsed.every(PinnedImageVerifier.IsVerifiedImage))
+        return new PinnedImageVerifier(PinnedImageVerifier.ImagesIn(parsed, path))
+    }
+
+    /** The value as a list of VerifiedImage; anything else throws InvalidVerifiedImagesError naming `location`. */
+    public static ImagesIn(value: unknown, location: string): VerifiedImage[]
+    {
+        if (!Array.isArray(value) || !value.every(PinnedImageVerifier.IsVerifiedImage))
         {
-            throw new InvalidVerifiedImagesError(path)
+            throw new InvalidVerifiedImagesError(location)
         }
-        return new PinnedImageVerifier(parsed)
+        return value.map(image => ({ imageRef: image.imageRef }))
     }
 
     /** The trust root is the platform's concern (it verified before pinning); here only the pinned ref matters. */

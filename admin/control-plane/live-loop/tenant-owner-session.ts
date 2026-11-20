@@ -17,13 +17,9 @@ export class TenantOwnerSession
     private static readonly FormWaitMs = 60_000
     private static readonly ReturnWaitMs = 60_000
     private static readonly SettledState = 'networkidle'
-    private static readonly PasswordPath = '/tenant-auth/password'
-    private static readonly MethodPost = 'POST'
     private static readonly ContentTypeHeader = 'Content-Type'
     private static readonly JsonType = 'application/json'
-    private static readonly StatusOk = 200
     private static readonly NoSessionMessage = 'tenant owner sign-in did not end with a session on the tenant plane'
-    private static readonly PasswordChangeFailedPrefix = 'owner password change failed: status '
 
     private constructor(private readonly browser: Browser, private readonly page: Page)
     {
@@ -74,17 +70,6 @@ export class TenantOwnerSession
             return { status: r.status, text: await r.text() }
         }, { method, path, body: body === undefined ? undefined : JSON.stringify(body), contentType: TenantOwnerSession.ContentTypeHeader, jsonType: TenantOwnerSession.JsonType })
         return { status: answer.status, body: OperatorApiClient.ParseObject(answer.text) }
-    }
-
-    /** Changes the owner's password through the tenant plane (its policy: at least 12 characters). */
-    public async ChangePassword(current: string, next: string): Promise<void>
-    {
-        const S = TenantOwnerSession
-        const answer = await this.Call(S.MethodPost, S.PasswordPath, { currentPassword: current, newPassword: next, confirmPassword: next })
-        if (answer.status !== S.StatusOk)
-        {
-            throw new Error(S.PasswordChangeFailedPrefix + String(answer.status))
-        }
     }
 
     public async Close(): Promise<void>

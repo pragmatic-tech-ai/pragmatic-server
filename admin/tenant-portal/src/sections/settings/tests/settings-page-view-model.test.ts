@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { TenantApiError } from '../../../tenant-api-client.js'
+import { ApiError } from '../../../tenant-api-client.js'
 import { PageState } from '../../../shell/tenant-page-view-model.js'
 import { FakeTenantApi, Inspect, TenantTestHost } from '../../../shell/tests/tenant-test-fixtures.js'
 import { SettingsPageViewModel, SettingsTab } from '../settings-page-view-model.js'
@@ -76,7 +76,7 @@ describe('SettingsPageViewModel', () =>
     it('a 404 from the email-domain read leaves the tab read-only and the page populated', async () =>
     {
         const api = Fixture.Api()
-        api.FailOn.set('GetEmailDomains', new TenantApiError(404, 'not found'))
+        api.FailOn.set('GetEmailDomains', new ApiError(404, 'not found'))
         const page = await Fixture.Page(api)
         assert.equal(page.State, PageState.Populated)
         assert.equal(page.EmailDomains.IsEditable, false)
@@ -86,7 +86,7 @@ describe('SettingsPageViewModel', () =>
     it('any other email-domain failure shows its sentence in the tab only', async () =>
     {
         const api = Fixture.Api()
-        api.FailOn.set('GetEmailDomains', new TenantApiError(500, 'domains down'))
+        api.FailOn.set('GetEmailDomains', new ApiError(500, 'domains down'))
         const page = await Fixture.Page(api)
         assert.equal(page.State, PageState.Populated)
         assert.equal(page.ErrorText, '')
@@ -97,7 +97,7 @@ describe('SettingsPageViewModel', () =>
     it('a 401 from the email-domain read expires the session', async () =>
     {
         const api = Fixture.Api()
-        api.FailOn.set('GetEmailDomains', new TenantApiError(401, 'gone'))
+        api.FailOn.set('GetEmailDomains', new ApiError(401, 'gone'))
         const host = new TenantTestHost(api)
         await new SettingsPageViewModel(host.Session).Refresh()
         assert.equal(host.Reloader.Count, 1)
@@ -138,16 +138,16 @@ describe('SettingsPageViewModel', () =>
             ['Tenant id', 'tenant-1'],
             ['Organisation', 'Example Org'],
             ['Owner contact', 'owner@example.test'],
-            ['Your role', 'Tenant owner'],
+            ['Your role', 'Tenant admin'],
             ['Hive', 'Example Hive'],
         ])
         const sparse = Fixture.Api()
         sparse.ProfileDto = {
-            principalId: 'p', roleLabel: 'Viewer', tenant: { id: 't', displayName: 'T' },
+            principalId: 'p', roleLabel: 'Environment admin', tenant: { id: 't', displayName: 'T' },
             capabilities: TenantTestHost.AllCapabilities,
         }
         const other = await Fixture.Page(sparse)
-        assert.deepEqual(Fixture.Pairs(other, SettingsTab.Profile), [['Tenant name', 'T'], ['Tenant id', 't'], ['Your role', 'Viewer']])
+        assert.deepEqual(Fixture.Pairs(other, SettingsTab.Profile), [['Tenant name', 'T'], ['Tenant id', 't'], ['Your role', 'Environment admin']])
     })
 
     it('shows the identity provider by reference only', async () =>
@@ -183,15 +183,15 @@ describe('SettingsPageViewModel', () =>
     it('is Denied on a 403, Error on another failure, and a 401 expires the session', async () =>
     {
         const denied = Fixture.Api()
-        denied.FailOn.set('Profile', new TenantApiError(403, 'forbidden'))
+        denied.FailOn.set('Profile', new ApiError(403, 'forbidden'))
         assert.equal((await Fixture.Page(denied)).State, PageState.Denied)
         const failed = Fixture.Api()
-        failed.FailOn.set('ListHives', new TenantApiError(500, 'hives down'))
+        failed.FailOn.set('ListHives', new ApiError(500, 'hives down'))
         const page = await Fixture.Page(failed)
         assert.equal(page.State, PageState.Error)
         assert.equal(page.ErrorText, 'hives down')
         const expired = Fixture.Api()
-        expired.FailOn.set('Profile', new TenantApiError(401, 'gone'))
+        expired.FailOn.set('Profile', new ApiError(401, 'gone'))
         const host = new TenantTestHost(expired)
         await new SettingsPageViewModel(host.Session).Refresh()
         assert.equal(host.Reloader.Count, 1)

@@ -6,7 +6,7 @@ import { EnvServerSeedSource } from './env-server-seed.js'
 import { InClusterRegistry } from './in-cluster-registry.js'
 import { IdpWorkloadNames, type IdpWorkloadSpec } from './idp-workload-driver.js'
 import { TenantAdminEnv } from './tenant-admin-env.js'
-import type { TenantAdminWorkloadSpec } from './tenant-admin-workload.js'
+import { TenantAdminDatabaseSecret, type TenantAdminDatabaseSpec, type TenantAdminWorkloadSpec } from './tenant-admin-workload.js'
 import { InvalidRecordIdError } from './platform-records.js'
 import { KindClusterName } from './kind-cluster-name.js'
 import { IngressTlsPolicy, IngressTlsSource, type IngressTls } from './ingress-tls.js'
@@ -57,6 +57,7 @@ export class K8sManifestBuilder
     private static readonly StorageKey = 'storage'
     private static readonly ServiceAccountNameKey = 'serviceAccountName'
     private static readonly CommandKey = 'command'
+    private static readonly ArgsKey = 'args'
     private static readonly RulesKey = 'rules'
     private static readonly ApiGroupsKey = 'apiGroups'
     private static readonly ApiGroupKey = 'apiGroup'
@@ -269,6 +270,36 @@ export class K8sManifestBuilder
     private static readonly TenantAdminDataSize = '256Mi'
     private static readonly TenantAdminBindAll = '0.0.0.0'
     private static readonly TenantAdminUid = 10001
+    // The console's pragmatic-postgres sidecar (the image's own paths; its user is 999, the console's group reads the Secret).
+    private static readonly ConsolePostgresContainerName = 'postgres'
+    private static readonly ConsolePostgresSuffix = '-postgres'
+    private static readonly ConsolePostgresUid = 999
+    /** The server's arguments: it listens on the pod's loopback only (the image's default listens on every address). */
+    public static readonly ConsolePostgresArgs: readonly string[] = ['postgres', '-c', 'listen_addresses=127.0.0.1']
+    private static readonly ConsolePostgresDataPath = '/var/lib/postgresql/data'
+    private static readonly ConsolePostgresDataSubPath = 'postgres'
+    private static readonly ConsolePostgresPgDataVar = 'PGDATA'
+    /** A folder under the mount, so initdb creates (and owns) it whatever the volume root's owner. */
+    private static readonly ConsolePostgresPgData = '/var/lib/postgresql/data/pgdata'
+    private static readonly ConsolePostgresSecretsVolume = 'postgres-secrets'
+    private static readonly ConsolePostgresSecretsMount = '/run/secrets/pragmatic-postgres'
+    private static readonly ConsolePostgresApplicationsDir = 'applications/'
+    private static readonly ConsolePostgresConfigVolume = 'postgres-config'
+    private static readonly ConsolePostgresConfigMount = '/etc/pragmatic-postgres'
+    private static readonly ConsolePostgresApplicationsFile = 'applications.conf'
+    private static readonly ConsolePostgresRunVolume = 'postgres-run'
+    private static readonly ConsolePostgresRunMount = '/var/run/postgresql'
+    private static readonly ConsolePostgresTmpVolume = 'postgres-tmp'
+    private static readonly ConsoleDatabaseVolume = 'database-url'
+    private static readonly ConsoleDatabaseMount = '/run/secrets/tenant-admin-database'
+    /** The mounted URL file (the mount plus the one projected item, TenantAdminDatabaseSecret.UrlKey). */
+    public static readonly ConsoleDatabaseUrlFile = '/run/secrets/tenant-admin-database/database-url'
+    private static readonly ConfigMapKindName = 'ConfigMap'
+    private static readonly ConfigMapVolumeKey = 'configMap'
+    private static readonly DataKeyName = 'data'
+    private static readonly SubPathKeyName = 'subPath'
+    private static readonly RunAsGroupKeyName = 'runAsGroup'
+    private static readonly NewLine = '\n'
     /** Non-root uid the server image runs as (docker/Dockerfile `USER 10001`); also the pod fsGroup so the 0440 Secret files are readable and the data PVC is writable. */
     private static readonly ServerUid = 10001
     private static readonly TenantAdminRootPath = '/'
@@ -999,6 +1030,7 @@ export class K8sManifestBuilder
             K8sManifestBuilder.TenantConsoleFingerprintSecretNameOf(tenantId),
             K8sManifestBuilder.TenantConsoleIdpCaSecretNameOf(tenantId),
             K8sManifestBuilder.TenantConsoleIdpTokenSecretNameOf(tenantId),
+            K8sManifestBuilder.ConsolePostgresNameOf(tenantId),
         ].map(name => K8sManifestBuilder.SystemSecretIdentity(name))
     }
 
@@ -1064,6 +1096,7 @@ export class K8sManifestBuilder
             this.TenantConsoleEnvClusterRole(spec),
             ...this.TenantConsoleTlsReadRbac(spec),
             this.TenantAdminClaim(spec),
+            ...this.ConsolePostgresConfig(spec),
             this.TenantAdminDeployment(spec),
             this.TenantAdminServiceObject(spec),
             ...this.TenantConsoleIngressObjects(spec),
@@ -1106,6 +1139,8 @@ export class K8sManifestBuilder
             this.Identity(B.ApiVersionNetworking, B.NetworkPolicyKind, name, system),
             ...B.TenantConsoleCredentialIdentitiesOf(tenantId),
             B.SystemSecretIdentity(B.TenantConsoleDevTlsSecretNameOf(tenantId)),
+            // The console's Postgres sidecar config; its data stays in the retained volume (a reinstall resumes it).
+            this.Identity(B.ApiVersionCore, B.ConfigMapKindName, B.ConsolePostgresNameOf(tenantId), system),
             // The in-hive IdP stops serving with its console; its namespace, data volume and Secrets stay (a reinstall resumes it).
             this.Identity(B.ApiVersionApps, B.DeploymentKind, idp, idp),
             this.Identity(B.ApiVersionCore, B.ServiceKind, idp, idp),
@@ -1416,7 +1451,7 @@ export class K8sManifestBuilder
             [K8sManifestBuilder.AutomountTokenKey]: true,
             [K8sManifestBuilder.SecurityContextKey]: { [K8sManifestBuilder.FsGroupKey]: K8sManifestBuilder.TenantAdminUid },
             [K8sManifestBuilder.InitContainersKey]: [this.TenantAdminSeedContainer(spec)],
-            [K8sManifestBuilder.ContainersKey]: [this.TenantAdminContainer(spec)],
+            [K8sManifestBuilder.ContainersKey]: [this.TenantAdminContainer(spec), ...this.ConsolePostgresContainers(spec)],
             [K8sManifestBuilder.VolumesKey]: [
                 {
                     [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TenantAdminDataVolume,
@@ -1426,6 +1461,7 @@ export class K8sManifestBuilder
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TmpVolume, [K8sManifestBuilder.EmptyDirKey]: {} },
                 ...this.TenantAdminIdpVolumes(spec),
                 ...this.TenantConsoleFingerprintVolumes(spec),
+                ...this.ConsolePostgresVolumes(spec),
             ],
         }
         if (spec.imagePullSecretName !== undefined)
@@ -1571,12 +1607,14 @@ export class K8sManifestBuilder
                 },
                 ...this.TenantAdminIdpEnv(spec),
                 ...this.TenantConsoleEnv(spec),
+                ...this.ConsoleDatabaseEnv(spec),
             ],
             [K8sManifestBuilder.VolumeMountsKey]: [
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TenantAdminDataVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TenantAdminDataMount },
                 { [K8sManifestBuilder.NameKey]: K8sManifestBuilder.TmpVolume, [K8sManifestBuilder.MountPathKey]: K8sManifestBuilder.TmpMount },
                 ...this.TenantAdminIdpMounts(spec),
                 ...this.TenantConsoleFingerprintMounts(spec),
+                ...this.ConsoleDatabaseMounts(spec),
             ],
             // The plane answers 403 to any Host that is not a known tenant subdomain, so the probe presents the tenant's own host.
             [K8sManifestBuilder.ReadinessProbeKey]: {
@@ -1590,6 +1628,100 @@ export class K8sManifestBuilder
                 },
             },
         }
+    }
+
+    /** The console's pragmatic-postgres name: its ConfigMap (applications.conf) and its database Secret's default name. */
+    public static ConsolePostgresNameOf(tenantId: string): string
+    {
+        return K8sManifestBuilder.TenantAdminNameOf(tenantId) + K8sManifestBuilder.ConsolePostgresSuffix
+    }
+
+    /** The sidecar's applications.conf: the console's one database and role. */
+    private ConsolePostgresConfig(spec: TenantAdminWorkloadSpec): K8sObject[]
+    {
+        if (spec.database === undefined)
+        {
+            return []
+        }
+        const B = K8sManifestBuilder
+        return [{
+            [B.ApiVersionKey]: B.ApiVersionCore,
+            [B.KindKey]: B.ConfigMapKindName,
+            [B.MetadataKey]: this.HiveAgentNamespacedMeta(spec.hiveId, B.ConsolePostgresNameOf(spec.tenantId)),
+            [B.DataKeyName]: { [B.ConsolePostgresApplicationsFile]: TenantAdminDatabaseSecret.ApplicationsLine() + B.NewLine },
+        }]
+    }
+
+    /**
+     * The pragmatic-postgres sidecar: non-root (999) with a read-only root, its data in the console's volume (its own sub
+     * folder, PGDATA one level below so initdb owns it), the superuser and console passwords projected from the database
+     * Secret as the image expects them, the applications file from the ConfigMap. It listens on the pod's loopback only
+     * (`listen_addresses`; no Service), so no other pod reaches it whether or not the console is exposed.
+     */
+    private ConsolePostgresContainers(spec: TenantAdminWorkloadSpec): K8sObject[]
+    {
+        const db = spec.database
+        if (db === undefined)
+        {
+            return []
+        }
+        const B = K8sManifestBuilder
+        return [{
+            [B.NameKey]: B.ConsolePostgresContainerName,
+            [B.ImageKey]: db.image,
+            [B.ImagePullPolicyKey]: B.IfNotPresent,
+            [B.ArgsKey]: [...B.ConsolePostgresArgs],
+            [B.SecurityContextKey]: {
+                [B.RunAsNonRootKey]: true,
+                [B.RunAsUserKey]: B.ConsolePostgresUid,
+                [B.RunAsGroupKeyName]: B.ConsolePostgresUid,
+                [B.AllowPrivilegeEscalationKey]: false,
+                [B.CapabilitiesKey]: { [B.DropKey]: [B.AllCapabilities] },
+                [B.SeccompProfileKey]: { [B.TypeKey]: B.RuntimeDefault },
+                [B.ReadOnlyRootFilesystemKey]: true,
+            },
+            [B.EnvKey]: [this.EnvLiteral(B.ConsolePostgresPgDataVar, B.ConsolePostgresPgData)],
+            [B.VolumeMountsKey]: [
+                { [B.NameKey]: B.TenantAdminDataVolume, [B.MountPathKey]: B.ConsolePostgresDataPath, [B.SubPathKeyName]: B.ConsolePostgresDataSubPath },
+                { [B.NameKey]: B.ConsolePostgresSecretsVolume, [B.MountPathKey]: B.ConsolePostgresSecretsMount, [B.ReadOnlyKey]: true },
+                { [B.NameKey]: B.ConsolePostgresConfigVolume, [B.MountPathKey]: B.ConsolePostgresConfigMount, [B.ReadOnlyKey]: true },
+                { [B.NameKey]: B.ConsolePostgresRunVolume, [B.MountPathKey]: B.ConsolePostgresRunMount },
+                { [B.NameKey]: B.ConsolePostgresTmpVolume, [B.MountPathKey]: B.TmpMount },
+            ],
+        }]
+    }
+
+    private ConsolePostgresVolumes(spec: TenantAdminWorkloadSpec): K8sObject[]
+    {
+        const db: TenantAdminDatabaseSpec | undefined = spec.database
+        if (db === undefined)
+        {
+            return []
+        }
+        const B = K8sManifestBuilder
+        const S = TenantAdminDatabaseSecret
+        return [
+            this.SecretVolume(B.ConsolePostgresSecretsVolume, db.secretName, [
+                { key: S.SuperuserKey, path: S.SuperuserKey },
+                { key: S.PasswordKey, path: B.ConsolePostgresApplicationsDir + S.Application },
+            ]),
+            { [B.NameKey]: B.ConsolePostgresConfigVolume, [B.ConfigMapVolumeKey]: { [B.NameKey]: B.ConsolePostgresNameOf(spec.tenantId) } },
+            { [B.NameKey]: B.ConsolePostgresRunVolume, [B.EmptyDirKey]: {} },
+            { [B.NameKey]: B.ConsolePostgresTmpVolume, [B.EmptyDirKey]: {} },
+            this.SecretVolume(B.ConsoleDatabaseVolume, db.secretName, [{ key: S.UrlKey, path: S.UrlKey }]),
+        ]
+    }
+
+    /** Where the console reads its database URL (a mounted secret file, never an inline value). */
+    private ConsoleDatabaseEnv(spec: TenantAdminWorkloadSpec): K8sObject[]
+    {
+        return spec.database === undefined ? [] : [this.EnvLiteral(TenantAdminEnv.DatabaseUrlFile, K8sManifestBuilder.ConsoleDatabaseUrlFile)]
+    }
+
+    private ConsoleDatabaseMounts(spec: TenantAdminWorkloadSpec): K8sObject[]
+    {
+        const B = K8sManifestBuilder
+        return spec.database === undefined ? [] : [{ [B.NameKey]: B.ConsoleDatabaseVolume, [B.MountPathKey]: B.ConsoleDatabaseMount, [B.ReadOnlyKey]: true }]
     }
 
     private TenantAdminServiceObject(spec: TenantAdminWorkloadSpec): K8sObject

@@ -64,7 +64,6 @@ export class LiveLoopStackNames
     public static readonly HiveId = 'e2e-hive'
     public static readonly OwnerEmail = 'o@t.io'
     public static readonly OperatorEmail = 'op@t.io'
-    public static readonly OwnerPassword = 'e2e-password'
     public static readonly OperatorPassword = 'e2e-operator'
     public static readonly OperatorPort = 7000
     public static readonly TenantPlanePort = 7100
@@ -370,7 +369,7 @@ export class LiveLoopStack
     }
 
     private readonly exec = new NodeExecFile()
-    private readonly secrets: string[] = [LiveLoopStackNames.OwnerPassword, LiveLoopStackNames.OperatorPassword]
+    private readonly secrets: string[] = [LiveLoopStackNames.OperatorPassword]
     private readonly kind = new KindCli(new NodeExecFile(), new NodeExecFile(KindCli.ImageLoadTimeoutMs))
 
     public static async Main(): Promise<void>
@@ -477,18 +476,13 @@ export class LiveLoopStack
         console.log(L.Steps.Agent)
         await new LiveLoopStackAgent(api).Install()
 
+        // The owner signs in once through the tenant plane (proving the realm sign-in); the console no longer changes a realm
+        // password (the realm's sign-in service owns it), so the one-time password stays the owner's, kept in an owner-only file.
         console.log(L.Steps.Owner)
         const owner = await TenantOwnerSession.Open(N.TenantPlaneOrigin, N.OwnerEmail, oneTime)
-        try
-        {
-            await owner.ChangePassword(oneTime, N.OwnerPassword)
-        }
-        finally
-        {
-            await owner.Close()
-        }
+        await owner.Close()
         const ownerPasswordFile = join(N.StackDir, L.OwnerPasswordFileName)
-        writeFileSync(ownerPasswordFile, N.OwnerPassword, { encoding: L.Utf8, mode: L.OwnerOnlyMode })
+        writeFileSync(ownerPasswordFile, oneTime, { encoding: L.Utf8, mode: L.OwnerOnlyMode })
 
         const descriptor: LiveLoopStackDescriptor = {
             platformAddress: N.PlatformAddress,

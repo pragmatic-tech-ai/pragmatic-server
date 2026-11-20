@@ -1,6 +1,6 @@
 import { ObservableCollection } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import { TenantApiError } from '../../tenant-api-client.js'
+import { ApiError } from '../../tenant-api-client.js'
 import type { HiveRolloutDto, RolloutEnvDto } from '../../tenant-types.js'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
@@ -138,7 +138,7 @@ export class ConnectionPageViewModel extends TenantPageViewModel
         }
         catch (e)
         {
-            if (!(e instanceof TenantApiError && e.Status === TenantApiError.UnavailableStatus))
+            if (!(e instanceof ApiError && e.Status === ApiError.UnavailableStatus))
             {
                 throw e
             }

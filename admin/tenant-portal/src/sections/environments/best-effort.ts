@@ -1,4 +1,4 @@
-import { TenantApiError } from '../../tenant-api-client.js'
+import { ApiError } from '../../tenant-api-client.js'
 
 // A read that only enriches a page (health, versions, the rollout): its
 // failure degrades to a fallback instead of failing the page. A 401 is still
@@ -20,7 +20,7 @@ export class BestEffort
 
     public static RethrowUnauthorized(e: unknown): void
     {
-        if (e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus)
+        if (e instanceof ApiError && e.Status === ApiError.UnauthorizedStatus)
         {
             throw e
         }

@@ -1,9 +1,8 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import { ApiError } from '../../api-client.js'
+import { ApiError, ControlPlaneErrors } from '../../api-client.js'
 import type { HiveClusterBackend, HiveDto, HiveProvisionMode, ProvisionInputDto, TenantDto } from '../../portal-types.js'
-import { PendingSecret, type IHoldsPendingSecret } from '../../shell/holds-pending-secret.js'
-import { PendingWork, type IHoldsPendingWork } from '../../shell/holds-pending-work.js'
+import { PendingSecret, PendingWork, type IHoldsPendingSecret, type IHoldsPendingWork } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { OptionViewModel } from '../../shell/option-view-model.js'
 import { PortalPageViewModel } from '../../shell/portal-page-view-model.js'
 import type { PortalSessionService } from '../../shell/portal-session-service.js'
@@ -1281,15 +1280,16 @@ export class ProvisionWizardPageViewModel extends PortalPageViewModel implements
     {
         const C = ProvisionWizardPageViewModel
         let text = C.FailedPrefix + (e instanceof Error ? e.message : String(e))
-        if (e instanceof ApiError && e.rollback !== undefined)
+        const rollback = e instanceof ApiError ? ControlPlaneErrors.Rollback(e) : undefined
+        if (rollback !== undefined)
         {
-            if (e.rollback.rolledBack.length > 0)
+            if (rollback.rolledBack.length > 0)
             {
-                text += C.RolledBackPrefix + e.rollback.rolledBack.join(C.ListSeparator) + C.SentenceEnd
+                text += C.RolledBackPrefix + rollback.rolledBack.join(C.ListSeparator) + C.SentenceEnd
             }
-            if (e.rollback.residue.length > 0)
+            if (rollback.residue.length > 0)
             {
-                text += C.ResiduePrefix + e.rollback.residue.join(C.ListSeparator) + C.SentenceEnd
+                text += C.ResiduePrefix + rollback.residue.join(C.ListSeparator) + C.SentenceEnd
             }
         }
         return text

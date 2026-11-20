@@ -2,7 +2,7 @@ import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/run
 import { Observable, type IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { ActivityLog } from '../../activity-log.js'
 import { EnvironmentRow } from '../../environment-row.js'
-import { TenantApiError } from '../../tenant-api-client.js'
+import { ApiError } from '../../tenant-api-client.js'
 import type { EnvironmentDto, HiveHealthDto, HiveRolloutDto, ManifestDto } from '../../tenant-types.js'
 import { AdminCapability } from '../../shell/admin-capability.js'
 import { ShownPage, type IShownPage } from '../../shell/shown-page.js'
@@ -78,11 +78,11 @@ export class OverviewHiveSnapshot
     private static ConnectionOf(e: unknown): OverviewConnectionState
     {
         BestEffort.RethrowUnauthorized(e)
-        if (e instanceof TenantApiError && e.Status === TenantApiError.UnavailableStatus)
+        if (e instanceof ApiError && e.Status === ApiError.UnavailableStatus)
         {
             return OverviewConnectionState.Quiet
         }
-        if (e instanceof TenantApiError && e.Status === TenantApiError.ForbiddenStatus)
+        if (e instanceof ApiError && e.Status === ApiError.ForbiddenStatus)
         {
             return OverviewConnectionState.Forbidden
         }

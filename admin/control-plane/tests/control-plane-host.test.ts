@@ -415,14 +415,14 @@ class Harness
 
     public static async Ticket(host: ControlPlaneHost): Promise<string>
     {
-        const r = await Harness.Send(host, 'GET', '/api/events-ticket')
+        const r = await Harness.Send(host, 'POST', '/api/ws-ticket', '{}')
         assert.equal(r.status, 200)
         return (JSON.parse(r.body) as { ticket: string }).ticket
     }
 
     public static async TicketFor(host: ControlPlaneHost, token: string): Promise<string>
     {
-        const r = await Harness.Anon(host, 'GET', '/api/events-ticket', undefined, { cookie: `cp_session=${token}` })
+        const r = await Harness.Anon(host, 'POST', '/api/ws-ticket', '{}', { cookie: `cp_session=${token}` })
         assert.equal(r.status, 200)
         return (JSON.parse(r.body) as { ticket: string }).ticket
     }
@@ -734,7 +734,7 @@ describe('ControlPlaneHost', () =>
     {
         const ok = await Harness.Anon(host, 'GET', '/api/session', undefined, { cookie: Harness.AuthCookie })
         assert.equal(ok.status, 200)
-        assert.deepEqual(JSON.parse(ok.body), { email: FakeOperator.Email, principalId: 'p1', role: 'full' })
+        assert.deepEqual(JSON.parse(ok.body), { subject: 'p1', claims: { amr: ['pwd'], app_roles: ['operator.full'], email: [FakeOperator.Email] } })
         assert.equal((await Harness.Anon(host, 'GET', '/api/session')).status, 401)
     })
 
@@ -745,7 +745,7 @@ describe('ControlPlaneHost', () =>
         const ok = await Harness.Anon(host, 'GET', '/api/session', undefined, { cookie: Harness.AuthCookie })
         assert.equal(ok.status, 200)
         const body = JSON.parse(ok.body)
-        assert.deepEqual(body, { email: FakeOperator.Email, principalId: 'p2', role: 'readonly' })
+        assert.deepEqual(body, { subject: 'p2', claims: { amr: ['pwd'], app_roles: ['operator.read-only'], email: [FakeOperator.Email] } })
         assert.ok(!('token' in body))
         assert.ok(!('password' in body))
     })
@@ -839,15 +839,15 @@ describe('ControlPlaneHost', () =>
         assert.equal(await opens(new WebSocket(url, [ticket])), false)
     })
 
-    it('events-ticket refuses a foreign Origin', async () =>
+    it('ws-ticket refuses a foreign Origin', async () =>
     {
-        const r = await Harness.Anon(host, 'GET', '/api/events-ticket', undefined, { cookie: Harness.AuthCookie, origin: 'http://evil.example' })
+        const r = await Harness.Anon(host, 'POST', '/api/ws-ticket', '{}', { cookie: Harness.AuthCookie, origin: 'http://evil.example' })
         assert.equal(r.status, 403)
     })
 
-    it('events-ticket requires a session', async () =>
+    it('ws-ticket requires a session', async () =>
     {
-        assert.equal((await Harness.Anon(host, 'GET', '/api/events-ticket')).status, 401)
+        assert.equal((await Harness.Anon(host, 'POST', '/api/ws-ticket', '{}')).status, 401)
     })
 
     it('logout closes the operator event sockets of that session', async () =>

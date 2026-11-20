@@ -150,8 +150,8 @@ export class PlatformConsoleImageApproval implements IConsoleImageApproval
     }
 }
 
-/** The images one console install runs: the tenant-admin pod and the in-hive IdP. */
-type ConsoleImages = { tenantAdmin: string; idp: string }
+/** The images one console install runs: the tenant-admin pod (with its pragmatic-postgres sidecar) and the in-hive IdP. */
+type ConsoleImages = { tenantAdmin: string; idp: string; postgres: string }
 
 /** The IdP's CA + admin token for the bootstrap, and the seed Secrets to apply (undefined when the running IdP's are reused). */
 type IdpMaterial = { ca: Buffer; adminToken: string; secretsManifest: string | undefined; scrub: string[] }
@@ -340,7 +340,9 @@ export class TenantConsoleInstaller
         }
         const tenantAdminImage = this.platformImages.ImageOf(ReleaseApp.TenantAdmin)
         const idpImage = this.platformImages.ImageOf(ReleaseApp.TenantIdp)
-        if (tenantAdminImage === undefined || idpImage === undefined)
+        // The console stores in its own pragmatic-postgres (a sidecar): a release without that image cannot run a console.
+        const postgresImage = this.platformImages.ImageOf(ReleaseApp.Postgres)
+        if (tenantAdminImage === undefined || idpImage === undefined || postgresImage === undefined)
         {
             throw new ConsoleInstallUnavailableError(PlatformImages.NoReleaseMessage)
         }
@@ -355,7 +357,7 @@ export class TenantConsoleInstaller
         }
         const run = new ConsoleInstallRun(hiveId, new Date(this.clock.Now()).toISOString())
         this.runs.set(hiveId, run)
-        run.settled = this.Run(run, hive, tenant, spec, channelUrl, { tenantAdmin: tenantAdminImage, idp: idpImage })
+        run.settled = this.Run(run, hive, tenant, spec, channelUrl, { tenantAdmin: tenantAdminImage, idp: idpImage, postgres: postgresImage })
         return run.Snapshot()
     }
 
@@ -586,6 +588,7 @@ export class TenantConsoleInstaller
                 tenant,
                 hive,
                 tenantAdminImage: images.tenantAdmin,
+                postgresImage: images.postgres,
                 tenantPlanePort: C.ConsolePort,
                 baseDomain: spec.baseDomain,
                 externalScheme: C.HttpsScheme,

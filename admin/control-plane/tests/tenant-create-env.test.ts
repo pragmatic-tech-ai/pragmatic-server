@@ -9,9 +9,10 @@ import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
-import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import type { TenantSession } from '../tenant-auth/tenant-sessions.js'
 import { ResRecorder } from './res-recorder.js'
 import { TenantSignInInHiveError } from '../tenant-idp-mode.js'
+import { TenantApiDispatch } from './tenant-test-sessions.js'
 
 // Captures console.error lines for the duration of one call, restoring it afterwards.
 class ErrorLog
@@ -122,7 +123,7 @@ describe('TenantApiEndpoint POST /tenant-api/environments', () =>
     async function Post(req: IncomingMessage, tenantId = 't-a'): Promise<ResRecorder>
     {
         const res = new ResRecorder()
-        assert.equal(await endpoint.Handle(req, res as unknown as ServerResponse, Path, Fixtures.Session(tenantId)), true)
+        assert.equal(await TenantApiDispatch.Handle(endpoint, req, res as unknown as ServerResponse, Path, Fixtures.Session(tenantId), TenantApiDispatch.OwnerlessDirectory), true)
         return res
     }
 

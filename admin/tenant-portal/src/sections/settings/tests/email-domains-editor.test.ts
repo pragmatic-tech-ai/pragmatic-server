@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { ToVisibility, Visibility } from '@pragmatic-tech-ai/mural/runtime'
-import { TenantApiError } from '../../../tenant-api-client.js'
+import { ApiError } from '../../../tenant-api-client.js'
 import { FakeTenantApi, TenantTestHost } from '../../../shell/tests/tenant-test-fixtures.js'
 import { DomainApprovalState, type DomainVerificationDto } from '../../../tenant-types.js'
 import { EmailDomainsEditorViewModel } from '../email-domains-editor-view-model.js'
@@ -60,7 +60,7 @@ describe('EmailDomainsEditorViewModel', () =>
     {
         const api = new FakeTenantApi()
         const editor = await Fixture.Loaded(api)
-        api.FailOn.set('SetEmailDomains', new TenantApiError(400, 'gmail.com is a public mail domain and cannot be used'))
+        api.FailOn.set('SetEmailDomains', new ApiError(400, 'gmail.com is a public mail domain and cannot be used'))
         editor.DomainsText = 'gmail.com'
         await editor.Save()
         assert.equal(editor.ErrorText, 'gmail.com is a public mail domain and cannot be used')
@@ -75,7 +75,7 @@ describe('EmailDomainsEditorViewModel', () =>
         const host = new TenantTestHost(api)
         const editor = Fixture.Editor(api, host)
         editor.Apply(await api.GetEmailDomains(), true)
-        api.FailOn.set('SetEmailDomains', new TenantApiError(401, 'gone'))
+        api.FailOn.set('SetEmailDomains', new ApiError(401, 'gone'))
         editor.DomainsText = 'beta.test'
         await editor.Save()
         assert.equal(host.Reloader.Count, 1)
@@ -326,12 +326,12 @@ describe('EmailDomainsEditorViewModel', () =>
             verifications: [Fixture.Verification('acme.test', DomainApprovalState.Pending, false)],
         }
         editor.Apply(await api.GetEmailDomains(), true)
-        api.FailOn.set('VerifyEmailDomain', new TenantApiError(429, 'Too many lookups for this tenant; try again later.'))
+        api.FailOn.set('VerifyEmailDomain', new ApiError(429, 'Too many lookups for this tenant; try again later.'))
         await editor.VerifyDomain('acme.test')
         assert.equal(editor.ErrorText, 'Too many lookups for this tenant; try again later.')
         assert.equal(editor.VerifyNoticeText, '')
         assert.equal(editor.IsVerifying, false)
-        api.FailOn.set('VerifyEmailDomain', new TenantApiError(401, 'gone'))
+        api.FailOn.set('VerifyEmailDomain', new ApiError(401, 'gone'))
         await editor.VerifyDomain('acme.test')
         assert.equal(host.Reloader.Count, 1)
         assert.equal(editor.ErrorText, '')

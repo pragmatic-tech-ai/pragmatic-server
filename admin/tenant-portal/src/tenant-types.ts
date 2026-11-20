@@ -1,9 +1,7 @@
-// Wire shapes of the 7a tenant surface (/tenant-auth/* + /tenant-api/*), kept verbatim.
+import type { IPageLocation } from '@pragmatic-tech-ai/pragmatic-app-shell'
 
-export type SessionDto = { tenantId: string; principalId: string; email?: string }
-
-// The reply to an own-password change: changed; whether the other sessions were signed out, and why not when not.
-export type PasswordChangedDto = { ok: boolean; otherSessionsEnded: boolean; warning?: string }
+// Wire shapes of the 7a tenant surface (/tenant-auth/* + /tenant-api/*), kept verbatim. The session itself is the
+// app-host shape (`{ subject, claims }`), read by the shell's AppSession.
 
 // Mirrored by hand from the server's tenant-profile-dto.ts; the portal never imports pragmatic-protocol.
 export type AdminCapabilitiesDto = { envs: boolean; adopt: boolean; access: boolean; settings: boolean }
@@ -156,9 +154,12 @@ export interface IWebSocketLike
     Close(): void
 }
 
+// Opens the console's sockets: each carries its single-use ticket (POST /tenant-api/ws-ticket) as its lone
+// subprotocol; there is no cookie auth on the upgrade. Location is the page's own, so a socket stays on its origin.
 export interface IWebSocketFactory
 {
-    Open(url: string): IWebSocketLike
+    readonly Location: IPageLocation
+    Open(url: string, ticket: string): IWebSocketLike
 }
 
 // Admin wire shapes mirrored from the server; the portal never imports pragmatic-protocol.
@@ -405,3 +406,73 @@ export interface ConnectionStatus
     targetVersion: string | undefined
     environments: readonly ConnectionEnvironment[]
 }
+
+// The configuration repository (/tenant-api/configuration/), mirrored by hand from the server. A version number is
+// 1-based; 0 names the empty document (a diff's "from" before the first version). Secret settings hold secret
+// references (`secret:<store>/<name>`), never values.
+export type ConfigurationTargetDto = { environment: string; hive: string; namespace: string; deployment: string; applied: number | null }
+
+export type ConfigurationComponentDto = {
+    component: string
+    componentVersion: string
+    descriptorDigest: string
+    head: number | null
+    targets: ConfigurationTargetDto[]
+}
+
+export type ConfigurationSettingDto = { name: string; type: string; description: string; required: boolean; secret: boolean; default?: unknown }
+
+export type ConfigurationOptionDto = { name: string; description: string; settings: ConfigurationSettingDto[] }
+
+export type ConfigurationVersionSummaryDto = {
+    version: number
+    componentVersion: string
+    descriptorDigest: string
+    author: string
+    createdAt: string
+    comment: string
+}
+
+// How an apply ended; values match the server wire strings.
+export enum ConfigurationApplyOutcome
+{
+    Applied = 'applied',
+    Failed = 'failed',
+}
+
+export type ConfigurationApplyDto = {
+    id: string
+    version: number
+    environment: string
+    outcome: ConfigurationApplyOutcome
+    requestedBy: string
+    requestedAt: string
+    completedAt: string | null
+    detail: string | null
+}
+
+export type ConfigurationComponentDetailDto = {
+    component: string
+    componentVersion: string
+    descriptorDigest: string
+    options: ConfigurationOptionDto[]
+    versions: ConfigurationVersionSummaryDto[]
+    applies: ConfigurationApplyDto[]
+}
+
+export type ConfigurationVersionDto = ConfigurationVersionSummaryDto & { document: unknown }
+
+// What a diff found at one path; values match the server wire strings.
+export enum ConfigurationChangeKind
+{
+    Added = 'added',
+    Removed = 'removed',
+    Changed = 'changed',
+}
+
+export type ConfigurationChangeDto = { path: string; kind: ConfigurationChangeKind; before?: unknown; after?: unknown }
+
+export type ConfigurationDiffDto = { from: number; to: number; changes: ConfigurationChangeDto[] }
+
+// One reason a saved document did not validate (a 422's `errors`).
+export type ConfigurationValidationErrorDto = { path: string; message: string }

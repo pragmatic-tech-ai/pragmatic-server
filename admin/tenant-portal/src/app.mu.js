@@ -1,4 +1,5 @@
 import { AppResources } from "./app.resources.mu.js";
+import { ConfigurationModule } from "./sections/configuration/configuration.module.mu.js";
 import { ConnectionModule } from "./sections/connection/connection.module.mu.js";
 import { EnvironmentsModule } from "./sections/environments/environments.module.mu.js";
 import { OverviewModule } from "./sections/overview/overview.module.mu.js";
@@ -18,6 +19,7 @@ import { NavigationService } from "@pragmatic-tech-ai/mural/framework/shell/serv
 import { ToolTipService } from "@pragmatic-tech-ai/mural/framework/tooltips/tooltip-service.js";
 import { Pragmatic, PragmaticDark } from "@pragmatic-tech-ai/mural/resources/pragmatic";
 import { Application, DataContextBinding, DynamicResource, NameScope, ServiceBinding, ServiceProvider, Setter, SetterFactory, Style } from "@pragmatic-tech-ai/mural/runtime";
+import { AppShellResources } from "@pragmatic-tech-ai/pragmatic-app-shell";
 
 export const app = (() => {
     const _app0 = new Application();
@@ -31,8 +33,10 @@ export const app = (() => {
     _app0.AddModule(UsersAccessModule);
     _app0.AddModule(ReleasesModule);
     _app0.AddModule(SettingsModule);
+    _app0.AddModule(ConfigurationModule);
     _app0.AddModule(ConnectionModule);
     const _rd1 = _app0.Resources;
+    for (const [_k, _v] of AppShellResources.Clone().Entries()) _rd1.Set(_k, _v);
     for (const [_k, _v] of ShellResources.Clone().Entries()) _rd1.Set(_k, _v);
     for (const [_k, _v] of AppResources.Clone().Entries()) _rd1.Set(_k, _v);
     for (const [_k, _v] of TenantIcons.Clone().Entries()) _rd1.Set(_k, _v);

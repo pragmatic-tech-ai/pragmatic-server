@@ -1,5 +1,5 @@
 import type { HiveRecord, TenantRecord } from '../platform-records.js'
-import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import type { TenantSession } from '../tenant-auth/tenant-sessions.js'
 import type { AdminCapabilities, AdminRoleCapabilities } from './tenant-admin-capabilities.js'
 
 export type AdminCapabilitiesDto = AdminCapabilities

@@ -13,8 +13,9 @@
  * REAL AgentChannelHost on all interfaces (pod-visible as host.docker.internal; override the host with
  * PRAGMATIC_SMOKE_CHANNEL_HOST), then generates a bootstrap with TenantAdminBootstrap (agent token, per-tenant master key,
  * seed read-models, trust-root public key) and applies it: the per-hive agent objects plus the tenant-admin container
- * (RenderTenantAdmin), then the bootstrap Secrets. The seed Secret also carries a DIRECTLY-SEEDED tenant session and one
- * environment record (no browser OIDC login is performed). The smoke then asserts the container SERVES (rollout ready,
+ * (RenderTenantAdmin, with its pragmatic-postgres sidecar), then the bootstrap Secrets. The seed Secret also carries one
+ * pre-A5 environment record, which the console imports into its database at its first start; a tenant session is
+ * DIRECTLY SEEDED into the console's database through a port-forward to its sidecar (no browser OIDC login is performed). The smoke then asserts the container SERVES (rollout ready,
  * GET / serves the SPA, unauthenticated /tenant-auth/session and /tenant-api/* answer 401) and, with the seeded session
  * cookie through a kubectl port-forward, that /tenant-api lists the hive and the seeded environment, reads the gated
  * manifests over the agent channel, and adopts a version, which the platform registry then records as the hive target.
@@ -22,7 +23,7 @@
  * Environment creation is NOT exercised: the tenant plane exposes no create route, and in-pod lifecycle needs a
  * non-docker environment driver that does not exist yet (see the task report).
  */
-import { randomBytes, generateKeyPairSync } from 'node:crypto'
+import { generateKeyPairSync } from 'node:crypto'
 import { SmokeCluster } from './smoke-cluster.js'
 import { spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
@@ -55,7 +56,12 @@ import { TenantPlaneComposer } from './tenant-plane-composer.js'
 import { TenantAdminBootstrap } from './tenant-admin-bootstrap.js'
 import type { TenantBootstrap } from './tenant-admin-bootstrap.js'
 import { TenantRegistry } from './tenant-registry.js'
-import { TenantSessionCookie } from './tenant-auth/tenant-session-cookie.js'
+import { SqlSessionRepository } from '@pragmatic-tech-ai/pragmatic-app-host'
+import { PgSession } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
+import pg from 'pg'
+import { TenantSessionClaims, TenantSessions } from './tenant-auth/tenant-sessions.js'
+import { TenantAdminDatabaseSecret } from './tenant-admin-workload.js'
+import { DevPlatformImages } from './platform-images.js'
 
 /** The smoke never reconciles against docker, so no container is ever reported running. */
 class NoContainerProbe implements IContainerProbe
@@ -67,7 +73,7 @@ class NoContainerProbe implements IContainerProbe
 }
 
 /** The slices of the tenant-api responses the smoke reads. */
-type SessionDto = { principalId?: string }
+type SessionDto = { subject?: string }
 type HiveDto = { id?: string }
 type EnvironmentDto = { name?: string }
 type ManifestDto = { id?: string }
@@ -93,13 +99,14 @@ export class TenantAdminSmoke
     private static readonly BaseDomain = 'tenants.smoke.test'
     private static readonly Scheme = 'http'
     private static readonly SeedEnvName = 'ta-seeded-env'
-    private static readonly SessionsFile = 'tenant-sessions.json'
-    private static readonly SessionsRootKey = 'sessions'
     private static readonly SessionPrincipal = 'smoke-maker'
     private static readonly SessionEmail = 'maker@ta-smoke.test'
-    private static readonly SessionTtlMs = 3600000
-    private static readonly TokenBytes = 32
-    private static readonly TokenEncoding = 'base64url'
+    private static readonly PostgresImageEnv = 'PRAGMATIC_SMOKE_POSTGRES_IMAGE'
+    private static readonly JsonPathFlagPrefix = '-o=jsonpath={.data.'
+    private static readonly JsonPathFlagSuffix = '}'
+    private static readonly Base64 = 'base64'
+    private static readonly LoopbackPortPrefix = '127.0.0.1:'
+    private static readonly SlashSep = '/'
     private static readonly Ed25519 = 'ed25519'
     private static readonly Pem = 'pem'
     private static readonly Spki = 'spki'
@@ -107,7 +114,7 @@ export class TenantAdminSmoke
     private static readonly ContentTypeResponseHeader = 'content-type'
     private static readonly ChannelLabel = 'agent channel host'
     private static readonly HiveSelectorPrefix = 'pragmatic/hive='
-    private static readonly DotSep = '.'
+    private static readonly CookieAssign = '='
     private static readonly Space = ' '
     private static readonly NameJoin = ', '
     private static readonly EnvironmentsKey = 'environments'
@@ -144,7 +151,7 @@ export class TenantAdminSmoke
     private static readonly SecretKind = 'secret'
     private static readonly DeploymentPrefix = 'deploy/'
     private static readonly ServicePrefix = 'svc/'
-    private static readonly NamespacedKinds = 'deployment,service,serviceaccount,persistentvolumeclaim'
+    private static readonly NamespacedKinds = 'deployment,service,serviceaccount,persistentvolumeclaim,configmap'
     /** Cluster-scoped, hive-labelled objects of the tenant-admin manifest (console RBAC and its admission fence). */
     private static readonly ClusterKinds = 'clusterrole,clusterrolebinding,validatingadmissionpolicy,validatingadmissionpolicybinding'
     private static readonly ForwardingReady = 'Forwarding from'
@@ -208,13 +215,14 @@ export class TenantAdminSmoke
     private failed = false
     private tempDir: string | undefined
     private channel: AgentChannelHost | undefined
-    private forward: ChildProcess | undefined
+    private readonly forwards: ChildProcess[] = []
     private applied = false
     private systemNamespacePreExisted = true
     private bootstrap: TenantBootstrap | undefined
     private readonly exec = new NodeExecFile()
     private readonly context = SmokeCluster.Context()
     private readonly image = process.env[TenantAdminSmoke.ImageEnv] ?? TenantAdminSmoke.DefaultImage
+    private readonly postgresImage = process.env[TenantAdminSmoke.PostgresImageEnv] ?? DevPlatformImages.PostgresImage
     private readonly channelHost = process.env[TenantAdminSmoke.ChannelHostEnv] ?? TenantAdminSmoke.DefaultChannelHost
     private readonly tenantHost = TenantAdminSmoke.TenantId + '.' + TenantAdminSmoke.BaseDomain
     private sessionToken = TenantAdminSmoke.EmptyString
@@ -267,6 +275,7 @@ export class TenantAdminSmoke
                 externalScheme: S.Scheme,
                 channelUrl,
                 trustRootPublicKey: generateKeyPairSync(S.Ed25519).publicKey.export({ type: S.Spki, format: S.Pem }).toString(),
+                postgresImage: this.postgresImage,
             })
             this.SeedTestState(this.bootstrap)
             console.log(S.InfoTag + S.InfoBootstrap + this.bootstrap.secrets.Names().join(S.NameJoin))
@@ -286,7 +295,8 @@ export class TenantAdminSmoke
             if (rolledOut)
             {
                 this.Expect(S.Labels.Rollout, true)
-                const port = await this.StartForward(admin)
+                const port = await this.StartForward(S.ServicePrefix + admin, S.TenantPlanePort)
+                await this.SeedSession(admin)
                 await this.CheckUnauthenticated(port)
                 await this.CheckAuthenticated(port)
                 this.Expect(S.Labels.Recorded, registry.TargetFor(S.HiveId)?.version === S.VersionV2)
@@ -338,21 +348,10 @@ export class TenantAdminSmoke
         return url
     }
 
-    /**
-     * SMOKE-ONLY seeding that rides in the seed Secret next to seed.json: one pre-issued tenant session (so no browser OIDC
-     * login is needed; the token never leaves this process and the cluster Secret) and one environment record to list.
-     */
+    /** SMOKE-ONLY seeding that rides in the seed Secret next to seed.json: one pre-A5 environment record to list (imported at start). */
     private SeedTestState(bootstrap: TenantBootstrap): void
     {
         const S = TenantAdminSmoke
-        this.sessionToken = randomBytes(S.TokenBytes).toString(S.TokenEncoding)
-        const session = {
-            id: this.sessionToken,
-            tenantId: S.TenantId,
-            principalId: S.SessionPrincipal,
-            email: S.SessionEmail,
-            expiresAt: new Date(Date.now() + S.SessionTtlMs).toISOString(),
-        }
         const record: EnvironmentRecord = {
             name: S.SeedEnvName,
             type: EnvType.Development,
@@ -367,8 +366,32 @@ export class TenantAdminSmoke
             createdAt: S.EpochIso,
             status: EnvStatus.Unknown,
         }
-        bootstrap.secrets.AddEntry(bootstrap.seedSecretName, S.SessionsFile, JSON.stringify({ [S.SessionsRootKey]: { [session.id]: session } }))
         bootstrap.secrets.AddEntry(bootstrap.seedSecretName, TenantPlaneComposer.RegistryFile, JSON.stringify({ [S.EnvironmentsKey]: { [record.name]: record } }))
+    }
+
+    /**
+     * SMOKE-ONLY: issues one console session straight into the console's database (a port-forward to its Postgres sidecar,
+     * the URL from the console's database Secret); the token never leaves this process.
+     */
+    private async SeedSession(admin: string): Promise<void>
+    {
+        const S = TenantAdminSmoke
+        const secret = K8sManifestBuilder.ConsolePostgresNameOf(S.TenantId)
+        const encoded = await this.exec.Run(S.Kubectl, [S.ContextFlag, this.context, S.GetVerb, S.SecretKind, secret, S.NamespaceFlag, K8sManifestBuilder.SystemNamespace,
+            S.JsonPathFlagPrefix + TenantAdminDatabaseSecret.UrlKey + S.JsonPathFlagSuffix])
+        const local = await this.StartForward(S.DeploymentPrefix + admin, TenantAdminDatabaseSecret.Port)
+        const url = Buffer.from(encoded.stdout.trim(), S.Base64).toString(S.Utf8)
+            .replace(S.LoopbackPortPrefix + String(TenantAdminDatabaseSecret.Port) + S.SlashSep, S.LoopbackPortPrefix + String(local) + S.SlashSep)
+        const session = new PgSession(new pg.Pool({ connectionString: url }))
+        try
+        {
+            const sessions = new TenantSessions({ ...TenantSessions.InMemory(), Sessions: await SqlSessionRepository.Open(session) }, false)
+            this.sessionToken = (await sessions.Store.Issue(S.SessionPrincipal, TenantSessionClaims.Of(S.TenantId, S.SessionEmail))).Token
+        }
+        finally
+        {
+            await session.Dispose()
+        }
     }
 
     /** Manifest first (creates the shared Namespace), then the Secrets; pods wait on their Secret volumes until it lands. */
@@ -383,13 +406,13 @@ export class TenantAdminSmoke
         console.log(S.InfoTag + S.InfoApplied)
     }
 
-    /** Starts `kubectl port-forward` to the tenant Service on a free local port; resolves with that port once it reports forwarding. */
-    private async StartForward(serviceName: string): Promise<number>
+    /** Port-forwards `target` (`svc/<name>` or `deploy/<name>`) in pragmatic-system to a free local port; resolves with that port once it reports forwarding. */
+    private async StartForward(target: string, remotePort: number): Promise<number>
     {
         const S = TenantAdminSmoke
         const local = await TenantAdminSmoke.FreePort()
-        const child = spawn(S.Kubectl, [S.ContextFlag, this.context, S.NamespaceFlag, K8sManifestBuilder.SystemNamespace, S.PortForwardVerb, S.ServicePrefix + serviceName, `${local}${S.UrlPortSep}${S.TenantPlanePort}`])
-        this.forward = child
+        const child = spawn(S.Kubectl, [S.ContextFlag, this.context, S.NamespaceFlag, K8sManifestBuilder.SystemNamespace, S.PortForwardVerb, target, `${local}${S.UrlPortSep}${remotePort}`])
+        this.forwards.push(child)
         await new Promise<void>((resolve, reject) =>
         {
             const timer = setTimeout(() => reject(new Error(S.ForwardTimeoutMessage)), S.ForwardTimeoutMs)
@@ -446,7 +469,7 @@ export class TenantAdminSmoke
     {
         const S = TenantAdminSmoke
         const session = await this.Http(port, S.MethodGet, S.SessionPath, undefined, true)
-        this.Expect(S.Labels.Session, session.status === S.StatusOk && (session.json as SessionDto | undefined)?.principalId === S.SessionPrincipal, S.StatusWord + String(session.status))
+        this.Expect(S.Labels.Session, session.status === S.StatusOk && (session.json as SessionDto | undefined)?.subject === S.SessionPrincipal, S.StatusWord + String(session.status))
         const hives = await this.Http(port, S.MethodGet, S.HivesPath, undefined, true)
         const hiveList = TenantAdminSmoke.AsList<HiveDto>(hives.json)
         this.Expect(S.Labels.Hives, hives.status === S.StatusOk && hiveList.length === 1 && hiveList[0]?.id === S.HiveId, S.StatusWord + String(hives.status))
@@ -467,7 +490,7 @@ export class TenantAdminSmoke
         const headers: Record<string, string> = { [S.HostHeader]: this.tenantHost }
         if (withSession)
         {
-            headers[S.CookieHeader] = TenantSessionCookie.Name + '=' + encodeURIComponent(S.TenantId) + S.DotSep + this.sessionToken
+            headers[S.CookieHeader] = TenantSessions.CookieName + S.CookieAssign + this.sessionToken
         }
         if (method === S.MethodPost)
         {
@@ -561,7 +584,10 @@ export class TenantAdminSmoke
     private async Cleanup(): Promise<void>
     {
         const S = TenantAdminSmoke
-        this.forward?.kill()
+        for (const forward of this.forwards)
+        {
+            forward.kill()
+        }
         await this.BestEffort(S.ChannelLabel, async () => { await this.channel?.Close() })
         if (this.applied)
         {

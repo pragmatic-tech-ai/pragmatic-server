@@ -1,6 +1,6 @@
 import { ObservableCollection } from '@pragmatic-tech-ai/mural/runtime'
 import { Observable } from '@pragmatic-tech-ai/todl-runtime'
-import { TenantApiError } from '../../tenant-api-client.js'
+import { ApiError } from '../../tenant-api-client.js'
 import { TenantPageViewModel } from '../../shell/tenant-page-view-model.js'
 import type { TenantSessionService } from '../../shell/tenant-session-service.js'
 import { UtcText } from '../../shell/utc-text.js'
@@ -227,8 +227,8 @@ export class SettingsPageViewModel extends TenantPageViewModel
         return this.profile !== undefined
     }
 
-    // The email-domain read as a value: the dto, a TenantApiError to show in the tab, or a thrown 401.
-    private static async ReadEmailDomains(read: Promise<EmailDomainsDto>): Promise<EmailDomainsDto | TenantApiError | Error>
+    // The email-domain read as a value: the dto, a ApiError to show in the tab, or a thrown 401.
+    private static async ReadEmailDomains(read: Promise<EmailDomainsDto>): Promise<EmailDomainsDto | ApiError | Error>
     {
         try
         {
@@ -236,7 +236,7 @@ export class SettingsPageViewModel extends TenantPageViewModel
         }
         catch (e)
         {
-            if (e instanceof TenantApiError && e.Status === TenantApiError.UnauthorizedStatus)
+            if (e instanceof ApiError && e.Status === ApiError.UnauthorizedStatus)
             {
                 throw e
             }
@@ -250,7 +250,7 @@ export class SettingsPageViewModel extends TenantPageViewModel
         {
             this.emailDomains.Apply(result, canChangeSettings)
         }
-        else if (result instanceof TenantApiError && result.Status === SettingsPageViewModel.NotFoundStatus)
+        else if (result instanceof ApiError && result.Status === SettingsPageViewModel.NotFoundStatus)
         {
             this.emailDomains.ApplyUnavailable()
         }

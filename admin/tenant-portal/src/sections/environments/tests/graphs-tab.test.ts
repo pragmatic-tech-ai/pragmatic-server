@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { TenantApiError } from '../../../tenant-api-client.js'
+import { ApiError } from '../../../tenant-api-client.js'
 import { EnvType, type GraphDto } from '../../../tenant-types.js'
 import { ConfirmDialogViewModel } from '../../../shell/confirm-dialog-view-model.js'
 import { FakeTenantApi, TenantTestHost, Tick } from '../../../shell/tests/tenant-test-fixtures.js'
@@ -92,7 +92,7 @@ describe('Graphs tab', () =>
     it("shows the route's sentence when graphs cannot be listed", async () =>
     {
         const api = GraphsFixture.Development('dev1', [GraphsFixture.Graph('sales', 1)])
-        api.FailOn.set('ListGraphs', new TenantApiError(503, UnreachableSentence))
+        api.FailOn.set('ListGraphs', new ApiError(503, UnreachableSentence))
         const page = await GraphsFixture.Detail(new SectionsFixture(api), 'dev1')
         assert.equal(page.GraphsTab.IsError, true)
         assert.equal(page.GraphsTab.ErrorText, UnreachableSentence)
@@ -185,7 +185,7 @@ describe('Graphs tab', () =>
         const f = new SectionsFixture(api)
         const page = await GraphsFixture.Detail(f, 'dev1')
         const tab = page.GraphsTab
-        api.FailOn.set('DeleteGraph', new TenantApiError(404, NotFoundSentence))
+        api.FailOn.set('DeleteGraph', new ApiError(404, NotFoundSentence))
         tab.Rows.ToArray()[0]!.DeleteCommand.Execute()
         await Tick.Settle()
         const confirm = f.Dialogs.Last

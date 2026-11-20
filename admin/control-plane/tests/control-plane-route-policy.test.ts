@@ -14,7 +14,7 @@ class RoutePolicyFixture
 {
     public static readonly Reads: readonly string[] = [
         '/api/environments', '/api/fleet', '/api/activity', '/api/manifests', '/api/policies', '/api/gating', '/api/selections', '/api/rollouts',
-        '/api/clients', '/api/clients/c1', '/api/tenants', '/api/tenants/t1', '/api/hives', '/api/hives/h1', '/api/events-ticket',
+        '/api/clients', '/api/clients/c1', '/api/tenants', '/api/tenants/t1', '/api/hives', '/api/hives/h1',
         '/api/tenants/t1/manifests', '/api/tenants/t1/email-domains', '/api/hives/h1/rollout', '/api/hives/h1/health', '/api/hives/h1/observations',
         '/api/hives/h1/ledger', '/api/hives/h1/bootstrap', '/api/hives/h1/agent-install', '/api/hives/h1/console-install',
         '/api/environments/e1/graphs', '/api/environments/e1/graphs/g1', '/api/environments/e1/loaded-graph',
@@ -40,6 +40,8 @@ class RoutePolicyFixture
         [HttpMethod.Get, '/api/ping'], [HttpMethod.Post, '/api/login'], [HttpMethod.Get, '/api/session'], [HttpMethod.Post, '/api/logout'], [HttpMethod.Post, '/api/desktop/discover'],
     ]
     public static readonly SelfService = '/api/session/password'
+    /** The socket ticket: any signed-in operator (the events socket itself admits both operator roles). */
+    public static readonly Ticket = '/api/ws-ticket'
 
     public static Table(): RouteTable
     {
@@ -61,7 +63,7 @@ class RoutePolicyFixture
     {
         const route = table.Match(method, path).Route
         assert.ok(route !== undefined, `${method} ${path} is declared`)
-        return new ClaimsAuthorizer(OperatorRoleClaims.RoleClaim).Authorize(route.Definition, RoutePolicyFixture.Session(role))
+        return new ClaimsAuthorizer().Authorize(route.Definition, RoutePolicyFixture.Session(role))
     }
 }
 
@@ -104,7 +106,7 @@ describe('ControlPlaneHost route policy', () =>
     {
         const now = new Date()
         const bare = new SessionRecord('id', 'p1', OperatorRoleClaims.Of({ email: 'op@example.com', principalId: 'p1', role: OperatorRole.Full }).With(OperatorRoleClaims.RoleClaim, []), now, new Date(now.getTime() + 60_000), now, new SessionPolicy(60_000))
-        const authorizer = new ClaimsAuthorizer(OperatorRoleClaims.RoleClaim)
+        const authorizer = new ClaimsAuthorizer()
         for (const [method, path] of [...F.FullOnly, ...F.Reads.map(p => [HttpMethod.Get, p] as [HttpMethod, string])])
         {
             const route = table.Match(method, path).Route
@@ -112,10 +114,29 @@ describe('ControlPlaneHost route policy', () =>
         }
     })
 
-    it('declares the events socket for both roles', () =>
+    it('declares the events socket for both roles, as application roles', () =>
     {
         const socket = table.MatchSocket('/api/events')
         assert.equal(socket?.Route.Definition.Auth, RouteAuth.Session)
-        assert.deepEqual(socket?.Route.Definition.Role, OperatorRoleClaims.Any)
+        assert.deepEqual(socket?.Route.Definition.AppRole, OperatorRoleClaims.Any)
+        assert.equal(socket?.Route.Definition.Role, undefined)
+    })
+
+    it('names the operator roles as AppRole on every session route, never as a tenant Role', () =>
+    {
+        for (const [method, path] of [...F.FullOnly, ...F.Reads.map(p => [HttpMethod.Get, p] as [HttpMethod, string])])
+        {
+            const route = table.Match(method, path).Route!
+            assert.equal(route.Definition.Role, undefined, `${method} ${path}`)
+            assert.ok(route.Definition.AppRole !== undefined, `${method} ${path}`)
+        }
+    })
+
+    it('the socket ticket is open to any signed-in operator', () =>
+    {
+        for (const role of [OperatorRole.Full, OperatorRole.ReadOnly])
+        {
+            assert.equal(F.Outcome(table, HttpMethod.Post, F.Ticket, role), AuthorizationOutcome.Allowed)
+        }
     })
 })

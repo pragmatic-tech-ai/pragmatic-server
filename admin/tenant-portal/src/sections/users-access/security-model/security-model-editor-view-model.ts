@@ -1,8 +1,8 @@
 import { ObservableCollection, RelayCommand } from '@pragmatic-tech-ai/mural/runtime'
-import { TenantApiError } from '../../../tenant-api-client.js'
+import { ApiError } from '../../../tenant-api-client.js'
 import { SecurityRoleKind, type SecurityProfileDto, type SecurityRoleDto } from '../../../tenant-types.js'
 import { AdminCapability } from '../../../shell/admin-capability.js'
-import { PendingWork, type IHoldsPendingWork } from '../../../shell/holds-pending-work.js'
+import { PendingWork, type IHoldsPendingWork } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import type { TenantSessionService } from '../../../shell/tenant-session-service.js'
 import { EnvironmentScopedPageViewModel } from '../environment-scoped-page-view-model.js'
 import type { UsersAccessSectionService } from '../users-access-section-service.js'
@@ -772,7 +772,7 @@ export class SecurityModelEditorViewModel extends EnvironmentScopedPageViewModel
         }
         catch (e)
         {
-            if (!(e instanceof TenantApiError && e.Status === TenantApiError.ForbiddenStatus))
+            if (!(e instanceof ApiError && e.Status === ApiError.ForbiddenStatus))
             {
                 throw e
             }

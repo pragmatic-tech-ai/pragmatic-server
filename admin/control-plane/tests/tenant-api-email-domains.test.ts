@@ -10,8 +10,9 @@ import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import { DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerifyThrottledError, EmailDomainsNotEditableError, type ITenantEmailDomains, type TenantEmailDomainsView } from '../tenant-api/tenant-email-domains.js'
 import { DomainApprovalState, type DomainVerificationView } from '../domain-verification-record.js'
 import { InvalidEmailDomainError } from '../email-domain-policy.js'
-import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import type { TenantSession } from '../tenant-auth/tenant-sessions.js'
 import { ResRecorder } from './res-recorder.js'
+import { TenantApiDispatch } from './tenant-test-sessions.js'
 
 /** An in-memory store: editable unless told otherwise; records the tenant ids it was asked about. */
 class FakeEmailDomains implements ITenantEmailDomains
@@ -63,11 +64,12 @@ class Fixtures
     public static readonly Path = '/tenant-api/settings/email-domains'
     public static readonly VerifyPath = '/tenant-api/settings/email-domains/verify'
 
+    public static readonly Tenant: TenantRecord = { id: Fixtures.TenantId, clientId: 'c', displayName: 'A', createdAt: '2026-01-01T00:00:00Z', ownerPrincipalId: Fixtures.OwnerId }
+    public static readonly Directory = new SeededTenantDirectory({ tenant: Fixtures.Tenant, hives: [] })
+
     public static Build(store: ITenantEmailDomains | undefined): TenantApiEndpoint
     {
-        const tenant: TenantRecord = { id: Fixtures.TenantId, clientId: 'c', displayName: 'A', createdAt: '2026-01-01T00:00:00Z', ownerPrincipalId: Fixtures.OwnerId }
-        const directory = new SeededTenantDirectory({ tenant, hives: [] })
-        return new TenantApiEndpoint({} as IEnvironmentService, directory, undefined as never, undefined as never, undefined as never, store)
+        return new TenantApiEndpoint({} as IEnvironmentService, Fixtures.Directory, undefined as never, undefined as never, undefined as never, store)
     }
 
     public static Session(principalId: string): TenantSession
@@ -87,7 +89,7 @@ class Fixtures
     public static async Send(endpoint: TenantApiEndpoint, principalId: string, method: string, body?: unknown, path: string = Fixtures.Path): Promise<{ status: number; json: Record<string, unknown> }>
     {
         const res = new ResRecorder()
-        assert.equal(await endpoint.Handle(Fixtures.Req(method, body), res as unknown as ServerResponse, path, Fixtures.Session(principalId)), true)
+        assert.equal(await TenantApiDispatch.Handle(endpoint, Fixtures.Req(method, body), res as unknown as ServerResponse, path, Fixtures.Session(principalId), Fixtures.Directory), true)
         return { status: res.status, json: JSON.parse(res.body) as Record<string, unknown> }
     }
 
@@ -131,7 +133,7 @@ describe('TenantApiEndpoint email domains', () =>
         const store = new FakeEmailDomains()
         const endpoint = Fixtures.Build(store)
         assert.deepEqual(await Fixtures.Send(endpoint, 'someone-else', 'GET'), { status: 200, json: { domains: ['acme.test'], editable: false, inHive: false, pending: [], verifications: [] } })
-        assert.deepEqual(await Fixtures.Send(endpoint, 'someone-else', 'PUT', { domains: ['other.test'] }), { status: 403, json: { error: 'forbidden' } })
+        assert.deepEqual(await Fixtures.Send(endpoint, 'someone-else', 'PUT', { domains: ['other.test'] }), { status: 403, json: { error: 'Forbidden' } })
         assert.deepEqual(store.domains, ['acme.test'])
     })
 
@@ -199,7 +201,7 @@ describe('TenantApiEndpoint email domains', () =>
     {
         const store = new FakeEmailDomains()
         const r = await Fixtures.Send(Fixtures.Build(store), 'someone-else', 'POST', { domain: 'acme.test' }, Fixtures.VerifyPath)
-        assert.deepEqual(r, { status: 403, json: { error: 'forbidden' } })
+        assert.deepEqual(r, { status: 403, json: { error: 'Forbidden' } })
         assert.deepEqual(store.Asked, [])
         assert.deepEqual(store.VerifiedDomains, [])
     })
@@ -271,11 +273,11 @@ describe('TenantApiEndpoint email domains', () =>
         await assert.rejects(Fixtures.Send(Fixtures.Build(store), Fixtures.OwnerId, 'POST', { domain: 'acme.test' }, Fixtures.VerifyPath), /boom/)
     })
 
-    it('verify accepts only POST', async () =>
+    it('verify accepts only POST (405 otherwise)', async () =>
     {
         const endpoint = Fixtures.Build(new FakeEmailDomains())
-        assert.equal((await Fixtures.Send(endpoint, Fixtures.OwnerId, 'GET', undefined, Fixtures.VerifyPath)).status, 404)
-        assert.equal((await Fixtures.Send(endpoint, Fixtures.OwnerId, 'PUT', { domain: 'acme.test' }, Fixtures.VerifyPath)).status, 404)
+        assert.equal((await Fixtures.Send(endpoint, Fixtures.OwnerId, 'GET', undefined, Fixtures.VerifyPath)).status, 405)
+        assert.equal((await Fixtures.Send(endpoint, Fixtures.OwnerId, 'PUT', { domain: 'acme.test' }, Fixtures.VerifyPath)).status, 405)
     })
 
     it('GET passes verifications through', async () =>

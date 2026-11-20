@@ -36,13 +36,8 @@ class TenantText
     public static readonly ChooseVersion = 'Choose a version'
     public static readonly LogOut = 'Log out'
     public static readonly ChangePassword = 'Change password'
-    public static readonly PasswordMismatch = 'The two new passwords do not match.'
-    public static readonly PasswordTooShort = 'Use at least 12 characters.'
-    public static readonly PasswordChanged = 'Password changed. Your other sessions were signed out.'
-    public static readonly CurrentPassword = 'e2e-current-password'
-    public static readonly NewPassword = 'e2e-new-password-12'
     public static readonly SignIn = 'Sign in'
-    public static readonly UnreachablePrefix = "Can't reach the tenant admin service: "
+    public static readonly UnreachablePrefix = "Can't reach Tenant Admin: "
     public static readonly ServiceUnavailable = 503
     public static readonly ActivityOne = 'Activity (1)'
     public static readonly ActivityCreated = 'Environment gamma-env was created'
@@ -55,7 +50,7 @@ class TenantText
     public static readonly Favicon = '/favicon.ico'
     // Each rail section's page title (its H3), in RailEntry order.
     public static readonly SectionTitles: readonly string[] = [
-        'Overview', 'Environments', 'Users & Access', 'Releases', 'Settings', 'Connection status',
+        'Overview', 'Environments', 'Users & Access', 'Releases', 'Settings', 'Configuration', 'Connection status',
     ]
     // Text a template shows only when a binding or a label formatter failed.
     public static readonly BrokenBinding = /undefined|\[object Object\]|NaN/
@@ -69,6 +64,7 @@ enum RailEntry
     UsersAccess,
     Releases,
     Settings,
+    Configuration,
     Connection,
 }
 
@@ -80,8 +76,6 @@ enum RailEntry
 // fails loudly.
 class TenantSteps
 {
-    // Every masked (IsPassword) native input on the page.
-    public static readonly PasswordInputs = 'input[type="password"]'
     // The rail's geometry in CSS px at the default viewport (Mural's
     // ActivityBarRail: 48 wide, items 40 apart, the first centred at y=97).
     private static readonly RailCenterX = 24
@@ -131,52 +125,6 @@ class TenantSteps
         await input.click()
         await page.keyboard.type(text)
         await expect(input).toHaveValue(text)
-    }
-
-    // The n-th masked password input (0: current, 1: new, 2: confirm), clicked and typed into as a person would.
-    public static async TypePassword(page: Page, index: number, text: string): Promise<void>
-    {
-        const input = page.locator(TenantSteps.PasswordInputs).nth(index)
-        const box = await input.boundingBox()
-        if (box === null)
-        {
-            throw new Error('password input ' + index + ' has no box')
-        }
-        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2)
-        await page.keyboard.type(text)
-        await expect(input).toHaveValue(text)
-    }
-
-    // A mouse click at the centre of the visible exact text match nearest the top (the header button).
-    public static async RealClickTopmost(page: Page, text: string): Promise<void>
-    {
-        await TenantSteps.RealClickWhere(page, text, (a, b) => a.y < b.y)
-    }
-
-    // A mouse click at the centre of the visible exact text match lowest on screen: a dialog's button, not the
-    // header button (or its tooltip) of the same label above it.
-    public static async RealClickLowest(page: Page, text: string): Promise<void>
-    {
-        await TenantSteps.RealClickWhere(page, text, (a, b) => a.y > b.y)
-    }
-
-    private static async RealClickWhere(page: Page, text: string, better: (a: { y: number }, b: { y: number }) => boolean): Promise<void>
-    {
-        const matches = TenantSteps.Text(page, text).filter({ visible: true })
-        let pick: { x: number; y: number; width: number; height: number } | null = null
-        for (let i = 0; i < await matches.count(); i++)
-        {
-            const box = await matches.nth(i).boundingBox()
-            if (box !== null && (pick === null || better(box, pick)))
-            {
-                pick = box
-            }
-        }
-        if (pick === null)
-        {
-            throw new Error('no box for ' + text)
-        }
-        await page.mouse.click(pick.x + pick.width / 2, pick.y + pick.height / 2)
     }
 
     public static async OpenSection(page: Page, entry: RailEntry): Promise<void>
@@ -346,39 +294,11 @@ test.describe('tenant admin portal', () =>
         expect(fake.BeginLoginCalls).toBe(1)
     })
 
-    test('Change password: real clicks and typing into three masked inputs; inline length and mismatch hints; the change lands and the header says so', async ({ page }) =>
+    test('the header offers no Change password (the credential belongs to the identity provider)', async ({ page }) =>
     {
         await TenantSteps.Boot(page, base)
-        await TenantSteps.RealClickTopmost(page, TenantText.ChangePassword)
-        await expect(page.locator(TenantSteps.PasswordInputs)).toHaveCount(3)
-        await TenantSteps.TypePassword(page, 0, TenantText.CurrentPassword)
-        await TenantSteps.TypePassword(page, 1, 'short')
-        await expect(TenantSteps.Visible(page, TenantText.PasswordTooShort)).toBeVisible()
-        await page.keyboard.press('Control+A')
-        await page.keyboard.type(TenantText.NewPassword)
-        await expect(TenantSteps.Text(page, TenantText.PasswordTooShort).filter({ visible: true })).toHaveCount(0)
-        await TenantSteps.TypePassword(page, 2, TenantText.NewPassword + 'x')
-        await expect(TenantSteps.Visible(page, TenantText.PasswordMismatch)).toBeVisible()
-        await page.keyboard.press('Backspace')
-        await expect(TenantSteps.Text(page, TenantText.PasswordMismatch).filter({ visible: true })).toHaveCount(0)
-        await TenantSteps.RealClickLowest(page, TenantText.ChangePassword)
-        await expect.poll(() => fake.PasswordCalls).toEqual([{ currentPassword: TenantText.CurrentPassword, newPassword: TenantText.NewPassword, confirmPassword: TenantText.NewPassword }])
-        await expect(TenantSteps.Visible(page, TenantText.PasswordChanged)).toBeVisible()
-        await expect(page.locator(TenantSteps.PasswordInputs)).toHaveCount(0)
-        await TenantSteps.ExpectNoBrokenText(page)
-    })
-
-    test('Change password: a wrong current password keeps the dialog open with the reason and the user signed in', async ({ page }) =>
-    {
-        await TenantSteps.Boot(page, base)
-        await TenantSteps.RealClickTopmost(page, TenantText.ChangePassword)
-        await TenantSteps.TypePassword(page, 0, FakeTenantControlPlane.WrongCurrentPassword)
-        await TenantSteps.TypePassword(page, 1, TenantText.NewPassword)
-        await TenantSteps.TypePassword(page, 2, TenantText.NewPassword)
-        await TenantSteps.RealClickLowest(page, TenantText.ChangePassword)
-        await expect(TenantSteps.Visible(page, FakeTenantControlPlane.WrongPasswordError)).toBeVisible()
-        await expect(page.locator(TenantSteps.PasswordInputs)).toHaveCount(3)
-        expect(fake.BeginLoginCalls).toBe(0)
+        await expect(TenantSteps.Text(page, TenantText.ChangePassword).filter({ visible: true })).toHaveCount(0)
+        await expect(TenantSteps.Visible(page, TenantText.LogOut)).toBeVisible()
     })
 
     test('Log out posts to the server and lands on the identity provider', async ({ page }) =>

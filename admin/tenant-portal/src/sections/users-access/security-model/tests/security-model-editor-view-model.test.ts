@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { TenantApiError } from '../../../../tenant-api-client.js'
+import { ApiError } from '../../../../tenant-api-client.js'
 import type { SecurityModelDto } from '../../../../tenant-types.js'
-import { PendingWork } from '../../../../shell/holds-pending-work.js'
+import { PendingWork } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { PageState } from '../../../../shell/tenant-page-view-model.js'
 import { FakeTenantApi, TenantTestHost, Tick } from '../../../../shell/tests/tenant-test-fixtures.js'
 import { UsersAccessSectionService } from '../../users-access-section-service.js'
@@ -359,7 +359,7 @@ describe('SecurityModelEditorViewModel', () =>
     it('a 403 on load or on save shows Denied', async () =>
     {
         const api = Fixture.Api()
-        api.FailOn.set('GetSecurityModel', new TenantApiError(403, 'forbidden'))
+        api.FailOn.set('GetSecurityModel', new ApiError(403, 'forbidden'))
         const denied = await Fixture.Editor(api)
         assert.equal(denied.State, PageState.Denied)
 
@@ -367,7 +367,7 @@ describe('SecurityModelEditorViewModel', () =>
         const editor = await Fixture.Editor(saveApi)
         Fixture.Select(editor, 'BasicUser')
         editor.PrivilegeRows.ToArray()[0].Create.Cycle()
-        saveApi.FailOn.set('SetSecurityModel', new TenantApiError(403, 'forbidden'))
+        saveApi.FailOn.set('SetSecurityModel', new ApiError(403, 'forbidden'))
         editor.SaveCommand.Execute()
         await Tick.Settle()
         assert.equal(editor.State, PageState.Denied)
@@ -380,7 +380,7 @@ describe('SecurityModelEditorViewModel', () =>
         const editor = await Fixture.Editor(api)
         Fixture.Select(editor, 'BasicUser')
         editor.PrivilegeRows.ToArray()[0].Create.Cycle()
-        api.FailOn.set('SetSecurityModel', new TenantApiError(409, 'conflict'))
+        api.FailOn.set('SetSecurityModel', new ApiError(409, 'conflict'))
         editor.SaveCommand.Execute()
         await Tick.Settle()
         assert.equal(editor.State, PageState.Populated)

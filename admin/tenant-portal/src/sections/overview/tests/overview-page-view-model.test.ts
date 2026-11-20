@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
-import { TenantApiError } from '../../../tenant-api-client.js'
+import { ApiError } from '../../../tenant-api-client.js'
 import { EnvStatus, TenantEventType } from '../../../tenant-types.js'
 import { PageState } from '../../../shell/tenant-page-view-model.js'
 import { FakeTenantApi, Tick } from '../../../shell/tests/tenant-test-fixtures.js'
@@ -84,9 +84,9 @@ describe('Overview page', () =>
     it('degrades failed health, versions and rollout reads instead of failing', async () =>
     {
         const api = Home.Api()
-        api.FailOn.set('GetHealth', new TenantApiError(500, 'down'))
-        api.FailOn.set('ListManifests', new TenantApiError(500, 'down'))
-        api.FailOn.set('GetRollout', new TenantApiError(500, 'down'))
+        api.FailOn.set('GetHealth', new ApiError(500, 'down'))
+        api.FailOn.set('ListManifests', new ApiError(500, 'down'))
+        api.FailOn.set('GetRollout', new ApiError(500, 'down'))
         const page = await Home.Open(new SectionsFixture(api))
         assert.equal(page.State, PageState.Populated)
         assert.equal(page.Cards.Count, 2)
@@ -99,13 +99,13 @@ describe('Overview page', () =>
     it('reads a 503 rollout as a quiet link and a 403 as not available', async () =>
     {
         const quiet = Home.Api()
-        quiet.FailOn.set('GetRollout', new TenantApiError(503, 'unavailable'))
+        quiet.FailOn.set('GetRollout', new ApiError(503, 'unavailable'))
         const quietPage = await Home.Open(new SectionsFixture(quiet))
         assert.equal(quietPage.IsQuiet, true)
         assert.equal(quietPage.ConnectionLabel, 'Quiet')
 
         const forbidden = Home.Api()
-        forbidden.FailOn.set('GetRollout', new TenantApiError(403, 'forbidden'))
+        forbidden.FailOn.set('GetRollout', new ApiError(403, 'forbidden'))
         const forbiddenPage = await Home.Open(new SectionsFixture(forbidden))
         assert.equal(forbiddenPage.Connection, OverviewConnectionState.Forbidden)
         assert.equal(forbiddenPage.HasConnectionPill, false)
@@ -125,7 +125,7 @@ describe('Overview page', () =>
     it('is an Error only when the environments fail, still populated without any, and expires on a 401 anywhere', async () =>
     {
         const failing = Home.Api()
-        failing.FailOn.set('ListEnvironments', new TenantApiError(500, 'boom'))
+        failing.FailOn.set('ListEnvironments', new ApiError(500, 'boom'))
         const failed = await Home.Open(new SectionsFixture(failing))
         assert.equal(failed.State, PageState.Error)
         assert.equal(failed.ErrorText, 'boom')
@@ -136,7 +136,7 @@ describe('Overview page', () =>
         assert.equal(empty.HasNoEnvironments, true)
 
         const expiring = Home.Api()
-        expiring.FailOn.set('GetHealth', new TenantApiError(401, 'gone'))
+        expiring.FailOn.set('GetHealth', new ApiError(401, 'gone'))
         const f = new SectionsFixture(expiring)
         await Home.Open(f)
         assert.equal(f.Host.Reloader.Count, 1)

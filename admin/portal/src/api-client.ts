@@ -1,31 +1,40 @@
-import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, OperatorDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto, HiveDeleteOutcomeDto, OwnerPasswordResetDto, PasswordChangedDto, HiveConsoleSpecDto, ConsoleInstallStatusDto, ConsoleRemovalDto, InHiveOwnerPasswordDto, ReleaseRefreshDto, TenantEmailDomainsDto } from './portal-types.js'
+import { ApiError, AppSessionClient, type FetchFunction } from '@pragmatic-tech-ai/pragmatic-app-shell'
+import { BrowserEventSockets, type IEventSocket, type IEventSocketFactory } from './shell/event-sockets.js'
+import { PlatformShell } from './shell/platform-shell.js'
+import type { ClientDto, CreatedTenantDto, EnvironmentDto, HiveDto, FleetHiveDto, ManifestDto, OperatorSummaryDto, GatingDto, SelectionDto, HiveRolloutDto, TenantDto, GraphDto, GraphLoadedDto, PromotionResultDto, ProvisionInputDto, ProvisionResultDto, PolicyDto, ActivityDto, ObservationDto, LedgerDto, HiveBootstrapDto, RolloutRegistrationDto, AgentInstallStatusDto, HiveDeleteOutcomeDto, OwnerPasswordResetDto, HiveConsoleSpecDto, ConsoleInstallStatusDto, ConsoleRemovalDto, InHiveOwnerPasswordDto, ReleaseRefreshDto, TenantEmailDomainsDto, ProvisionRollbackDto } from './portal-types.js'
 
-// Thrown for non-2xx control-plane responses; Message carries the server's error text.
-export class ApiError extends Error
+// The shell's error type: thrown for every non-2xx control-plane answer, its message the server's error text, its
+// Code the server's machine-readable code and its Body the whole error reply (a provision's rollback).
+export { ApiError }
+
+// What a refused control-plane request says beyond its sentence: the codes a hive delete answers when "delete anyway"
+// may follow, and a failed provision's rollback report.
+export class ControlPlaneErrors
 {
-    public static readonly UnauthorizedStatus = 401
-    public static readonly NotFoundStatus = 404
-    // The control plane's code for a hive delete that could not remove the agent from its cluster (delete anyway may follow).
+    // A hive delete that could not remove the agent from its cluster.
     public static readonly AgentUninstallFailedCode = 'agent-uninstall-failed'
-    // The control plane's code for a hive delete whose local kind cluster could not be destroyed (delete anyway may follow).
+    // A hive delete whose local kind cluster could not be destroyed.
     public static readonly ClusterDestroyFailedCode = 'cluster-destroy-failed'
 
-    public readonly Status: number
-    public readonly rollback?: { rolledBack: string[]; residue: string[] }
-    // The server's machine-readable error code, when it sends one.
-    public readonly Code: string | undefined
+    private static readonly RollbackField = 'rollback'
 
-    public constructor(status: number, message: string, rollback?: { rolledBack: string[]; residue: string[] }, code?: string)
+    // The rollback report a failed provision carries (what was undone, what remains); undefined when none.
+    public static Rollback(error: ApiError): ProvisionRollbackDto | undefined
     {
-        super(message)
-        this.Status = status
-        this.rollback = rollback
-        this.Code = code
+        const rollback = error.Body?.[ControlPlaneErrors.RollbackField]
+        if (typeof rollback !== 'object' || rollback === null)
+        {
+            return undefined
+        }
+        const candidate = rollback as Partial<ProvisionRollbackDto>
+        return Array.isArray(candidate.rolledBack) && Array.isArray(candidate.residue) ? candidate as ProvisionRollbackDto : undefined
     }
 }
 
-// fetch wrapper over the control-plane REST API plus one shared events socket.
-export class ControlPlaneClient
+// The platform admin console's client: the control-plane REST API plus one shared events socket. It is the shell's
+// AppSessionClient (session probe, password sign-in, logout, own-password change, WebSocket tickets), so every request
+// raises the same 401 / 403 signals the session service listens to.
+export class ControlPlaneClient extends AppSessionClient
 {
     private static readonly EnvironmentsRoute = '/api/environments'
     private static readonly ClientsRoute = '/api/clients'
@@ -43,16 +52,7 @@ export class ControlPlaneClient
     private static readonly GatingRoute = '/api/gating'
     private static readonly SelectionsRoute = '/api/selections'
     private static readonly RolloutsRoute = '/api/rollouts'
-    private static readonly LoginRoute = '/api/login'
-    private static readonly LogoutRoute = '/api/logout'
-    private static readonly SessionRoute = '/api/session'
-    private static readonly SessionPasswordRoute = '/api/session/password'
-    private static readonly CurrentPasswordKey = 'currentPassword'
-    private static readonly NewPasswordKey = 'newPassword'
-    private static readonly ConfirmPasswordKey = 'confirmPassword'
-    private static readonly CredentialsMode = 'same-origin'
     private static readonly EventsRoute = '/api/events'
-    private static readonly EventsTicketRoute = '/api/events-ticket'
     private static readonly PathSeparator = '/'
     private static readonly GraphsLeaf = 'graphs'
     private static readonly PromoteLeaf = 'promote'
@@ -65,9 +65,6 @@ export class ControlPlaneClient
     private static readonly PasswordKey = 'password'
     private static readonly RoleKey = 'role'
     private static readonly DisabledKey = 'disabled'
-    private static readonly MethodPost = 'POST'
-    private static readonly MethodDelete = 'DELETE'
-    private static readonly MethodPut = 'PUT'
     private static readonly ActivityRoute = '/api/activity'
     private static readonly ObservationsSegment = 'observations'
     private static readonly LedgerSegment = 'ledger'
@@ -92,31 +89,30 @@ export class ControlPlaneClient
     private static readonly MinVersionSegment = 'min-version'
     private static readonly HoldSegment = 'hold'
     private static readonly ChannelsKey = 'channels'
-    private static readonly ContentTypeHeader = 'content-type'
-    private static readonly JsonType = 'application/json'
-    private static readonly EmptyBody = '{}'
     private static readonly ChangedType = 'environments-changed'
-    private static readonly WsScheme = 'ws:'
-    private static readonly WssScheme = 'wss:'
-    private static readonly HttpsScheme = 'https:'
-    private static readonly SchemeSuffix = '//'
-    private static readonly MessageEvent = 'message'
-    private static readonly CloseEvent = 'close'
     private static readonly ReconnectDelayMs = 2000
-    private static readonly RequestFailed = 'Request failed: '
+    private static readonly QueryStart = '?'
+    private static readonly QueryAssign = '='
 
     private readonly handlers: Array<() => void> = []
-    private socket: WebSocket | undefined
+    private readonly sockets: IEventSocketFactory
+    private socket: IEventSocket | undefined
     private connecting = false
+
+    public constructor(sockets: IEventSocketFactory = new BrowserEventSockets(), fetcher?: FetchFunction)
+    {
+        super(PlatformShell.Config, fetcher)
+        this.sockets = sockets
+    }
 
     public async ListEnvironments(): Promise<EnvironmentDto[]>
     {
-        return await this.Send<EnvironmentDto[]>(ControlPlaneClient.EnvironmentsRoute, undefined)
+        return await this.Get<EnvironmentDto[]>(ControlPlaneClient.EnvironmentsRoute)
     }
 
     public async ListClients(): Promise<ClientDto[]>
     {
-        return await this.Send<ClientDto[]>(ControlPlaneClient.ClientsRoute, undefined)
+        return await this.Get<ClientDto[]>(ControlPlaneClient.ClientsRoute)
     }
 
     public async CreateClient(id: string, displayName: string, subscriptionRef?: string): Promise<ClientDto>
@@ -126,70 +122,69 @@ export class ControlPlaneClient
         {
             body.subscriptionRef = subscriptionRef
         }
-        return await this.Send<ClientDto>(ControlPlaneClient.ClientsRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify(body) })
+        return await this.Post<ClientDto>(ControlPlaneClient.ClientsRoute, body)
     }
 
     public async DeleteClient(id: string): Promise<void>
     {
-        await this.Send<unknown>(this.ItemRoute(ControlPlaneClient.ClientsRoute, id), { method: ControlPlaneClient.MethodDelete })
+        await this.Delete<unknown>(this.ItemRoute(ControlPlaneClient.ClientsRoute, id))
     }
 
     // No server-side parent filter exists; filters the full list by clientId when given.
     public async ListTenants(clientId?: string): Promise<TenantDto[]>
     {
-        const all = await this.Send<TenantDto[]>(ControlPlaneClient.TenantsRoute, undefined)
+        const all = await this.Get<TenantDto[]>(ControlPlaneClient.TenantsRoute)
         return clientId === undefined ? all : all.filter(t => t.clientId === clientId)
     }
 
     public async CreateTenant(id: string, clientId: string, displayName: string, ownerEmail: string): Promise<CreatedTenantDto>
     {
-        return await this.Send<CreatedTenantDto>(ControlPlaneClient.TenantsRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ id, clientId, displayName, ownerEmail }) })
+        return await this.Post<CreatedTenantDto>(ControlPlaneClient.TenantsRoute, { id, clientId, displayName, ownerEmail })
     }
 
     public async DeleteTenant(id: string): Promise<void>
     {
-        await this.Send<unknown>(this.ItemRoute(ControlPlaneClient.TenantsRoute, id), { method: ControlPlaneClient.MethodDelete })
+        await this.Delete<unknown>(this.ItemRoute(ControlPlaneClient.TenantsRoute, id))
     }
 
     // Sets a fresh Owner password in the tenant's IdP (the old one stops working at once); the reply is the only copy.
     public async ResetOwnerPassword(tenantId: string): Promise<OwnerPasswordResetDto>
     {
         const route = this.ItemRoute(ControlPlaneClient.TenantsRoute, tenantId) + ControlPlaneClient.PathSeparator + ControlPlaneClient.OwnerPasswordSegment
-        return await this.Send<OwnerPasswordResetDto>(route, { method: ControlPlaneClient.MethodPost })
+        return await this.Post<OwnerPasswordResetDto>(route)
     }
 
     // The tenant's email domains: where they come from, whether they are editable here, who else claims them and, for an
     // in-hive tenant, each reported domain's approval. A 404 for an unknown tenant (or a control plane without the route).
     public async GetTenantEmailDomains(tenantId: string): Promise<TenantEmailDomainsDto>
     {
-        return await this.Send<TenantEmailDomainsDto>(this.TenantEmailDomainsRoute(tenantId), undefined)
+        return await this.Get<TenantEmailDomainsDto>(this.TenantEmailDomainsRoute(tenantId))
     }
 
     // Replaces a control-plane tenant's email domains; the reply is the fresh report. A refused domain is a 400 with a
     // plain sentence; an in-hive tenant (its Owner sets them in its console) is a 409.
     public async SetTenantEmailDomains(tenantId: string, domains: readonly string[]): Promise<TenantEmailDomainsDto>
     {
-        const body = JSON.stringify({ [ControlPlaneClient.DomainsKey]: domains })
-        return await this.Send<TenantEmailDomainsDto>(this.TenantEmailDomainsRoute(tenantId), { method: ControlPlaneClient.MethodPut, body })
+        return await this.Put<TenantEmailDomainsDto>(this.TenantEmailDomainsRoute(tenantId), { [ControlPlaneClient.DomainsKey]: domains })
     }
 
     // Approves one domain an in-hive tenant's console reports, so discovery matches it; the reply is the fresh report.
     public async ApproveTenantEmailDomain(tenantId: string, domain: string): Promise<TenantEmailDomainsDto>
     {
-        return await this.Send<TenantEmailDomainsDto>(this.TenantEmailDomainActionRoute(tenantId, ControlPlaneClient.ApproveSegment), this.PostBody({ [ControlPlaneClient.DomainKey]: domain }))
+        return await this.Post<TenantEmailDomainsDto>(this.TenantEmailDomainActionRoute(tenantId, ControlPlaneClient.ApproveSegment), { [ControlPlaneClient.DomainKey]: domain })
     }
 
     // Withdraws one domain's approval; the reply is the fresh report.
     public async RevokeTenantEmailDomain(tenantId: string, domain: string): Promise<TenantEmailDomainsDto>
     {
-        return await this.Send<TenantEmailDomainsDto>(this.TenantEmailDomainActionRoute(tenantId, ControlPlaneClient.RevokeSegment), this.PostBody({ [ControlPlaneClient.DomainKey]: domain }))
+        return await this.Post<TenantEmailDomainsDto>(this.TenantEmailDomainActionRoute(tenantId, ControlPlaneClient.RevokeSegment), { [ControlPlaneClient.DomainKey]: domain })
     }
 
     // Looks up the domain's DNS TXT record now; the reply is the fresh report. A 429 (too many lookups) or 503 (the lookup
     // failed) carries the server's sentence.
     public async VerifyTenantEmailDomain(tenantId: string, domain: string): Promise<TenantEmailDomainsDto>
     {
-        return await this.Send<TenantEmailDomainsDto>(this.TenantEmailDomainActionRoute(tenantId, ControlPlaneClient.VerifySegment), this.PostBody({ [ControlPlaneClient.DomainKey]: domain }))
+        return await this.Post<TenantEmailDomainsDto>(this.TenantEmailDomainActionRoute(tenantId, ControlPlaneClient.VerifySegment), { [ControlPlaneClient.DomainKey]: domain })
     }
 
     private TenantEmailDomainsRoute(tenantId: string): string
@@ -205,88 +200,74 @@ export class ControlPlaneClient
     // No server-side parent filter exists; filters the full list by tenantId when given.
     public async ListHives(tenantId?: string): Promise<HiveDto[]>
     {
-        const all = await this.Send<HiveDto[]>(ControlPlaneClient.HivesRoute, undefined)
+        const all = await this.Get<HiveDto[]>(ControlPlaneClient.HivesRoute)
         return tenantId === undefined ? all : all.filter(h => h.tenantId === tenantId)
     }
 
     public async ListFleet(): Promise<FleetHiveDto[]>
     {
-        return await this.Send<FleetHiveDto[]>(ControlPlaneClient.FleetRoute, undefined)
+        return await this.Get<FleetHiveDto[]>(ControlPlaneClient.FleetRoute)
     }
 
     public async ListManifests(): Promise<ManifestDto[]>
     {
-        return await this.Send<ManifestDto[]>(ControlPlaneClient.ManifestsRoute, undefined)
+        return await this.Get<ManifestDto[]>(ControlPlaneClient.ManifestsRoute)
     }
 
     public async ListOperators(): Promise<OperatorSummaryDto[]>
     {
-        return await this.Send<OperatorSummaryDto[]>(ControlPlaneClient.OperatorsRoute, undefined)
+        return await this.Get<OperatorSummaryDto[]>(ControlPlaneClient.OperatorsRoute)
     }
 
     public async CreateOperator(email: string, password: string, role: string): Promise<void>
     {
         const body = { [ControlPlaneClient.EmailKey]: email, [ControlPlaneClient.PasswordKey]: password, [ControlPlaneClient.RoleKey]: role }
-        await this.Send<unknown>(ControlPlaneClient.OperatorsRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify(body) })
+        await this.Post<unknown>(ControlPlaneClient.OperatorsRoute, body)
     }
 
     public async SetOperatorRole(email: string, role: string): Promise<void>
     {
-        await this.Send<unknown>(ControlPlaneClient.OperatorRoleRoute, this.PostBody({ [ControlPlaneClient.EmailKey]: email, [ControlPlaneClient.RoleKey]: role }))
+        await this.Post<unknown>(ControlPlaneClient.OperatorRoleRoute, { [ControlPlaneClient.EmailKey]: email, [ControlPlaneClient.RoleKey]: role })
     }
 
     public async ResetOperatorPassword(email: string): Promise<{ password: string }>
     {
-        return await this.Send<{ password: string }>(ControlPlaneClient.OperatorPasswordResetRoute, this.PostBody({ [ControlPlaneClient.EmailKey]: email }))
-    }
-
-    // Changes the signed-in operator's own password. The control plane ends every
-    // other session of the operator and re-issues this one (a fresh cookie), so
-    // the page stays signed in. A wrong current password is a 403; a second
-    // change while one runs is a 409. The reply's warning says what did not
-    // happen (other sessions not ended, or sign in again).
-    public async ChangeOwnPassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<PasswordChangedDto>
-    {
-        return await this.Send<PasswordChangedDto>(ControlPlaneClient.SessionPasswordRoute, this.PostBody({
-            [ControlPlaneClient.CurrentPasswordKey]: currentPassword,
-            [ControlPlaneClient.NewPasswordKey]: newPassword,
-            [ControlPlaneClient.ConfirmPasswordKey]: confirmPassword,
-        }))
+        return await this.Post<{ password: string }>(ControlPlaneClient.OperatorPasswordResetRoute, { [ControlPlaneClient.EmailKey]: email })
     }
 
     public async SetOperatorDisabled(email: string, disabled: boolean): Promise<void>
     {
-        await this.Send<unknown>(ControlPlaneClient.OperatorDisabledRoute, this.PostBody({ [ControlPlaneClient.EmailKey]: email, [ControlPlaneClient.DisabledKey]: disabled }))
+        await this.Post<unknown>(ControlPlaneClient.OperatorDisabledRoute, { [ControlPlaneClient.EmailKey]: email, [ControlPlaneClient.DisabledKey]: disabled })
     }
 
     public async RevokeOperatorSessions(email: string): Promise<void>
     {
-        await this.Send<unknown>(ControlPlaneClient.OperatorRevokeSessionsRoute, this.PostBody({ [ControlPlaneClient.EmailKey]: email }))
+        await this.Post<unknown>(ControlPlaneClient.OperatorRevokeSessionsRoute, { [ControlPlaneClient.EmailKey]: email })
     }
 
     public async ListGating(): Promise<GatingDto[]>
     {
-        return await this.Send<GatingDto[]>(ControlPlaneClient.GatingRoute, undefined)
+        return await this.Get<GatingDto[]>(ControlPlaneClient.GatingRoute)
     }
 
     public async ListSelections(): Promise<SelectionDto[]>
     {
-        return await this.Send<SelectionDto[]>(ControlPlaneClient.SelectionsRoute, undefined)
+        return await this.Get<SelectionDto[]>(ControlPlaneClient.SelectionsRoute)
     }
 
     public async ListRollouts(): Promise<HiveRolloutDto[]>
     {
-        return await this.Send<HiveRolloutDto[]>(ControlPlaneClient.RolloutsRoute, undefined)
+        return await this.Get<HiveRolloutDto[]>(ControlPlaneClient.RolloutsRoute)
     }
 
     public async CreateHive(input: HiveDto): Promise<HiveDto>
     {
-        return await this.Send<HiveDto>(ControlPlaneClient.HivesRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify(input) })
+        return await this.Post<HiveDto>(ControlPlaneClient.HivesRoute, input)
     }
 
     public async Provision(input: ProvisionInputDto): Promise<ProvisionResultDto>
     {
-        return await this.Send<ProvisionResultDto>(ControlPlaneClient.ProvisionRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify(input) })
+        return await this.Post<ProvisionResultDto>(ControlPlaneClient.ProvisionRoute, input)
     }
 
     // Deletes a hive (its agent is removed from a cluster the control plane drives, its token revoked). With force
@@ -294,38 +275,33 @@ export class ControlPlaneClient
     public async DeleteHive(id: string, force: boolean = false): Promise<HiveDeleteOutcomeDto>
     {
         const route = this.ItemRoute(ControlPlaneClient.HivesRoute, id) + (force ? ControlPlaneClient.ForceQuery : ControlPlaneClient.NoQuery)
-        return await this.Send<HiveDeleteOutcomeDto>(route, { method: ControlPlaneClient.MethodDelete })
+        return await this.Delete<HiveDeleteOutcomeDto>(route)
     }
 
     // Imports every new release from the registry (Full operators only). A 409 (no registry configured) or 502 (the
     // registry is unavailable) carries the server's sentence.
     public async RefreshReleases(): Promise<ReleaseRefreshDto>
     {
-        return await this.Send<ReleaseRefreshDto>(ControlPlaneClient.ReleasesRefreshRoute, { method: ControlPlaneClient.MethodPost })
+        return await this.Post<ReleaseRefreshDto>(ControlPlaneClient.ReleasesRefreshRoute)
     }
 
     public async Gate(tenantId: string, version: string): Promise<void>
     {
-        await this.Send<unknown>(this.TenantGatingRoute(tenantId), { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ [ControlPlaneClient.VersionKey]: version }) })
+        await this.Post<unknown>(this.TenantGatingRoute(tenantId), { [ControlPlaneClient.VersionKey]: version })
     }
 
     public async Ungate(tenantId: string, version: string): Promise<void>
     {
-        await this.Send<unknown>(this.TenantGatingItemRoute(tenantId, version), { method: ControlPlaneClient.MethodDelete })
+        await this.Delete<unknown>(this.TenantGatingItemRoute(tenantId, version))
     }
 
     public async SetManifestWithdrawn(version: string, withdraw: boolean, reason?: string): Promise<ManifestDto>
     {
         if (!withdraw)
         {
-            return await this.Send<ManifestDto>(this.ManifestWithdrawnRoute(version), { method: ControlPlaneClient.MethodDelete })
+            return await this.Delete<ManifestDto>(this.ManifestWithdrawnRoute(version))
         }
-        return await this.Send<ManifestDto>(this.ManifestWithdrawnRoute(version), { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ [ControlPlaneClient.ReasonKey]: reason }) })
-    }
-
-    private PostBody(body: Record<string, unknown>): { method: string; body: string }
-    {
-        return { method: ControlPlaneClient.MethodPost, body: JSON.stringify(body) }
+        return await this.Post<ManifestDto>(this.ManifestWithdrawnRoute(version), { [ControlPlaneClient.ReasonKey]: reason })
     }
 
     private ManifestWithdrawnRoute(version: string): string
@@ -340,36 +316,36 @@ export class ControlPlaneClient
 
     public async ListActivity(limit?: number): Promise<ActivityDto[]>
     {
-        return await this.Send<ActivityDto[]>(this.WithLimit(ControlPlaneClient.ActivityRoute, limit), undefined)
+        return await this.Get<ActivityDto[]>(this.WithLimit(ControlPlaneClient.ActivityRoute, limit))
     }
 
     public async ListHiveObservations(hiveId: string, limit?: number): Promise<ObservationDto[]>
     {
-        return await this.Send<ObservationDto[]>(this.WithLimit(this.HiveSubRoute(hiveId, ControlPlaneClient.ObservationsSegment), limit), undefined)
+        return await this.Get<ObservationDto[]>(this.WithLimit(this.HiveSubRoute(hiveId, ControlPlaneClient.ObservationsSegment), limit))
     }
 
     public async ListHiveLedger(hiveId: string, limit?: number): Promise<LedgerDto[]>
     {
-        return await this.Send<LedgerDto[]>(this.WithLimit(this.HiveSubRoute(hiveId, ControlPlaneClient.LedgerSegment), limit), undefined)
+        return await this.Get<LedgerDto[]>(this.WithLimit(this.HiveSubRoute(hiveId, ControlPlaneClient.LedgerSegment), limit))
     }
 
     // The hive agent's secret-free install bundle; 409 while the control plane's agent channel is off.
     public async GetHiveBootstrap(hiveId: string): Promise<HiveBootstrapDto>
     {
-        return await this.Send<HiveBootstrapDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.BootstrapSegment), undefined)
+        return await this.Get<HiveBootstrapDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.BootstrapSegment))
     }
 
     // Mints a new one-time agent token, replacing the old one at once; the reply is the only copy.
     public async ReissueAgentToken(hiveId: string): Promise<string>
     {
-        const reply = await this.Send<RolloutRegistrationDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.RolloutRegistrationSegment), { method: ControlPlaneClient.MethodPost })
+        const reply = await this.Post<RolloutRegistrationDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.RolloutRegistrationSegment))
         return reply.token
     }
 
     // Starts the control plane's automatic agent install for a Local hive; the reply is its first status (never a token).
     public async StartAgentInstall(hiveId: string): Promise<AgentInstallStatusDto>
     {
-        return await this.Send<AgentInstallStatusDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.AgentInstallSegment), { method: ControlPlaneClient.MethodPost })
+        return await this.Post<AgentInstallStatusDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.AgentInstallSegment))
     }
 
     // The hive's latest automatic install status; null when none has run since the control plane started.
@@ -377,7 +353,7 @@ export class ControlPlaneClient
     {
         try
         {
-            return await this.Send<AgentInstallStatusDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.AgentInstallSegment), undefined)
+            return await this.Get<AgentInstallStatusDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.AgentInstallSegment))
         }
         catch (e)
         {
@@ -393,20 +369,20 @@ export class ControlPlaneClient
     // control plane refuses is a 400 with a plain sentence; a running hive operation is a 409.
     public async SetHiveConsole(hiveId: string, spec: HiveConsoleSpecDto): Promise<HiveDto>
     {
-        return await this.Send<HiveDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.ConsoleSegment), { method: ControlPlaneClient.MethodPut, body: JSON.stringify(spec) })
+        return await this.Put<HiveDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.ConsoleSegment), spec)
     }
 
     // Removes the console from a cluster the control plane drives, then clears its settings; the reply is the updated
     // hive and what stayed in the cluster. A cluster that refuses the removal is a 409 and the settings stay.
     public async RemoveHiveConsole(hiveId: string): Promise<ConsoleRemovalDto>
     {
-        return await this.Send<ConsoleRemovalDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.ConsoleSegment), { method: ControlPlaneClient.MethodDelete })
+        return await this.Delete<ConsoleRemovalDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.ConsoleSegment))
     }
 
     // Starts the control plane's console install for the hive; the reply is its first status (never a secret).
     public async StartConsoleInstall(hiveId: string): Promise<ConsoleInstallStatusDto>
     {
-        return await this.Send<ConsoleInstallStatusDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.ConsoleInstallSegment), { method: ControlPlaneClient.MethodPost })
+        return await this.Post<ConsoleInstallStatusDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.ConsoleInstallSegment))
     }
 
     // The hive's latest console install status; null when none has run since the control plane started.
@@ -414,7 +390,7 @@ export class ControlPlaneClient
     {
         try
         {
-            return await this.Send<ConsoleInstallStatusDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.ConsoleInstallSegment), undefined)
+            return await this.Get<ConsoleInstallStatusDto>(this.HiveSubRoute(hiveId, ControlPlaneClient.ConsoleInstallSegment))
         }
         catch (e)
         {
@@ -431,7 +407,7 @@ export class ControlPlaneClient
     public async ResetInHiveOwnerPassword(hiveId: string): Promise<InHiveOwnerPasswordDto>
     {
         const route = this.HiveSubRoute(hiveId, ControlPlaneClient.ConsoleSegment) + ControlPlaneClient.PathSeparator + ControlPlaneClient.OwnerPasswordSegment
-        return await this.Send<InHiveOwnerPasswordDto>(route, { method: ControlPlaneClient.MethodPost })
+        return await this.Post<InHiveOwnerPasswordDto>(route)
     }
 
     private HivePolicyRoute(hiveId: string, segment: string): string
@@ -441,27 +417,27 @@ export class ControlPlaneClient
 
     public async SetHiveChannels(hiveId: string, channels: string[]): Promise<PolicyDto>
     {
-        return await this.Send<PolicyDto>(this.HivePolicyRoute(hiveId, ControlPlaneClient.ChannelsSegment), { method: ControlPlaneClient.MethodPut, body: JSON.stringify({ [ControlPlaneClient.ChannelsKey]: channels }) })
+        return await this.Put<PolicyDto>(this.HivePolicyRoute(hiveId, ControlPlaneClient.ChannelsSegment), { [ControlPlaneClient.ChannelsKey]: channels })
     }
 
     public async SetHiveMinVersion(hiveId: string, version: string): Promise<PolicyDto>
     {
-        return await this.Send<PolicyDto>(this.HivePolicyRoute(hiveId, ControlPlaneClient.MinVersionSegment), { method: ControlPlaneClient.MethodPut, body: JSON.stringify({ [ControlPlaneClient.VersionKey]: version }) })
+        return await this.Put<PolicyDto>(this.HivePolicyRoute(hiveId, ControlPlaneClient.MinVersionSegment), { [ControlPlaneClient.VersionKey]: version })
     }
 
     public async ClearHiveMinVersion(hiveId: string): Promise<PolicyDto>
     {
-        return await this.Send<PolicyDto>(this.HivePolicyRoute(hiveId, ControlPlaneClient.MinVersionSegment), { method: ControlPlaneClient.MethodDelete })
+        return await this.Delete<PolicyDto>(this.HivePolicyRoute(hiveId, ControlPlaneClient.MinVersionSegment))
     }
 
     public async SetHiveHold(hiveId: string, reason: string): Promise<PolicyDto>
     {
-        return await this.Send<PolicyDto>(this.HivePolicyRoute(hiveId, ControlPlaneClient.HoldSegment), { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ [ControlPlaneClient.ReasonKey]: reason }) })
+        return await this.Post<PolicyDto>(this.HivePolicyRoute(hiveId, ControlPlaneClient.HoldSegment), { [ControlPlaneClient.ReasonKey]: reason })
     }
 
     public async ClearHiveHold(hiveId: string): Promise<PolicyDto>
     {
-        return await this.Send<PolicyDto>(this.HivePolicyRoute(hiveId, ControlPlaneClient.HoldSegment), { method: ControlPlaneClient.MethodDelete })
+        return await this.Delete<PolicyDto>(this.HivePolicyRoute(hiveId, ControlPlaneClient.HoldSegment))
     }
 
     private HiveSubRoute(hiveId: string, segment: string): string
@@ -471,37 +447,37 @@ export class ControlPlaneClient
 
     private WithLimit(route: string, limit?: number): string
     {
-        return limit === undefined ? route : route + '?' + ControlPlaneClient.LimitParam + '=' + String(limit)
+        return limit === undefined ? route : route + ControlPlaneClient.QueryStart + ControlPlaneClient.LimitParam + ControlPlaneClient.QueryAssign + String(limit)
     }
 
     public async ListPolicies(): Promise<PolicyDto[]>
     {
-        return await this.Send<PolicyDto[]>(ControlPlaneClient.PoliciesRoute, undefined)
+        return await this.Get<PolicyDto[]>(ControlPlaneClient.PoliciesRoute)
     }
 
     public async SetTenantChannels(tenantId: string, channels: string[]): Promise<PolicyDto>
     {
-        return await this.Send<PolicyDto>(this.TenantPolicyRoute(tenantId, ControlPlaneClient.ChannelsSegment), { method: ControlPlaneClient.MethodPut, body: JSON.stringify({ [ControlPlaneClient.ChannelsKey]: channels }) })
+        return await this.Put<PolicyDto>(this.TenantPolicyRoute(tenantId, ControlPlaneClient.ChannelsSegment), { [ControlPlaneClient.ChannelsKey]: channels })
     }
 
     public async SetTenantMinVersion(tenantId: string, version: string): Promise<PolicyDto>
     {
-        return await this.Send<PolicyDto>(this.TenantPolicyRoute(tenantId, ControlPlaneClient.MinVersionSegment), { method: ControlPlaneClient.MethodPut, body: JSON.stringify({ [ControlPlaneClient.VersionKey]: version }) })
+        return await this.Put<PolicyDto>(this.TenantPolicyRoute(tenantId, ControlPlaneClient.MinVersionSegment), { [ControlPlaneClient.VersionKey]: version })
     }
 
     public async ClearTenantMinVersion(tenantId: string): Promise<PolicyDto>
     {
-        return await this.Send<PolicyDto>(this.TenantPolicyRoute(tenantId, ControlPlaneClient.MinVersionSegment), { method: ControlPlaneClient.MethodDelete })
+        return await this.Delete<PolicyDto>(this.TenantPolicyRoute(tenantId, ControlPlaneClient.MinVersionSegment))
     }
 
     public async SetTenantHold(tenantId: string, reason: string): Promise<PolicyDto>
     {
-        return await this.Send<PolicyDto>(this.TenantPolicyRoute(tenantId, ControlPlaneClient.HoldSegment), { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ [ControlPlaneClient.ReasonKey]: reason }) })
+        return await this.Post<PolicyDto>(this.TenantPolicyRoute(tenantId, ControlPlaneClient.HoldSegment), { [ControlPlaneClient.ReasonKey]: reason })
     }
 
     public async ClearTenantHold(tenantId: string): Promise<PolicyDto>
     {
-        return await this.Send<PolicyDto>(this.TenantPolicyRoute(tenantId, ControlPlaneClient.HoldSegment), { method: ControlPlaneClient.MethodDelete })
+        return await this.Delete<PolicyDto>(this.TenantPolicyRoute(tenantId, ControlPlaneClient.HoldSegment))
     }
 
     private TenantGatingRoute(tenantId: string): string
@@ -519,33 +495,6 @@ export class ControlPlaneClient
         return collection + ControlPlaneClient.PathSeparator + encodeURIComponent(id)
     }
 
-    public async Login(email: string, password: string): Promise<void>
-    {
-        await this.Send<unknown>(ControlPlaneClient.LoginRoute, { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ email, password }) })
-    }
-
-    public async Logout(): Promise<void>
-    {
-        await this.Send<unknown>(ControlPlaneClient.LogoutRoute, { method: ControlPlaneClient.MethodPost, body: ControlPlaneClient.EmptyBody })
-    }
-
-    // The signed-in operator, or null when there is no valid session (401).
-    public async Session(): Promise<OperatorDto | null>
-    {
-        try
-        {
-            return await this.Send<OperatorDto>(ControlPlaneClient.SessionRoute, undefined)
-        }
-        catch (e)
-        {
-            if (e instanceof ApiError && e.Status === ApiError.UnauthorizedStatus)
-            {
-                return null
-            }
-            throw e
-        }
-    }
-
     // Registers a handler; the single /api/events socket is opened on first use.
     public OnChanged(handler: () => void): void
     {
@@ -557,7 +506,8 @@ export class ControlPlaneClient
         this.Connect()
     }
 
-    // Fetches a single-use ticket, then opens the socket with it as the subprotocol; no ticket, no socket (retried via the reconnect delay).
+    // Mints a single-use ticket (POST /api/ws-ticket), then opens the socket with it as the lone subprotocol; no ticket,
+    // no socket (retried via the reconnect delay, except after a 401: the session is gone and the page reloads).
     private Connect(): void
     {
         this.connecting = true
@@ -569,7 +519,7 @@ export class ControlPlaneClient
         let ticket: string
         try
         {
-            ticket = (await this.Send<{ ticket: string }>(ControlPlaneClient.EventsTicketRoute, undefined)).ticket
+            ticket = await this.MintWsTicket()
         }
         catch (e)
         {
@@ -583,15 +533,14 @@ export class ControlPlaneClient
         {
             return
         }
-        const scheme = location.protocol === ControlPlaneClient.HttpsScheme ? ControlPlaneClient.WssScheme : ControlPlaneClient.WsScheme
-        const socket = new WebSocket(scheme + ControlPlaneClient.SchemeSuffix + location.host + ControlPlaneClient.EventsRoute, [ticket])
-        socket.addEventListener(ControlPlaneClient.MessageEvent, (ev: MessageEvent) => { this.OnMessage(String(ev.data)) })
-        socket.addEventListener(ControlPlaneClient.CloseEvent, () => { this.OnClosed(socket) })
+        const socket = this.sockets.Open(this.SocketUrl(ControlPlaneClient.EventsRoute, this.sockets.Location), ticket)
+        socket.OnMessage(data => { this.OnMessage(data) })
+        socket.OnClose(() => { this.OnClosed(socket) })
         this.socket = socket
     }
 
     // Reopens the socket after a delay; skipped if Dispose() ran or the socket was already replaced.
-    private OnClosed(closed: WebSocket): void
+    private OnClosed(closed: IEventSocket): void
     {
         if (this.socket !== closed)
         {
@@ -614,7 +563,7 @@ export class ControlPlaneClient
 
     public Dispose(): void
     {
-        this.socket?.close()
+        this.socket?.Close()
         this.socket = undefined
         this.handlers.length = 0
     }
@@ -656,54 +605,33 @@ export class ControlPlaneClient
 
     public async ListGraphs(envName: string): Promise<GraphDto[]>
     {
-        return await this.Send<GraphDto[]>(this.GraphsRoute(envName), undefined)
+        return await this.Get<GraphDto[]>(this.GraphsRoute(envName))
     }
 
     public async CreateGraph(envName: string, name: string, description: string): Promise<GraphDto>
     {
-        return await this.Send<GraphDto>(this.GraphsRoute(envName), { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ name, description }) })
+        return await this.Post<GraphDto>(this.GraphsRoute(envName), { name, description })
     }
 
     public async DeleteGraph(envName: string, graphName: string): Promise<void>
     {
-        await this.Send<unknown>(this.GraphsRoute(envName) + ControlPlaneClient.PathSeparator + encodeURIComponent(graphName), { method: ControlPlaneClient.MethodDelete })
+        await this.Delete<unknown>(this.GraphsRoute(envName) + ControlPlaneClient.PathSeparator + encodeURIComponent(graphName))
     }
 
     // Promotes a development graph into a runtime environment.
     public async PromoteGraph(sourceEnv: string, graphName: string, targetEnv: string): Promise<PromotionResultDto>
     {
-        return await this.Send<PromotionResultDto>(this.PromoteRoute(sourceEnv, graphName), { method: ControlPlaneClient.MethodPost, body: JSON.stringify({ targetEnv }) })
+        return await this.Post<PromotionResultDto>(this.PromoteRoute(sourceEnv, graphName), { targetEnv })
     }
 
     // The runtime's loaded graph; null when none has been promoted.
     public async GetLoadedGraph(runtimeEnv: string): Promise<GraphLoadedDto | null>
     {
-        return await this.Send<GraphLoadedDto | null>(this.LoadedGraphRoute(runtimeEnv), undefined)
+        return await this.Get<GraphLoadedDto | null>(this.LoadedGraphRoute(runtimeEnv))
     }
 
     private EnvRoute(name: string): string
     {
         return ControlPlaneClient.EnvironmentsRoute + ControlPlaneClient.PathSeparator + encodeURIComponent(name)
-    }
-
-    private async Send<T>(route: string, init: { method: string; body?: string } | undefined): Promise<T>
-    {
-        const response = await fetch(route, init === undefined ? { credentials: ControlPlaneClient.CredentialsMode } :
-            { method: init.method, body: init.body, credentials: ControlPlaneClient.CredentialsMode, headers: { [ControlPlaneClient.ContentTypeHeader]: ControlPlaneClient.JsonType } })
-        let payload: unknown
-        try
-        {
-            payload = await response.json()
-        }
-        catch
-        {
-            payload = undefined
-        }
-        if (!response.ok)
-        {
-            const body = payload as { error?: string; code?: string; rollback?: { rolledBack: string[]; residue: string[] } } | undefined
-            throw new ApiError(response.status, body?.error ?? ControlPlaneClient.RequestFailed + String(response.status), body?.rollback, body?.code)
-        }
-        return payload as T
     }
 }

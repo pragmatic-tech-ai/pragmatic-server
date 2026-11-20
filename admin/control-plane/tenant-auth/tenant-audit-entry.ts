@@ -1,5 +1,5 @@
 import type { AuditRecord, AuditRegistry } from '../audit-record.js'
-import type { TenantSession } from './tenant-session.js'
+import type { TenantSession } from './tenant-sessions.js'
 
 /** What a tenant-plane caller records; `at` is stamped on append. */
 export type TenantAuditFields = Omit<AuditRecord, 'id' | 'at'>

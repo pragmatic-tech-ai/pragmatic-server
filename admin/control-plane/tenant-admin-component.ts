@@ -1,10 +1,12 @@
 import { SettingType, type ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component'
 import { ComponentDeclarations, type ComponentDeclaration } from '../../src/component/component-declaration.js'
+import { TenantRoles } from './tenant-auth/tenant-roles.js'
 
 /**
  * The component descriptor of the tenant admin image (pragmatic-tenant-admind, the console that ships into a client hive):
  * the `TenantAdminEnv` contract as `TenantAdminServer`, `InjectedIdpService` and `IngressTlsPolicy` read it. Stores in
- * Postgres (A5). Its port is configuration with no default; 7100 is the port the console installer gives it in a hive.
+ * Postgres (A5). Declares its application role (`environment-admin`; the tenant role `admin` is the realm's own). Its port is
+ * configuration with no default; 7100 is the port the console installer gives it in a hive.
  */
 export class TenantAdminComponent
 {
@@ -17,7 +19,9 @@ export class TenantAdminComponent
                 name: 'core',
                 description: 'The tenant console: listener, state folder and tenant origins.',
                 settings: [
-                    { name: 'dataRoot', type: SettingType.String, source: 'PRAGMATIC_TENANT_ADMIN_DATA_ROOT', required: true, description: 'The state folder (its master.key decrypts the data).' },
+                    { name: 'dataRoot', type: SettingType.String, source: 'PRAGMATIC_TENANT_ADMIN_DATA_ROOT', required: true, description: 'The state folder: master.key (seals the stored secrets) and the platform delivery (seed, verified images).' },
+                    { name: 'databaseUrl', type: SettingType.String, source: 'PRAGMATIC_TENANT_ADMIN_DATABASE_URL_FILE', required: true, secret: true, description: 'The console Postgres URL (a mounted secret file); every record of the console lives there.' },
+                    { name: 'portalDir', type: SettingType.String, source: 'PRAGMATIC_TENANT_ADMIN_PORTAL_DIR', description: 'The tenant portal bundle (defaults to the shipped admin/tenant-portal/dist).' },
                     { name: 'port', type: SettingType.Integer, source: 'PRAGMATIC_TENANT_ADMIN_PORT', required: true, description: 'Port of the tenant listener.' },
                     { name: 'baseDomain', type: SettingType.String, source: 'PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN', required: true, description: 'Tenants are served at <tenant>.<baseDomain>.' },
                     { name: 'bind', type: SettingType.String, source: 'PRAGMATIC_TENANT_ADMIN_BIND', default: '127.0.0.1', description: 'Address of the tenant listener.' },
@@ -61,7 +65,9 @@ export class TenantAdminComponent
                 ],
             },
         ],
-        roles: [],
+        roles: [
+            { name: TenantRoles.EnvironmentAdmin, description: 'A tenant member who manages the tenant environments and their rollout (not access or settings).' },
+        ],
         postgres: true,
         ports: [{ name: 'http', number: 7100 }],
         health: { port: 'http', path: '/healthz' },

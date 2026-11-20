@@ -2,6 +2,10 @@
 export class TenantAdminEnv
 {
     public static readonly DataRoot = 'PRAGMATIC_TENANT_ADMIN_DATA_ROOT'
+    /** Path of the secret file holding the console's Postgres URL (never an inline value; required). */
+    public static readonly DatabaseUrlFile = 'PRAGMATIC_TENANT_ADMIN_DATABASE_URL_FILE'
+    /** The tenant portal bundle folder; default the shipped admin/tenant-portal/dist. */
+    public static readonly PortalDir = 'PRAGMATIC_TENANT_ADMIN_PORTAL_DIR'
     public static readonly Port = 'PRAGMATIC_TENANT_ADMIN_PORT'
     public static readonly Bind = 'PRAGMATIC_TENANT_ADMIN_BIND'
     public static readonly BaseDomain = 'PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN'

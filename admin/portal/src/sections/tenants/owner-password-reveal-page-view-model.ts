@@ -1,4 +1,4 @@
-import { OneTimeSecretPageViewModel } from '../../shell/one-time-secret-page-view-model.js'
+import { OneTimeSecretPageViewModel } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import type { TenantsSectionService } from './tenants-section-service.js'
 
 // Why an Owner password is being shown: the tenant was just created, or the
@@ -19,6 +19,7 @@ export class OwnerPasswordRevealPageViewModel extends OneTimeSecretPageViewModel
     private static readonly CreatedContinue = 'Continue to the tenant'
     private static readonly ResetContinue = 'Back to the tenant'
     private static readonly NoWarning = ''
+    private static readonly NoticeText = "This password is shown once. Copy it now and pass it to the tenant's Owner over a secure channel. It cannot be shown again."
 
     public constructor(
         private readonly section: TenantsSectionService,
@@ -45,6 +46,21 @@ export class OwnerPasswordRevealPageViewModel extends OneTimeSecretPageViewModel
     public get Heading(): string
     {
         return this.Kind === OwnerPasswordKind.Reset ? OwnerPasswordRevealPageViewModel.ResetHeading : OwnerPasswordRevealPageViewModel.CreatedHeading
+    }
+
+    public get Title(): string
+    {
+        return this.Heading
+    }
+
+    public get Notice(): string
+    {
+        return OwnerPasswordRevealPageViewModel.NoticeText
+    }
+
+    public get ConfirmLabel(): string
+    {
+        return this.ContinueLabel
     }
 
     public get ContinueLabel(): string

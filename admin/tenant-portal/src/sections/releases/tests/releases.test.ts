@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import type { IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
 import { NavigationService } from '@pragmatic-tech-ai/mural/framework/shell/services/navigation-service.js'
-import { TenantApiError } from '../../../tenant-api-client.js'
+import { ApiError } from '../../../tenant-api-client.js'
 import { EnvStatus } from '../../../tenant-types.js'
 import { PageState, TenantPageViewModel } from '../../../shell/tenant-page-view-model.js'
 import { TenantSectionService } from '../../../shell/tenant-section-service.js'
@@ -205,12 +205,12 @@ describe('ReleasesPageViewModel', () =>
     it('shows a load failure as Error and a 401 expires the session', async () =>
     {
         const api = Fixture.StandardApi()
-        api.FailOn.set('ListLedger', new TenantApiError(500, 'ledger down'))
+        api.FailOn.set('ListLedger', new ApiError(500, 'ledger down'))
         const page = await new Fixture(api).OpenReleases()
         assert.equal(page.State, PageState.Error)
         assert.equal(page.ErrorText, 'ledger down')
         const expired = Fixture.StandardApi()
-        expired.FailOn.set('ListManifests', new TenantApiError(401, 'gone'))
+        expired.FailOn.set('ListManifests', new ApiError(401, 'gone'))
         const f = new Fixture(expired)
         await f.OpenReleases()
         assert.equal(f.Host.Reloader.Count, 1)
@@ -384,7 +384,7 @@ describe('AdoptWizardPageViewModel', () =>
         it('reports a ' + String(status) + ' as "' + title + '" with the server message', async () =>
         {
             const api = Fixture.StandardApi()
-            api.FailOn.set('SelectTarget', new TenantApiError(status, 'server says ' + String(status)))
+            api.FailOn.set('SelectTarget', new ApiError(status, 'server says ' + String(status)))
             const wizard = await new Fixture(api).OpenWizard('2')
             wizard.NextCommand.Execute()
             wizard.NextCommand.Execute()
@@ -401,7 +401,7 @@ describe('AdoptWizardPageViewModel', () =>
     it('a 401 on adopt expires the session', async () =>
     {
         const api = Fixture.StandardApi()
-        api.FailOn.set('SelectTarget', new TenantApiError(401, 'gone'))
+        api.FailOn.set('SelectTarget', new ApiError(401, 'gone'))
         const f = new Fixture(api)
         const wizard = await f.OpenWizard('2')
         wizard.NextCommand.Execute()

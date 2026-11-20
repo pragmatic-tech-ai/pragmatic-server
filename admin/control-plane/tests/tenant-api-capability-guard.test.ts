@@ -1,15 +1,15 @@
 import { strict as assert } from 'node:assert'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
-import { describe, it, mock } from 'node:test'
+import { describe, it } from 'node:test'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import type { IEnvironmentService } from '../control-plane-host.js'
 import type { TenantRecord } from '../platform-records.js'
 import { SeededTenantDirectory } from '../tenant-api/seeded-tenant-directory.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
-import { TenantAdminCapabilities } from '../tenant-api/tenant-admin-capabilities.js'
-import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import type { TenantSession } from '../tenant-auth/tenant-sessions.js'
 import { ResRecorder } from './res-recorder.js'
+import { TenantApiDispatch } from './tenant-test-sessions.js'
 
 /** Answers every Admin*, lifecycle and list call with a benign value; the guard test only cares about the HTTP status. */
 class FakeService
@@ -129,7 +129,8 @@ class Fixtures
     public static readonly TenantId = 't-a'
     public static readonly OwnerId = 'owner-1'
     public static readonly Base = '/tenant-api/environments/a-env/'
-    public static readonly Forbidden = { error: 'forbidden' }
+    /** The host's role refusal (ClaimsAuthorizer, before the handler). */
+    public static readonly Forbidden = { error: 'Forbidden' }
     public static readonly Grant = { subject: 's1', role: 'admin', resourceKind: 'graph', resourcePath: '/g' }
 
     public static readonly Guarded: Route[] = [
@@ -158,8 +159,11 @@ class Fixtures
         new Route('POST', 'admin/config', {}),
         new Route('DELETE', 'admin/config', {}),
         new Route('POST', 'admin/accounts/user%2F1', {}),
-        new Route('DELETE', 'admin/grants/extra', {}),
         new Route('PUT', 'admin/tokens', {})
+    ]
+    /** Paths that are no route under any method: 404. */
+    public static readonly Unknown: Route[] = [
+        new Route('DELETE', 'admin/grants/extra', {}),
     ]
 
     public static Tenant(owner: boolean): TenantRecord
@@ -168,7 +172,7 @@ class Fixtures
         return owner ? { ...t, ownerPrincipalId: Fixtures.OwnerId } : t
     }
 
-    public static Build(owner: boolean, envTenant: string = Fixtures.TenantId): { endpoint: TenantApiEndpoint; service: FakeService }
+    public static Build(owner: boolean, envTenant: string = Fixtures.TenantId): { endpoint: TenantApiEndpoint; service: FakeService; directory: SeededTenantDirectory }
     {
         const env: EnvironmentRecord = {
             name: 'a-env', type: EnvType.Development, template: Template.DevBlank, environmentId: 'eid', tenantId: envTenant, hiveId: undefined, hostPort: 8101,
@@ -176,7 +180,7 @@ class Fixtures
         }
         const directory = new SeededTenantDirectory({ tenant: Fixtures.Tenant(owner), hives: [] })
         const service = new FakeService([env])
-        return { endpoint: new TenantApiEndpoint(service as unknown as IEnvironmentService, directory, undefined as never, undefined as never, undefined as never), service }
+        return { endpoint: new TenantApiEndpoint(service as unknown as IEnvironmentService, directory, undefined as never, undefined as never, undefined as never), service, directory }
     }
 
     public static Session(principalId: string): TenantSession
@@ -193,10 +197,10 @@ class Fixtures
         return stream
     }
 
-    public static async Send(endpoint: TenantApiEndpoint, session: TenantSession, method: string, path: string, body?: unknown): Promise<ResRecorder>
+    public static async Send(built: { endpoint: TenantApiEndpoint; directory: SeededTenantDirectory }, session: TenantSession, method: string, path: string, body?: unknown): Promise<ResRecorder>
     {
         const res = new ResRecorder()
-        assert.equal(await endpoint.Handle(Fixtures.Req(method, body), res as unknown as ServerResponse, path, session), true)
+        assert.equal(await TenantApiDispatch.Handle(built.endpoint, Fixtures.Req(method, body), res as unknown as ServerResponse, path, session, built.directory), true)
         return res
     }
 }
@@ -205,10 +209,10 @@ describe('TenantApiEndpoint capability guard', () =>
 {
     for (const r of Fixtures.Guarded)
     {
-        it(`${r.Method} ${r.Suffix} is 403 generic for a non-owner and never reaches the handler`, async () =>
+        it(`${r.Method} ${r.Suffix} is 403 generic for a non-owner (no tenant role admin) and never reaches the handler`, async () =>
         {
             const f = Fixtures.Build(true)
-            const res = await Fixtures.Send(f.endpoint, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
+            const res = await Fixtures.Send(f, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
             assert.equal(res.status, 403)
             assert.deepEqual(JSON.parse(res.body), Fixtures.Forbidden)
             assert.equal(f.service.Calls, 0)
@@ -217,7 +221,7 @@ describe('TenantApiEndpoint capability guard', () =>
         it(`${r.Method} ${r.Suffix} is allowed for the owner and reaches the handler`, async () =>
         {
             const f = Fixtures.Build(true)
-            const res = await Fixtures.Send(f.endpoint, Fixtures.Session(Fixtures.OwnerId), r.Method, Fixtures.Base + r.Suffix, r.Body)
+            const res = await Fixtures.Send(f, Fixtures.Session(Fixtures.OwnerId), r.Method, Fixtures.Base + r.Suffix, r.Body)
             assert.ok(res.status === 200 || res.status === 201, `status ${res.status}`)
             assert.equal(f.service.Calls, 1)
         })
@@ -225,16 +229,18 @@ describe('TenantApiEndpoint capability guard', () =>
         it(`${r.Method} ${r.Suffix} is allowed when the tenant records no owner (fail-open)`, async () =>
         {
             const f = Fixtures.Build(false)
-            const res = await Fixtures.Send(f.endpoint, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
+            const res = await Fixtures.Send(f, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
             assert.ok(res.status === 200 || res.status === 201, `status ${res.status}`)
             assert.equal(f.service.Calls, 1)
         })
 
-        it(`${r.Method} ${r.Suffix} on a foreign environment is 404 (ownership wins over 403)`, async () =>
+        it(`${r.Method} ${r.Suffix} on a foreign environment is 404 for the admin and 403 for a non-admin (the role is checked first)`, async () =>
         {
             const f = Fixtures.Build(true, 't-other')
-            const res = await Fixtures.Send(f.endpoint, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
-            assert.equal(res.status, 404)
+            const admin = await Fixtures.Send(f, Fixtures.Session(Fixtures.OwnerId), r.Method, Fixtures.Base + r.Suffix, r.Body)
+            assert.equal(admin.status, 404)
+            const other = await Fixtures.Send(f, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
+            assert.equal(other.status, 403)
             assert.equal(f.service.Calls, 0)
         })
     }
@@ -244,47 +250,52 @@ describe('TenantApiEndpoint capability guard', () =>
         it(`${r.Method} ${r.Suffix} stays open for a non-owner`, async () =>
         {
             const f = Fixtures.Build(true)
-            const res = await Fixtures.Send(f.endpoint, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
+            const res = await Fixtures.Send(f, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
             assert.ok(res.status === 200 || res.status === 201, `status ${res.status}`)
             assert.equal(f.service.Calls, 1)
         })
     }
 
-    for (const r of Fixtures.Unrouted)
+    for (const r of Fixtures.Unknown)
     {
-        it(`${r.Method} ${r.Suffix} (no such route) is 404 for a non-owner, not 403`, async () =>
+        it(`${r.Method} ${r.Suffix} (no such path) is 404 for a non-owner, not 403`, async () =>
         {
             const f = Fixtures.Build(true)
-            const res = await Fixtures.Send(f.endpoint, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
+            const res = await Fixtures.Send(f, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
             assert.equal(res.status, 404)
+            assert.equal(f.service.Calls, 0)
+        })
+    }
+
+    for (const r of Fixtures.Unrouted)
+    {
+        it(`${r.Method} ${r.Suffix} (no such route) is 405 for a non-owner, before any role check`, async () =>
+        {
+            const f = Fixtures.Build(true)
+            const res = await Fixtures.Send(f, Fixtures.Session('someone-else'), r.Method, Fixtures.Base + r.Suffix, r.Body)
+            assert.equal(res.status, 405)
             assert.equal(f.service.Calls, 0)
         })
     }
 
     for (const suffix of ['maker-token', 'app-reader-grant'])
     {
-        it(`POST ${suffix} is 403 generic for a session without the envs capability and never reaches the service`, async () =>
+        it(`POST ${suffix} is 403 generic for a session holding neither admin nor environment-admin and never reaches the service`, async () =>
         {
-            const stub = mock.method(TenantAdminCapabilities, 'For', () => ({ roleLabel: 'x', capabilities: { envs: false, adopt: false, access: false, settings: false } }))
-            try
-            {
-                const f = Fixtures.Build(true)
-                const res = await Fixtures.Send(f.endpoint, Fixtures.Session(Fixtures.OwnerId), 'POST', Fixtures.Base + suffix)
-                assert.equal(res.status, 403)
-                assert.deepEqual(JSON.parse(res.body), Fixtures.Forbidden)
-                assert.equal(f.service.Calls, 0)
-            }
-            finally
-            {
-                stub.mock.restore()
-            }
+            const f = Fixtures.Build(true)
+            const res = new ResRecorder()
+            const roleless: TenantSession = { ...Fixtures.Session(Fixtures.OwnerId), roles: [], appRoles: [] }
+            assert.equal(await TenantApiDispatch.Handle(f.endpoint, Fixtures.Req('POST'), res as unknown as ServerResponse, Fixtures.Base + suffix, roleless), true)
+            assert.equal(res.status, 403)
+            assert.deepEqual(JSON.parse(res.body), Fixtures.Forbidden)
+            assert.equal(f.service.Calls, 0)
         })
     }
 
     it('environment start stays open for a non-owner', async () =>
     {
         const f = Fixtures.Build(true)
-        const res = await Fixtures.Send(f.endpoint, Fixtures.Session('someone-else'), 'POST', '/tenant-api/environments/a-env/start')
+        const res = await Fixtures.Send(f, Fixtures.Session('someone-else'), 'POST', '/tenant-api/environments/a-env/start')
         assert.equal(res.status, 200)
         assert.equal(f.service.Calls, 1)
     })

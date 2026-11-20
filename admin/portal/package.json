@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@pragmatic-tech-ai/mural": "file:../../../Mural",
+    "@pragmatic-tech-ai/pragmatic-app-shell": "file:../../../pragmatic-shared/packages/pragmatic-app-shell",
     "@pragmatic-tech-ai/todl-runtime": "file:../../../todl-runtime"
   },
   "devDependencies": {

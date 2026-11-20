@@ -1,9 +1,7 @@
 import type { IEnvironmentService } from '../control-plane-host.js'
 import { EnvStatus, EnvType, type EnvironmentRecord } from '../environment-record.js'
-import type { TenantRecord } from '../platform-records.js'
 import { TenantAdminCapabilities, type AdminRoleCapabilities } from '../tenant-api/tenant-admin-capabilities.js'
-import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
-import type { TenantSession } from './tenant-session.js'
+import type { TenantSession } from './tenant-sessions.js'
 
 /** What the desktop app does to an environment: contribute graphs to a Development one, publish to a Runtime one, or (relay-only, either type) read-only inspect, or (relay-only, Development) develop: read and write source, drive the language service, and contribute, or (relay-only, Development) run-test: load a build into the dev env's runtime and read back what runs. */
 export enum DesktopAction
@@ -31,8 +29,8 @@ export type DesktopTargetDto = { name: string; status: EnvStatus }
 
 export type DesktopTargetsDto = { contribute: DesktopTargetDto[]; publish: DesktopTargetDto[] }
 
-/** Derives a session's role capabilities (the profile's source); injectable so tests can model a role without `envs`. */
-export type DesktopCapabilitiesSource = (session: TenantSession, tenant: TenantRecord | undefined) => AdminRoleCapabilities
+/** Derives a session's role capabilities (the profile's source: its role claims); injectable so tests can model a role without `envs`. */
+export type DesktopCapabilitiesSource = (session: TenantSession) => AdminRoleCapabilities
 
 /**
  * The environments a desktop session may act on. Offered == allowed: `For` (the pickers) and `Allows` / `Check` (the action, used
@@ -44,8 +42,7 @@ export class DesktopTargets
 {
     public constructor(
         private readonly service: IEnvironmentService,
-        private readonly directory: ITenantDirectory,
-        private readonly capabilities: DesktopCapabilitiesSource = (session, tenant) => TenantAdminCapabilities.For(session, tenant))
+        private readonly capabilities: DesktopCapabilitiesSource = session => TenantAdminCapabilities.For(session))
     {
     }
 
@@ -88,7 +85,7 @@ export class DesktopTargets
 
     private MayActOnEnvs(session: TenantSession): boolean
     {
-        return this.capabilities(session, this.directory.GetTenant(session.tenantId)).capabilities.envs
+        return this.capabilities(session).capabilities.envs
     }
 
     private Listed(session: TenantSession, mayActOnEnvs: boolean, records: readonly EnvironmentRecord[], action: DesktopAction): DesktopTargetDto[]

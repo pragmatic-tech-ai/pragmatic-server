@@ -15,7 +15,8 @@ import { RolloutAdoptionRefusedError, type AdoptionLedgerDto, type IRolloutClien
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
 import { TenantHostResolver } from '../tenant-auth/tenant-host-resolver.js'
-import type { TenantSession } from '../tenant-auth/tenant-session.js'
+import type { TenantSession } from '../tenant-auth/tenant-sessions.js'
+import { TenantApiDispatch } from './tenant-test-sessions.js'
 
 /** A hand-written directory implementing ONLY the narrow tenant seam. */
 class FakeTenantDirectory implements ITenantDirectory
@@ -195,7 +196,7 @@ describe('tenant plane depends on narrow seams', () =>
         const service = new FakeEnvironmentService([Kit.Env()]) as unknown as IEnvironmentService
         const endpoint = new TenantApiEndpoint(service, Kit.Directory(), rollout, new HiveOrchestratorFactory(), new EnvironmentPlacement(Kit.Directory()))
         const res = Kit.Res()
-        const handled = await endpoint.Handle(Kit.PostJson({ version: Kit.Version }), res as unknown as ServerResponse, Kit.TargetPath, Kit.Session())
+        const handled = await TenantApiDispatch.Handle(endpoint, Kit.PostJson({ version: Kit.Version }), res as unknown as ServerResponse, Kit.TargetPath, Kit.Session(), Kit.Directory())
         assert.equal(handled, true)
         assert.equal(res.status, 204)
         assert.deepEqual(rollout.Adopted, [{ hiveId: Kit.Hive, version: Kit.Version }])
@@ -206,7 +207,7 @@ describe('tenant plane depends on narrow seams', () =>
         const service = new FakeEnvironmentService([Kit.Env()]) as unknown as IEnvironmentService
         const endpoint = new TenantApiEndpoint(service, Kit.Directory(), new RefusingRolloutClient(), new HiveOrchestratorFactory(), new EnvironmentPlacement(Kit.Directory()))
         const res = Kit.Res()
-        const handled = await endpoint.Handle(Kit.PostJson({ version: Kit.Version }), res as unknown as ServerResponse, Kit.TargetPath, Kit.Session())
+        const handled = await TenantApiDispatch.Handle(endpoint, Kit.PostJson({ version: Kit.Version }), res as unknown as ServerResponse, Kit.TargetPath, Kit.Session(), Kit.Directory())
         assert.equal(handled, true)
         assert.equal(res.status, 409)
     })

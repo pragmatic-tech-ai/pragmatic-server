@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { ApiError } from '../../../api-client.js'
 import { OperatorContext } from '../../../operator-context.js'
-import { PendingSecret } from '../../../shell/holds-pending-secret.js'
+import { PendingSecret } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { FakeControlPlane, Inspect, PortalTestHost, TestRail, Tick } from '../../../shell/tests/portal-test-fixtures.js'
 import { TenantDetailPageViewModel } from '../../tenants/tenant-detail-page-view-model.js'
 import { TenantsPageViewModel } from '../../tenants/tenants-page-view-model.js'
@@ -415,7 +415,7 @@ describe('Stand up a hive (provision wizard)', () =>
     {
         const fx = new WizardFixture()
         const wizard = await fx.AtReview()
-        fx.Api.Failure = new ApiError(409, 'client initech already exists', { rolledBack: ['tenant initech-prod'], residue: ['hive initech-hive'] })
+        fx.Api.Failure = new ApiError(409, 'client initech already exists', undefined, { error: 'client initech already exists', rollback: { rolledBack: ['tenant initech-prod'], residue: ['hive initech-hive'] } })
         wizard.SubmitCommand.Execute()
         await Tick.Settle()
         assert.equal(wizard.StepIndex, ProvisionStep.Review)

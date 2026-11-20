@@ -1,6 +1,5 @@
-import { readFile } from 'node:fs/promises'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
-import { AtomicJsonFile } from './atomic-json-file.js'
+import { RecordMapFormatError, RecordSlot, type IRecordMap } from './record-map.js'
 import { DomainApprovalState, DomainVerificationRecord, type DomainVerificationAnswer } from './domain-verification-record.js'
 import { EmailDomainPolicy, InvalidEmailDomainError } from './email-domain-policy.js'
 import { DomainNotClaimedError, DomainVerificationUnavailableError, EmailDomainsNotEditableError, type ITenantEmailDomains, type TenantEmailDomainsView } from './tenant-api/tenant-email-domains.js'
@@ -15,9 +14,10 @@ export interface IConsoleDomainVerifyChannel
 }
 
 /**
- * The in-hive console's own email domains, kept in `<dataRoot>/email-domains.json` (`{ "domains": string[] }`). Until the
- * Owner first saves a list, the domains are the seed's (the tenant record copied in at install), filtered by
- * EmailDomainPolicy; opening never writes. Writes are serialised and atomic (unique temp file, then rename), and `Changed`
+ * The in-hive console's own email domains: the record `domains` (a string array) of the console's database
+ * (`records_console_email_domains`), or of `<dataRoot>/email-domains.json` (`{ "domains": string[] }`, the pre-A5 file the
+ * importer reads). Until the Owner first saves a list, the domains are the seed's (the tenant record copied in at install),
+ * filtered by EmailDomainPolicy; opening never writes. Writes are serialised (each durable when Set resolves), and `Changed`
  * fires after each write that changed the list, carrying the new list (the advert sender re-sends on it). The domains'
  * verifications come from the platform (the advert answer, or a Verify through the attached channel) and are held in memory
  * only, for the domains currently in the list.
@@ -27,11 +27,9 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
     public static readonly FileName = 'email-domains.json'
     /** The sentence a verify channel answers when the platform could not check the domain (or answered something unusable). */
     public static readonly PlatformUnavailableMessage = 'The platform could not check the domain. Try again later.'
-    private static readonly DomainsKey = 'domains'
-    private static readonly Utf8 = 'utf8'
-    private static readonly NotFoundCode = 'ENOENT'
-    private static readonly JsonIndent = 2
-    private static readonly MalformedPrefix = 'Invalid email domains file (expected { "domains": string[] }): '
+    /** The record's key (and the pre-A5 file's root member). */
+    public static readonly DomainsKey = 'domains'
+    private static readonly MalformedPrefix = 'Invalid email domains record (expected { "domains": string[] }): '
     private static readonly NotEditableMessage = 'This console sets only its own tenant\'s email domains.'
     private static readonly NoChannelMessage = 'Domain verification is not available on this console.'
     private static readonly NotListedSuffix = ' is not among this console\'s email domains.'
@@ -46,30 +44,35 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
     private channel: IConsoleDomainVerifyChannel | undefined
 
     private constructor(
-        private readonly filePath: string,
+        private readonly slot: RecordSlot<unknown>,
         private readonly tenantId: string,
         domains: readonly string[])
     {
         this.domains = domains
     }
 
-    /** File absent -> the seed domains (EmailDomainPolicy.Filter; refused seed entries dropped); never writes on open. A malformed file throws naming it. */
-    public static async Open(filePath: string, tenantId: string, seedDomains: readonly string[] | undefined): Promise<ConsoleEmailDomainStore>
+    /**
+     * No stored list -> the seed domains (EmailDomainPolicy.Filter; refused seed entries dropped); never writes on open. A
+     * malformed record (or file) throws naming its location. `location` is a record map or the path of the pre-A5 file.
+     */
+    public static async Open(location: string | IRecordMap<unknown>, tenantId: string, seedDomains: readonly string[] | undefined): Promise<ConsoleEmailDomainStore>
     {
-        let text: string
+        const slot = RecordSlot.Of<unknown>(location, ConsoleEmailDomainStore.DomainsKey)
+        let stored: unknown
         try
         {
-            text = await readFile(filePath, ConsoleEmailDomainStore.Utf8)
+            stored = await slot.Read()
         }
         catch (err)
         {
-            if ((err as NodeJS.ErrnoException).code !== ConsoleEmailDomainStore.NotFoundCode)
+            if (err instanceof RecordMapFormatError)
             {
-                throw err
+                throw new Error(ConsoleEmailDomainStore.MalformedPrefix + slot.Location)
             }
-            return new ConsoleEmailDomainStore(filePath, tenantId, EmailDomainPolicy.Filter(seedDomains ?? []).accepted)
+            throw err
         }
-        return new ConsoleEmailDomainStore(filePath, tenantId, EmailDomainPolicy.Filter(ConsoleEmailDomainStore.DomainsIn(text, filePath)).accepted)
+        const domains = stored === undefined ? seedDomains ?? [] : ConsoleEmailDomainStore.DomainsIn(stored, slot.Location)
+        return new ConsoleEmailDomainStore(slot, tenantId, EmailDomainPolicy.Filter(domains).accepted)
     }
 
     public get Domains(): readonly string[]
@@ -169,25 +172,13 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
         return await this.For(tenantId)
     }
 
-    private static DomainsIn(text: string, filePath: string): string[]
+    private static DomainsIn(stored: unknown, location: string): string[]
     {
-        let body: unknown
-        try
+        if (!Array.isArray(stored) || !stored.every(d => typeof d === 'string'))
         {
-            body = JSON.parse(text)
+            throw new Error(ConsoleEmailDomainStore.MalformedPrefix + location)
         }
-        catch
-        {
-            throw new Error(ConsoleEmailDomainStore.MalformedPrefix + filePath)
-        }
-        const domains = body !== null && typeof body === 'object' && !Array.isArray(body)
-            ? (body as Record<string, unknown>)[ConsoleEmailDomainStore.DomainsKey]
-            : undefined
-        if (!Array.isArray(domains) || !domains.every(d => typeof d === 'string'))
-        {
-            throw new Error(ConsoleEmailDomainStore.MalformedPrefix + filePath)
-        }
-        return domains as string[]
+        return stored as string[]
     }
 
     /** True when `a` was checked after `b` (an answer never checked is the oldest). */
@@ -220,6 +211,6 @@ export class ConsoleEmailDomainStore implements ITenantEmailDomains
 
     private Write(domains: readonly string[]): Promise<void>
     {
-        return AtomicJsonFile.Write(this.filePath, { [ConsoleEmailDomainStore.DomainsKey]: domains }, ConsoleEmailDomainStore.JsonIndent)
+        return this.slot.Write([...domains])
     }
 }
