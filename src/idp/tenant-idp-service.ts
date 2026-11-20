@@ -12,7 +12,7 @@ import { IdpLoginThrottles } from './idp-login-throttles.js';
 import { IdpRealm, IdpSourceClients } from './idp-realm.js';
 import { IdpRealmSet, type IRealmOpener } from './idp-realm-set.js';
 import type { IdpSigningKey } from './idp-signing-key.js';
-import { IdpTlsFront, type IdpTlsIdentity } from './idp-tls-front.js';
+import type { IdpTlsIdentity } from './idp-tls-identity.js';
 import { ProtocolEndpoints } from './protocol-endpoints.js';
 import type { IRealmSecretsHome, RealmConfiguration } from './realm-configuration-reader.js';
 import { RealmIssuer } from './realm-issuer.js';
@@ -103,10 +103,7 @@ export class TenantIdpService
         public readonly Realms: IdpRealmSet,
         public readonly Stores: TenantIdpStores,
         public readonly Discovery: ProtocolEndpoints,
-        private readonly host: AppHost,
-        private readonly tls: IdpTlsFront | undefined,
-        private readonly config: AppHostConfig,
-        private readonly formEndpoints: ReadonlyMap<string, IFormEndpoint>)
+        private readonly host: AppHost)
     {
     }
 
@@ -128,6 +125,10 @@ export class TenantIdpService
         const routes = new RouteTable();
         signIn.Register(routes);
         protocol.Register(routes);
+        new IdpFormRoutes(new Map<string, IFormEndpoint>([
+            [RealmIssuer.TokenPath, new TokenEndpoint(realms, stores.Clients, stores.Codes, stores.RefreshTokens, stores.Sso, issuer)],
+            [RealmIssuer.RevocationPath, new RevocationEndpoint(realms, stores.Clients, stores.RefreshTokens)],
+        ])).Register(routes);
         S.RegisterAssets(routes, options.LoginPage);
         if (options.AdminTokens !== undefined && options.AdminTokens.length > 0)
         {
@@ -139,45 +140,29 @@ export class TenantIdpService
             TrustedProxy: options.TrustedProxy,
             ApiPrefix: S.ApiPrefix,
             Security: { ContentSecurityPolicy: S.ContentSecurityPolicy() },
+            Tls: options.Tls === undefined ? undefined : { Key: options.Tls.Key, Cert: options.Tls.Cert },
         });
         const host = new AppHost(config, {
             Routes: routes,
             Audit: new AuditTrail(stores.HostAudit),
             Problems: new ProblemMapper(err => console.error(S.LogPrefix, err instanceof Error ? err.name : typeof err)),
         });
-        const form = new Map<string, IFormEndpoint>([
-            [RealmIssuer.TokenPath, new TokenEndpoint(realms, stores.Clients, stores.Codes, stores.RefreshTokens, stores.Sso, issuer)],
-            [RealmIssuer.RevocationPath, new RevocationEndpoint(realms, stores.Clients, stores.RefreshTokens)],
-        ]);
-        const tls = options.Tls === undefined ? undefined : new IdpTlsFront(host, options.Tls);
-        return new TenantIdpService(realms, stores, protocol, host, tls, config, form);
+        return new TenantIdpService(realms, stores, protocol, host);
     }
 
+    /** Serves HTTPS when the options carry a TLS identity (the host terminates it), plain HTTP otherwise. */
     public async Listen(port: number, bind: string): Promise<void>
     {
-        if (this.tls !== undefined)
-        {
-            await this.tls.Listen(port, bind);
-        }
-        else
-        {
-            await this.host.Listen(port, bind);
-        }
-        IdpFormRoutes.Install(this.host, this.config, this.formEndpoints);
+        await this.host.Listen(port, bind);
     }
 
     public Address(): { address: string; port: number }
     {
-        return this.tls !== undefined ? this.tls.Address() : this.host.Address();
+        return this.host.Address();
     }
 
     public async Close(): Promise<void>
     {
-        if (this.tls !== undefined)
-        {
-            await this.tls.Close();
-            return;
-        }
         await this.host.Close();
     }
 

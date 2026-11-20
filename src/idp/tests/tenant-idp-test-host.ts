@@ -11,7 +11,7 @@ import { DevCa, IdpTlsMaterial } from '../dev-ca.js';
 import { IdpLoginPage } from '../idp-login-page.js';
 import type { IdpSourceClients } from '../idp-realm.js';
 import { IdpSigningKey } from '../idp-signing-key.js';
-import { IdpTlsIdentity } from '../idp-tls-front.js';
+import { IdpTlsIdentity } from '../idp-tls-identity.js';
 import { RealmIssuer } from '../realm-issuer.js';
 import type { RealmConfiguration } from '../realm-configuration-reader.js';
 import { TenantIdpDatabase } from '../tenant-idp-database.js';

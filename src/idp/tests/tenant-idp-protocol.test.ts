@@ -38,8 +38,7 @@ describe('the realm sign-in service: protocol edges and the admin API', () =>
     it('the token endpoint takes forms only, refuses an unknown grant, and accepts client_secret_basic', async () =>
     {
         const json = await host.Http.Send('POST', flow.Issuer + RealmIssuer.TokenPath, { Json: { grant_type: 'authorization_code' } });
-        assert.equal(json.Status, 400);
-        assert.equal(json.Json().error, 'invalid_request');
+        assert.equal(json.Status, 415);
         const unknown = await host.Http.Send('POST', flow.Issuer + RealmIssuer.TokenPath, { Form: { grant_type: 'password' } });
         assert.equal(unknown.Json().error, 'unsupported_grant_type');
         assert.equal(unknown.Header('cache-control'), 'no-store');

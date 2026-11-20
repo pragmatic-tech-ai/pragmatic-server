@@ -6,7 +6,7 @@ import { ComponentDescriptorCodec, type ComponentDescriptor } from '@pragmatic-t
 import { DevCa, IdpTlsMaterial } from './dev-ca.js';
 import { IdpLoginPage } from './idp-login-page.js';
 import { IdpSigningKey } from './idp-signing-key.js';
-import { IdpTlsIdentity } from './idp-tls-front.js';
+import { IdpTlsIdentity } from './idp-tls-identity.js';
 import { RealmConfigurationReader, type RealmConfiguration } from './realm-configuration-reader.js';
 import { TenantIdpComponent } from './tenant-idp-component.js';
 import { TenantIdpDatabase } from './tenant-idp-database.js';
