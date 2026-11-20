@@ -154,6 +154,14 @@ export class FakeOciRegistry
         return digest
     }
 
+    /** Stores a blob under its digest (as a completed upload would); returns the digest. */
+    public PutBlob(repo: string, bytes: Uint8Array): string
+    {
+        const digest = FakeOciRegistry.DigestOf(bytes)
+        this.blobs.set(FakeOciRegistry.KeyOf(repo, digest), bytes)
+        return digest
+    }
+
     public HasBlob(repo: string, digest: string): boolean
     {
         return this.blobs.has(FakeOciRegistry.KeyOf(repo, digest))

@@ -1,8 +1,12 @@
 # syntax=docker/dockerfile:1
-# One image per app (docker/docker-bake.hcl builds all eight). The build context MUST be the parent workspace dir
-# (architecture-agent/) holding pragmatic-server and its siblings. Each runtime target copies ONLY the dirs its
-# docker/images/closure.json entry lists; docker/images/closure-check.ts keeps closure.json, this file and the code in step.
-# Build: docker buildx bake -f pragmatic-server/docker/docker-bake.hcl   (NPMRC_FILE names an .npmrc with read:packages)
+# One image per app (docker/docker-bake.hcl builds all eight), each carrying its component descriptor at
+# /pragmatic/component.json and the descriptor's digest as the label ai.pragmatic-tech.component.digest. The build context
+# MUST be the parent workspace dir (architecture-agent/) holding pragmatic-server and its siblings. Each runtime target
+# copies ONLY the dirs its docker/images/closure.json entry lists; docker/images/closure-check.ts keeps closure.json, this
+# file and the code in step. Build in two steps (docker/README.md, "Component descriptors"; NPMRC_FILE names an .npmrc
+# with read:packages):
+#   docker buildx bake -f pragmatic-server/docker/docker-bake.hcl pragmatic-components
+#   docker buildx bake -f pragmatic-server/docker/docker-bake.hcl -f pragmatic-server/docker/.components/docker-bake.components.json
 FROM node:22@sha256:e13726ca604184d7a91fcacab1fc09eefd642dc28e79ac34e85540dd93b78cfb AS build
 WORKDIR /workspace
 # The one native addon (lmdb, reached by the env server) needs a C toolchain; hashing is hash-wasm, no argon2/bcrypt.
@@ -97,6 +101,23 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     done; rm -rf /todl-dev-stash; \
     sh /workspace/pragmatic-server/docker/link-workspace-singletons.sh /workspace; \
     find /workspace -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete 2>/dev/null || true
+
+# Component descriptors (admin/control-plane/release/component-descriptor-cli.ts), emitted from the descriptor classes
+# of the applications on the very tree the images are cut from. `components` writes every release app's descriptor; the
+# `pragmatic-components` bake target exports them (with the digests and the docker-bake.components.json override that
+# hands each image target its COMPONENT_APP and COMPONENT_DIGEST) before the images are baked, since a label value must be
+# known when the build starts. `component` writes one app's descriptor and refuses one that does not hash to the
+# COMPONENT_DIGEST the image is labelled with, so /pragmatic/component.json and the label always agree.
+FROM build AS components
+RUN node pragmatic-server/dist-tenant-admin/admin/control-plane/bin/pragmatic-component-descriptors.js emit-all --out /components
+
+FROM scratch AS pragmatic-components
+COPY --from=components /components /
+
+FROM build AS component
+ARG COMPONENT_APP
+ARG COMPONENT_DIGEST
+RUN node pragmatic-server/dist-tenant-admin/admin/control-plane/bin/pragmatic-component-descriptors.js emit --app "$COMPONENT_APP" --digest "$COMPONENT_DIGEST" --out /component/component.json
 
 # Per-image pragmatic-shared dependencies. The build's hoisted pragmatic-shared/node_modules holds the third-party deps of
 # all twelve shared packages (the realm adapters' cloud SDKs among them), so no image copies it. Each image that reaches a
@@ -221,6 +242,9 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-ad
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/demo /workspace/pragmatic-server/dist-tenant-admin/environments/demo
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/sample-apps /workspace/pragmatic-server/dist-tenant-admin/environments/sample-apps
 ENV PRAGMATIC_CONTROL_PLANE_ROLE=admin
+ARG COMPONENT_DIGEST
+COPY --from=component /component/component.json /pragmatic/component.json
+LABEL ai.pragmatic-tech.component.digest=$COMPONENT_DIGEST
 USER 10001
 EXPOSE 7000 7001
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
@@ -250,6 +274,9 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-ad
 ENV PRAGMATIC_CONTROL_PLANE_ROLE=edge
 ENV PRAGMATIC_AGENT_CHANNEL_PORT=7100
 ENV PRAGMATIC_AGENT_CHANNEL_BIND=0.0.0.0
+ARG COMPONENT_DIGEST
+COPY --from=component /component/component.json /pragmatic/component.json
+LABEL ai.pragmatic-tech.component.digest=$COMPONENT_DIGEST
 USER 10001
 EXPOSE 7100
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
@@ -281,6 +308,9 @@ COPY --from=pragmatic-env-server-shared-modules --chown=10001:10001 /workspace/p
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist /workspace/pragmatic-server/dist
+ARG COMPONENT_DIGEST
+COPY --from=component /component/component.json /pragmatic/component.json
+LABEL ai.pragmatic-tech.component.digest=$COMPONENT_DIGEST
 USER 10001
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
@@ -295,6 +325,9 @@ COPY --from=pragmatic-env-gateway-shared-modules --chown=10001:10001 /workspace/
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist /workspace/pragmatic-server/dist
+ARG COMPONENT_DIGEST
+COPY --from=component /component/component.json /pragmatic/component.json
+LABEL ai.pragmatic-tech.component.digest=$COMPONENT_DIGEST
 USER 10001
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
@@ -305,6 +338,9 @@ ENTRYPOINT ["node", "dist/bin/pragmatic-gatewayd.js"]
 FROM runtime AS pragmatic-hive-agent
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist /workspace/pragmatic-server/dist
+ARG COMPONENT_DIGEST
+COPY --from=component /component/component.json /pragmatic/component.json
+LABEL ai.pragmatic-tech.component.digest=$COMPONENT_DIGEST
 USER 10001
 ENTRYPOINT ["node", "dist/bin/pragmatic-agentd.js"]
 
@@ -329,6 +365,9 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-ad
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/admin/tenant-portal /workspace/pragmatic-server/dist-tenant-admin/admin/tenant-portal
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/demo /workspace/pragmatic-server/dist-tenant-admin/environments/demo
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/sample-apps /workspace/pragmatic-server/dist-tenant-admin/environments/sample-apps
+ARG COMPONENT_DIGEST
+COPY --from=component /component/component.json /pragmatic/component.json
+LABEL ai.pragmatic-tech.component.digest=$COMPONENT_DIGEST
 USER 10001
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD node -e "const r=require('node:http').request({host:'127.0.0.1',port:process.env.PRAGMATIC_TENANT_ADMIN_PORT,path:'/healthz'},x=>process.exit(x.statusCode===200?0:1));r.on('error',()=>process.exit(1));r.end()"
@@ -348,6 +387,9 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist /workspace/pragmatic-server/dist
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/idp-login/dist /workspace/pragmatic-server/idp-login/dist
+ARG COMPONENT_DIGEST
+COPY --from=component /component/component.json /pragmatic/component.json
+LABEL ai.pragmatic-tech.component.digest=$COMPONENT_DIGEST
 USER 10001
 EXPOSE 7100
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
@@ -361,5 +403,8 @@ COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-ru
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-ui-unpack /workspace/pragmatic-server/dist-ui-unpack
+ARG COMPONENT_DIGEST
+COPY --from=component /component/component.json /pragmatic/component.json
+LABEL ai.pragmatic-tech.component.digest=$COMPONENT_DIGEST
 USER 10001
 ENTRYPOINT ["node", "dist-ui-unpack/admin/control-plane/bin/pragmatic-ui-unpack.js"]

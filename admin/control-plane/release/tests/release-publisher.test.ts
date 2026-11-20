@@ -7,10 +7,11 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { OciRegistryClient } from '../../oci-registry-client.js'
 import { FakeOciRegistry } from '../../tests/fake-oci-registry.js'
+import { FakeImageLayout, FakeReleaseImage } from '../../tests/fake-release-image.js'
 import { ImportWalker } from '../../tests/import-walker.js'
 import { ReleaseDescriptorCodec } from '../release-descriptor.js'
 import { ReleasePublishCli } from '../release-publish-cli.js'
-import { ReleaseImageMissingError, ReleasePublisher, ReleaseSigningKeyMismatchError, ReleaseVersionExistsError } from '../release-publisher.js'
+import { ReleaseComponentMissingError, ReleaseImageMissingError, ReleasePublisher, ReleaseSigningKeyMismatchError, ReleaseVersionExistsError } from '../release-publisher.js'
 import { ReleaseSignature } from '../release-signature.js'
 import { ReleaseApp, ReleaseApps, ReleaseTag, ReleaseTagInvalidError } from '../release-tag.js'
 import { ReleaseTrustKeys } from '../release-trust-keys.js'
@@ -64,14 +65,24 @@ class PublisherFixture
         return PublisherFixture.Namespace + PublisherFixture.PathSeparator + app
     }
 
-    public SeedImages(skip?: ReleaseApp): void
+    /** The platform images are multi-arch indexes (as release.yml joins them); the rest single image manifests. */
+    public static readonly IndexApps: readonly ReleaseApp[] = [ReleaseApp.PlatformAdmin, ReleaseApp.PlatformEdge, ReleaseApp.Postgres]
+    public static readonly MethodGet = 'GET'
+
+    public readonly Images = new FakeReleaseImage(this.Registry)
+    /** The digest each seeded image was stored at. */
+    public readonly Digests = new Map<ReleaseApp, string>()
+
+    /** Seeds every app's image (but `skip`), each labelled with its component digest (but `unlabelled`). */
+    public SeedImages(skip?: ReleaseApp, unlabelled?: ReleaseApp): void
     {
         for (const app of ReleaseApps.All)
         {
             if (app !== skip)
             {
-                const bytes = new TextEncoder().encode(PublisherFixture.ImagePrefix + app)
-                this.Registry.PutManifest(PublisherFixture.Repo(app), PublisherFixture.Version, bytes, PublisherFixture.ManifestType)
+                const layout = PublisherFixture.IndexApps.includes(app) ? FakeImageLayout.Index : FakeImageLayout.Single
+                const component = app === unlabelled ? null : FakeReleaseImage.ComponentDigestOf(app)
+                this.Digests.set(app, this.Images.Put(PublisherFixture.Repo(app), PublisherFixture.Version, PublisherFixture.ImagePrefix + app, layout, component))
             }
         }
     }
@@ -97,7 +108,7 @@ class PublisherFixture
     /** True when the registry saw only reads: nothing was uploaded or tagged. */
     public get PushedNothing(): boolean
     {
-        return this.Registry.Requests.every(r => r.method === PublisherFixture.MethodHead)
+        return this.Registry.Requests.every(r => r.method === PublisherFixture.MethodHead || r.method === PublisherFixture.MethodGet)
     }
 }
 
@@ -240,7 +251,8 @@ describe('ReleasePublisher', () =>
         for (const [app, image] of ReleaseDescriptorCodec.ImagesOf(decoded))
         {
             assert.equal(image.repository, PublisherFixture.Repo(app))
-            assert.equal(image.digest, FakeOciRegistry.DigestOf(new TextEncoder().encode(PublisherFixture.ImagePrefix + app)))
+            assert.equal(image.digest, f.Digests.get(app))
+            assert.equal(image.componentDigest, FakeReleaseImage.ComponentDigestOf(app), 'the component digest read from the image label')
             assert.ok(ReleaseSignature.Verifies(image.digest, image.signature, f.Key.Public))
         }
         assert.equal(pulled.layerDigest, descriptorDigest)
@@ -270,6 +282,49 @@ describe('ReleasePublisher', () =>
             assert.equal(err.Version, PublisherFixture.Version)
             return true
         })
+        assert.ok(f.PushedNothing)
+    })
+
+    it('refuses to publish when an image carries no component descriptor label, and pushes nothing', async () =>
+    {
+        for (const app of [ReleaseApp.EnvGateway, ReleaseApp.Postgres])
+        {
+            const f = new PublisherFixture()
+            f.SeedImages(undefined, app)
+            await assert.rejects(() => f.Publisher().Publish(f.Input()), (err: unknown) =>
+            {
+                assert.ok(err instanceof ReleaseComponentMissingError)
+                assert.equal(err.App, app)
+                assert.match(err.message, /ai\.pragmatic-tech\.component\.digest/)
+                return true
+            })
+            assert.ok(f.PushedNothing)
+        }
+    })
+
+    it('refuses an index whose platform images carry different component digests', async () =>
+    {
+        const f = new PublisherFixture()
+        f.SeedImages()
+        const repo = PublisherFixture.Repo(ReleaseApp.PlatformEdge)
+        const one = FakeReleaseImage.ComponentDigestOf(ReleaseApp.PlatformEdge)
+        f.Images.Put(repo, PublisherFixture.Version, PublisherFixture.ImagePrefix + ReleaseApp.PlatformEdge, FakeImageLayout.Index, one, [one, FakeReleaseImage.ComponentDigestOf(ReleaseApp.PlatformAdmin)])
+        await assert.rejects(() => f.Publisher().Publish(f.Input()), (err: unknown) =>
+        {
+            assert.ok(err instanceof ReleaseComponentMissingError)
+            assert.equal(err.App, ReleaseApp.PlatformEdge)
+            assert.match(err.message, /different component digests/)
+            return true
+        })
+        assert.ok(f.PushedNothing)
+    })
+
+    it('refuses an image whose config blob does not match its digest', async () =>
+    {
+        const f = new PublisherFixture()
+        f.SeedImages()
+        f.Registry.TamperBlobs(true)
+        await assert.rejects(() => f.Publisher().Publish(f.Input()), /does not match its digest/)
         assert.ok(f.PushedNothing)
     })
 

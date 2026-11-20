@@ -4,6 +4,8 @@ dist-tenant-admin
 dist-ui-unpack
 docker/master.key
 docker/*.key
+# Component descriptors exported by the first bake step (docker-bake.hcl, pragmatic-components).
+docker/.components/
 environments/*/master.key
 environments/*/provisioned-secrets.json
 environments/*/tenants.json

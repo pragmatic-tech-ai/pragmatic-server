@@ -1,0 +1,215 @@
+{
+  "schema": 1,
+  "component": "pragmatic-tenant-admin",
+  "version": "0.1.0",
+  "options": [
+    {
+      "name": "core",
+      "description": "The tenant console: listener, state folder and tenant origins.",
+      "settings": [
+        {
+          "name": "dataRoot",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_DATA_ROOT: The state folder (its master.key decrypts the data)."
+        },
+        {
+          "name": "port",
+          "type": "integer",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_PORT: Port of the tenant listener."
+        },
+        {
+          "name": "baseDomain",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: Tenants are served at <tenant>.<baseDomain>."
+        },
+        {
+          "name": "bind",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "default": "127.0.0.1",
+          "description": "PRAGMATIC_TENANT_ADMIN_BIND: Address of the tenant listener."
+        },
+        {
+          "name": "externalScheme",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "default": "https",
+          "description": "PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME: Scheme browsers use for tenant origins."
+        },
+        {
+          "name": "externalPort",
+          "type": "integer",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT: Port browsers use for tenant origins, when not the scheme default."
+        },
+        {
+          "name": "secureCookie",
+          "type": "boolean",
+          "required": false,
+          "secret": false,
+          "default": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_SECURE_COOKIE: Whether session cookies are Secure."
+        },
+        {
+          "name": "trustedProxy",
+          "type": "boolean",
+          "required": false,
+          "secret": false,
+          "default": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_TRUSTED_PROXY: Whether the tenant listener sits behind a trusted proxy."
+        },
+        {
+          "name": "secretTtlHours",
+          "type": "integer",
+          "required": false,
+          "secret": false,
+          "default": 168,
+          "description": "PRAGMATIC_TENANT_ADMIN_SECRET_TTL_HOURS: Lifetime of issued tenant secrets, in hours."
+        },
+        {
+          "name": "healthProbeMs",
+          "type": "integer",
+          "required": false,
+          "secret": false,
+          "default": 30000,
+          "description": "PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_MS: Interval of environment health probes, in milliseconds."
+        },
+        {
+          "name": "healthProbeTimeoutMs",
+          "type": "integer",
+          "required": false,
+          "secret": false,
+          "default": 60000,
+          "description": "PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_TIMEOUT_MS: Timeout of one environment health probe, in milliseconds."
+        },
+        {
+          "name": "consoleHost",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_CONSOLE_HOST: Browser host the console is served on through its Ingress."
+        },
+        {
+          "name": "fingerprintKey",
+          "type": "string",
+          "required": false,
+          "secret": true,
+          "description": "PRAGMATIC_TENANT_ADMIN_FINGERPRINT_KEY_FILE: The account-email fingerprint key (a mounted secret file)."
+        }
+      ]
+    },
+    {
+      "name": "rollout",
+      "description": "The HTTP rollout client to the platform agent channel (in-process rollout when off).",
+      "settings": [
+        {
+          "name": "url",
+          "type": "url",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_ROLLOUT_URL: Base URL of the platform agent channel."
+        },
+        {
+          "name": "token",
+          "type": "string",
+          "required": true,
+          "secret": true,
+          "description": "PRAGMATIC_TENANT_ADMIN_ROLLOUT_TOKEN: The bearer token of the hive on the agent channel."
+        },
+        {
+          "name": "hiveId",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_ROLLOUT_HIVE_ID: The hive the rollout client is bound to."
+        }
+      ]
+    },
+    {
+      "name": "idp",
+      "description": "The injected tenant IdP the console connects to (a local IdP is used when off).",
+      "settings": [
+        {
+          "name": "browserBaseUrl",
+          "type": "url",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_IDP_BROWSER_BASE_URL: The browser-facing IdP origin (the issuer)."
+        },
+        {
+          "name": "baseUrl",
+          "type": "url",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_IDP_BASE_URL: The in-cluster IdP origin for token, jwks and admin calls (defaults to browserBaseUrl)."
+        },
+        {
+          "name": "caFile",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_IDP_CA_FILE: Path of the IdP CA certificate."
+        },
+        {
+          "name": "adminToken",
+          "type": "string",
+          "required": true,
+          "secret": true,
+          "description": "PRAGMATIC_IDP_ADMIN_TOKEN_FILE: The IdP admin token (a mounted secret file, never an inline value)."
+        }
+      ]
+    },
+    {
+      "name": "ingressTls",
+      "description": "TLS of the environment and IdP Ingresses this console renders.",
+      "settings": [
+        {
+          "name": "source",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_INGRESS_TLS_SOURCE: existing-secret, cert-manager or development."
+        },
+        {
+          "name": "secretName",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_INGRESS_TLS_SECRET: The TLS Secret (for existing-secret)."
+        },
+        {
+          "name": "clusterIssuer",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_INGRESS_TLS_ISSUER: The cert-manager ClusterIssuer (for cert-manager)."
+        }
+      ]
+    }
+  ],
+  "roles": [],
+  "storage": {
+    "postgres": true
+  },
+  "endpoints": {
+    "ports": [
+      {
+        "name": "http",
+        "port": 7100
+      }
+    ],
+    "health": {
+      "port": "http",
+      "path": "/healthz"
+    }
+  }
+}

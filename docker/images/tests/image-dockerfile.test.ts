@@ -11,11 +11,20 @@ import { fileURLToPath } from 'node:url'
 import type { IClosureEntry } from '../closure-check.js'
 import { ControlPlaneRole, ControlPlaneRoles } from '../../../admin/control-plane/control-plane-role.js'
 import { Template } from '../../../admin/control-plane/environment-record.js'
+import { ComponentDescriptorCli } from '../../../admin/control-plane/release/component-descriptor-cli.js'
+import { ComponentImageLabel } from '../../../admin/control-plane/release/component-image-label.js'
+import { ReleaseApps } from '../../../admin/control-plane/release/release-tag.js'
 import { ReleaseTrustKeys } from '../../../admin/control-plane/release/release-trust-keys.js'
 import { ControlPlaneServer } from '../../../admin/control-plane/server.js'
 import { TemplateCatalog } from '../../../admin/control-plane/template-catalog.js'
 import { TenantPlaneComposer } from '../../../admin/control-plane/tenant-plane-composer.js'
 import { NorthwindApp } from '../../../environments/seed/compile.js'
+
+/** The compiled CLI the image build runs to emit the component descriptors. */
+class ComponentImageFiles
+{
+    public static readonly CliBin = 'pragmatic-server/dist-tenant-admin/admin/control-plane/bin/pragmatic-component-descriptors.js'
+}
 
 /** docker/images/Dockerfile split into its stages (continuation lines joined), plus closure.json and the bake file. */
 class ImageFiles
@@ -407,5 +416,50 @@ describe('platform images: ports, health and tools (edge/admin split)', () =>
         {
             assert.ok(stage(name).includes('USER 10001'), name)
         }
+    })
+})
+
+describe('component descriptors in the images', () =>
+{
+    const copyLine = `COPY --from=component /component/component.json ${ComponentImageLabel.InImagePath}`
+    const labelLine = `LABEL ${ComponentImageLabel.Name}=$COMPONENT_DIGEST`
+
+    it('every Node app image carries its descriptor at the fixed path and its digest as the label', () =>
+    {
+        for (const app of ReleaseApps.NodeApps)
+        {
+            const lines = ImageFiles.Stage(app)
+            assert.ok(lines.includes('ARG COMPONENT_DIGEST'), app)
+            assert.ok(lines.includes(copyLine), app)
+            assert.ok(lines.includes(labelLine), app)
+        }
+    })
+
+    it('the component stage writes the descriptor only when it hashes to the label digest; emit-all feeds the bake export', () =>
+    {
+        const component = ImageFiles.Stage('component')
+        assert.ok(component.includes('ARG COMPONENT_APP') && component.includes('ARG COMPONENT_DIGEST'))
+        assert.ok(component.some(line => line.includes('emit --app "$COMPONENT_APP" --digest "$COMPONENT_DIGEST" --out /component/component.json')))
+        assert.ok(ImageFiles.Stage('components').some(line => line.includes('emit-all --out /components')))
+        assert.deepEqual(ImageFiles.Stage('pragmatic-components').filter(line => line.length > 0 && !line.startsWith('#')), ['COPY --from=components /components /'])
+        assert.ok(ImageFiles.Stage('components').some(line => line.includes(ComponentImageFiles.CliBin)))
+    })
+
+    it('the bake file exports the descriptors to docker/.components, which the build context and git leave out', () =>
+    {
+        const bake = ImageFiles.Text('docker', 'docker-bake.hcl')
+        assert.match(bake, /target "pragmatic-components" \{[^}]*target\s*= "pragmatic-components"[^}]*output\s*= \["type=local,dest=pragmatic-server\/docker\/\.components"\]/)
+        assert.ok(ImageFiles.Text('docker', 'images', 'Dockerfile.dockerignore').split(/\r?\n/).includes('pragmatic-server/docker/.components'))
+        assert.ok(ImageFiles.Text('.gitignore').split(/\r?\n/).includes('docker/.components/'))
+        assert.match(bake, /contexts = \{\s*components = "pragmatic-server\/docker\/\.components"\s*\}/)
+    })
+
+    it('the bake override names the build arguments both Dockerfiles declare', () =>
+    {
+        const postgres = ImageFiles.Text('docker', 'postgres', 'Dockerfile')
+        assert.ok(postgres.includes('ARG ' + ComponentDescriptorCli.DigestArg))
+        assert.ok(postgres.includes(`COPY --from=component /component/component.json ${ComponentImageLabel.InImagePath}`))
+        assert.ok(postgres.includes(labelLine))
+        assert.ok(ImageFiles.Stage('component').includes('ARG ' + ComponentDescriptorCli.AppArg))
     })
 })

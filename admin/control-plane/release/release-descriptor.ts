@@ -1,12 +1,21 @@
 import { Channel } from '../channel.js'
 import { ReleaseApp, ReleaseApps } from './release-tag.js'
 
-export type ReleaseImage = { repository: string; digest: string; signature: string }
+/**
+ * One image of a release: its repository, the digest of its manifest (an index for a multi-arch or attested image) and the
+ * release key's signature over that digest. From schema 2 on, also the content digest of the component descriptor the image
+ * carries (`/pragmatic/component.json`, label `ai.pragmatic-tech.component.digest`): the descriptor signature covers it, so
+ * one signature binds image and descriptor. A schema-1 image has none.
+ */
+export type ReleaseImage = { repository: string; digest: string; signature: string; componentDigest?: string }
 
 /** Every app's image; a schema-1 descriptor (published before pragmatic-postgres existed) has none for it. */
 export type ReleaseImages = Omit<Record<ReleaseApp, ReleaseImage>, ReleaseApp.Postgres> & { [ReleaseApp.Postgres]?: ReleaseImage }
 
-/** Schema 1: the eight Node apps (ReleaseApps.NodeApps). Schema 2: every app (ReleaseApps.All), adding pragmatic-postgres. */
+/**
+ * Schema 1: the eight Node apps (ReleaseApps.NodeApps). Schema 2: every app (ReleaseApps.All), adding pragmatic-postgres, and
+ * per image the component descriptor digest.
+ */
 export type ReleaseDescriptorSchema = 1 | 2
 
 export type ReleaseDescriptor = {
@@ -53,6 +62,9 @@ export class ReleaseDescriptorCodec
     private static readonly MissingImagePrefix = 'missing image: '
     private static readonly BadImagePrefix = 'ill-shaped image: '
     private static readonly BadDigestPrefix = 'bad digest for image: '
+    private static readonly BadComponentDigestPrefix = 'bad component digest for image: '
+    /** The schemas whose images carry a component descriptor digest. */
+    private static readonly ComponentSchemas: ReadonlySet<unknown> = new Set([2])
     private static readonly FieldVersion = 'version'
     private static readonly FieldBuiltAt = 'builtAt'
     private static readonly FieldSigningKeyId = 'signingKeyId'
@@ -130,7 +142,7 @@ export class ReleaseDescriptorCodec
         const siblingCommits = ReleaseDescriptorCodec.decodeSiblings(raw.siblingCommits)
         const builtAt = ReleaseDescriptorCodec.requireString(raw, ReleaseDescriptorCodec.FieldBuiltAt)
         const signingKeyId = ReleaseDescriptorCodec.requireString(raw, ReleaseDescriptorCodec.FieldSigningKeyId)
-        const images = ReleaseDescriptorCodec.decodeImages(raw.images, apps)
+        const images = ReleaseDescriptorCodec.decodeImages(raw.images, apps, ReleaseDescriptorCodec.ComponentSchemas.has(raw.schema))
         return {
             schema: raw.schema as ReleaseDescriptorSchema,
             version,
@@ -165,7 +177,7 @@ export class ReleaseDescriptorCodec
         return result
     }
 
-    private static decodeImages(value: unknown, apps: readonly ReleaseApp[]): ReleaseImages
+    private static decodeImages(value: unknown, apps: readonly ReleaseApp[], withComponent: boolean): ReleaseImages
     {
         if (!ReleaseDescriptorCodec.isRecord(value))
         {
@@ -192,7 +204,16 @@ export class ReleaseDescriptorCodec
             {
                 throw new ReleaseDescriptorInvalidError(ReleaseDescriptorCodec.BadDigestPrefix + app)
             }
-            result[app] = { repository: image.repository, digest: image.digest, signature: image.signature }
+            const decoded: ReleaseImage = { repository: image.repository, digest: image.digest, signature: image.signature }
+            if (withComponent)
+            {
+                if (typeof image.componentDigest !== 'string' || !ReleaseDescriptorCodec.DigestPattern.test(image.componentDigest))
+                {
+                    throw new ReleaseDescriptorInvalidError(ReleaseDescriptorCodec.BadComponentDigestPrefix + app)
+                }
+                decoded.componentDigest = image.componentDigest
+            }
+            result[app] = decoded
         }
         return result as ReleaseImages
     }

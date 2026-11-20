@@ -60,7 +60,9 @@ jobs:
         working-directory: ${{ github.workspace }}/pragmatic-server/idp-login
         run: |
           npm install --no-audit --no-fund && npm test && npm run typecheck
-      # One image per app (docker/docker-bake.hcl), built but not pushed; release.yml publishes them.
+      # One image per app (docker/docker-bake.hcl), built but not pushed; release.yml publishes them. Two steps: the
+      # component descriptors and their bake override first (pragmatic-components, into pragmatic-server/docker/.components),
+      # then the images, each labelled with its descriptor digest; every image is then checked to carry that descriptor.
       - name: Docker build
         working-directory: ${{ github.workspace }}
         env:
@@ -68,7 +70,17 @@ jobs:
         run: |
           trap 'rm -f "$RUNNER_TEMP/npmrc"' EXIT
           (umask 077 && printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$PACKAGES_TOKEN" > "$RUNNER_TEMP/npmrc")
-          NPMRC_FILE="$RUNNER_TEMP/npmrc" VERSION=ci SERVER_SHA="$GITHUB_SHA" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --allow=fs.read="$RUNNER_TEMP/npmrc"
+          NPMRC_FILE="$RUNNER_TEMP/npmrc" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --allow=fs.read="$RUNNER_TEMP/npmrc" pragmatic-components
+          NPMRC_FILE="$RUNNER_TEMP/npmrc" VERSION=ci SERVER_SHA="$GITHUB_SHA" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl \
+            -f pragmatic-server/docker/.components/docker-bake.components.json --allow=fs.read="$RUNNER_TEMP/npmrc"
+      - name: Component descriptor in every image matches its label
+        working-directory: ${{ github.workspace }}
+        run: |
+          images=()
+          for app in pragmatic-platform-admin pragmatic-platform-edge pragmatic-env-server pragmatic-env-gateway pragmatic-hive-agent pragmatic-tenant-admin pragmatic-tenant-idp pragmatic-ui-unpack pragmatic-postgres; do
+            images+=("ghcr.io/pragmatic-tech-ai/$app:ci")
+          done
+          bash pragmatic-server/docker/images/check-component-label.sh "${images[@]}"
       # pragmatic-postgres end to end on the image just baked: two applications, isolation, a restart with a third, a
       # changed password file, a refused start (docker/postgres/tests/image.test.sh removes what it creates).
       - name: pragmatic-postgres image test
@@ -100,10 +112,14 @@ jobs:
         run: |
           trap 'rm -f "$RUNNER_TEMP/npmrc"' EXIT
           (umask 077 && printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$PACKAGES_TOKEN" > "$RUNNER_TEMP/npmrc")
-          NPMRC_FILE="$RUNNER_TEMP/npmrc" PLATFORMS=linux/arm64 VERSION=ci SERVER_SHA="$GITHUB_SHA" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --allow=fs.read="$RUNNER_TEMP/npmrc" pragmatic-platform-admin pragmatic-platform-edge pragmatic-postgres
+          NPMRC_FILE="$RUNNER_TEMP/npmrc" PLATFORMS=linux/arm64 docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --allow=fs.read="$RUNNER_TEMP/npmrc" pragmatic-components
+          NPMRC_FILE="$RUNNER_TEMP/npmrc" PLATFORMS=linux/arm64 VERSION=ci SERVER_SHA="$GITHUB_SHA" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl \
+            -f pragmatic-server/docker/.components/docker-bake.components.json --allow=fs.read="$RUNNER_TEMP/npmrc" pragmatic-platform-admin pragmatic-platform-edge pragmatic-postgres
       # The arm64 pragmatic-postgres, loaded into the runner's docker and run through the same end-to-end test.
       - name: pragmatic-postgres image test (arm64)
         working-directory: ${{ github.workspace }}
         run: |
-          PLATFORMS=linux/arm64 VERSION=ci SERVER_SHA="$GITHUB_SHA" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --load pragmatic-postgres
+          PLATFORMS=linux/arm64 VERSION=ci SERVER_SHA="$GITHUB_SHA" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl \
+            -f pragmatic-server/docker/.components/docker-bake.components.json --load pragmatic-postgres
+          bash pragmatic-server/docker/images/check-component-label.sh ghcr.io/pragmatic-tech-ai/pragmatic-postgres:ci
           bash pragmatic-server/docker/postgres/tests/image.test.sh ghcr.io/pragmatic-tech-ai/pragmatic-postgres:ci

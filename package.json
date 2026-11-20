@@ -41,6 +41,7 @@
     "@opentelemetry/sdk-trace-base": "2.12.0",
     "@opentelemetry/sdk-trace-node": "2.12.0",
     "@opentelemetry/semantic-conventions": "1.43.0",
+    "@pragmatic-tech-ai/pragmatic-component": "file:../pragmatic-shared/packages/pragmatic-component",
     "@pragmatic-tech-ai/pragmatic-connectors-host": "file:../todl-connectors-host",
     "@pragmatic-tech-ai/pragmatic-graph": "file:../pragmatic-graph",
     "@pragmatic-tech-ai/pragmatic-identity": "file:../pragmatic-shared/packages/pragmatic-identity",

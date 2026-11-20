@@ -4,6 +4,7 @@ import { ReleaseState } from '../manifest-record.js'
 import type { ManifestRecord, ManifestRelease } from '../manifest-record.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { ManifestExistsError, ReleaseNotRejectedError, ReleaseRegistryUnavailableError, UnknownManifestError } from '../rollout-errors.js'
+import { ComponentImageLabel, ComponentLabelError } from './component-image-label.js'
 import { ReleaseDescriptorCodec, ReleaseDescriptorInvalidError } from './release-descriptor.js'
 import type { ReleaseDescriptor, ReleaseImage } from './release-descriptor.js'
 import { ReleasePublisher } from './release-publisher.js'
@@ -23,7 +24,8 @@ type PulledDescriptor = { layer: Uint8Array; layerDigest: string; annotations: R
 
 /**
  * Lists the signed release descriptors in the registry and imports every version not yet in the manifest catalogue,
- * verified (descriptor signed by a trusted key, every image present at the signed digest with a valid signature) or
+ * verified (descriptor signed by a trusted key, every image present at the signed digest with a valid signature and, from
+ * schema 2 on, carrying the component descriptor digest the descriptor signs) or
  * rejected with a reason naming only the failed check and the app or key id. Every version is inspected before any is
  * imported, so a registry that drops or refuses the credential mid-refresh leaves the catalogue untouched.
  */
@@ -55,6 +57,9 @@ export class ReleaseCatalog
     private static readonly ImageMissing = 'image missing: '
     private static readonly DigestMismatch = 'image digest mismatch: '
     private static readonly ImageSignatureInvalid = 'image signature invalid: '
+    private static readonly ComponentMissing = 'component descriptor label missing: '
+    private static readonly ComponentMismatch = 'component descriptor digest mismatch: '
+    private static readonly ComponentUnreadable = 'component descriptor label unreadable: '
 
     /**
      * @param imageHost the registry host the by-digest image references are recorded under (`ghcr.io`, or the host of
@@ -302,7 +307,35 @@ export class ReleaseCatalog
         {
             return S.ImageSignatureInvalid + app
         }
-        return undefined
+        return image.componentDigest === undefined ? undefined : await this.VerifyComponent(app, image.repository, image.digest, image.componentDigest)
+    }
+
+    /**
+     * The image (at its signed digest) carries the component descriptor the release signs: its label equals the signed
+     * component digest. The label is part of the image config, so it is as immutable as the image digest; the build writes
+     * the in-image descriptor and the label from one descriptor and refuses a mismatch.
+     */
+    private async VerifyComponent(app: ReleaseApp, repository: string, digest: string, componentDigest: string): Promise<string | undefined>
+    {
+        const S = ReleaseCatalog
+        let label: string | undefined
+        try
+        {
+            label = await ComponentImageLabel.Read(this.registry, repository, digest)
+        }
+        catch (error)
+        {
+            if (error instanceof ComponentLabelError)
+            {
+                return S.ComponentUnreadable + app
+            }
+            throw error
+        }
+        if (label === undefined)
+        {
+            return S.ComponentMissing + app
+        }
+        return label === componentDigest ? undefined : S.ComponentMismatch + app
     }
 
     private Verified(descriptor: ReleaseDescriptor): ManifestRecord
@@ -310,7 +343,9 @@ export class ReleaseCatalog
         const images: NonNullable<ManifestRelease['images']> = {}
         for (const [app, image] of ReleaseDescriptorCodec.ImagesOf(descriptor))
         {
-            images[app] = { repository: image.repository, digest: image.digest }
+            images[app] = image.componentDigest === undefined
+                ? { repository: image.repository, digest: image.digest }
+                : { repository: image.repository, digest: image.digest, componentDigest: image.componentDigest }
         }
         const server = descriptor.images[ReleaseApp.EnvServer]
         return {

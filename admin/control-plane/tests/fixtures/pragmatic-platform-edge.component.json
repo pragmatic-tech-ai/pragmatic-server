@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "component": "pragmatic-platform-edge",
+  "version": "0.1.0",
+  "options": [
+    {
+      "name": "core",
+      "description": "The public agent channel and the internal API of admin it relays to.",
+      "settings": [
+        {
+          "name": "agentChannelPort",
+          "type": "integer",
+          "required": false,
+          "secret": false,
+          "default": 7100,
+          "description": "PRAGMATIC_AGENT_CHANNEL_PORT: Port of the public agent channel (the image sets 7100)."
+        },
+        {
+          "name": "agentChannelBind",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "default": "0.0.0.0",
+          "description": "PRAGMATIC_AGENT_CHANNEL_BIND: Address of the public agent channel (an IP address)."
+        },
+        {
+          "name": "adminUrl",
+          "type": "url",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_EDGE_ADMIN_URL: The http(s) URL of the internal API of admin."
+        },
+        {
+          "name": "internalApiSecret",
+          "type": "string",
+          "required": true,
+          "secret": true,
+          "description": "PRAGMATIC_INTERNAL_API_SECRET_FILE: The shared secret for the internal API of admin (a mounted secret file)."
+        },
+        {
+          "name": "trustedProxy",
+          "type": "boolean",
+          "required": false,
+          "secret": false,
+          "default": false,
+          "description": "PRAGMATIC_EDGE_TRUSTED_PROXY: Whether the edge sits behind a trusted proxy (x-forwarded-for is then the client)."
+        }
+      ]
+    }
+  ],
+  "roles": [],
+  "storage": {
+    "postgres": false
+  },
+  "endpoints": {
+    "ports": [
+      {
+        "name": "agent-channel",
+        "port": 7100
+      }
+    ],
+    "health": {
+      "port": "agent-channel",
+      "path": "/healthz"
+    }
+  }
+}

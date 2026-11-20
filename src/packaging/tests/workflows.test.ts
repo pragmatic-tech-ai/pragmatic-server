@@ -65,7 +65,7 @@ test('release workflow publishes on release tags only, and never leaks its crede
     const check = runs.findIndex(run => /pragmatic-release-publish\.ts check --tag "\$GITHUB_REF"/.test(run))
     const clone = runs.findIndex(run => /git clone/.test(run))
     assert.ok(check !== -1 && check < clone, 'the tag is checked before any sibling is cloned')
-    assert.ok(runs.some(run => /docker buildx bake -f pragmatic-server\/docker\/docker-bake\.hcl --push/.test(run)))
+    assert.ok(runs.some(run => /docker buildx bake -f pragmatic-server\/docker\/docker-bake\.hcl \\\s+-f pragmatic-server\/docker\/\.components\/docker-bake\.components\.json --push/.test(run)))
     assert.ok(runs.some(run => WorkflowCommands.BakeAllowsNpmrc.test(run)), 'bake is granted read access to the npmrc secret file')
     assert.ok(runs.some(run => /publish --tag .* --key-id release-2026-11/.test(run)))
     assert.ok(runs.some(run => /umask 077[\s\S]*release\.key/.test(run)), 'the signing key is written under umask 077')
@@ -347,7 +347,7 @@ test('ci runs the pragmatic-postgres image test on the amd64 and the arm64 image
     const amd64Test = amd64.findIndex(run => imageTest.test(run))
     assert.ok(bake !== -1 && amd64Test > bake, 'the amd64 test runs on the image the bake built')
     const arm64 = MultiArch.Runs(jobs['platform-images-arm64'].steps).find(run => imageTest.test(run)) ?? ''
-    assert.match(arm64, /PLATFORMS=linux\/arm64 .*docker buildx bake .*--load pragmatic-postgres/)
+    assert.match(arm64, /PLATFORMS=linux\/arm64 [\s\S]*docker buildx bake [\s\S]*--load pragmatic-postgres/)
 })
 
 test('bake: the platform images take PLATFORMS; the six other apps form the amd64-only group', () =>
@@ -384,4 +384,57 @@ test('release resolves the sibling commits once; every image build and the descr
     }
     const publish = MultiArch.Runs(jobs.release.steps).find(run => /pragmatic-release-publish\.ts publish/.test(run)) ?? ''
     assert.match(publish, /--siblings-file "\$RUNNER_TEMP\/siblings\/siblings\.json"/)
+})
+
+/** The bake commands of a workflow job, continuation lines joined, in order. */
+class BakeCommands
+{
+    public static readonly Export = 'pragmatic-components'
+    public static readonly Override = '-f pragmatic-server/docker/.components/docker-bake.components.json'
+    private static readonly Continuation = /\\\n\s*/g
+    private static readonly LineBreak = '\n'
+    private static readonly Space = ' '
+    private static readonly Bake = 'docker buildx bake'
+
+    public static Of(steps: IWorkflowStep[] | undefined): string[]
+    {
+        const B = BakeCommands
+        return MultiArch.Runs(steps).flatMap(run => run.replace(B.Continuation, B.Space).split(B.LineBreak)).filter(line => line.includes(B.Bake))
+    }
+}
+
+test('every image bake runs after the component descriptors are exported and labels the images through their override', () =>
+{
+    const B = BakeCommands
+    const jobs = { ...MultiArch.Jobs('ci.yml'), ...MultiArch.Jobs('release.yml') }
+    let images = 0
+    for (const [name, job] of Object.entries(jobs))
+    {
+        let exported = false
+        for (const command of B.Of(job.steps))
+        {
+            if (command.trimEnd().endsWith(B.Space + B.Export))
+            {
+                assert.ok(!command.includes(B.Override), name)
+                exported = true
+                continue
+            }
+            assert.ok(exported, name + ': the descriptors are exported before ' + command)
+            assert.ok(command.includes(B.Override), name + ': ' + command)
+            images++
+        }
+    }
+    assert.ok(images >= 5)
+})
+
+test('ci checks every image carries the component descriptor its label names', () =>
+{
+    const runs = MultiArch.Runs(MultiArch.Jobs('ci.yml')['build-test-package'].steps)
+    const bake = runs.findIndex(run => /docker buildx bake/.test(run))
+    const check = runs.findIndex(run => run.includes('docker/images/check-component-label.sh'))
+    assert.ok(bake !== -1 && check > bake)
+    for (const app of ['pragmatic-platform-admin', 'pragmatic-platform-edge', 'pragmatic-env-server', 'pragmatic-env-gateway', 'pragmatic-hive-agent', 'pragmatic-tenant-admin', 'pragmatic-tenant-idp', 'pragmatic-ui-unpack', 'pragmatic-postgres'])
+    {
+        assert.ok(runs[check].includes(app), app)
+    }
 })

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { OciRegistryClient } from '../../oci-registry-client.js'
 import { FakeOciRegistry } from '../../tests/fake-oci-registry.js'
+import { FakeImageLayout, FakeReleaseImage } from '../../tests/fake-release-image.js'
 import { ReleasePublisher } from '../release-publisher.js'
 import { ReleaseRegistry } from '../release-registry.js'
 import { ReleaseApps, ReleaseTag } from '../release-tag.js'
@@ -41,7 +42,6 @@ class ConfigFixture
     public static readonly KeyId = 'release-test'
     public static readonly Version = '1.4.0'
     public static readonly Namespace = 'pragmatic-tech-ai'
-    public static readonly ManifestType = 'application/vnd.oci.image.manifest.v1+json'
     public static readonly ImagePrefix = 'image '
     public static readonly PathSeparator = '/'
     public static readonly Commit = 'a'.repeat(40)
@@ -207,9 +207,10 @@ describe('ReleaseCatalogConfig', () =>
         const keys = join(fx.Dir, F.KeysDir)
         mkdirSync(keys)
         writeFileSync(join(keys, F.KeyId + ReleaseTrustKeys.Suffix), trustedPublicKeyPem)
+        const images = new FakeReleaseImage(registry)
         for (const app of ReleaseApps.All)
         {
-            registry.PutManifest(F.Namespace + F.PathSeparator + app, F.Version, new TextEncoder().encode(F.ImagePrefix + app), F.ManifestType)
+            images.Put(F.Namespace + F.PathSeparator + app, F.Version, F.ImagePrefix + app, FakeImageLayout.Single, FakeReleaseImage.ComponentDigestOf(app))
         }
         await new ReleasePublisher(new OciRegistryClient(F.OtherRegistry, registry.Fetch), F.Namespace).Publish({
             tag: ReleaseTag.FromVersion(F.Version), serverCommit: F.Commit, siblingCommits: {}, signingKeyId: F.KeyId, privateKeyPem, trustedPublicKeyPem,

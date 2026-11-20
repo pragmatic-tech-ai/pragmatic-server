@@ -63,8 +63,18 @@ describe('pragmatic-postgres image', () =>
     it('builds on the official Postgres 17, pinned by a multi-arch digest', () =>
     {
         const from = PostgresImage.Instruction('FROM')
-        assert.equal(from.length, 1)
-        assert.match(from[0], /^FROM postgres:17\.\d+-[a-z]+@sha256:[0-9a-f]{64}$/)
+        assert.equal(from.length, 2, 'the component check stage and the image, on the same base')
+        assert.match(from[0], /^FROM postgres:17\.\d+-[a-z]+@sha256:[0-9a-f]{64} AS component$/)
+        assert.equal(from[0], from[1] + ' AS component')
+        assert.match(from[1], /^FROM postgres:17\.\d+-[a-z]+@sha256:[0-9a-f]{64}$/)
+    })
+
+    it('carries its component descriptor, checked at build against the label digest', () =>
+    {
+        const run = PostgresImage.Instruction('RUN').find(line => line.includes('sha256sum /component/component.json'))
+        assert.ok(run !== undefined && run.includes('"$COMPONENT_DIGEST"'), 'the build refuses a descriptor that is not the labelled one')
+        assert.ok(PostgresImage.Instruction('COPY').includes('COPY --from=components pragmatic-postgres/component.json /component/component.json'))
+        assert.ok(PostgresImage.Instruction('LABEL').includes('LABEL ai.pragmatic-tech.component.digest=$COMPONENT_DIGEST'))
     })
 
     it('runs as the postgres user by number, so runAsNonRoot can check it', () =>

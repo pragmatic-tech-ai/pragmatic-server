@@ -72,6 +72,7 @@ export class ReleasePublishCli
     private static readonly PublishedPrefix = 'published '
     private static readonly DescriptorLabel = 'descriptor '
     private static readonly ImageSeparator = ' '
+    private static readonly ComponentLabel = ' component '
 
     public static async Run(argv: readonly string[], env: NodeJS.ProcessEnv, output: ReleaseCliOutput, fetchFn?: OciFetch): Promise<number>
     {
@@ -128,7 +129,9 @@ export class ReleasePublishCli
         output.Out(S.PublishedPrefix + descriptor.version)
         for (const [app, image] of Object.entries(descriptor.images))
         {
-            output.Out(app + S.ImageSeparator + image.digest)
+            output.Out(image.componentDigest === undefined
+                ? app + S.ImageSeparator + image.digest
+                : app + S.ImageSeparator + image.digest + S.ComponentLabel + image.componentDigest)
         }
         output.Out(S.DescriptorLabel + descriptorDigest)
     }

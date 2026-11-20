@@ -36,3 +36,6 @@ pragmatic-server/environments/*/provisioned-secrets.json
 pragmatic-server/environments/*/tenants.json
 # Vendored native sources (Skia etc.) the TS build never reads.
 Mural/third_party
+# The component descriptors the first bake step exports (docker-bake.hcl, pragmatic-components): never part of the build
+# input, or the second step would see a changed tree and rebuild everything.
+pragmatic-server/docker/.components

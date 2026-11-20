@@ -1,4 +1,5 @@
 import { OciRegistryClient } from '../oci-registry-client.js'
+import { ComponentImageLabel, ComponentLabelError } from './component-image-label.js'
 import { ReleaseDescriptorCodec, type ReleaseDescriptor, type ReleaseImage } from './release-descriptor.js'
 import { ReleaseRegistry } from './release-registry.js'
 import { ReleaseSignature } from './release-signature.js'
@@ -65,8 +66,32 @@ export class ReleaseImageMissingError extends Error
 }
 
 /**
+ * An image of the release carries no component descriptor label (or one that cannot be read), so its descriptor cannot be
+ * bound to it; nothing is pushed. The reason is a fixed sentence (ComponentLabelFault) or absent for a missing label.
+ */
+export class ReleaseComponentMissingError extends Error
+{
+    private static readonly ErrorName = 'ReleaseComponentMissingError'
+    private static readonly MessagePrefix = 'Release image has no readable component descriptor label: '
+    private static readonly VersionSeparator = ':'
+    private static readonly LabelOpen = ' ('
+    private static readonly LabelClose = '): '
+    private static readonly NoLabel = 'no label'
+
+    public constructor(public readonly App: ReleaseApp, public readonly Version: string, reason?: string)
+    {
+        super(ReleaseComponentMissingError.MessagePrefix + App + ReleaseComponentMissingError.VersionSeparator + Version
+            + ReleaseComponentMissingError.LabelOpen + ComponentImageLabel.Name + ReleaseComponentMissingError.LabelClose
+            + (reason ?? ReleaseComponentMissingError.NoLabel))
+        this.name = ReleaseComponentMissingError.ErrorName
+    }
+}
+
+/**
  * Signs the digest of every image tagged with the release version and publishes the signed release descriptor as an OCI
- * artifact. The descriptor is pushed last, so its existence means every image was present and signed.
+ * artifact. Each image's component descriptor digest is read from its label and recorded beside the image digest, so the
+ * descriptor signature binds both. The descriptor is pushed last, so its existence means every image was present, labelled
+ * and signed.
  */
 export class ReleasePublisher
 {
@@ -107,7 +132,8 @@ export class ReleasePublisher
             {
                 throw new ReleaseImageMissingError(app, version)
             }
-            images[app] = { repository, digest, signature: ReleaseSignature.Sign(digest, input.privateKeyPem) }
+            const componentDigest = await this.ComponentDigestOf(app, version, repository, digest)
+            images[app] = { repository, digest, signature: ReleaseSignature.Sign(digest, input.privateKeyPem), componentDigest }
         }
         const descriptor: ReleaseDescriptor = {
             schema: ReleaseDescriptorCodec.CurrentSchema,
@@ -149,6 +175,28 @@ export class ReleasePublisher
                 throw new ReleaseSigningKeyMismatchError(input.signingKeyId)
             }
         }
+    }
+
+    private async ComponentDigestOf(app: ReleaseApp, version: string, repository: string, digest: string): Promise<string>
+    {
+        let component: string | undefined
+        try
+        {
+            component = await ComponentImageLabel.Read(this.registry, repository, digest)
+        }
+        catch (error)
+        {
+            if (error instanceof ComponentLabelError)
+            {
+                throw new ReleaseComponentMissingError(app, version, error.Fault)
+            }
+            throw error
+        }
+        if (component === undefined)
+        {
+            throw new ReleaseComponentMissingError(app, version)
+        }
+        return component
     }
 
     private repo(name: string): string

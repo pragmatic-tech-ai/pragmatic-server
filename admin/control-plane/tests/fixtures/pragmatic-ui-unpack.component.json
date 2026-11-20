@@ -1,0 +1,90 @@
+{
+  "schema": 1,
+  "component": "pragmatic-ui-unpack",
+  "version": "0.1.0",
+  "options": [
+    {
+      "name": "core",
+      "description": "The UI artifact to unpack and the trust it is verified against.",
+      "settings": [
+        {
+          "name": "registryBase",
+          "type": "url",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_UI_REGISTRY_BASE: Base URL of the registry the artifact is pulled from."
+        },
+        {
+          "name": "repository",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_UI_REPO: The artifact repository."
+        },
+        {
+          "name": "artifactTag",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_UI_ARTIFACT_TAG: The artifact tag."
+        },
+        {
+          "name": "signatureTag",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_UI_SIG_TAG: The tag of the artifact signature."
+        },
+        {
+          "name": "manifestDigest",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_UI_MANIFEST_DIGEST: The manifest digest the artifact must have."
+        },
+        {
+          "name": "appName",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_UI_APP_NAME: The application the UI belongs to."
+        },
+        {
+          "name": "appVersion",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_UI_APP_VERSION: The application version."
+        },
+        {
+          "name": "trustRootRef",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_UI_TRUST_ROOT_REF: The trust root the signature must chain to."
+        },
+        {
+          "name": "dataDir",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_UI_DATA_DIR: Folder the UI is unpacked into."
+        },
+        {
+          "name": "trustDir",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_UI_TRUST_DIR: Folder of the trusted public keys."
+        }
+      ]
+    }
+  ],
+  "roles": [],
+  "storage": {
+    "postgres": false
+  },
+  "endpoints": {
+    "ports": []
+  }
+}

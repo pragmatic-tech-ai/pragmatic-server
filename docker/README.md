@@ -71,3 +71,36 @@ Run it non-root with a read-only root filesystem:
 The files must be readable by uid 999. The health check is `pg_isready` on loopback TCP, so the start-up reconcile
 (socket only) never reads as healthy. Tests: `bash docker/postgres/tests/reconcile.test.sh` (no database) and
 `bash docker/postgres/tests/image.test.sh <image>` (a docker host; CI runs both arches).
+
+To build it on its own (outside bake), hand it the descriptor the first bake step exported and its digest:
+
+    docker build --build-context components=pragmatic-server/docker/.components \
+        --build-arg COMPONENT_DIGEST="$(jq -r '."pragmatic-postgres"' pragmatic-server/docker/.components/digests.json)" \
+        -t pragmatic-postgres:local pragmatic-server/docker/postgres
+
+# Component descriptors
+
+Every release image carries a component descriptor (`@pragmatic-tech-ai/pragmatic-component`): what the application
+supports (its options and their settings, which settings are secret, its application roles, whether it needs a
+Postgres database, its ports and health endpoint). The descriptor is declared by a class next to the application's
+composition root (`src/bin/env-server-component.ts`, `src/bin/env-gateway-component.ts`,
+`src/agent/hive-agent-component.ts`, `src/idp/tenant-idp-component.ts`, `admin/control-plane/platform-admin-component.ts`,
+`platform-edge-component.ts`, `tenant-admin-component.ts`, `ui-unpack-component.ts`,
+`docker/postgres/pragmatic-postgres-component.ts`); a golden test pins each one's JSON and digest, and a source test holds
+each to the variables its configuration readers read.
+
+In the image the descriptor is `/pragmatic/component.json` (its canonical JSON, the bytes its digest covers) and its
+digest is the label `ai.pragmatic-tech.component.digest`. A label value must be known when a build starts, so images are
+baked in two steps from the workspace root:
+
+    NPMRC_FILE=/path/to/.npmrc docker buildx bake -f pragmatic-server/docker/docker-bake.hcl pragmatic-components
+    NPMRC_FILE=/path/to/.npmrc docker buildx bake -f pragmatic-server/docker/docker-bake.hcl \
+        -f pragmatic-server/docker/.components/docker-bake.components.json [targets]
+
+The first step runs `pragmatic-component-descriptors emit-all` inside the build and exports every descriptor, a
+`digests.json` and the bake override `docker-bake.components.json` (each image target's `COMPONENT_APP` and
+`COMPONENT_DIGEST`) into `pragmatic-server/docker/.components` (git- and build-context-ignored). In the second, each image
+writes its descriptor again from the same code and refuses the build unless it hashes to `COMPONENT_DIGEST`, so the file
+and the label always agree; `docker/images/check-component-label.sh <image>...` checks a built image. The release
+publisher reads every image's label and signs it beside the image digest (release descriptor schema 2); the platform's
+release catalogue checks each image's label against the signed digest.

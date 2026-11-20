@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "component": "pragmatic-postgres",
+  "version": "0.1.0",
+  "options": [
+    {
+      "name": "core",
+      "description": "One database and one role per application, reconciled on every start.",
+      "settings": [
+        {
+          "name": "applicationsFile",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "default": "/etc/pragmatic-postgres/applications.conf",
+          "description": "PRAGMATIC_POSTGRES_APPLICATIONS: File of <application> <database> <role> lines."
+        },
+        {
+          "name": "applicationSecretsDir",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "default": "/run/secrets/pragmatic-postgres/applications",
+          "description": "PRAGMATIC_POSTGRES_SECRETS_DIR: Folder holding one password file per application, named for the application."
+        },
+        {
+          "name": "superuser",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "default": "postgres",
+          "description": "POSTGRES_USER: Name of the superuser role."
+        },
+        {
+          "name": "superuserPassword",
+          "type": "string",
+          "required": true,
+          "secret": true,
+          "description": "POSTGRES_PASSWORD_FILE: The superuser password (a mounted secret file, /run/secrets/pragmatic-postgres/superuser in the image)."
+        }
+      ]
+    }
+  ],
+  "roles": [],
+  "storage": {
+    "postgres": false
+  },
+  "endpoints": {
+    "ports": [
+      {
+        "name": "postgres",
+        "port": 5432
+      }
+    ]
+  }
+}

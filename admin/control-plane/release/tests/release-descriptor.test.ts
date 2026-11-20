@@ -9,10 +9,10 @@ class DescriptorFixture
 {
     public static Make(): ReleaseDescriptor
     {
-        const images: Partial<Record<ReleaseApp, { repository: string; digest: string; signature: string }>> = {}
+        const images: Partial<Record<ReleaseApp, { repository: string; digest: string; signature: string; componentDigest: string }>> = {}
         for (const app of ReleaseApps.All)
         {
-            images[app] = { repository: `ghcr.io/pragmatic-tech-ai/${app}`, digest: `sha256:${'a'.repeat(64)}`, signature: 'c2ln' }
+            images[app] = { repository: `ghcr.io/pragmatic-tech-ai/${app}`, digest: `sha256:${'a'.repeat(64)}`, signature: 'c2ln', componentDigest: DescriptorFixture.ComponentDigest }
         }
         return {
             schema: ReleaseDescriptorCodec.CurrentSchema,
@@ -26,6 +26,7 @@ class DescriptorFixture
         }
     }
 
+    public static readonly ComponentDigest = 'sha256:' + 'f'.repeat(64)
     public static readonly Commit = 'e'.repeat(40)
     public static readonly ShortCommit = 'e'.repeat(39)
     public static readonly Proto = '__proto__'
@@ -117,6 +118,32 @@ describe('ReleaseDescriptorCodec', () =>
         assert.equal(decoded.schema, 1)
         assert.equal(decoded.images[ReleaseApp.Postgres], undefined)
         assert.deepEqual(ReleaseDescriptorCodec.ImagesOf(decoded).map(([app]) => app), ReleaseApps.All.filter(app => app !== ReleaseApp.Postgres))
+        assert.deepEqual(ReleaseDescriptorCodec.Decode(ReleaseDescriptorCodec.Encode(decoded)), decoded)
+    })
+
+    it('schema 2 binds a component descriptor digest to every image: one missing or malformed is rejected naming the app', () =>
+    {
+        for (const bad of [undefined, 'sha256:abc', 'f'.repeat(64), 42])
+        {
+            const d = DescriptorFixture.Make() as unknown as { images: Record<string, Record<string, unknown>> }
+            d.images[ReleaseApp.EnvGateway].componentDigest = bad
+            assert.throws(() => ReleaseDescriptorCodec.Decode(DescriptorFixture.Bytes(d)),
+                (error: unknown) => error instanceof ReleaseDescriptorInvalidError && error.Reason === 'bad component digest for image: pragmatic-env-gateway', String(bad))
+        }
+        const decoded = ReleaseDescriptorCodec.Decode(ReleaseDescriptorCodec.Encode(DescriptorFixture.Make()))
+        assert.ok(ReleaseDescriptorCodec.ImagesOf(decoded).every(([, image]) => image.componentDigest === DescriptorFixture.ComponentDigest))
+    })
+
+    it('a schema-1 descriptor carries no component digest: it decodes without one (as published) and never reads one', () =>
+    {
+        const published = { ...DescriptorFixture.Make(), schema: 1 } as unknown as { images: Record<string, Record<string, unknown>> }
+        delete published.images[ReleaseApp.Postgres]
+        for (const image of Object.values(published.images))
+        {
+            delete image.componentDigest
+        }
+        const decoded = ReleaseDescriptorCodec.Decode(DescriptorFixture.Bytes(published))
+        assert.ok(ReleaseDescriptorCodec.ImagesOf(decoded).every(([, image]) => !('componentDigest' in image)))
         assert.deepEqual(ReleaseDescriptorCodec.Decode(ReleaseDescriptorCodec.Encode(decoded)), decoded)
     })
 

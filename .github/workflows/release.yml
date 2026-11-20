@@ -1,6 +1,9 @@
 # Publishes a release from a `release/X.Y.Z` (stable) or `release/X.Y.Z-early.N` (early access) tag on this repo:
 # builds the nine app images (docker/docker-bake.hcl), pushes them to ghcr.io/pragmatic-tech-ai tagged :X.Y.Z and
 # :git-<server sha>, then signs each image digest and pushes the signed release descriptor (pragmatic-release:X.Y.Z).
+# Every bake runs in two steps: pragmatic-components first exports the component descriptors and the override that
+# labels each image with its descriptor digest (ai.pragmatic-tech.component.digest; the descriptor itself is at
+# /pragmatic/component.json); the publisher reads each image's label and signs it with the image digest (schema 2).
 # The three platform images (platform-admin, platform-edge, postgres) are multi-arch: the platform-images job builds
 # each arch on its own native runner (no QEMU) and pushes it by digest; the release job joins both digests under the
 # version tags (docker buildx imagetools create), so the descriptor records and signs the multi-arch index digest. The
@@ -118,7 +121,9 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: |
           mkdir -p "$RUNNER_TEMP/digests"
-          NPMRC_FILE="$RUNNER_TEMP/npmrc" PLATFORMS=linux/${{ matrix.arch }} docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --allow=fs.read="$RUNNER_TEMP/npmrc" \
+          NPMRC_FILE="$RUNNER_TEMP/npmrc" PLATFORMS=linux/${{ matrix.arch }} docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --allow=fs.read="$RUNNER_TEMP/npmrc" pragmatic-components
+          NPMRC_FILE="$RUNNER_TEMP/npmrc" PLATFORMS=linux/${{ matrix.arch }} docker buildx bake -f pragmatic-server/docker/docker-bake.hcl \
+            -f pragmatic-server/docker/.components/docker-bake.components.json --allow=fs.read="$RUNNER_TEMP/npmrc" \
             --metadata-file "$RUNNER_TEMP/bake-meta.json" \
             --set pragmatic-platform-admin.tags=ghcr.io/pragmatic-tech-ai/pragmatic-platform-admin --set pragmatic-platform-edge.tags=ghcr.io/pragmatic-tech-ai/pragmatic-platform-edge \
             --set pragmatic-postgres.tags=ghcr.io/pragmatic-tech-ai/pragmatic-postgres \
@@ -195,7 +200,9 @@ jobs:
       - name: Build and push the amd64-only app images
         working-directory: ${{ github.workspace }}
         run: |
-          NPMRC_FILE="$RUNNER_TEMP/npmrc" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --push --allow=fs.read="$RUNNER_TEMP/npmrc" amd64-only
+          NPMRC_FILE="$RUNNER_TEMP/npmrc" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --allow=fs.read="$RUNNER_TEMP/npmrc" pragmatic-components
+          NPMRC_FILE="$RUNNER_TEMP/npmrc" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl \
+            -f pragmatic-server/docker/.components/docker-bake.components.json --push --allow=fs.read="$RUNNER_TEMP/npmrc" amd64-only
           rm -f "$RUNNER_TEMP/npmrc"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

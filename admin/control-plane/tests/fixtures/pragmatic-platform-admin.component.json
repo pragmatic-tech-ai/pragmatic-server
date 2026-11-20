@@ -1,0 +1,300 @@
+{
+  "schema": 1,
+  "component": "pragmatic-platform-admin",
+  "version": "0.1.0",
+  "options": [
+    {
+      "name": "core",
+      "description": "The operator listener, state folder, operator bootstrap, keys and infrastructure target.",
+      "settings": [
+        {
+          "name": "port",
+          "type": "integer",
+          "required": false,
+          "secret": false,
+          "default": 7000,
+          "description": "PRAGMATIC_ADMIN_PORT: Port of the operator listener."
+        },
+        {
+          "name": "bind",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "default": "127.0.0.1",
+          "description": "PRAGMATIC_ADMIN_BIND: Address of the operator listener (an IP address or localhost)."
+        },
+        {
+          "name": "dataRoot",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_ADMIN_DATA_ROOT: The state folder (defaults to data beside the control plane)."
+        },
+        {
+          "name": "allowedHosts",
+          "type": "list",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_ADMIN_ALLOWED_HOSTS: Host names the operator listener answers (comma-separated)."
+        },
+        {
+          "name": "secureCookie",
+          "type": "boolean",
+          "required": false,
+          "secret": false,
+          "default": false,
+          "description": "PRAGMATIC_ADMIN_SECURE_COOKIE: Whether operator session cookies are Secure."
+        },
+        {
+          "name": "trustedProxy",
+          "type": "boolean",
+          "required": false,
+          "secret": false,
+          "default": false,
+          "description": "PRAGMATIC_ADMIN_TRUSTED_PROXY: Whether the operator listener sits behind a trusted proxy (x-forwarded-for is then the client)."
+        },
+        {
+          "name": "operatorEmail",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "default": "admin@control-plane.test",
+          "description": "PRAGMATIC_ADMIN_OPERATOR_EMAIL: Email of the first operator, created on a fresh start."
+        },
+        {
+          "name": "operatorPassword",
+          "type": "string",
+          "required": false,
+          "secret": true,
+          "description": "PRAGMATIC_ADMIN_OPERATOR_PASSWORD_FILE: Password of the first operator (a mounted secret file; PRAGMATIC_ADMIN_OPERATOR_PASSWORD may hold it instead, never both)."
+        },
+        {
+          "name": "masterKey",
+          "type": "string",
+          "required": false,
+          "secret": true,
+          "description": "PRAGMATIC_ADMIN_MASTER_KEY_FILE: The 32-byte master key of the operator identity store (a mounted secret file; defaults to master.key in the state folder)."
+        },
+        {
+          "name": "signingKeyRef",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_ADMIN_SIGNING_KEY_REF: The platform image signing key reference (the generated platform key when unset)."
+        },
+        {
+          "name": "signingKey",
+          "type": "string",
+          "required": false,
+          "secret": true,
+          "description": "PRAGMATIC_ADMIN_SIGNING_KEY_FILE: The platform signing key (a mounted secret file; the key store in the state folder when unset)."
+        },
+        {
+          "name": "infraTarget",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "default": "local",
+          "description": "PRAGMATIC_ADMIN_INFRA_TARGET: local (this host's Docker and kind), none, or hosted (registered clusters over the mesh)."
+        },
+        {
+          "name": "kubeconfig",
+          "type": "string",
+          "required": false,
+          "secret": true,
+          "description": "PRAGMATIC_ADMIN_KUBECONFIG_FILE: The kubeconfig of the hosted clusters (a mounted secret file)."
+        },
+        {
+          "name": "agentChannelUrl",
+          "type": "url",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_AGENT_CHANNEL_URL: Public URL of the agent channel that hive install bundles point at."
+        },
+        {
+          "name": "desktopTenantPlaneUrl",
+          "type": "url",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_DESKTOP_TENANT_PLANE_URL: Where the desktop app finds the tenant plane (derived from the tenant plane settings when unset)."
+        }
+      ]
+    },
+    {
+      "name": "internalApi",
+      "description": "The internal API the platform edge calls (off unless enabled).",
+      "settings": [
+        {
+          "name": "port",
+          "type": "integer",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_ADMIN_INTERNAL_PORT: Port of the internal API listener."
+        },
+        {
+          "name": "bind",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "default": "127.0.0.1",
+          "description": "PRAGMATIC_ADMIN_INTERNAL_BIND: Address of the internal API listener (an IP address or localhost)."
+        },
+        {
+          "name": "secret",
+          "type": "string",
+          "required": true,
+          "secret": true,
+          "description": "PRAGMATIC_INTERNAL_API_SECRET_FILE: The shared secret the edge authenticates with (a mounted secret file)."
+        }
+      ]
+    },
+    {
+      "name": "releases",
+      "description": "The release catalogue: signed release descriptors read from an OCI registry and imported on a poll.",
+      "settings": [
+        {
+          "name": "registry",
+          "type": "url",
+          "required": false,
+          "secret": false,
+          "default": "https://ghcr.io",
+          "description": "PRAGMATIC_RELEASE_REGISTRY: The registry (https; http only for a loopback registry)."
+        },
+        {
+          "name": "namespace",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "default": "pragmatic-tech-ai",
+          "description": "PRAGMATIC_RELEASE_NAMESPACE: The registry namespace of the release repositories."
+        },
+        {
+          "name": "trustDir",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_RELEASE_TRUST_DIR: Folder of trusted release public keys (defaults to the shipped release-keys)."
+        },
+        {
+          "name": "pollSeconds",
+          "type": "integer",
+          "required": false,
+          "secret": false,
+          "default": 300,
+          "description": "PRAGMATIC_RELEASE_POLL_SECONDS: Seconds between two catalogue refreshes (0 turns the poll off)."
+        },
+        {
+          "name": "credential",
+          "type": "string",
+          "required": false,
+          "secret": true,
+          "description": "PRAGMATIC_RELEASE_CREDENTIAL_FILE: The registry read credential, JSON with username and token (a mounted secret file)."
+        }
+      ]
+    },
+    {
+      "name": "tenantPlane",
+      "description": "The tenant plane co-hosted with the operator listener (on when port and baseDomain are set).",
+      "settings": [
+        {
+          "name": "port",
+          "type": "integer",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_PORT: Port of the tenant listener."
+        },
+        {
+          "name": "baseDomain",
+          "type": "string",
+          "required": true,
+          "secret": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_BASE_DOMAIN: Tenants are served at <tenant>.<baseDomain>."
+        },
+        {
+          "name": "bind",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "default": "127.0.0.1",
+          "description": "PRAGMATIC_TENANT_ADMIN_BIND: Address of the tenant listener."
+        },
+        {
+          "name": "externalScheme",
+          "type": "string",
+          "required": false,
+          "secret": false,
+          "default": "https",
+          "description": "PRAGMATIC_TENANT_ADMIN_EXTERNAL_SCHEME: Scheme browsers use for tenant origins."
+        },
+        {
+          "name": "externalPort",
+          "type": "integer",
+          "required": false,
+          "secret": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_EXTERNAL_PORT: Port browsers use for tenant origins, when not the scheme default."
+        },
+        {
+          "name": "trustedProxy",
+          "type": "boolean",
+          "required": false,
+          "secret": false,
+          "default": false,
+          "description": "PRAGMATIC_TENANT_ADMIN_TRUSTED_PROXY: Whether the tenant listener sits behind a trusted proxy."
+        },
+        {
+          "name": "secretTtlHours",
+          "type": "integer",
+          "required": false,
+          "secret": false,
+          "default": 168,
+          "description": "PRAGMATIC_TENANT_ADMIN_SECRET_TTL_HOURS: Lifetime of issued tenant secrets, in hours."
+        },
+        {
+          "name": "healthProbeMs",
+          "type": "integer",
+          "required": false,
+          "secret": false,
+          "default": 30000,
+          "description": "PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_MS: Interval of environment health probes, in milliseconds."
+        },
+        {
+          "name": "healthProbeTimeoutMs",
+          "type": "integer",
+          "required": false,
+          "secret": false,
+          "default": 60000,
+          "description": "PRAGMATIC_TENANT_ADMIN_HEALTH_PROBE_TIMEOUT_MS: Timeout of one environment health probe, in milliseconds."
+        }
+      ]
+    }
+  ],
+  "roles": [
+    {
+      "name": "operator.full",
+      "description": "A platform operator who may change the platform (Owner grant on the control-plane realm)."
+    },
+    {
+      "name": "operator.read-only",
+      "description": "A platform operator who may only observe (Viewer grant, or no Owner grant)."
+    }
+  ],
+  "storage": {
+    "postgres": true
+  },
+  "endpoints": {
+    "ports": [
+      {
+        "name": "http",
+        "port": 7000
+      },
+      {
+        "name": "internal",
+        "port": 7001
+      }
+    ],
+    "health": {
+      "port": "http",
+      "path": "/healthz"
+    }
+  }
+}

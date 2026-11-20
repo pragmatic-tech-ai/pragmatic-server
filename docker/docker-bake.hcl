@@ -1,7 +1,11 @@
 # One image per app: the Node apps from docker/images/Dockerfile, pragmatic-postgres from docker/postgres/Dockerfile.
-# Run from the workspace root (architecture-agent/), which is the
-# build context holding pragmatic-server and its siblings:
-#   NPMRC_FILE=/path/to/.npmrc VERSION=1.2.3 SERVER_SHA=<sha> docker buildx bake -f pragmatic-server/docker/docker-bake.hcl
+# Run from the workspace root (architecture-agent/), which is the build context holding pragmatic-server and its
+# siblings, in two steps. The first exports the component descriptors (and the override that labels each image with
+# its descriptor digest) into pragmatic-server/docker/.components; the second bakes the images with that override:
+#   NPMRC_FILE=/path/to/.npmrc docker buildx bake -f pragmatic-server/docker/docker-bake.hcl pragmatic-components
+#   NPMRC_FILE=/path/to/.npmrc VERSION=1.2.3 SERVER_SHA=<sha> docker buildx bake -f pragmatic-server/docker/docker-bake.hcl \
+#     -f pragmatic-server/docker/.components/docker-bake.components.json
+# An image target baked without the override stops at its component stage (no COMPONENT_DIGEST to match).
 # NPMRC_FILE names an .npmrc able to read @pragmatic-tech-ai packages from GitHub Packages; it reaches the build only
 # as the BuildKit secret `npmrc`, never as a layer.
 
@@ -71,6 +75,15 @@ target "_app" {
   }
 }
 
+# Step one: every release app's component descriptor, its digest and the bake override, exported as files (one platform:
+# the descriptors are the same on every arch). Not an image; built before the image targets, which read its output.
+target "pragmatic-components" {
+  inherits  = ["_app"]
+  target    = "pragmatic-components"
+  platforms = [split(",", PLATFORMS)[0]]
+  output    = ["type=local,dest=pragmatic-server/docker/.components"]
+}
+
 target "pragmatic-platform-admin" {
   inherits  = ["_app"]
   target    = "pragmatic-platform-admin"
@@ -127,6 +140,10 @@ target "pragmatic-postgres" {
   dockerfile = "Dockerfile"
   platforms  = split(",", PLATFORMS)
   tags       = tags("pragmatic-postgres")
+  # The descriptor the first bake step exported (pragmatic-components).
+  contexts = {
+    components = "pragmatic-server/docker/.components"
+  }
   labels = {
     "org.opencontainers.image.source" = "https://github.com/pragmatic-tech-ai/pragmatic-server"
   }

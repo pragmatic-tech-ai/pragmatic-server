@@ -16,8 +16,8 @@ export type ManifestRelease = {
     siblingCommits?: Record<string, string>
     builtAt?: string
     signingKeyId?: string
-    /** One per app the release's descriptor carries (releases published before pragmatic-postgres have no image for it). */
-    images?: Partial<Record<ReleaseApp, { repository: string; digest: string }>>
+    /** One per app the release's descriptor carries (releases published before pragmatic-postgres have no image for it); componentDigest from schema 2 on. */
+    images?: Partial<Record<ReleaseApp, { repository: string; digest: string; componentDigest?: string }>>
     /** Why verification failed: names the check and the app or key id only. */
     rejectedReason?: string
 }

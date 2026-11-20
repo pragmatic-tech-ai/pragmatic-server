@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import { OciRegistryClient } from '../../oci-registry-client.js'
 import type { OciFetch } from '../../oci-registry-client.js'
 import { FakeOciRegistry } from '../../tests/fake-oci-registry.js'
+import { FakeImageLayout, FakeReleaseImage } from '../../tests/fake-release-image.js'
 import { RolloutFixture } from '../../tests/rollout-fixture.js'
 import type { PlatformDeploymentRegistry } from '../../platform-deployment-registry.js'
 import type { PlatformDirectory } from '../../platform-directory.js'
@@ -82,6 +83,7 @@ class CatalogFixture
     public static readonly SignerDown = 'signer down'
 
     public readonly Registry = new FakeOciRegistry()
+    public readonly Images = new FakeReleaseImage(this.Registry)
     public readonly Rogue = new SigningKey(CatalogFixture.RogueId)
     /** When set, the catalogue's fetch throws for any URL containing it (simulating a registry that drops mid-refresh). */
     public FailOn: string | undefined
@@ -123,10 +125,6 @@ class CatalogFixture
         return CatalogFixture.Repo(ReleasePublisher.DescriptorRepository)
     }
 
-    public static ImageBytes(app: string, version: string): Uint8Array
-    {
-        return new TextEncoder().encode(CatalogFixture.ImageContentPrefix + app + CatalogFixture.ContentSeparator + version)
-    }
 
     public Client(credential?: { username: string; token: string }): OciRegistryClient
     {
@@ -151,11 +149,23 @@ class CatalogFixture
     /** Apps whose image is stored as a multi-arch OCI index (as release.yml's imagetools merge produces). */
     public readonly IndexApps = new Set<ReleaseApp>()
 
-    public SeedImages(version: string): void
+    /**
+     * Stores (or restores: same content, same digest) one app's image under the version tag, labelled with its component
+     * digest unless `labelled` is false (as the images of the schema-1 releases are); returns its digest.
+     */
+    public SeedImage(app: ReleaseApp, version: string, labelled = true): string
+    {
+        const S = CatalogFixture
+        const layout = this.IndexApps.has(app) ? FakeImageLayout.Index : FakeImageLayout.Single
+        const content = S.ImageContentPrefix + app + S.ContentSeparator + version
+        return this.Images.Put(S.Repo(app), version, content, layout, labelled ? FakeReleaseImage.ComponentDigestOf(app) : null)
+    }
+
+    public SeedImages(version: string, labelled = true): void
     {
         for (const app of ReleaseApps.All)
         {
-            this.Registry.PutManifest(CatalogFixture.Repo(app), version, CatalogFixture.ImageBytes(app, version), this.IndexApps.has(app) ? CatalogFixture.IndexType : CatalogFixture.ManifestType)
+            this.SeedImage(app, version, labelled)
         }
     }
 
@@ -198,14 +208,17 @@ class CatalogFixture
     }
 
     /** A correctly signed descriptor for the version (images seeded), before any test mutation. */
-    public Descriptor(version: string, key: SigningKey = this.Trusted): ReleaseDescriptor
+    public Descriptor(version: string, key: SigningKey = this.Trusted, labelled = true): ReleaseDescriptor
     {
-        this.SeedImages(version)
         const images = {} as ReleaseDescriptor['images']
         for (const app of ReleaseApps.All)
         {
-            const digest = FakeOciRegistry.DigestOf(CatalogFixture.ImageBytes(app, version))
+            const digest = this.SeedImage(app, version, labelled)
             images[app] = { repository: CatalogFixture.Repo(app), digest, signature: ReleaseSignature.Sign(digest, key.Private) }
+            if (labelled)
+            {
+                images[app].componentDigest = FakeReleaseImage.ComponentDigestOf(app)
+            }
         }
         return {
             schema: ReleaseDescriptorCodec.CurrentSchema,
@@ -240,7 +253,7 @@ describe('ReleaseCatalog.Refresh', () =>
             const result = await fx.Catalog().Refresh()
             assert.deepEqual(result, { imported: [CatalogFixture.V1], rejected: [], unchanged: 0, shadowed: [] })
             const envServer = descriptor.images[ReleaseApp.EnvServer].digest
-            const images = Object.fromEntries(ReleaseDescriptorCodec.ImagesOf(descriptor).map(([app, image]) => [app, { repository: CatalogFixture.Repo(app), digest: image.digest }]))
+            const images = Object.fromEntries(ReleaseDescriptorCodec.ImagesOf(descriptor).map(([app, image]) => [app, { repository: CatalogFixture.Repo(app), digest: image.digest, componentDigest: FakeReleaseImage.ComponentDigestOf(app) }]))
             assert.equal(Object.keys(images).length, ReleaseApps.All.length)
             assert.deepEqual(fx.Release(CatalogFixture.V1), {
                 id: CatalogFixture.V1,
@@ -450,14 +463,13 @@ describe('ReleaseCatalog.Refresh', () =>
         {
             await fx.Publish(CatalogFixture.V1)
             const gateway = CatalogFixture.Repo(ReleaseApp.EnvGateway)
-            const original = CatalogFixture.ImageBytes(ReleaseApp.EnvGateway, CatalogFixture.V1)
             fx.Registry.PutManifest(gateway, CatalogFixture.V1, new TextEncoder().encode(CatalogFixture.Rebuilt), CatalogFixture.ManifestType)
             assert.deepEqual(await fx.Catalog().Refresh(), { imported: [], rejected: [CatalogFixture.V1], unchanged: 0, shadowed: [] })
             // Still failing: the rejected record stays as it is and counts unchanged.
             assert.deepEqual(await fx.Catalog().Refresh(), { imported: [], rejected: [], unchanged: 1, shadowed: [] })
             assert.equal(fx.Release(CatalogFixture.V1)?.release?.state, ReleaseState.Rejected)
             // The tag points at the signed image again: the next refresh imports the verified record in its place.
-            fx.Registry.PutManifest(gateway, CatalogFixture.V1, original, CatalogFixture.ManifestType)
+            fx.SeedImage(ReleaseApp.EnvGateway, CatalogFixture.V1)
             assert.deepEqual(await fx.Catalog().Refresh(), { imported: [CatalogFixture.V1], rejected: [], unchanged: 0, shadowed: [] })
             assert.equal(fx.Release(CatalogFixture.V1)?.release?.state, ReleaseState.Verified)
             assert.equal(fx.Reason(CatalogFixture.V1), undefined)
@@ -472,12 +484,11 @@ describe('ReleaseCatalog.Refresh', () =>
         {
             await fx.Publish(CatalogFixture.V1)
             const gateway = CatalogFixture.Repo(ReleaseApp.EnvGateway)
-            const original = CatalogFixture.ImageBytes(ReleaseApp.EnvGateway, CatalogFixture.V1)
             fx.Registry.PutManifest(gateway, CatalogFixture.V1, new TextEncoder().encode(CatalogFixture.Rebuilt), CatalogFixture.ManifestType)
             await fx.Catalog().Refresh()
             const rejected = structuredClone(fx.Release(CatalogFixture.V1))
             assert.equal(rejected?.release?.state, ReleaseState.Rejected)
-            fx.Registry.PutManifest(gateway, CatalogFixture.V1, original, CatalogFixture.ManifestType)
+            fx.SeedImage(ReleaseApp.EnvGateway, CatalogFixture.V1)
             fx.FailOn = CatalogFixture.Repo(ReleaseApp.EnvServer) + CatalogFixture.ManifestsPath
             await assert.rejects(() => fx.Catalog().Refresh(), ReleaseRegistryUnavailableError)
             assert.deepEqual(fx.Release(CatalogFixture.V1), rejected)
@@ -747,7 +758,7 @@ describe('ReleaseCatalog countersigning', () =>
                 await PlatformSigningKey.Ensure(keysDir, PlatformSigningKey.DefaultRef)
                 const store = new FileSignatureStore(join(dir, CatalogFixture.SignaturesFile))
                 const signer = new CountingSigner(new ImageSigner(new RegistryRefImageDigest(), store, new FileKeyStore(keysDir)))
-                const descriptor = { ...fx.Descriptor(CatalogFixture.V1), schema: 1 as const }
+                const descriptor = { ...fx.Descriptor(CatalogFixture.V1, fx.Trusted, false), schema: 1 as const }
                 delete descriptor.images[ReleaseApp.Postgres]
                 await fx.PushDescriptor(CatalogFixture.V1, ReleaseDescriptorCodec.Encode(descriptor))
                 const result = await fx.Catalog(undefined, undefined, new PlatformReleaseCountersigner(signer, PlatformSigningKey.DefaultRef, store)).Refresh()
@@ -761,6 +772,87 @@ describe('ReleaseCatalog countersigning', () =>
         {
             await rm(dir, { recursive: true, force: true })
         }
+    })
+
+    it('schema 2 binds image and component descriptor: a published release verifies its labels and records the digests', async () =>
+    {
+        await CatalogFixture.Run(async fx =>
+        {
+            fx.IndexApps.add(ReleaseApp.PlatformAdmin)
+            await fx.Publish(CatalogFixture.V1)
+            assert.deepEqual((await fx.Catalog().Refresh()).imported, [CatalogFixture.V1])
+            const images = fx.Release(CatalogFixture.V1)?.release?.images ?? {}
+            for (const app of ReleaseApps.All)
+            {
+                assert.equal(images[app]?.componentDigest, FakeReleaseImage.ComponentDigestOf(app), app)
+            }
+        })
+    })
+
+    it('a tampered component digest in a published descriptor fails its signature', async () =>
+    {
+        await CatalogFixture.Run(async fx =>
+        {
+            const { descriptor } = await fx.Publish(CatalogFixture.V1)
+            const pulled = await fx.Client().PullArtifactLayer(CatalogFixture.DescriptorRepo(), CatalogFixture.V1)
+            const tampered = structuredClone(descriptor)
+            tampered.images[ReleaseApp.TenantIdp].componentDigest = FakeReleaseImage.ComponentDigestOf(ReleaseApp.EnvServer)
+            await fx.PushArtifact(CatalogFixture.V1, ReleaseDescriptorCodec.Encode(tampered), pulled.annotations)
+            await fx.Catalog().Refresh()
+            assert.equal(fx.Reason(CatalogFixture.V1), 'descriptor signature invalid: ' + CatalogFixture.TrustedId)
+        })
+    })
+
+    it('a signed component digest that is not the image label is rejected, naming the app', async () =>
+    {
+        await CatalogFixture.Run(async fx =>
+        {
+            const descriptor = fx.Descriptor(CatalogFixture.V1)
+            descriptor.images[ReleaseApp.TenantIdp].componentDigest = FakeReleaseImage.ComponentDigestOf(ReleaseApp.EnvServer)
+            await fx.PushDescriptor(CatalogFixture.V1, ReleaseDescriptorCodec.Encode(descriptor))
+            await fx.Catalog().Refresh()
+            assert.equal(fx.Reason(CatalogFixture.V1), 'component descriptor digest mismatch: pragmatic-tenant-idp')
+        })
+    })
+
+    it('a schema-2 release whose image carries no component label, or an unreadable one, is rejected naming the app', async () =>
+    {
+        await CatalogFixture.Run(async fx =>
+        {
+            const descriptor = fx.Descriptor(CatalogFixture.V1)
+            const gateway = CatalogFixture.Repo(ReleaseApp.EnvGateway)
+            const unlabelled = fx.Images.Put(gateway, CatalogFixture.V1, CatalogFixture.Rebuilt, FakeImageLayout.Single, null)
+            descriptor.images[ReleaseApp.EnvGateway].digest = unlabelled
+            descriptor.images[ReleaseApp.EnvGateway].signature = ReleaseSignature.Sign(unlabelled, fx.Trusted.Private)
+            await fx.PushDescriptor(CatalogFixture.V1, ReleaseDescriptorCodec.Encode(descriptor))
+            await fx.Catalog().Refresh()
+            assert.equal(fx.Reason(CatalogFixture.V1), 'component descriptor label missing: pragmatic-env-gateway')
+        })
+        await CatalogFixture.Run(async fx =>
+        {
+            const descriptor = fx.Descriptor(CatalogFixture.V1)
+            const gateway = CatalogFixture.Repo(ReleaseApp.EnvGateway)
+            const manifest = { schemaVersion: 2, config: { digest: CatalogFixture.SomeDigest } }
+            const missingConfig = fx.Registry.PutManifest(gateway, CatalogFixture.V1, new TextEncoder().encode(JSON.stringify(manifest)), CatalogFixture.ManifestType)
+            descriptor.images[ReleaseApp.EnvGateway].digest = missingConfig
+            descriptor.images[ReleaseApp.EnvGateway].signature = ReleaseSignature.Sign(missingConfig, fx.Trusted.Private)
+            await fx.PushDescriptor(CatalogFixture.V1, ReleaseDescriptorCodec.Encode(descriptor))
+            await fx.Catalog().Refresh()
+            assert.equal(fx.Reason(CatalogFixture.V1), 'component descriptor label unreadable: pragmatic-env-gateway')
+        })
+    })
+
+    it('a schema-1 release over unlabelled images still verifies and records no component digest', async () =>
+    {
+        await CatalogFixture.Run(async fx =>
+        {
+            const descriptor = { ...fx.Descriptor(CatalogFixture.V1, fx.Trusted, false), schema: 1 as const }
+            delete descriptor.images[ReleaseApp.Postgres]
+            await fx.PushDescriptor(CatalogFixture.V1, ReleaseDescriptorCodec.Encode(descriptor))
+            assert.deepEqual((await fx.Catalog().Refresh()).imported, [CatalogFixture.V1])
+            const images = fx.Release(CatalogFixture.V1)?.release?.images ?? {}
+            assert.ok(Object.values(images).every(image => image !== undefined && !('componentDigest' in image)))
+        })
     })
 
     it('a rejected release is not countersigned', async () =>

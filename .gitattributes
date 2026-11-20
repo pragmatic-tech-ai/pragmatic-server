@@ -2,3 +2,5 @@
 *.sh text eol=lf
 # The pragmatic-postgres image folder (Dockerfile, scripts, fixtures) is built and run on Linux: LF everywhere.
 docker/postgres/** text eol=lf
+# Golden component descriptors: compared byte for byte (LF) on every checkout.
+*.component.json text eol=lf
