@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import { FileAuditSink, FileIdentityStores } from '@pragmatic-tech-ai/pragmatic-identity-store'
@@ -70,6 +71,13 @@ export class PlatformAdminDataRoot
         new DataRootFile(PlatformAdminRegistry.ConsoleOwnerResets, ConsoleOwnerResets.FileName, {}),
         new DataRootFile(PlatformAdminRegistry.SealedSecrets, SealedSecretStore.FileName, { RootKey: SealedSecretStore.RootKey, RequireRoot: true }),
     ]
+    private static readonly ClientsFile = 'clients.json'
+
+    /** Whether the folder holds records from before the database (a registry file or the operator identity). */
+    public static HoldsRecords(dataRoot: string): boolean
+    {
+        return existsSync(join(dataRoot, PlatformAdminDataRoot.ClientsFile)) || existsSync(join(dataRoot, PlatformAdminDataRoot.IdentityDir))
+    }
 }
 
 /** The database already holds records and the import was not forced. */
@@ -83,6 +91,20 @@ export class PlatformAdminImportRefusedError extends Error
     {
         super(PlatformAdminImportRefusedError.MessagePrefix + NonEmpty.join(', ') + PlatformAdminImportRefusedError.MessageSuffix)
         this.name = PlatformAdminImportRefusedError.ErrorName
+    }
+}
+
+/** The data root still holds records the (empty) database lacks: the console refuses to start as an empty platform. */
+export class PlatformAdminImportPendingError extends Error
+{
+    private static readonly ErrorName = 'PlatformAdminImportPendingError'
+    private static readonly MessagePrefix = 'The platform admin database is empty but the data root holds records from before it: run bin/pragmatic-admin-import.js --data-root '
+    private static readonly MessageSuffix = ' first (starting now would begin an empty platform beside them).'
+
+    public constructor(dataRoot: string)
+    {
+        super(PlatformAdminImportPendingError.MessagePrefix + dataRoot + PlatformAdminImportPendingError.MessageSuffix)
+        this.name = PlatformAdminImportPendingError.ErrorName
     }
 }
 
@@ -125,9 +147,25 @@ export class PlatformAdminImport
     private static readonly SessionsSkipped = 'sessions: operator and tenant sessions are not imported (operators sign in again)'
     private static readonly TokensSkippedPrefix = 'service tokens of the operator realm (hashed, cannot be moved; reissue them): '
     private static readonly SignaturesRegistry = PlatformAdminRegistry.Signatures
+    private static readonly IdentityCopyPrefix = 'pragmatic-admin-import-identity-'
 
     public constructor(private readonly dataRoot: string, private readonly database: PlatformAdminDatabase, private readonly masterKey: Buffer)
     {
+    }
+
+    /** Refuses (PlatformAdminImportPendingError) a start over an empty database while the data root holds records. */
+    public static async RequireImported(dataRoot: string, database: PlatformAdminDatabase): Promise<void>
+    {
+        if (!PlatformAdminDataRoot.HoldsRecords(dataRoot))
+        {
+            return
+        }
+        const clients = await database.Map(PlatformAdminRegistry.Clients)
+        const accounts = await (await OperatorIdentity.AccountStore(database.Session)).ListAccounts(OperatorIdentity.Realm())
+        if (await clients.IsEmpty() && accounts.length === 0)
+        {
+            throw new PlatformAdminImportPendingError(dataRoot)
+        }
     }
 
     public async Run(force: boolean): Promise<PlatformAdminImportReport>
@@ -227,8 +265,24 @@ export class PlatformAdminImport
             // A data root that never held an operator (the file stores would create their folder on open).
             return
         }
+        // The file stores upgrade what they open (legacy realm ids, missing audit hashes): they read a private copy, so the
+        // data root itself is never written.
+        const copy = mkdtempSync(join(tmpdir(), P.IdentityCopyPrefix))
+        try
+        {
+            cpSync(identityRoot, copy, { recursive: true })
+            await this.ImportIdentityFrom(await FileIdentityStores.Open(new NodeFsStorage(copy), this.masterKey), target, report)
+        }
+        finally
+        {
+            rmSync(copy, { recursive: true, force: true })
+        }
+    }
+
+    private async ImportIdentityFrom(source: IdentityStoreSet, target: IdentityStoreSet, report: PlatformAdminImportReport): Promise<void>
+    {
+        const P = PlatformAdminImport
         const realm = OperatorIdentity.Realm()
-        const source = await FileIdentityStores.Open(new NodeFsStorage(identityRoot), this.masterKey)
         const accounts = await source.Accounts.ListAccounts(realm)
         const secretRefs = new Set<string>([OperatorIdentity.BootstrapPasswordRef])
         const principals = new Set<string>([OperatorIdentity.BootstrapPrincipalId])

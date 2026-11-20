@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import type { ISqlSession } from '@pragmatic-tech-ai/todl'
 import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
 import { PlatformAdminDatabase, PlatformAdminRegistry } from '../platform-admin-database.js'
-import { PlatformAdminImport, PlatformAdminImportRefusedError } from '../platform-admin-import.js'
+import { PlatformAdminImport, PlatformAdminImportPendingError, PlatformAdminImportRefusedError } from '../platform-admin-import.js'
 import { OperatorIdentity, OperatorRole } from '../operator-identity.js'
 import { OperatorSessions } from '../operator-sessions.js'
 import { SealedSecretStore } from '../sealed-secret-store.js'
@@ -174,6 +174,24 @@ describe('PlatformAdminImport', () =>
                 err instanceof PlatformAdminImportRefusedError && err.NonEmpty.includes('records_clients') && err.NonEmpty.includes('app_host_audit') && err.NonEmpty.includes('identity.accounts'))
             await new PlatformAdminImport(F.DataRoot, database, F.MasterKey()).Run(true)
             assert.deepEqual(await F.Dump(session, database), first)
+        })
+
+        it(`${backend}: the console refuses to start over an empty database while the data root holds records, and starts once imported`, async () =>
+        {
+            const session = await makeSession()
+            const database = PlatformAdminDatabase.Over(session)
+            await assert.rejects(PlatformAdminImport.RequireImported(F.DataRoot, database), PlatformAdminImportPendingError)
+            const empty = mkdtempSync(join(tmpdir(), F.TempPrefix))
+            try
+            {
+                await PlatformAdminImport.RequireImported(empty, database)
+            }
+            finally
+            {
+                rmSync(empty, { recursive: true, force: true })
+            }
+            await new PlatformAdminImport(F.DataRoot, database, F.MasterKey()).Run(false)
+            await PlatformAdminImport.RequireImported(F.DataRoot, database)
         })
 
         it(`${backend}: an empty data root imports nothing and leaves the database empty`, async () =>

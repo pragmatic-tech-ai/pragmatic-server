@@ -4,7 +4,13 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
-import { FileRecordMap, MemoryRecordMap, RecordMapFormatError, type IRecordMap } from '../record-map.js'
+import { FileRecordMap, MemoryRecordMap, RecordDocuments, RecordMapFormatError, RecordUnstorableError, type IRecordMap } from '../record-map.js'
+import { EnvironmentRegistry, type PersistedEnvironmentRecord } from '../environment-registry.js'
+import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
+import { IdpRegistry } from '../idp-registry.js'
+import type { IdpRecord } from '../idp-record.js'
+import { ClientRegistry } from '../client-registry.js'
+import type { ClientRecord } from '../platform-records.js'
 import { SqlRecordMap } from '../sql-record-map.js'
 
 type Thing = { name: string; tags?: string[]; nested?: { n: number } }
@@ -170,5 +176,54 @@ describe('SqlRecordMap', () =>
             const document = typeof rows[0]!.document === 'string' ? JSON.parse(rows[0]!.document as string) : rows[0]!.document
             assert.deepEqual(document, { id: 'ka', record: RecordMapFixture.A })
         })
+    })
+})
+
+/** A record map whose next Save fails once (a database that was briefly unreachable). */
+class FlakyRecordMap<T> extends MemoryRecordMap<T>
+{
+    public FailNext = false
+    public readonly Saved: string[][] = []
+
+    public override async Save(all: ReadonlyMap<string, T>, changed: ReadonlySet<string>): Promise<void>
+    {
+        if (this.FailNext)
+        {
+            this.FailNext = false
+            throw new Error('database unreachable')
+        }
+        this.Saved.push([...changed].sort())
+        await super.Save(all, changed)
+    }
+}
+
+describe('stores over a record map', () =>
+{
+    it('EnvironmentRegistry and IdpRegistry carry a failed write\'s keys into the next one', async () =>
+    {
+        const envMap = new FlakyRecordMap<PersistedEnvironmentRecord>()
+        const environments = new EnvironmentRegistry(envMap, { Running: async () => false })
+        const record = (name: string): EnvironmentRecord => ({ name, template: Template.DevBlank, type: EnvType.Development, environmentId: name, hostPort: 8100, createdAt: '2026-11-20T00:00:00.000Z', status: EnvStatus.Stopped })
+        envMap.FailNext = true
+        await assert.rejects(environments.Put(record('a')))
+        await environments.Put(record('b'))
+        assert.deepEqual(envMap.Saved, [['a', 'b']])
+        assert.deepEqual([...(await envMap.Load()).keys()].sort(), ['a', 'b'])
+        const idpMap = new FlakyRecordMap<IdpRecord>()
+        const idps = new IdpRegistry(idpMap)
+        idpMap.FailNext = true
+        await assert.rejects(idps.Put({ tenantId: 't1' } as IdpRecord))
+        await idps.Put({ tenantId: 't2' } as IdpRecord)
+        assert.deepEqual([...(await idpMap.Load()).keys()].sort(), ['t1', 't2'])
+    })
+
+    it('a record holding a NUL character is refused before anything changes (Postgres jsonb cannot store it)', async () =>
+    {
+        const clients = new ClientRegistry(new MemoryRecordMap<ClientRecord>())
+        await assert.rejects(clients.Put({ id: 'c1', displayName: 'bad\u0000name', createdAt: '2026-11-20T00:00:00.000Z' }), RecordUnstorableError)
+        assert.equal(clients.Get('c1'), undefined)
+        await clients.Put({ id: 'c2', displayName: 'fine', createdAt: '2026-11-20T00:00:00.000Z' })
+        assert.equal(clients.List().length, 1)
+        assert.throws(() => RecordDocuments.AssertStorable({ nested: [{ 'k\u0000': 1 }] }), RecordUnstorableError)
     })
 })

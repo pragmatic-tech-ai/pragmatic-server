@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { writeFileSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ISqlSession } from '@pragmatic-tech-ai/todl'
 import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
@@ -85,6 +85,17 @@ SqlTestSessions.Describe('OperatorIdentity', (makeSession, backend) =>
             {
                 writeFileSync(join(root, OperatorIdentityFixture.KeyFile), Buffer.alloc(OperatorIdentityFixture.BadKeyBytes))
                 await assert.rejects(() => OperatorIdentityFixture.Compose(root, session, OperatorIdentityFixture.Password), MasterKeyError)
+            })
+        })
+
+        it('refuses to mint a new master key over a database that already holds operators (sealed under the lost key)', async () =>
+        {
+            await OperatorIdentityFixture.WithRoot(makeSession, async (root, session) =>
+            {
+                await OperatorIdentityFixture.Compose(root, session, OperatorIdentityFixture.Password)
+                rmSync(join(root, OperatorIdentityFixture.KeyFile))
+                await assert.rejects(() => OperatorIdentityFixture.Compose(root, session, OperatorIdentityFixture.Password), MasterKeyError)
+                assert.equal(existsSync(join(root, OperatorIdentityFixture.KeyFile)), false)
             })
         })
 

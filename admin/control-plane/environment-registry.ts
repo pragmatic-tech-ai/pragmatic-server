@@ -1,6 +1,6 @@
 import { SerialRuns } from './atomic-json-file.js'
 import { EnvStatus, EnvType, type EnvironmentRecord, type IContainerProbe } from './environment-record.js'
-import { FileRecordMap, type IRecordMap } from './record-map.js'
+import { FileRecordMap, RecordDocuments, type IRecordMap } from './record-map.js'
 
 /** An environment as stored: records from before environment types read as Development. */
 export type PersistedEnvironmentRecord = Omit<EnvironmentRecord, 'type'> & { type?: EnvType }
@@ -12,6 +12,8 @@ export class EnvironmentRegistry
 
     private readonly records = new Map<string, EnvironmentRecord>()
     private readonly writes = new SerialRuns()
+    /** Keys changed since the last write that included them (a failed write leaves them for the next one). */
+    private readonly pending = new Set<string>()
     private readonly map: IRecordMap<PersistedEnvironmentRecord>
 
     /** `location`: the `{ environments: { <name>: record } }` file, or a record map (the console's Postgres table). */
@@ -57,6 +59,7 @@ export class EnvironmentRegistry
 
     public async Put(record: EnvironmentRecord): Promise<void>
     {
+        RecordDocuments.AssertStorable(record)
         this.records.set(record.name, { ...record })
         await this.persist(new Set([record.name]))
     }
@@ -82,10 +85,31 @@ export class EnvironmentRegistry
         await this.persist(new Set(this.records.keys()))
     }
 
-    /** Writes run one at a time; each saves the current records of the names it changed, so a later write carries every earlier change. */
+    /** Writes run one at a time; each saves the current records of every key changed since the last successful write (a
+     *  failed write's keys ride with the next), so a later write carries every earlier change. */
     private persist(changed: ReadonlySet<string>): Promise<void>
     {
-        return this.writes.Run(() => this.Commit(changed))
+        for (const key of changed)
+        {
+            this.pending.add(key)
+        }
+        return this.writes.Run(async () =>
+        {
+            const batch = new Set(this.pending)
+            this.pending.clear()
+            try
+            {
+                await this.Commit(batch)
+            }
+            catch (err)
+            {
+                for (const key of batch)
+                {
+                    this.pending.add(key)
+                }
+                throw err
+            }
+        })
     }
 
     /** One write of the changed names (the file form rewrites the whole map); overridable so a test can hold a write. */

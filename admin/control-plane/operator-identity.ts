@@ -141,6 +141,7 @@ export class OperatorIdentity implements IOperatorIdentity
     private static readonly KeyFileMode = 0o600
     private static readonly SecretDirMode = 0o700
     private static readonly BadMasterKeyMessage = 'Master key file must contain exactly 32 bytes'
+    private static readonly MissingMasterKeyMessage = 'The master key file is missing, but the database already holds operator accounts sealed under a master key: restore the key file (a new key would make every sealed secret unreadable)'
     /** The key id the identity secrets are sealed under (the master key; a rotation adds the next id). */
     public static readonly SecretKeyId = 'master'
     /** The secret-store scope of the operator realm's secrets. */
@@ -163,6 +164,12 @@ export class OperatorIdentity implements IOperatorIdentity
         return new Realm(OperatorIdentity.OperatorRealmId, RealmKind.SelfHosted, OperatorIdentity.OperatorRealmDisplay)
     }
 
+    /** The operator accounts table (opened without the master key: to ask whether operators exist). */
+    public static AccountStore(session: ISqlSession): Promise<SqlLocalAccountStore>
+    {
+        return SqlLocalAccountStore.Open(session)
+    }
+
     /** The SQL identity stores of the operator realm, over the console's database (secrets sealed under `masterKey`). */
     public static async OpenStores(session: ISqlSession, masterKey: Buffer): Promise<IdentityStoreSet>
     {
@@ -180,8 +187,12 @@ export class OperatorIdentity implements IOperatorIdentity
     public static async Compose(options: OperatorComposeOptions): Promise<OperatorIdentity>
     {
         mkdirSync(dirname(options.masterKeyFile), { recursive: true, mode: OperatorIdentity.SecretDirMode })
-        const key = OperatorIdentity.LoadOrCreateKey(options.masterKeyFile)
         const realm = OperatorIdentity.Realm()
+        if (!existsSync(options.masterKeyFile) && (await (await OperatorIdentity.AccountStore(options.session)).ListAccounts(realm)).length > 0)
+        {
+            throw new MasterKeyError(OperatorIdentity.MissingMasterKeyMessage)
+        }
+        const key = OperatorIdentity.LoadOrCreateKey(options.masterKeyFile)
         const stores = await OperatorIdentity.OpenStores(options.session, key)
         const pack = ServerIdentityPack.OpenWith(stores, { DelegationDepth: DelegationDepth.FullAuthz })
         const existing = await pack.Directory.Lookup(OperatorIdentity.AdminPrincipalId, realm)

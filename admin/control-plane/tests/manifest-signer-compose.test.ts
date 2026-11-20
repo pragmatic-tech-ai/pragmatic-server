@@ -12,6 +12,8 @@ import { ImageSigner } from '../image-signer.js'
 import { ManifestSigner } from '../manifest-signer.js'
 import { PlatformSigningKey, PlatformSigningKeyMissingError } from '../platform-signing-key.js'
 import { ControlPlaneServer } from '../server.js'
+import { FileKeyStore } from '../key-store.js'
+import { DockerImageDigest } from '../image-digest.js'
 
 class SignerComposeFixture
 {
@@ -55,14 +57,14 @@ describe('ControlPlaneServer signing composition', () =>
         const dataRoot = join(root, 'default')
         mkdirSync(dataRoot)
         const directory = await SignerComposeFixture.Directory(dataRoot)
-        const signing = await ControlPlaneServer.PlatformSigningOf({}, dataRoot, directory)
+        const signing = await ControlPlaneServer.PlatformSigningOf({}, dataRoot, directory, ControlPlaneServer.FileSignaturesOf(dataRoot))
         assert.ok(existsSync(join(dataRoot, 'keys', 'platform-signing.key')))
         assert.equal(directory.GetHive('h1')?.trustRootRef, 'platform-signing')
         assert.equal(signing.PlatformSigner.KeyRef, 'platform-signing')
         assert.equal(signing.PlatformSigner.SignsFor(directory.GetHive('h1')!), true)
         assert.ok(signing.ImageSigner instanceof ImageSigner)
         const again = readFileSync(join(dataRoot, 'keys', 'platform-signing.key'), 'utf8')
-        await ControlPlaneServer.PlatformSigningOf({}, dataRoot, directory)
+        await ControlPlaneServer.PlatformSigningOf({}, dataRoot, directory, ControlPlaneServer.FileSignaturesOf(dataRoot))
         assert.equal(readFileSync(join(dataRoot, 'keys', 'platform-signing.key'), 'utf8'), again)
     })
 
@@ -71,15 +73,17 @@ describe('ControlPlaneServer signing composition', () =>
         const dataRoot = join(root, 'operator')
         mkdirSync(dataRoot)
         const directory = await SignerComposeFixture.Directory(dataRoot)
-        await assert.rejects(ControlPlaneServer.PlatformSigningOf({ [SignerComposeFixture.KeyRefEnvVar]: 'typo-key' }, dataRoot, directory), PlatformSigningKeyMissingError)
+        await assert.rejects(ControlPlaneServer.PlatformSigningOf({ [SignerComposeFixture.KeyRefEnvVar]: 'typo-key' }, dataRoot, directory, ControlPlaneServer.FileSignaturesOf(dataRoot)), PlatformSigningKeyMissingError)
         assert.equal(directory.GetHive('h1')?.trustRootRef, undefined)
         assert.equal(existsSync(join(dataRoot, 'keys', 'typo-key.key')), false)
     })
 
     it('always composes a ManifestSigner over the shared image signer', () =>
     {
-        const signer = ControlPlaneServer.ManifestSignerOf('platform-release', root, ControlPlaneServer.ImageSignerOf(root))
+        const signatures = ControlPlaneServer.FileSignaturesOf(root)
+        const keys = new FileKeyStore(join(root, 'keys'))
+        const signer = ControlPlaneServer.ManifestSignerOf('platform-release', ControlPlaneServer.ImageSignerOf(keys, new DockerImageDigest(), signatures), new DockerImageDigest(), signatures)
         assert.ok(signer instanceof ManifestSigner)
-        assert.ok(ControlPlaneServer.ImageSignerOf(root) instanceof ImageSigner)
+        assert.ok(ControlPlaneServer.ImageSignerOf(keys, new DockerImageDigest(), signatures) instanceof ImageSigner)
     })
 })

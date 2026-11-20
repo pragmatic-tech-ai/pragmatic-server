@@ -16,6 +16,7 @@ import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, Ow
 import { InvalidEnvironmentNameError } from './template-catalog.js'
 import { LastOperatorError, OperatorExistsError, OperatorNotFoundError, OperatorProtectedError, OperatorSelfLockoutError } from './operator-identity.js'
 import { AdminProxyError, AdminProxyErrorKind } from './admin-proxy.js'
+import { RecordUnstorableError } from './record-map.js'
 import { ClientHasTenantsError, HiveHasEnvironmentsError, InHiveConsoleTakenError, RecordExistsError, TenantClientMismatchError, TenantHasHivesError, UnknownClientError, UnknownTenantError } from './platform-directory.js'
 import { HivePlacementError } from './hive-placement-error.js'
 import { InvalidEmailDomainError } from './email-domain-policy.js'
@@ -60,6 +61,7 @@ export class ControlPlaneProblems extends ProblemMapper
         super(err => logError(ControlPlaneProblems.LogPrefix, err))
         const P = ControlPlaneProblems
         this.Register(BodyTooLargeError, P.CodeTooLarge)
+            .Register(RecordUnstorableError, P.CodeBadRequest)
             .Register(InvalidEnvironmentNameError, P.CodeBadRequest)
             .Register(EnvironmentNotFoundError, P.CodeNotFound)
             .Register(EnvironmentExistsError, P.CodeConflict)

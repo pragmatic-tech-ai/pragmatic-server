@@ -1,6 +1,6 @@
 import { SerialRuns } from './atomic-json-file.js'
 import type { IdpRecord } from './idp-record.js'
-import { FileRecordMap, type IRecordMap } from './record-map.js'
+import { FileRecordMap, RecordDocuments, type IRecordMap } from './record-map.js'
 
 export class IdpRegistry
 {
@@ -8,6 +8,8 @@ export class IdpRegistry
 
     private readonly records = new Map<string, IdpRecord>()
     private readonly writes = new SerialRuns()
+    /** Keys changed since the last write that included them (a failed write leaves them for the next one). */
+    private readonly pending = new Set<string>()
     private readonly map: IRecordMap<IdpRecord>
 
     /** `location`: the `{ idps: { <tenantId>: record } }` file, or a record map (the console's Postgres table). */
@@ -37,6 +39,7 @@ export class IdpRegistry
 
     public async Put(record: IdpRecord): Promise<void>
     {
+        RecordDocuments.AssertStorable(record)
         this.records.set(record.tenantId, { ...record })
         await this.persist(new Set([record.tenantId]))
     }
@@ -47,10 +50,31 @@ export class IdpRegistry
         await this.persist(new Set([tenantId]))
     }
 
-    /** Writes run one at a time; each saves the current records of the tenants it changed, so a later write carries every earlier change. */
+    /** Writes run one at a time; each saves the current records of every key changed since the last successful write (a
+     *  failed write's keys ride with the next), so a later write carries every earlier change. */
     private persist(changed: ReadonlySet<string>): Promise<void>
     {
-        return this.writes.Run(() => this.Commit(changed))
+        for (const key of changed)
+        {
+            this.pending.add(key)
+        }
+        return this.writes.Run(async () =>
+        {
+            const batch = new Set(this.pending)
+            this.pending.clear()
+            try
+            {
+                await this.Commit(batch)
+            }
+            catch (err)
+            {
+                for (const key of batch)
+                {
+                    this.pending.add(key)
+                }
+                throw err
+            }
+        })
     }
 
     /** One write of the changed tenants (the file form rewrites the whole map); overridable so a test can hold a write. */

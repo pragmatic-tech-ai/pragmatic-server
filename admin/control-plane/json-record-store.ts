@@ -1,5 +1,5 @@
 import { AtomicJsonFile } from './atomic-json-file.js'
-import { FileRecordMap, type IRecordMap } from './record-map.js'
+import { FileRecordMap, RecordDocuments, type IRecordMap } from './record-map.js'
 
 /**
  * A registry of records by id, held in memory (reads are synchronous copies) and persisted through a record map: the
@@ -74,8 +74,10 @@ export abstract class JsonRecordStore<TRecord extends { id: string }>
     }
 
     /** Mutates memory only; pair with Flush() to persist. */
+    /** Throws RecordUnstorableError (nothing changes) for a record the database could not hold. */
     protected Stage(record: TRecord): void
     {
+        RecordDocuments.AssertStorable(record)
         this.records.set(record.id, structuredClone(record))
         this.changed.add(record.id)
     }

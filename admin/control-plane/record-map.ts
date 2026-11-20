@@ -28,6 +28,51 @@ export class RecordMapFormatError extends Error
     }
 }
 
+/** A record holds a string Postgres jsonb cannot store (a NUL character): refused before anything changes. */
+export class RecordUnstorableError extends Error
+{
+    private static readonly ErrorName = 'RecordUnstorableError'
+    private static readonly Text = 'A text field holds a character that cannot be stored (NUL).'
+
+    public constructor()
+    {
+        super(RecordUnstorableError.Text)
+        this.name = RecordUnstorableError.ErrorName
+    }
+}
+
+/** The one rule every record map shares about what a record may hold, checked before a store changes its memory. */
+export class RecordDocuments
+{
+    private static readonly Nul = '\u0000'
+
+    /** Throws RecordUnstorableError when any string of the record (a key or a value, at any depth) holds a NUL. */
+    public static AssertStorable(value: unknown): void
+    {
+        if (!RecordDocuments.IsStorable(value))
+        {
+            throw new RecordUnstorableError()
+        }
+    }
+
+    private static IsStorable(value: unknown): boolean
+    {
+        if (typeof value === 'string')
+        {
+            return !value.includes(RecordDocuments.Nul)
+        }
+        if (Array.isArray(value))
+        {
+            return value.every(v => RecordDocuments.IsStorable(v))
+        }
+        if (typeof value === 'object' && value !== null)
+        {
+            return Object.entries(value).every(([k, v]) => !k.includes(RecordDocuments.Nul) && RecordDocuments.IsStorable(v))
+        }
+        return true
+    }
+}
+
 /** How a FileRecordMap lays out and writes its file. */
 export interface FileRecordMapOptions
 {

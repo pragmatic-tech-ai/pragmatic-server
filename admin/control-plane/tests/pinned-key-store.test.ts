@@ -134,7 +134,7 @@ describe('PlatformSigningOf with a signing key file', () =>
         const env = { [PinnedFixture.FileEnvVar]: PinnedFixture.File(privatePem) }
         const directory = new PlatformDirectory(new ClientRegistry(join(dataRoot, 'clients.json')), new TenantRegistry(join(dataRoot, 'tenants.json')), new HiveRegistry(join(dataRoot, 'hives.json')), { List: () => [] })
         await directory.Load()
-        await ControlPlaneServer.PlatformSigningOf(env, dataRoot, directory)
+        await ControlPlaneServer.PlatformSigningOf(env, dataRoot, directory, ControlPlaneServer.FileSignaturesOf(dataRoot))
         assert.equal(existsSync(join(dataRoot, 'keys', PinnedFixture.Ref + FileKeyStore.PrivateSuffix)), false)
         assert.equal(readFileSync(join(dataRoot, 'keys', PinnedFixture.Ref + FileKeyStore.PublicSuffix), 'utf8'), publicPem)
     })

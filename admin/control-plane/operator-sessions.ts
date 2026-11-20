@@ -38,16 +38,26 @@ export class OperatorRoleClaims
     /** The claim the roles travel in (the application-roles claim of the realm's sessions). */
     public static readonly RoleClaim = 'app_roles'
     public static readonly EmailClaim = 'email'
+    /** How the session was signed in (the OIDC `amr` claim): `pwd` for the console's own operator accounts. */
+    public static readonly MethodClaim = 'amr'
+    public static readonly PasswordMethod = 'pwd'
 
     public static NameOf(role: OperatorRole): string
     {
         return role === OperatorRole.Full ? OperatorRoleClaims.Full : OperatorRoleClaims.ReadOnly
     }
 
-    /** The session claims of an operator: its email and its role. */
+    /** The session claims of an operator account: its email, its role and the password sign-in method. */
     public static Of(principal: OperatorPrincipal): SessionClaims
     {
-        return SessionClaims.From({ [OperatorRoleClaims.EmailClaim]: principal.email, [OperatorRoleClaims.RoleClaim]: [OperatorRoleClaims.NameOf(principal.role)] })
+        const C = OperatorRoleClaims
+        return SessionClaims.From({ [C.EmailClaim]: principal.email, [C.RoleClaim]: [C.NameOf(principal.role)], [C.MethodClaim]: [C.PasswordMethod] })
+    }
+
+    /** Whether the session belongs to one of the console's own operator accounts (signed in with its password). */
+    public static IsOperatorAccount(session: SessionRecord): boolean
+    {
+        return session.Claims.Has(OperatorRoleClaims.MethodClaim, OperatorRoleClaims.PasswordMethod)
     }
 
     /** The operator a session names: its subject, email and role (ReadOnly unless the claims say Full: deny by default). */
@@ -59,9 +69,11 @@ export class OperatorRoleClaims
 }
 
 /**
- * The authentication step of the platform admin console: the cookie's session from the session store, with its claims
- * refreshed from the operator's account on every request, so a demotion, a promotion or a disabled account takes effect
- * at once (as the identity-pack sessions did) while the role still reaches authorization as a claim.
+ * The authentication step of the platform admin console: the cookie's session from the session store. A session of one
+ * of the console's own operator accounts (the password sign-in) has its claims refreshed from the account on every
+ * request, so a demotion, a promotion or a disabled account takes effect at once (as the identity-pack sessions did)
+ * while the role still reaches authorization as a claim. A session signed in another way (the realm's OIDC sign-in, a
+ * later step) keeps the claims it was issued with: its roles come from the realm.
  */
 export class OperatorSessionGate extends SessionGate
 {
@@ -79,6 +91,10 @@ export class OperatorSessionGate extends SessionGate
     /** The session with its claims as the operator's account says now; null when the operator is gone or disabled. */
     public async Refreshed(session: SessionRecord): Promise<SessionRecord | null>
     {
+        if (!OperatorRoleClaims.IsOperatorAccount(session))
+        {
+            return session
+        }
         const principal = await this.operators.PrincipalOf(session.Subject)
         if (principal === null)
         {

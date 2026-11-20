@@ -79,6 +79,7 @@ import { ImageSigner } from './image-signer.js'
 import { FileSignatureStore, type ISignatureStore } from './signature-store.js'
 import { PlatformAdminDatabase, PlatformAdminRegistry } from './platform-admin-database.js'
 import { OperatorSessions } from './operator-sessions.js'
+import { PlatformAdminImport } from './platform-admin-import.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { EnvironmentService } from './environment-service.js'
 import { GraphService } from './graph-service.js'
@@ -331,6 +332,7 @@ export class ControlPlaneServer
         const opts = ControlPlaneServer.ReadOperatorOptions(process.env, dataRoot)
         // Every record of the console lives in its own Postgres database (A5); only keys and public material stay on files.
         const database = await PlatformAdminDatabase.Open(process.env)
+        await PlatformAdminImport.RequireImported(dataRoot, database)
         const sessions = new OperatorSessions(await database.SessionRepositories(), opts.secureCookie)
         const operator = await OperatorIdentity.Compose({ session: database.Session, masterKeyFile: opts.masterKeyFile, operatorEmail: opts.operatorEmail, initialPassword: opts.initialPassword, sessions: sessions.Store })
         const masterKey = MasterKeyFile.Load(opts.masterKeyFile)
@@ -364,7 +366,7 @@ export class ControlPlaneServer
         // platform key (the trust-root back-fill this runs is idempotent, so a co-deployed edge and admin agree).
         // One key store for every signer: the signing-key file (if any) is read once, here.
         const keys = KeyStores.Of(dataRoot, process.env, ControlPlaneServer.SigningKeyRefOf(process.env))
-        const signing = await ControlPlaneServer.PlatformSigningOf(process.env, dataRoot, directory, keys, digests, signatures)
+        const signing = await ControlPlaneServer.PlatformSigningOf(process.env, dataRoot, directory, signatures, keys, digests)
         const allocator = new PortAllocator(TenantPlaneComposer.EnvPortFloor, new NetPortProbe())
         const bundle = new BundleBuilderAdapter()
         const seeder = new UserSeederAdapter(new UserSeeder())
@@ -400,11 +402,11 @@ export class ControlPlaneServer
         const ownerResets = new ConsoleOwnerResets(await database.Map(PlatformAdminRegistry.ConsoleOwnerResets))
         await Promise.all([manifests.Load(), desktopAudit.Load(), graphAudit.Load(), gating.Load(), selections.Load(), observations.Load(), registrations.Load(), policies.Load(), ledger.Load(), adminClientRegistry.Load(), accountIndex.Load(), adverts.Load(), approvals.Load(), ownerResets.Load()])
         await accountIndex.BackfillFrom(directory)
-        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(signing.PlatformSigner.KeyRef, dataRoot, signing.ImageSigner, digests, signatures), policies, ledger)
+        const deployments = new PlatformDeploymentRegistry(manifests, gating, selections, registrations, directory, orchestrators, registry, placement, observations, ControlPlaneServer.ManifestSignerOf(signing.PlatformSigner.KeyRef, signing.ImageSigner, digests, signatures), policies, ledger)
         // The release catalogue and its poll are operator-side: composed (and their settings validated) before any listener
         // starts, and never by the edge.
         // Release images are countersigned by their registry digest (never a local docker id), into the same signature store.
-        const countersigner = new PlatformReleaseCountersigner(ControlPlaneServer.ImageSignerOf(dataRoot, keys, new RegistryRefImageDigest(), signatures), signing.PlatformSigner.KeyRef, signatures)
+        const countersigner = new PlatformReleaseCountersigner(ControlPlaneServer.ImageSignerOf(keys, new RegistryRefImageDigest(), signatures), signing.PlatformSigner.KeyRef, signatures)
         const releases = ControlPlaneServer.ReleasesOf(role, process.env, join(here, TenantPlaneComposer.ParentSegment, TenantPlaneComposer.ParentSegment), deployments, countersigner)
         const agentChannelUrlRaw = process.env[ControlPlaneServer.AgentChannelUrlEnvVar]
         const agentChannelUrl = ControlPlaneServer.AgentChannelUrl(agentChannelPort, agentChannelUrlRaw)
@@ -541,7 +543,7 @@ export class ControlPlaneServer
     }
 
     /** The hive drivers for the infra mode: none drives nothing, hosted drives registered clusters by context, local adds kind. */
-    public static OrchestratorsOf(infra: InfraTargetMode, dataRoot: string, digests: IImageDigest, signatures?: ISignatureStore): HiveOrchestratorFactory
+    public static OrchestratorsOf(infra: InfraTargetMode, dataRoot: string, digests: IImageDigest, signatures: ISignatureStore): HiveOrchestratorFactory
     {
         if (infra === InfraTargetMode.None)
         {
@@ -800,8 +802,8 @@ export class ControlPlaneServer
      * trust root of every hive that has none; that back-fill is permanent, so hives keep the key they were given even if
      * the operator later names another one. Returns one shared image signer and the platform signer built over it.
      */
-    public static async PlatformSigningOf(env: NodeJS.ProcessEnv, dataRoot: string, directory: PlatformDirectory,
-        keys: IKeyStore = KeyStores.Of(dataRoot, env, ControlPlaneServer.SigningKeyRefOf(env)), digests: IImageDigest = new DockerImageDigest(), signatures?: ISignatureStore): Promise<{ ImageSigner: IImageSigner; PlatformSigner: PlatformImageSigner }>
+    public static async PlatformSigningOf(env: NodeJS.ProcessEnv, dataRoot: string, directory: PlatformDirectory, signatures: ISignatureStore,
+        keys: IKeyStore = KeyStores.Of(dataRoot, env, ControlPlaneServer.SigningKeyRefOf(env)), digests: IImageDigest = new DockerImageDigest()): Promise<{ ImageSigner: IImageSigner; PlatformSigner: PlatformImageSigner }>
     {
         const C = ControlPlaneServer
         const keysDir = join(dataRoot, C.KeysDirName)
@@ -824,7 +826,7 @@ export class ControlPlaneServer
         {
             console.log(C.TrustAdoptedPrefix + ref + C.TrustAdoptedInfix + adopted.join(C.HiveIdSeparator))
         }
-        const imageSigner = C.ImageSignerOf(dataRoot, keys, digests, signatures)
+        const imageSigner = C.ImageSignerOf(keys, digests, signatures)
         return { ImageSigner: imageSigner, PlatformSigner: new PlatformImageSigner(imageSigner, ref) }
     }
 
@@ -840,20 +842,20 @@ export class ControlPlaneServer
     }
 
     /** The registry manifest signer: publishes are signed with the platform signing key `ref`, through the shared image signer,
-     *  into `signatures` (the console's Postgres store; the data root's file when none is given: development tools). */
-    public static ManifestSignerOf(ref: string, dataRoot: string, signer: IImageSigner, digests: IImageDigest = new DockerImageDigest(), signatures?: ISignatureStore): IManifestSigner
+     *  into `signatures` (the console's Postgres store). */
+    public static ManifestSignerOf(ref: string, signer: IImageSigner, digests: IImageDigest, signatures: ISignatureStore): IManifestSigner
     {
-        return new ManifestSigner(digests, signer, signatures ?? ControlPlaneServer.FileSignaturesOf(dataRoot), ref)
+        return new ManifestSigner(digests, signer, signatures, ref)
     }
 
     /** Signs images into the same signature store the hive orchestrators verify against, with keys from the key store. */
-    public static ImageSignerOf(dataRoot: string, keys: IKeyStore = new FileKeyStore(join(dataRoot, ControlPlaneServer.KeysDirName)), digests: IImageDigest = new DockerImageDigest(), signatures?: ISignatureStore): ImageSigner
+    public static ImageSignerOf(keys: IKeyStore, digests: IImageDigest, signatures: ISignatureStore): ImageSigner
     {
-        return new ImageSigner(digests, signatures ?? ControlPlaneServer.FileSignaturesOf(dataRoot), keys)
+        return new ImageSigner(digests, signatures, keys)
     }
 
-    /** The data root's signature file (development tools and tests that keep no database). */
-    private static FileSignaturesOf(dataRoot: string): FileSignatureStore
+    /** The data root's signature file: development tools and tests that keep no database. */
+    public static FileSignaturesOf(dataRoot: string): FileSignatureStore
     {
         return new FileSignatureStore(join(dataRoot, ControlPlaneServer.SignaturesFileName))
     }
