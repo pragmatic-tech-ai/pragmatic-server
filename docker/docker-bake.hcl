@@ -25,8 +25,9 @@ variable "NPMRC_FILE" {
   default = ""
 }
 
-# The platform images (admin, edge, postgres) are built per arch on native runners (release.yml, platform-images job):
-# PLATFORMS=linux/arm64 there; comma-separated for a local multi-arch build. The other six stay linux/amd64.
+# The multi-arch images (platform admin, edge, postgres, and the realm sign-in service, which the central login runs on
+# an arm64 host) are built per arch on native runners (release.yml, platform-images job): PLATFORMS=linux/arm64 there;
+# comma-separated for a local multi-arch build. The other five stay linux/amd64.
 variable "PLATFORMS" {
   default = "linux/amd64"
 }
@@ -50,14 +51,13 @@ group "default" {
   ]
 }
 
-# Everything except the three multi-arch platform images (release.yml bakes these on amd64 only).
+# Everything except the four multi-arch images (release.yml bakes these on amd64 only).
 group "amd64-only" {
   targets = [
     "pragmatic-env-server",
     "pragmatic-env-gateway",
     "pragmatic-hive-agent",
     "pragmatic-tenant-admin",
-    "pragmatic-tenant-idp",
     "pragmatic-ui-unpack",
   ]
 }
@@ -123,9 +123,10 @@ target "pragmatic-tenant-admin" {
 }
 
 target "pragmatic-tenant-idp" {
-  inherits = ["_app"]
-  target   = "pragmatic-tenant-idp"
-  tags     = tags("pragmatic-tenant-idp")
+  inherits  = ["_app"]
+  target    = "pragmatic-tenant-idp"
+  platforms = split(",", PLATFORMS)
+  tags      = tags("pragmatic-tenant-idp")
 }
 
 target "pragmatic-ui-unpack" {

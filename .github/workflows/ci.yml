@@ -91,7 +91,7 @@ jobs:
         run: |
           helm lint pragmatic-server/helm/pragmatic-server
           helm template pragmatic-server/helm/pragmatic-server
-  # The three multi-arch platform images, built natively on arm64 (as release.yml does), without pushing.
+  # The four multi-arch images, built natively on arm64 (as release.yml does), without pushing.
   platform-images-arm64:
     runs-on: ubuntu-24.04-arm
     steps:
@@ -114,7 +114,7 @@ jobs:
           (umask 077 && printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$PACKAGES_TOKEN" > "$RUNNER_TEMP/npmrc")
           NPMRC_FILE="$RUNNER_TEMP/npmrc" PLATFORMS=linux/arm64 docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --allow=fs.read="$RUNNER_TEMP/npmrc" pragmatic-components
           NPMRC_FILE="$RUNNER_TEMP/npmrc" PLATFORMS=linux/arm64 VERSION=ci SERVER_SHA="$GITHUB_SHA" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl \
-            -f pragmatic-server/docker/.components/docker-bake.components.json --allow=fs.read="$RUNNER_TEMP/npmrc" pragmatic-platform-admin pragmatic-platform-edge pragmatic-postgres
+            -f pragmatic-server/docker/.components/docker-bake.components.json --allow=fs.read="$RUNNER_TEMP/npmrc" pragmatic-platform-admin pragmatic-platform-edge pragmatic-postgres pragmatic-tenant-idp
       # The arm64 pragmatic-postgres, loaded into the runner's docker and run through the same end-to-end test.
       - name: pragmatic-postgres image test (arm64)
         working-directory: ${{ github.workspace }}

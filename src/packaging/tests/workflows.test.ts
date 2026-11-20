@@ -281,7 +281,7 @@ test('ci workflow clones the graph engine and points the siblings at it and at t
 
 class MultiArch
 {
-    public static readonly PlatformApps = ['pragmatic-platform-admin', 'pragmatic-platform-edge', 'pragmatic-postgres']
+    public static readonly PlatformApps = ['pragmatic-platform-admin', 'pragmatic-platform-edge', 'pragmatic-postgres', 'pragmatic-tenant-idp']
     public static readonly Matrix = [{ arch: 'amd64', runner: 'ubuntu-latest' }, { arch: 'arm64', runner: 'ubuntu-24.04-arm' }]
 
     public static Jobs(name: string): Record<string, { 'runs-on'?: string; needs?: string | string[]; strategy?: { matrix?: { include?: unknown[] } }; steps?: IWorkflowStep[] }>
@@ -295,7 +295,7 @@ class MultiArch
     }
 }
 
-test('release builds platform-admin, platform-edge and postgres natively per arch, pushed by digest', () =>
+test('release builds platform-admin, platform-edge, postgres and tenant-idp natively per arch, pushed by digest', () =>
 {
     const job = MultiArch.Jobs('release.yml')['platform-images']
     assert.ok(job !== undefined, 'a platform-images job')
@@ -324,7 +324,7 @@ test('the release job merges both arches into one tag per platform image before 
     assert.match(bake, /amd64-only/)
 })
 
-test('ci also bakes the three platform images for arm64 on a native runner, without pushing', () =>
+test('ci also bakes the four multi-arch images for arm64 on a native runner, without pushing', () =>
 {
     const job = MultiArch.Jobs('ci.yml')['platform-images-arm64']
     assert.ok(job !== undefined, 'a platform-images-arm64 job')
@@ -350,7 +350,7 @@ test('ci runs the pragmatic-postgres image test on the amd64 and the arm64 image
     assert.match(arm64, /PLATFORMS=linux\/arm64 [\s\S]*docker buildx bake [\s\S]*--load pragmatic-postgres/)
 })
 
-test('bake: the platform images take PLATFORMS; the six other apps form the amd64-only group', () =>
+test('bake: the multi-arch images take PLATFORMS; the five other apps form the amd64-only group', () =>
 {
     const bake = readFileSync(join(Workflows.Dir(), '..', '..', 'docker', 'docker-bake.hcl'), 'utf8')
     assert.match(bake, /variable "PLATFORMS"\s*\{\s*default = "linux\/amd64"\s*\}/)
@@ -362,7 +362,7 @@ test('bake: the platform images take PLATFORMS; the six other apps form the amd6
     const group = /group "amd64-only" \{\s*targets = \[([^\]]*)\]/.exec(bake)
     assert.ok(group !== null)
     const members = (group[1].match(/"[^"]+"/g) ?? []).map(m => m.slice(1, -1))
-    assert.deepEqual(members.sort(), ['pragmatic-env-gateway', 'pragmatic-env-server', 'pragmatic-hive-agent', 'pragmatic-tenant-admin', 'pragmatic-tenant-idp', 'pragmatic-ui-unpack'])
+    assert.deepEqual(members.sort(), ['pragmatic-env-gateway', 'pragmatic-env-server', 'pragmatic-hive-agent', 'pragmatic-tenant-admin', 'pragmatic-ui-unpack'])
 })
 
 test('release resolves the sibling commits once; every image build and the descriptor use exactly those', () =>

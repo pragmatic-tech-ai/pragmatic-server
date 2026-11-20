@@ -4,10 +4,10 @@
 # Every bake runs in two steps: pragmatic-components first exports the component descriptors and the override that
 # labels each image with its descriptor digest (ai.pragmatic-tech.component.digest; the descriptor itself is at
 # /pragmatic/component.json); the publisher reads each image's label and signs it with the image digest (schema 2).
-# The three platform images (platform-admin, platform-edge, postgres) are multi-arch: the platform-images job builds
+# Four images (platform-admin, platform-edge, postgres, tenant-idp) are multi-arch: the platform-images job builds
 # each arch on its own native runner (no QEMU) and pushes it by digest; the release job joins both digests under the
 # version tags (docker buildx imagetools create), so the descriptor records and signs the multi-arch index digest. The
-# other six images are linux/amd64 only.
+# other five images are linux/amd64 only.
 # Only this repo is tagged: every sibling builds from its default-branch head (cloned exactly as ci.yml clones it; some
 # siblings' default branch is `master`). The siblings job resolves those heads ONCE into siblings.json; every image
 # build fetches exactly those commits, and the descriptor records the same file, so all nine images and the signed
@@ -126,11 +126,11 @@ jobs:
             -f pragmatic-server/docker/.components/docker-bake.components.json --allow=fs.read="$RUNNER_TEMP/npmrc" \
             --metadata-file "$RUNNER_TEMP/bake-meta.json" \
             --set pragmatic-platform-admin.tags=ghcr.io/pragmatic-tech-ai/pragmatic-platform-admin --set pragmatic-platform-edge.tags=ghcr.io/pragmatic-tech-ai/pragmatic-platform-edge \
-            --set pragmatic-postgres.tags=ghcr.io/pragmatic-tech-ai/pragmatic-postgres \
+            --set pragmatic-postgres.tags=ghcr.io/pragmatic-tech-ai/pragmatic-postgres --set pragmatic-tenant-idp.tags=ghcr.io/pragmatic-tech-ai/pragmatic-tenant-idp \
             --set '*.output=type=image,push-by-digest=true,name-canonical=true,push=true' \
-            pragmatic-platform-admin pragmatic-platform-edge pragmatic-postgres
+            pragmatic-platform-admin pragmatic-platform-edge pragmatic-postgres pragmatic-tenant-idp
           rm -f "$RUNNER_TEMP/npmrc"
-          for app in pragmatic-platform-admin pragmatic-platform-edge pragmatic-postgres; do
+          for app in pragmatic-platform-admin pragmatic-platform-edge pragmatic-postgres pragmatic-tenant-idp; do
             jq -r --arg app "$app" '.[$app]["containerimage.digest"]' "$RUNNER_TEMP/bake-meta.json" > "$RUNNER_TEMP/digests/$app"
             grep -Eq '^sha256:[0-9a-f]{64}$' "$RUNNER_TEMP/digests/$app"
           done
@@ -211,7 +211,7 @@ jobs:
       # One tag pair per platform image over both arches' digests: the version tag then names the multi-arch index.
       - name: Join the platform images' arches under the version tags
         run: |
-          for app in pragmatic-platform-admin pragmatic-platform-edge pragmatic-postgres; do
+          for app in pragmatic-platform-admin pragmatic-platform-edge pragmatic-postgres pragmatic-tenant-idp; do
             amd64=$(cat "$RUNNER_TEMP/platform-digests/platform-digests-amd64/$app")
             arm64=$(cat "$RUNNER_TEMP/platform-digests/platform-digests-arm64/$app")
             docker buildx imagetools create -t "ghcr.io/pragmatic-tech-ai/$app:$VERSION" -t "ghcr.io/pragmatic-tech-ai/$app:git-$SERVER_SHA" \
