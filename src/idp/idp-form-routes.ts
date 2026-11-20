@@ -11,8 +11,10 @@ export interface IFormEndpoint
 /**
  * The realm sign-in service's form-bodied OAuth endpoints (`POST <issuer>/protocol/openid-connect/token` and `/revoke`,
  * `application/x-www-form-urlencoded` by RFC 6749 §3.2 and RFC 7009) as AppHost routes declaring a form body: the host's
- * whole pipeline applies (security headers, the allowed Host, a non-form body 415, the body limit 413); the answer is
- * JSON with `no-store`. Public: each endpoint authenticates its client itself.
+ * whole pipeline applies (security headers, the allowed Host, the Origin guard, a non-form body 415, the body limit 413,
+ * each refused in the host's own JSON shape); an endpoint's answer is JSON with `no-store`. Public: each endpoint
+ * authenticates its client itself. The Origin guard refuses a cross-origin browser POST: today's clients are servers
+ * (no Origin); a browser-side client would need an Origin opt-out on the route first.
  */
 export class IdpFormRoutes
 {

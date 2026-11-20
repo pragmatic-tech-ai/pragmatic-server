@@ -358,14 +358,14 @@ class ConsoleKit
     }
 
     /** Dials the relay path raw and resolves the status line and body of the answer. */
-    public RawRelay(): Promise<{ statusLine: string; body: string }>
+    public RawRelay(host: string = ConsoleKit.LoopbackHost): Promise<{ statusLine: string; body: string }>
     {
         const { port } = this.Host.Address()
         return new Promise((res, rej) =>
         {
             const socket = connect(port, '127.0.0.1', () =>
             {
-                socket.write(['GET /desktop/relay?environment=acme-dev&action=contribute HTTP/1.1', 'Host: ' + ConsoleKit.LoopbackHost, 'Connection: Upgrade', 'Upgrade: websocket',
+                socket.write(['GET /desktop/relay?environment=acme-dev&action=contribute HTTP/1.1', 'Host: ' + host, 'Connection: Upgrade', 'Upgrade: websocket',
                     'Sec-WebSocket-Version: 13', 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==', '', ''].join('\r\n'))
             })
             const chunks: Buffer[] = []
@@ -633,7 +633,8 @@ describe('TenantConsoleHost desktop surface', () =>
         const kit = await ConsoleKit.Start({ desktop: true, relay })
         const answer = await kit.RawRelay()
         assert.ok(answer.statusLine.startsWith('HTTP/1.1 418'))
-        assert.deepEqual(relay.Urls, ['/desktop/relay?environment=acme-dev&action=contribute'])
+        assert.ok((await kit.RawRelay('desktop.unknown.example')).statusLine.startsWith('HTTP/1.1 418'), 'a Host no tenant resolves to still reaches the relay')
+        assert.deepEqual(relay.Urls, ['/desktop/relay?environment=acme-dev&action=contribute', '/desktop/relay?environment=acme-dev&action=contribute'])
         await kit.Stop()
         assert.equal(relay.Closed, 1)
     })

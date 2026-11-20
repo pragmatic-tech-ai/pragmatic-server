@@ -192,8 +192,6 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
     private static readonly StatusConflict = 409
     private static readonly StatusInternal = 500
     private static readonly StatusBadGateway = 502
-    /** The close an attach without an admitted pipe ends with (the route was wired without its admission). */
-    private static readonly InternalErrorClose = 1011
     private static readonly LogPrefix = '[desktop-relay] upstream failed:'
     private static readonly RevokeLogPrefix = '[desktop-relay] revoking the relay credential failed:'
     private static readonly ErrorEvent = 'error'
@@ -303,7 +301,7 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         this.admitted.delete(req)
         if (pipe === undefined)
         {
-            client.close(DesktopRelay.InternalErrorClose)
+            client.close(RelayPipe.InternalError)
             return
         }
         pipe.Attach(client)
@@ -635,7 +633,7 @@ class RelayPipe
     private static readonly IdField = 'id'
     private static readonly MethodField = 'method'
     private static readonly ErrorField = 'error'
-    private static readonly InternalError = 1011
+    public static readonly InternalError = 1011
     private static readonly SendableCodes: ReadonlySet<number> = new Set([1000, 1001, 1003, 1007, 1008, 1009, 1011, 1012, 1013])
     private static readonly MinApplicationCode = 3000
     private static readonly MaxApplicationCode = 4999

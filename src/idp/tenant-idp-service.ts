@@ -140,7 +140,7 @@ export class TenantIdpService
             TrustedProxy: options.TrustedProxy,
             ApiPrefix: S.ApiPrefix,
             Security: { ContentSecurityPolicy: S.ContentSecurityPolicy() },
-            Tls: options.Tls === undefined ? undefined : { Key: options.Tls.Key, Cert: options.Tls.Cert },
+            Tls: options.Tls,
         });
         const host = new AppHost(config, {
             Routes: routes,

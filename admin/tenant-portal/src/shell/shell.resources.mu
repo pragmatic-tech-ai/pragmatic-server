@@ -103,7 +103,12 @@ resources ShellResources {
             TextBlock [ Text = $ConsequencesText, TextWrapping = Wrap, Foreground = @Fg2, Margin = (0,0,0,12),
                         Visibility = $ConsequencesText << ToVisibility ]
             TextBlock [ Text = $PromptText, Style = @UiCaption, Foreground = @Fg2, Margin = (0,0,0,4) ]
-            TextBox [ UsesNativeInput = true, Text = $Typed, Placeholder = $Expected, Margin = (0,0,0,12) ]
+            // The box plus, while the typed text does not match, why Confirm is still disabled.
+            StackPanel [ Orientation = Vertical, Margin = (0,0,0,12) ] {
+                TextBox [ UsesNativeInput = true, Text = $Typed, Placeholder = $Expected ]
+                TextBlock [ Text = $MismatchText, Style = @UiCaption, Foreground = @StateDangerInk, Margin = (0,4,0,0),
+                            Visibility = $MismatchText << ToVisibility ]
+            }
             TextBlock [ Text = $ErrorText, Foreground = @StateDangerInk, TextWrapping = Wrap, Margin = (0,0,0,12),
                         Visibility = $ErrorText << ToVisibility ]
             StackPanel [ Orientation = Horizontal, HorizontalAlignment = Right ] {

@@ -286,7 +286,8 @@ export class TenantConsoleHost implements IPrincipalConnections
         plane.desktop?.Register(table, this.options.Registration)
         table.AddSocket({ Pattern: C.EventsPath, Auth: RouteAuth.Session, Handler: (ws, ctx) => this.AdmitEvents(ws, ctx) })
         table.AddSocket({ Pattern: C.LogsStreamPath, Auth: RouteAuth.Session, Handler: (ws, ctx) => this.AdmitLogs(ws, ctx) })
-        // Public on the host: the relay authenticates the desktop bearer itself and answers its own refusals before the handshake.
+        // Public on the host and on any Host (TenantHostAllowList admits /desktop/*): the relay authenticates the desktop
+        // bearer itself and answers its own refusals before the handshake.
         table.AddSocket({ Pattern: DesktopRelay.Path, Auth: RouteAuth.Public, Admit: req => this.AdmitRelay(req), Handler: (ws, ctx) => this.AttachRelay(ws, ctx) })
         return table
     }
