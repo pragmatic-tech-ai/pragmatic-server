@@ -37,7 +37,7 @@ test('Dockerfile runs as a non-root user and defines a healthcheck + entrypoint'
 test('Dockerfile builds the siblings in dependency order ending with pragmatic-server', () =>
 {
     const text = Dockerfile.Text()
-    const order = ['pragmatic-graph', 'todl-runtime', 'TODL', 'pragmatic-protocol', 'todl-identity', 'todl-identity-local', 'todl-identity-host', 'todl-identity-cloud', 'todl-identity-engine', 'todl-connectors-host', 'todl-platform-node', 'todl-platform-cloud', 'todl-identity-node', 'pragmatic-server']
+    const order = ['pragmatic-graph', 'todl-runtime', 'TODL', 'pragmatic-protocol', 'pragmatic-shared', 'todl-identity-engine', 'todl-connectors-host', 'pragmatic-server']
     let cursor = -1
     for (const name of order)
     {
@@ -62,7 +62,7 @@ test('the image holds one graph engine: the sibling is in the context and TODL i
     assert.match(Dockerfile.IgnoreText(), /^!pragmatic-graph$/m, 'the allowlist admits the engine sibling')
     const link = text.indexOf('link-graph-engine.sh /workspace && cd pragmatic-server && npm install')
     assert.ok(link > text.indexOf('COPY pragmatic-server/'), 'TODL is re-pointed before the server installs and builds')
-    const unlink = text.indexOf('rm /workspace/TODL/node_modules/@pragmatic-tech-ai/graph')
+    const unlink = text.indexOf('rm /workspace/TODL/node_modules/@pragmatic-tech-ai/pragmatic-graph')
     const prune = text.indexOf('npm prune --omit=dev')
     const relink = text.lastIndexOf('link-graph-engine.sh /workspace')
     assert.ok(unlink !== -1 && unlink < prune && prune < relink, 'the link is dropped before the prune and re-made after it')

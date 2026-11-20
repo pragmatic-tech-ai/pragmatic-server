@@ -1,4 +1,4 @@
-import { Cypher, GraphError, GraphErrorCode } from '@pragmatic-tech-ai/graph'
+import { Cypher, GraphError, GraphErrorCode } from '@pragmatic-tech-ai/pragmatic-graph'
 import { CursorStaleError, PageCursorCodec, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { PagingLimits } from '../../config/paging-limits.js'

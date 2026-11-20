@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { RedisClientType } from 'redis'
-import { OidcFlowState } from '@pragmatic-tech-ai/todl-identity-cloud'
+import { OidcFlowState } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import { RedisOidcFlowStateStore } from '../redis-oidc-flow-state-store.js'
 
 class Fixture

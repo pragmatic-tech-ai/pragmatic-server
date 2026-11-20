@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ResourceKind, Role } from '@pragmatic-tech-ai/todl-identity'
+import { ResourceKind, Role } from '@pragmatic-tech-ai/pragmatic-identity'
 import { AdminEnums } from '../admin-enums.js'
 
 class AdminEnumsFx

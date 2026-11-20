@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import { EncryptedSecretStore } from '@pragmatic-tech-ai/todl-identity-local'
+import { EncryptedSecretStore } from '@pragmatic-tech-ai/pragmatic-identity-source-local'
 import { AtomicJsonFile, SerialRuns } from './atomic-json-file.js'
 
 export class SealedSecretUnreadableError extends Error

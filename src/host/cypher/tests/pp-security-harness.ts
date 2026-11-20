@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
-import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy, IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
-import type { ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy, IdentityConfig } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { ISecurityModelConfig } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { PragmaticServer } from '../../../pragmatic-server.js'
 
 export class PpSecurityHarness

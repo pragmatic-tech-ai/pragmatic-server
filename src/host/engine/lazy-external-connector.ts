@@ -1,5 +1,5 @@
-import { ConnectorResidency } from '@pragmatic-tech-ai/graph'
-import type { ConnectorContext, IConnectorCapabilities, IConnectorTransaction, IExternalConnector, IFetchPage, IFetchRequest } from '@pragmatic-tech-ai/graph'
+import { ConnectorResidency } from '@pragmatic-tech-ai/pragmatic-graph'
+import type { ConnectorContext, IConnectorCapabilities, IConnectorTransaction, IExternalConnector, IFetchPage, IFetchRequest } from '@pragmatic-tech-ai/pragmatic-graph'
 import { DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
 import type { ExternalRecord, IDataSourceAdapter, PageQuery, PageSlice, QueryRequest, WriteBatch, WriteResult } from '@pragmatic-tech-ai/todl'
 import { DataSourceConnector } from '@pragmatic-tech-ai/todl/engine'

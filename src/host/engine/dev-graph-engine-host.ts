@@ -1,5 +1,5 @@
-import { CommitKind, GraphEngine, StorageKind, WriteOp } from '@pragmatic-tech-ai/graph'
-import type { BatchOp, ConnectorChangeSet, ConnectorContext, ICommitApplied, IConnectorApplyResult, IConnectorTransaction, IGraphConnector, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
+import { CommitKind, GraphEngine, StorageKind, WriteOp } from '@pragmatic-tech-ai/pragmatic-graph'
+import type { BatchOp, ConnectorChangeSet, ConnectorContext, ICommitApplied, IConnectorApplyResult, IConnectorTransaction, IGraphConnector, ISchemaDescription, ISignal, ISubscription } from '@pragmatic-tech-ai/pragmatic-graph'
 import { ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { EnvironmentCatalogError, TodlFileConnector } from '@pragmatic-tech-ai/todl/engine'
 import { ServiceProvider } from '@pragmatic-tech-ai/todl-runtime'

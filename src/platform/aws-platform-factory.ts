@@ -1,4 +1,4 @@
-import { AwsCloudBackends } from '@pragmatic-tech-ai/todl-platform-aws'
+import { AwsCloudBackends } from '@pragmatic-tech-ai/pragmatic-realm-aws'
 import type { ServerConfig } from '../config/server-config.js'
 import type { ICloudBundle, ICloudBackends } from './cloud-bundle.js'
 import { CloudPlatform } from './cloud-platform.js'

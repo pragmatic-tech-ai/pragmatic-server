@@ -1,8 +1,8 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { AccessScope, GraphEngine, GraphReader, GraphTransaction, IBeginOptions } from '@pragmatic-tech-ai/graph'
+import type { AccessScope, GraphEngine, GraphReader, GraphTransaction, IBeginOptions } from '@pragmatic-tech-ai/pragmatic-graph'
 import { AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { Principal, PrincipalKind } from '@pragmatic-tech-ai/todl-identity'
+import { Principal, PrincipalKind } from '@pragmatic-tech-ai/pragmatic-identity'
 import { EnvironmentFixture } from '../../environment/tests/environment-fixture.js'
 import { Tier1Fx } from '../../environment/tests/tier1-fixture.js'
 

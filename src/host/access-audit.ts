@@ -1,4 +1,4 @@
-import type { Action, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
+import type { Action, ResourceKind } from '@pragmatic-tech-ai/pragmatic-identity'
 
 /** The surface a decision was made on. */
 export enum AuditSurface

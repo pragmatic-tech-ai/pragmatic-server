@@ -1,5 +1,5 @@
 import type { IncomingMessage } from 'node:http'
-import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
+import type { ServerIdentityPack } from '@pragmatic-tech-ai/pragmatic-identity-store'
 import type { BrowserSessionAuth } from '../browser-session-auth.js'
 
 /** Whether a request carries a live browser session for an environment (AppServingEndpoint asks before serving an app's page). */

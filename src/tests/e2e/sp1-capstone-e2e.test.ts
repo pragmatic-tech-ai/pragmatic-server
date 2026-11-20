@@ -22,7 +22,7 @@ import {
     NullLogger,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection, SecurityModelDto, AppWriteOpDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { BaseRole, PrivilegeAction, AccessLevel } from '@pragmatic-tech-ai/todl-identity'
+import { BaseRole, PrivilegeAction, AccessLevel } from '@pragmatic-tech-ai/pragmatic-identity'
 import { BundleBuilder, EnvKind, EnvironmentPurposeName } from '../../../environments/seed/bundle.js'
 import { Sp1AppBuilder } from './sp1-app-builder.js'
 import type { BuiltSp1App } from './sp1-app-builder.js'

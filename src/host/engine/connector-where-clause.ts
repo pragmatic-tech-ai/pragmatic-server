@@ -1,5 +1,5 @@
-import { ValueType } from '@pragmatic-tech-ai/graph'
-import type { Cypher } from '@pragmatic-tech-ai/graph'
+import { ValueType } from '@pragmatic-tech-ai/pragmatic-graph'
+import type { Cypher } from '@pragmatic-tech-ai/pragmatic-graph'
 import { ConnectorFilterOp, ErrorCodes, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ConnectorFilterTermDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { InvalidParamsPrefix } from '../invalid-params-prefix.js'

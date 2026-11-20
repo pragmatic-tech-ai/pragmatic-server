@@ -1,5 +1,5 @@
-import { MemberKind, ValueType } from '@pragmatic-tech-ai/graph'
-import type { IDefinitionDescription, ISchemaDescription, MemberInput } from '@pragmatic-tech-ai/graph'
+import { MemberKind, ValueType } from '@pragmatic-tech-ai/pragmatic-graph'
+import type { IDefinitionDescription, ISchemaDescription, MemberInput } from '@pragmatic-tech-ai/pragmatic-graph'
 
 /**
  * How the engine will see a schema description, read off the description itself (before the engine opens on it): the

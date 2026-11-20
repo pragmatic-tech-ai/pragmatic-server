@@ -1,4 +1,4 @@
-import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Realm, RealmKind } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { EntityDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { PagingLimits } from '../../../config/paging-limits.js'
 import type { PragmaticServer } from '../../../pragmatic-server.js'

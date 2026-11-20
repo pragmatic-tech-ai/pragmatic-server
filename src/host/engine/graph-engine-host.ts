@@ -1,4 +1,4 @@
-import type { GraphEngine, ISchemaDescription, ISignal } from '@pragmatic-tech-ai/graph'
+import type { GraphEngine, ISchemaDescription, ISignal } from '@pragmatic-tech-ai/pragmatic-graph'
 import type { EngineCellMapper, ExternalIdentity, IExternalConnectorPlan } from '@pragmatic-tech-ai/todl/engine'
 
 /**

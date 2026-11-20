@@ -1,6 +1,6 @@
 import type { ProfileOverrideDto, RoleOverrideDto, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AccessLevel, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
-import type { IProfileOverrideConfig, IRoleOverrideConfig, ISecurityModelConfig } from '@pragmatic-tech-ai/todl-identity'
+import { AccessLevel, PrivilegeAction } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { IProfileOverrideConfig, IRoleOverrideConfig, ISecurityModelConfig } from '@pragmatic-tech-ai/pragmatic-identity'
 import { AdminEnumError } from './admin-enums.js'
 
 /**

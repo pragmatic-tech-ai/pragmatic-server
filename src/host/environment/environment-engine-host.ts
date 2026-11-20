@@ -1,5 +1,5 @@
-import { ConnectorPhase, GraphEngine, GraphError, GraphErrorCode } from '@pragmatic-tech-ai/graph'
-import type { ConnectorError, IGraphEngineOptions, ISchemaDescription, ISignal, ISubscription, StorageKind } from '@pragmatic-tech-ai/graph'
+import { ConnectorPhase, GraphEngine, GraphError, GraphErrorCode } from '@pragmatic-tech-ai/pragmatic-graph'
+import type { ConnectorError, IGraphEngineOptions, ISchemaDescription, ISignal, ISubscription, StorageKind } from '@pragmatic-tech-ai/pragmatic-graph'
 import { StoragePackageSource } from '@pragmatic-tech-ai/todl'
 import { EngineCellMapper, EnvironmentCatalogComposer, SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import type { IEnvironmentCatalog, IPackageDelivery } from '@pragmatic-tech-ai/todl/engine'

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { IdentityConfig, DelegationDepth, Role } from '@pragmatic-tech-ai/todl-identity'
+import { IdentityConfig, DelegationDepth, Role } from '@pragmatic-tech-ai/pragmatic-identity'
 import { NodePlatform } from '../node-platform.js'
 
 class PlatformFixture

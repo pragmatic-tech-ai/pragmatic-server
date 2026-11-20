@@ -1,5 +1,5 @@
 import { readFile, rename, writeFile } from 'node:fs/promises';
-import { Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local';
+import { Argon2PasswordHasher } from '@pragmatic-tech-ai/pragmatic-identity-source-local';
 
 /** A registered confidential OIDC client. Holds only the secret's hash, never the secret. */
 export class OidcClient

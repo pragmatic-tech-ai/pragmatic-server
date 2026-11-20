@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AuthMethod, PresentedSecret, Credential, AuthenticatedResult } from '@pragmatic-tech-ai/todl-identity'
+import { AuthMethod, PresentedSecret, Credential, AuthenticatedResult } from '@pragmatic-tech-ai/pragmatic-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 
 interface IRotationDirs

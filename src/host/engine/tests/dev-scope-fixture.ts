@@ -1,6 +1,6 @@
-import { AccessDefault, And, ConceptIs, FalsePredicate, MemberKind, NodeEvaluator, Not, Or, TruePredicate, ValueType } from '@pragmatic-tech-ai/graph'
-import type { AccessScope, CellValue, IDefinitionDescription, ISchemaDescription, MemberInput, Predicate } from '@pragmatic-tech-ai/graph'
-import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
+import { AccessDefault, And, ConceptIs, FalsePredicate, MemberKind, NodeEvaluator, Not, Or, TruePredicate, ValueType } from '@pragmatic-tech-ai/pragmatic-graph'
+import type { AccessScope, CellValue, IDefinitionDescription, ISchemaDescription, MemberInput, Predicate } from '@pragmatic-tech-ai/pragmatic-graph'
+import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Realm, RealmKind } from '@pragmatic-tech-ai/pragmatic-identity'
 import { EngineSchemaCatalog } from '../engine-schema-catalog.js'
 
 /** Which rule of a scope a check reads. */

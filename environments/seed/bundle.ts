@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DelegationDepth } from '@pragmatic-tech-ai/todl-identity'
-import { OidcSettingKeys } from '@pragmatic-tech-ai/todl-identity-cloud'
+import { DelegationDepth } from '@pragmatic-tech-ai/pragmatic-identity'
+import { OidcSettingKeys } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import { NorthwindApp } from './compile.js'
 
 export enum EnvKind

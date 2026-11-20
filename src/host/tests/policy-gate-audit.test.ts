@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, Action, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, Action, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/pragmatic-identity'
 import { LanguageProtocol, SolutionProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { trace } from '@opentelemetry/api'
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base'

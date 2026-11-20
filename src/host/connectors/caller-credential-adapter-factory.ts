@@ -1,9 +1,9 @@
 import { createHash } from 'node:crypto'
 import { ConnectionFailureKind } from '@pragmatic-tech-ai/todl'
 import type { AdapterResolutionRequest, DataSourceKind, ExternalRecord, IDataSourceAdapter, IDataSourceAdapterFactory, IDataSourceAdapterProvider, IDataSourceContext, PageQuery, PageSlice, QueryRequest, ResolvedConnection, WriteBatch, WriteResult } from '@pragmatic-tech-ai/todl'
-import { CypherAdapterFactory, DocumentAdapterFactory, RestAdapterFactory, SqlAdapterFactory } from '@pragmatic-tech-ai/todl-connectors-host'
-import { SourceTokenRequest } from '@pragmatic-tech-ai/todl-identity'
-import type { ISourceTokenProvider, Realm } from '@pragmatic-tech-ai/todl-identity'
+import { CypherAdapterFactory, DocumentAdapterFactory, RestAdapterFactory, SqlAdapterFactory } from '@pragmatic-tech-ai/pragmatic-connectors-host'
+import { SourceTokenRequest } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { ISourceTokenProvider, Realm } from '@pragmatic-tech-ai/pragmatic-identity'
 
 /** How a connector connection authenticates to its source (spec section 6): its connector config's `credentials`. */
 export enum ConnectionCredentialMode

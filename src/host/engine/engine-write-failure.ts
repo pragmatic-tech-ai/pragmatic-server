@@ -1,4 +1,4 @@
-import { AccessError, AccessErrorCode, CommitError, CommitErrorCode, ConflictError, ConnectorError, ConnectorPhase, Cypher } from '@pragmatic-tech-ai/graph'
+import { AccessError, AccessErrorCode, CommitError, CommitErrorCode, ConflictError, ConnectorError, ConnectorPhase, Cypher } from '@pragmatic-tech-ai/pragmatic-graph'
 import { WriteFailureKind } from '@pragmatic-tech-ai/todl'
 import { EngineBridgeError, EngineBridgeErrorCode, ExternalVersionConflict, ExternalWriteError } from '@pragmatic-tech-ai/todl/engine'
 import { AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'

@@ -1,5 +1,5 @@
-import { AccessError, ConnectorError } from '@pragmatic-tech-ai/graph'
-import type { CellValue, GraphTransaction, IFetchKey } from '@pragmatic-tech-ai/graph'
+import { AccessError, ConnectorError } from '@pragmatic-tech-ai/pragmatic-graph'
+import type { CellValue, GraphTransaction, IFetchKey } from '@pragmatic-tech-ai/pragmatic-graph'
 import { EngineBridgeErrorCode, ExternalWriteError } from '@pragmatic-tech-ai/todl/engine'
 import type { ExternalIdentity } from '@pragmatic-tech-ai/todl/engine'
 

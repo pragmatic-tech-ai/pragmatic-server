@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/pragmatic-identity'
 import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
 import { InMemoryEnvironmentCoordinator } from '../../environments/environment-coordinator.js'
 import { InMemoryEnvironmentProvisioning, EnvironmentRegistry } from '../../environments/environment-registry.js'

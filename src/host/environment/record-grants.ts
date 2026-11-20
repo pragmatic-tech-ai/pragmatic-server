@@ -1,9 +1,9 @@
-import { AccessDefault, AccessScope, And, EdgeDirection, IdIn } from '@pragmatic-tech-ai/graph'
-import type { ConnectorContext, GraphEngine, GraphReader } from '@pragmatic-tech-ai/graph'
+import { AccessDefault, AccessScope, And, EdgeDirection, IdIn } from '@pragmatic-tech-ai/pragmatic-graph'
+import type { ConnectorContext, GraphEngine, GraphReader } from '@pragmatic-tech-ai/pragmatic-graph'
 import { ShareGrants, ShareSubject, SystemNames } from '@pragmatic-tech-ai/todl/engine'
 import type { ExternalIdentity, IShareSubjects, ShareRight } from '@pragmatic-tech-ai/todl/engine'
-import type { AccessContext, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
-import type { RealmSecurityModel, Tier1Grants } from '@pragmatic-tech-ai/todl-identity-engine'
+import type { AccessContext, PrivilegeAction } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { RealmSecurityModel, Tier1Grants } from '@pragmatic-tech-ai/pragmatic-identity-engine-binding'
 import { EngineInstanceView } from '../engine/engine-instance-view.js'
 import type { EngineSchemaCatalog } from '../engine/engine-schema-catalog.js'
 

@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { X509Certificate, createHash } from 'node:crypto'
-import { AuthMethod, AuthenticatedResult, Credential, PresentedSecret, PrincipalKind, RejectedResult, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
+import { AuthMethod, AuthenticatedResult, Credential, PresentedSecret, PrincipalKind, RejectedResult, Realm, RealmKind } from '@pragmatic-tech-ai/pragmatic-identity'
 import { MachineCertIdentity, MachinePrincipalMap } from '../machine-principal-map.js'
 import { MachineCertAuthenticator } from '../machine-cert-authenticator.js'
 

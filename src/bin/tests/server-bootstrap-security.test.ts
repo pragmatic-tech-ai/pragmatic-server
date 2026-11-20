@@ -11,7 +11,7 @@ import { FileAccessAuditSink } from '../../host/file-access-audit-sink.js'
 import { SqlAuditAccessSink } from '../../host/sql-access-audit-sink.js'
 import { RateLimitScope } from '../../host/rate-limiter.js'
 import type { ServerConfig } from '../../config/server-config.js'
-import type { AuditEvent, IAuditSink } from '@pragmatic-tech-ai/todl-identity'
+import type { AuditEvent, IAuditSink } from '@pragmatic-tech-ai/pragmatic-identity'
 import { NullLogger } from '../../observability/logger.js'
 
 class CapturingStore implements IAuditSink

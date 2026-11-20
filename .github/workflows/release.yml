@@ -45,7 +45,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/siblings"
           siblings='{}'
-          for pair in pragmatic-graph:pragmatic-graph todl-runtime:todl-runtime todl:TODL mural:Mural pragmatic-protocol:pragmatic-protocol todl-identity:todl-identity todl-identity-local:todl-identity-local todl-identity-host:todl-identity-host todl-identity-cloud:todl-identity-cloud todl-identity-engine:todl-identity-engine todl-connectors-host:todl-connectors-host todl-platform-node:todl-platform-node todl-platform-cloud:todl-platform-cloud todl-platform-aws:todl-platform-aws todl-platform-azure:todl-platform-azure todl-platform-gcp:todl-platform-gcp todl-identity-node:todl-identity-node; do
+          for pair in pragmatic-graph:pragmatic-graph todl-runtime:todl-runtime todl:TODL mural:Mural pragmatic-protocol:pragmatic-protocol pragmatic-shared:pragmatic-shared todl-identity-engine:todl-identity-engine todl-connectors-host:todl-connectors-host; do
             repo="${pair%%:*}"
             dir="${pair#*:}"
             git clone --depth 1 "https://github.com/pragmatic-tech-ai/${repo}.git" "$dir"
@@ -93,7 +93,7 @@ jobs:
       - name: Fetch the siblings at the recorded commits
         working-directory: ${{ github.workspace }}
         run: |
-          for pair in pragmatic-graph:pragmatic-graph todl-runtime:todl-runtime todl:TODL mural:Mural pragmatic-protocol:pragmatic-protocol todl-identity:todl-identity todl-identity-local:todl-identity-local todl-identity-host:todl-identity-host todl-identity-cloud:todl-identity-cloud todl-identity-engine:todl-identity-engine todl-connectors-host:todl-connectors-host todl-platform-node:todl-platform-node todl-platform-cloud:todl-platform-cloud todl-platform-aws:todl-platform-aws todl-platform-azure:todl-platform-azure todl-platform-gcp:todl-platform-gcp todl-identity-node:todl-identity-node; do
+          for pair in pragmatic-graph:pragmatic-graph todl-runtime:todl-runtime todl:TODL mural:Mural pragmatic-protocol:pragmatic-protocol pragmatic-shared:pragmatic-shared todl-identity-engine:todl-identity-engine todl-connectors-host:todl-connectors-host; do
             repo="${pair%%:*}"
             dir="${pair#*:}"
             sha=$(jq -r --arg repo "$repo" '.[$repo]' "$RUNNER_TEMP/siblings/siblings.json")
@@ -171,7 +171,7 @@ jobs:
       - name: Fetch the siblings at the recorded commits
         working-directory: ${{ github.workspace }}
         run: |
-          for pair in pragmatic-graph:pragmatic-graph todl-runtime:todl-runtime todl:TODL mural:Mural pragmatic-protocol:pragmatic-protocol todl-identity:todl-identity todl-identity-local:todl-identity-local todl-identity-host:todl-identity-host todl-identity-cloud:todl-identity-cloud todl-identity-engine:todl-identity-engine todl-connectors-host:todl-connectors-host todl-platform-node:todl-platform-node todl-platform-cloud:todl-platform-cloud todl-platform-aws:todl-platform-aws todl-platform-azure:todl-platform-azure todl-platform-gcp:todl-platform-gcp todl-identity-node:todl-identity-node; do
+          for pair in pragmatic-graph:pragmatic-graph todl-runtime:todl-runtime todl:TODL mural:Mural pragmatic-protocol:pragmatic-protocol pragmatic-shared:pragmatic-shared todl-identity-engine:todl-identity-engine todl-connectors-host:todl-connectors-host; do
             repo="${pair%%:*}"
             dir="${pair#*:}"
             sha=$(jq -r --arg repo "$repo" '.[$repo]' "$RUNNER_TEMP/siblings/siblings.json")

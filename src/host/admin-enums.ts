@@ -1,4 +1,4 @@
-import { Role, ResourceKind, DelegationDepth } from '@pragmatic-tech-ai/todl-identity'
+import { Role, ResourceKind, DelegationDepth } from '@pragmatic-tech-ai/pragmatic-identity'
 
 /** Raised when a wire string does not name a known enum member. The message names the FIELD, never the offending value. */
 export class AdminEnumError extends Error

@@ -1,4 +1,4 @@
-import { BaseRole } from '@pragmatic-tech-ai/todl-identity'
+import { BaseRole } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /** A new Runtime environment could not be given its security setting and administrator; the create is rolled back. */

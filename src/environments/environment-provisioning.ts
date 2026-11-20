@@ -2,7 +2,7 @@ import type { BootstrapOptions, OidcServerOptions, PragmaticServerOptions } from
 import type { ConnectorsPolicy } from '../host/connector-policy.js'
 import type { MachinePrincipalMap } from '../host/machine-principal-map.js'
 import type { EnvironmentPurpose } from './environment-purpose.js'
-import type { IdentityConfig } from '@pragmatic-tech-ai/todl-identity'
+import type { IdentityConfig } from '@pragmatic-tech-ai/pragmatic-identity'
 
 export interface EnvironmentProvisioning
 {

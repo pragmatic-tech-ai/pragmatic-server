@@ -1,5 +1,5 @@
-import { AccessDefault, AccessScope, And, ConceptIs, FalsePredicate, Not, TruePredicate } from '@pragmatic-tech-ai/graph'
-import type { IEndpointMembers, IReadOnlyMembers, IWriteRules, Predicate } from '@pragmatic-tech-ai/graph'
+import { AccessDefault, AccessScope, And, ConceptIs, FalsePredicate, Not, TruePredicate } from '@pragmatic-tech-ai/pragmatic-graph'
+import type { IEndpointMembers, IReadOnlyMembers, IWriteRules, Predicate } from '@pragmatic-tech-ai/pragmatic-graph'
 import type { EngineSchemaCatalog } from './engine-schema-catalog.js'
 
 /** Folds conjunctions so a constant never leaves a needless tree (True is the identity, False absorbs). */

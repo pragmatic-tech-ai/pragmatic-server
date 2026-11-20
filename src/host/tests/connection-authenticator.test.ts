@@ -1,9 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
-import { PrincipalKind, Realm, RealmKind, Principal, PresentedSecret, SystemPrincipal } from '@pragmatic-tech-ai/todl-identity'
+import { PrincipalKind, Realm, RealmKind, Principal, PresentedSecret, SystemPrincipal } from '@pragmatic-tech-ai/pragmatic-identity'
 import { FakeStorage } from '@pragmatic-tech-ai/todl-runtime'
-import { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
+import { ServerIdentityPack } from '@pragmatic-tech-ai/pragmatic-identity-store'
 import { ConnectionAuthenticator } from '../connection-authenticator.js'
 
 class AuthenticatorFixture

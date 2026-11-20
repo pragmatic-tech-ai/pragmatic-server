@@ -21,7 +21,7 @@ import { SqlAuditAccessSink } from '../host/sql-access-audit-sink.js'
 import { TokenBucketRateLimiter } from '../host/rate-limiter.js'
 import type { RateLimitConfig } from '../host/rate-limiter.js'
 import { RateLimitGuard } from '../host/rate-limit-guard.js'
-import type { IAuditSink } from '@pragmatic-tech-ai/todl-identity'
+import type { IAuditSink } from '@pragmatic-tech-ai/pragmatic-identity'
 
 interface IObservabilityConfigView
 {

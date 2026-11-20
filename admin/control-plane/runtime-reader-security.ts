@@ -1,4 +1,4 @@
-import { AccessLevel, BaseRole, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
+import { AccessLevel, BaseRole, PrivilegeAction } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { RoleAssignmentDto, SecurityCatalogDto, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /**

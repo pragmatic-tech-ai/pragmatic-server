@@ -1,4 +1,4 @@
-import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
+import type { AccessContext } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { AppWriteOpDto, AppWriteResultDto, AssignParams, AssignResultDto, ListSharesParams, ListSharesResultDto, ShareParams, ShareResultDto, UnshareParams, UnshareResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /**

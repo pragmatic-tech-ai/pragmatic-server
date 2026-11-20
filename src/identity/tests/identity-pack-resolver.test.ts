@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AuthMethod, AuthenticatedResult, Credential, DelegationDepth, PresentedSecret, Role } from '@pragmatic-tech-ai/todl-identity'
+import { AuthMethod, AuthenticatedResult, Credential, DelegationDepth, PresentedSecret, Role } from '@pragmatic-tech-ai/pragmatic-identity'
 import { ResolverFixture } from './resolver-fixture.js'
 
 const EntraIssuer = 'https://login.microsoftonline.com/test-tid/v2.0'

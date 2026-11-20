@@ -1,5 +1,5 @@
-import { TeamMembershipRows } from '@pragmatic-tech-ai/todl-identity'
-import type { ISecurityModelConfig, TeamMembershipRow } from '@pragmatic-tech-ai/todl-identity'
+import { TeamMembershipRows } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { ISecurityModelConfig, TeamMembershipRow } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import { UnknownTeamError } from '../admin-service.js'
 import type { ISecuritySettingAdmin } from '../admin-service.js'

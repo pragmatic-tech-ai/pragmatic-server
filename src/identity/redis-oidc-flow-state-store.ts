@@ -1,7 +1,7 @@
 import { createClient } from 'redis'
 import type { RedisClientType } from 'redis'
-import { OidcFlowState } from '@pragmatic-tech-ai/todl-identity-cloud'
-import type { IOidcFlowStateStore } from '@pragmatic-tech-ai/todl-identity-cloud'
+import { OidcFlowState } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
+import type { IOidcFlowStateStore } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 
 /** OIDC login flow state shared across replicas over Redis: realm-namespaced keys, TTL-bound, single-use via GETDEL.
  *  Fail-closed: a Redis error on Put aborts the login start (sanitized error); on Take it reads as absent/expired.

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Cypher } from '@pragmatic-tech-ai/graph'
+import { Cypher } from '@pragmatic-tech-ai/pragmatic-graph'
 import { CursorStaleError, PageCursorCodec, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { PagingLimits } from '../../../config/paging-limits.js'
 import { CypherKeysetPage } from '../cypher-keyset-page.js'

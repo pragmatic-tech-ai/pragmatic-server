@@ -1,5 +1,5 @@
-import { Action, ResourceKind, ResourceRef, AccessDecision } from '@pragmatic-tech-ai/todl-identity'
-import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
+import { Action, ResourceKind, ResourceRef, AccessDecision } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { AccessContext } from '@pragmatic-tech-ai/pragmatic-identity'
 import { trace, isSpanContextValid } from '@opentelemetry/api'
 import { NullAccessAuditSink, AuditSurface, AuditOutcome } from './access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'

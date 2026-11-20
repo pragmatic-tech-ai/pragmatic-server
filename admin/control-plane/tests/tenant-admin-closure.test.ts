@@ -51,7 +51,7 @@ class ClosureProbe
  * environment's bundle, and the in-cluster runtime (InClusterEnvironmentRuntime.Prepare -> IBundleBuilder.Generate) runs
  * that for a hive-bound Template.DemoContoso create, which the console serves (in-cluster-env-create-smoke's demo phase).
  * Mural arrives through TODL's root entry (dist/index.js -> application/model-browser.mu.js, graph-api/browser/todl-app-bootstrap.js).
- * The graph engine (@pragmatic-tech-ai/graph) is not reached: within TODL only its engine-bridge modules import it, and the
+ * The graph engine (@pragmatic-tech-ai/pragmatic-graph) is not reached: within TODL only its engine-bridge modules import it, and the
  * entries compile.ts uses (root, ./domain, ./graph-api) do not load them; no server file in this closure imports it.
  */
 class Forbidden

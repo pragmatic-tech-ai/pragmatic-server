@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { MemberKind, ValueType } from '@pragmatic-tech-ai/graph'
+import { MemberKind, ValueType } from '@pragmatic-tech-ai/pragmatic-graph'
 import { Cardinality } from '@pragmatic-tech-ai/todl'
 import { EngineSchemaCatalog } from '../engine/engine-schema-catalog.js'
 import { RuntimeWritePayloadValidator } from '../runtime-write-payload-validator.js'

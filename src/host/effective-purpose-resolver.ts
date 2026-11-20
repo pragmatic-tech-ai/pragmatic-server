@@ -1,4 +1,4 @@
-import { AccessContext } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext } from '@pragmatic-tech-ai/pragmatic-identity'
 import { EnvironmentPurpose } from '../environments/environment-purpose.js'
 import { ScopedAccessContext, TokenScope } from './token-scope.js'
 

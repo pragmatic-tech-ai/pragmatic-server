@@ -1,6 +1,6 @@
-import type { AccessScope, ISubscription } from '@pragmatic-tech-ai/graph'
-import { AccessContext, ResourceAuthorizationPolicy, SystemPrincipal } from '@pragmatic-tech-ai/todl-identity'
-import type { Realm } from '@pragmatic-tech-ai/todl-identity'
+import type { AccessScope, ISubscription } from '@pragmatic-tech-ai/pragmatic-graph'
+import { AccessContext, ResourceAuthorizationPolicy, SystemPrincipal } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { Realm } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IGraphScope, IGraphScopeSource } from '../engine/access-scope-source.js'
 import type { EnvironmentScopeRules } from './environment-scope-rules.js'
@@ -20,7 +20,7 @@ import type { EnvironmentScopeRules } from './environment-scope-rules.js'
 export class SystemPrincipalScope implements IDisposable
 {
     /**
-     * The id namespace no account or external identity may take. Mirrors todl-identity's `SystemPrincipal.IsReserved`
+     * The id namespace no account or external identity may take. Mirrors pragmatic-identity's `SystemPrincipal.IsReserved`
      * (whose prefix constant is private there); checks use `SystemPrincipal.IsReserved`, this names the namespace.
      */
     public static readonly ReservedPrefix = 'system:'

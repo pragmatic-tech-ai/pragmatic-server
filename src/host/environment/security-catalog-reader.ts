@@ -1,7 +1,7 @@
 import type { IEnvironmentCatalog, IEnvironmentSecurity } from '@pragmatic-tech-ai/todl/engine'
 import type { IFieldProfileEntry, ISecurityPrivilege } from '@pragmatic-tech-ai/todl'
-import { AccessLevel, BaseRole } from '@pragmatic-tech-ai/todl-identity'
-import { Tier1Catalog } from '@pragmatic-tech-ai/todl-identity-engine'
+import { AccessLevel, BaseRole } from '@pragmatic-tech-ai/pragmatic-identity'
+import { Tier1Catalog } from '@pragmatic-tech-ai/pragmatic-identity-engine-binding'
 import { SecurityRoleKind } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { FieldAccessDto, PrivilegeDto, SecuredFieldDto, SecurityCatalogDto, SecurityConceptDto, SecurityProfileDto, SecurityRoleDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 

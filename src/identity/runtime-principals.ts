@@ -1,4 +1,4 @@
-import { Role, ResourceRef, ResourceKind, PresentedSecret } from '@pragmatic-tech-ai/todl-identity'
+import { Role, ResourceRef, ResourceKind, PresentedSecret } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { AdminService } from '../host/admin-service.js'
 import { DeploymentMode } from '../platform/deployment-mode.js'
 

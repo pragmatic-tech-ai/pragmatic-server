@@ -1,4 +1,4 @@
-import { ConnectorError, ConnectorPhase } from '@pragmatic-tech-ai/graph'
+import { ConnectorError, ConnectorPhase } from '@pragmatic-tech-ai/pragmatic-graph'
 import { DataSourceUnavailableError } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { DataSourceUnavailableData, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
 

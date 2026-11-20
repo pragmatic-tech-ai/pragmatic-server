@@ -9,7 +9,7 @@ import { AppDataProtocol, AppWriteOpKind, AppWriteStatus, ErrorCodes, GraphProto
 import type { AppWriteParams, CypherAppDeployParamsDto, MessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { Repository, toJSON } from '@pragmatic-tech-ai/todl'
 import type { PackageDocument } from '@pragmatic-tech-ai/todl'
-import { Grant, ResourceKind, ResourceRef, Role } from '@pragmatic-tech-ai/todl-identity'
+import { Grant, ResourceKind, ResourceRef, Role } from '@pragmatic-tech-ai/pragmatic-identity'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import { EnvironmentPurpose } from '../../environments/environment-purpose.js'

@@ -1,4 +1,4 @@
-import type { Cypher } from '@pragmatic-tech-ai/graph'
+import type { Cypher } from '@pragmatic-tech-ai/pragmatic-graph'
 import type { AppWriteStatus, CypherExecuteResultDto, CypherQueryPageDto, CypherWriteCountsDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 /**

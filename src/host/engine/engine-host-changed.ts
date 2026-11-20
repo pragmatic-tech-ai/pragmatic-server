@@ -1,4 +1,4 @@
-import type { ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
+import type { ISignal, ISubscription } from '@pragmatic-tech-ai/pragmatic-graph'
 import { Signal } from '@pragmatic-tech-ai/todl-runtime'
 
 /**

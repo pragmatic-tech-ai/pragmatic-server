@@ -1,5 +1,5 @@
-import { AccessDefault, PredicateKind } from '@pragmatic-tech-ai/graph'
-import type { AccessScope, And, ConceptIs, Not, Or, Predicate } from '@pragmatic-tech-ai/graph'
+import { AccessDefault, PredicateKind } from '@pragmatic-tech-ai/pragmatic-graph'
+import type { AccessScope, And, ConceptIs, Not, Or, Predicate } from '@pragmatic-tech-ai/pragmatic-graph'
 import type { EngineSchemaCatalog } from './engine-schema-catalog.js'
 
 /** A predicate folded for the instances of one concept: decided either way, or left to each node. */

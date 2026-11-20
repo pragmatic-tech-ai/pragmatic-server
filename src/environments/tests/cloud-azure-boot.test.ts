@@ -9,10 +9,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { newDb } from 'pg-mem'
 import pg from 'pg'
 import type { Pool } from 'pg'
-import { AzureCloudBackends } from '@pragmatic-tech-ai/todl-platform-azure'
-import { AzureEmulatorFactories } from '@pragmatic-tech-ai/todl-platform-azure/testing'
-import { AuthMethod, Credential, PresentedSecret, AuthenticatedResult } from '@pragmatic-tech-ai/todl-identity'
-import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/todl-platform-cloud'
+import { AzureCloudBackends } from '@pragmatic-tech-ai/pragmatic-realm-azure'
+import { AzureEmulatorFactories } from '@pragmatic-tech-ai/pragmatic-realm-azure/testing'
+import { AuthMethod, Credential, PresentedSecret, AuthenticatedResult } from '@pragmatic-tech-ai/pragmatic-identity'
+import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { AzurePlatformFactory } from '../../platform/azure-platform-factory.js'
 import type { ICloudBackends } from '../../platform/cloud-bundle.js'
 import { DeploymentMode } from '../../platform/deployment-mode.js'
@@ -240,7 +240,7 @@ class EmulatorAzureGate
      *  so pragmatic-server needs no direct @azure/identity dependency on the default path. */
     private static async NewCredential(): Promise<Parameters<typeof AzureEmulatorFactories.ForTest>[0]['credential']>
     {
-        const entry = fileURLToPath(import.meta.resolve('@pragmatic-tech-ai/todl-platform-azure'))
+        const entry = fileURLToPath(import.meta.resolve('@pragmatic-tech-ai/pragmatic-realm-azure'))
         const identityPath = createRequire(entry).resolve(EmulatorAzureGate.IdentityPackage)
         const identity = await import(pathToFileURL(identityPath).href) as { DefaultAzureCredential: new () => Parameters<typeof AzureEmulatorFactories.ForTest>[0]['credential'] }
         return new identity.DefaultAzureCredential()

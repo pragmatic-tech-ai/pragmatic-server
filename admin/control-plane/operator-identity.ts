@@ -2,8 +2,8 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
-import { FileIdentityStores, ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
-import { Realm, RealmKind, DelegationDepth, AuthMethod, Credential, PresentedSecret, AuthenticatedResult, Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
+import { FileIdentityStores, ServerIdentityPack } from '@pragmatic-tech-ai/pragmatic-identity-store'
+import { Realm, RealmKind, DelegationDepth, AuthMethod, Credential, PresentedSecret, AuthenticatedResult, Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/pragmatic-identity'
 import { ServerBootstrap } from '../../src/identity/server-bootstrap.js'
 
 export type OperatorSession = { token: string; expiresAt: Date }

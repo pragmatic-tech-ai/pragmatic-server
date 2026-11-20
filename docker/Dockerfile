@@ -22,42 +22,15 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
 COPY pragmatic-protocol/ ./pragmatic-protocol/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd pragmatic-protocol && npm install --no-audit --no-fund && npm run build
-COPY todl-identity/ ./todl-identity/
+COPY pragmatic-shared/ ./pragmatic-shared/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
-    cd todl-identity && npm install --no-audit --no-fund && npm run build
-COPY todl-identity-local/ ./todl-identity-local/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
-    cd todl-identity-local && npm install --no-audit --no-fund && npm run build
-COPY todl-identity-host/ ./todl-identity-host/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
-    cd todl-identity-host && npm install --no-audit --no-fund && npm run build
-COPY todl-identity-cloud/ ./todl-identity-cloud/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
-    cd todl-identity-cloud && npm install --no-audit --no-fund && npm run build
+    cd pragmatic-shared && npm install --no-audit --no-fund && npm run build
 COPY todl-identity-engine/ ./todl-identity-engine/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-identity-engine && npm install --no-audit --no-fund && npm run build
 COPY todl-connectors-host/ ./todl-connectors-host/
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     cd todl-connectors-host && npm install --no-audit --no-fund && npm run build
-COPY todl-platform-node/ ./todl-platform-node/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
-    cd todl-platform-node && npm install --no-audit --no-fund && npm run build
-COPY todl-platform-cloud/ ./todl-platform-cloud/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
-    cd todl-platform-cloud && npm install --no-audit --no-fund && npm run build
-COPY todl-platform-aws/ ./todl-platform-aws/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
-    cd todl-platform-aws && npm install --no-audit --no-fund && npm run build
-COPY todl-platform-azure/ ./todl-platform-azure/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
-    cd todl-platform-azure && npm install --no-audit --no-fund && npm run build
-COPY todl-platform-gcp/ ./todl-platform-gcp/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
-    cd todl-platform-gcp && npm install --no-audit --no-fund && npm run build
-COPY todl-identity-node/ ./todl-identity-node/
-RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
-    cd todl-identity-node && npm install --no-audit --no-fund && npm run build
 COPY pragmatic-server/ ./pragmatic-server/
 # TODL's lock pulls the engine from GitHub Packages; re-point it at the sibling before the server builds so
 # the image holds ONE engine (the server itself depends on file:../pragmatic-graph).
@@ -92,11 +65,9 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
 RUN set -e; mkdir /todl-dev-stash; for pkg in esbuild typescript; do \
       cp -a "/workspace/TODL/node_modules/$pkg" "/todl-dev-stash/$pkg"; \
     done; \
-    rm /workspace/TODL/node_modules/@pragmatic-tech-ai/graph; \
-    for d in pragmatic-graph todl-runtime TODL pragmatic-protocol todl-identity todl-identity-local \
-      todl-identity-host todl-identity-cloud todl-identity-engine todl-connectors-host \
-      todl-platform-node todl-platform-cloud todl-platform-aws todl-platform-azure \
-      todl-platform-gcp todl-identity-node pragmatic-server; do \
+    rm /workspace/TODL/node_modules/@pragmatic-tech-ai/pragmatic-graph; \
+    for d in pragmatic-graph todl-runtime TODL pragmatic-protocol pragmatic-shared todl-identity-engine \
+      todl-connectors-host pragmatic-server; do \
       (cd "/workspace/$d" && npm prune --omit=dev --no-audit --no-fund); \
     done; \
     for pkg in esbuild typescript; do \

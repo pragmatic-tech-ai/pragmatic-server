@@ -1,6 +1,6 @@
 import type { IPrincipalFacts } from '@pragmatic-tech-ai/todl/engine'
-import type { Principal } from '@pragmatic-tech-ai/todl-identity'
-import type { RealmSecurityModel } from '@pragmatic-tech-ai/todl-identity-engine'
+import type { Principal } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { RealmSecurityModel } from '@pragmatic-tech-ai/pragmatic-identity-engine-binding'
 
 /**
  * The acting principal as placement stamps it (contract C3): its id and its home business unit, taken from the

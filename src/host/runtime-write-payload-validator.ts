@@ -1,5 +1,5 @@
-import { ValueType } from '@pragmatic-tech-ai/graph'
-import type { CellValue } from '@pragmatic-tech-ai/graph'
+import { ValueType } from '@pragmatic-tech-ai/pragmatic-graph'
+import type { CellValue } from '@pragmatic-tech-ai/pragmatic-graph'
 import { Cardinality } from '@pragmatic-tech-ai/todl'
 import { CellConverter } from '@pragmatic-tech-ai/todl/engine'
 import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'

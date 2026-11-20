@@ -1,6 +1,6 @@
-import { PerUserSourceTokenCache } from '@pragmatic-tech-ai/todl-identity'
-import type { ISourceTokenProvider, SourceToken, SourceTokenRequest } from '@pragmatic-tech-ai/todl-identity'
-import type { IRevocableSourceTokenProvider } from '@pragmatic-tech-ai/todl-identity-cloud'
+import { PerUserSourceTokenCache } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { ISourceTokenProvider, SourceToken, SourceTokenRequest } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { IRevocableSourceTokenProvider } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 
 /**
  * The identity pack's source-token provider behind a per-user cache (realm, principal, resource; dropped a minute

@@ -5,14 +5,14 @@ import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, 
 import type { MessageConnection } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
-import type { LocalAccount } from '@pragmatic-tech-ai/todl-identity'
-import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
-import type { IAuditSink, AuditEvent } from '@pragmatic-tech-ai/todl-identity'
-import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/todl-identity-local'
-import { InMemoryRealmConfigStore } from '@pragmatic-tech-ai/todl-identity-host'
+import type { LocalAccount } from '@pragmatic-tech-ai/pragmatic-identity'
+import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { IAuditSink, AuditEvent } from '@pragmatic-tech-ai/pragmatic-identity'
+import { InMemoryRoleGrantStore, LocalAccountStore, ServiceTokenStore, LocalAccountRegistrar, EncryptedSecretStore, Argon2PasswordHasher } from '@pragmatic-tech-ai/pragmatic-identity-source-local'
+import { InMemoryRealmConfigStore } from '@pragmatic-tech-ai/pragmatic-identity-realm'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { AdminService } from '../admin-service.js'
-import { AdapterPackError, AdapterPackErrorKind } from '@pragmatic-tech-ai/todl-connectors-host'
+import { AdapterPackError, AdapterPackErrorKind } from '@pragmatic-tech-ai/pragmatic-connectors-host'
 
 class CapturingAuditSink implements IAuditSink
 {

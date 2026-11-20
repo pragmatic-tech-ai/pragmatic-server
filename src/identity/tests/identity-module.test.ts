@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AuthMethod, Role, ResourceKind, PresentedSecret, Credential, AuthenticatedResult } from '@pragmatic-tech-ai/todl-identity'
+import { AuthMethod, Role, ResourceKind, PresentedSecret, Credential, AuthenticatedResult } from '@pragmatic-tech-ai/pragmatic-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ProvisionedSecretSource } from '../../config/provisioned-secret-source.js'
 

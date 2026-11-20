@@ -1,9 +1,9 @@
-import type { ISignal, ISubscription } from '@pragmatic-tech-ai/graph'
+import type { ISignal, ISubscription } from '@pragmatic-tech-ai/pragmatic-graph'
 import type { IDataSourceAdapterFactory } from '@pragmatic-tech-ai/todl'
-import { Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
-import type { ISourceTokenProvider } from '@pragmatic-tech-ai/todl-identity'
-import { UnsupportedSourceTokenProvider } from '@pragmatic-tech-ai/todl-identity-cloud'
-import type { UpstreamTokenVault } from '@pragmatic-tech-ai/todl-identity-cloud'
+import { Realm, RealmKind } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { ISourceTokenProvider } from '@pragmatic-tech-ai/pragmatic-identity'
+import { UnsupportedSourceTokenProvider } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
+import type { UpstreamTokenVault } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import { CallerCredentialAdapterFactory } from './caller-credential-adapter-factory.js'
 import type { ICallerCredentialWrapper } from './caller-credential-adapter-factory.js'
 import { NullLogger } from '../../observability/logger.js'
@@ -20,7 +20,7 @@ export interface ICallerCredentialRevoker
 /**
  * The server's per-user source credentials (PR12, R27): wraps every data-source adapter factory the environment's
  * connectors use in a {@link CallerCredentialAdapterFactory} over the identity pack's source tokens (behind a per-user
- * cache), and revokes one principal's credentials: its stored upstream tokens (todl-identity-cloud UpstreamTokenVault,
+ * cache), and revokes one principal's credentials: its stored upstream tokens (pragmatic-identity-source-oidc UpstreamTokenVault,
  * where the pack stores them), its cached source tokens and every caller's-identity inner adapter opened for it.
  *
  * Unbound (before Start, or without identity) every source-token request is refused (UnsupportedPrincipal): a

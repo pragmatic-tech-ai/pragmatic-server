@@ -1,6 +1,6 @@
-import { Grant, Role, ResourceRef, ResourceKind, PresentedSecret } from '@pragmatic-tech-ai/todl-identity'
-import type { Realm } from '@pragmatic-tech-ai/todl-identity'
-import type { ServerIdentityPack } from '@pragmatic-tech-ai/todl-identity-node'
+import { Grant, Role, ResourceRef, ResourceKind, PresentedSecret } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { Realm } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { ServerIdentityPack } from '@pragmatic-tech-ai/pragmatic-identity-store'
 import type { BootstrapOptions } from '../pragmatic-server.js'
 
 /** First-run seed of an Owner admin account. Idempotent: a second run over an existing account is a no-op.

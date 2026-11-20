@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { ISecretStore } from '@pragmatic-tech-ai/todl-identity'
+import type { ISecretStore } from '@pragmatic-tech-ai/pragmatic-identity'
 import { ProvisionedSecretSource } from '../../config/provisioned-secret-source.js'
 import { EnvironmentSecretProvisioner, ProvisionedSecretMissingError } from '../environment-secret-provisioner.js'
 

@@ -1,5 +1,5 @@
-import { AccessDefault, AccessScope, ConceptIs, FalsePredicate, Not, Or, TruePredicate } from '@pragmatic-tech-ai/graph'
-import type { IReadOnlyMembers, IWriteRules, Predicate } from '@pragmatic-tech-ai/graph'
+import { AccessDefault, AccessScope, ConceptIs, FalsePredicate, Not, Or, TruePredicate } from '@pragmatic-tech-ai/pragmatic-graph'
+import type { IReadOnlyMembers, IWriteRules, Predicate } from '@pragmatic-tech-ai/pragmatic-graph'
 import { AccessScopeConjunction, PredicateFold, WriteRule } from './access-scope-conjunction.js'
 import type { EngineSchemaCatalog } from './engine-schema-catalog.js'
 

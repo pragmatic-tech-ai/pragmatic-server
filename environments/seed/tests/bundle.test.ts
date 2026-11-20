@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DelegationDepth } from '@pragmatic-tech-ai/todl-identity'
+import { DelegationDepth } from '@pragmatic-tech-ai/pragmatic-identity'
 import { BundleBuilder, EnvKind, EnvironmentPurposeName } from '../bundle.js'
 
 test('demo bundle generates key, environments.json, realm-config.json, package, and application.json', async () =>

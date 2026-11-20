@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessContext, Action, AuthMethod, AuthenticatedResult, Credential, DelegationDepth, IdentityConfig, Principal, PrincipalKind, PresentedSecret, RejectedResult, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity'
-import { ClaimsAccessPolicy } from '@pragmatic-tech-ai/todl-identity-cloud'
+import { AccessContext, Action, AuthMethod, AuthenticatedResult, Credential, DelegationDepth, IdentityConfig, Principal, PrincipalKind, PresentedSecret, RejectedResult, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Realm, RealmKind } from '@pragmatic-tech-ai/pragmatic-identity'
+import { ClaimsAccessPolicy } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import { IdentityPackResolver } from '../identity-pack-resolver.js'
 import { ResolverFixture } from './resolver-fixture.js'
 

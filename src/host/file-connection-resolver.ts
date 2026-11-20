@@ -1,6 +1,6 @@
 import type { IConnectionResolver, ConnectorSpec, ResolvedConnection } from '@pragmatic-tech-ai/todl'
 import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
-import { SecretStoreKey } from '@pragmatic-tech-ai/todl-identity'
+import { SecretStoreKey } from '@pragmatic-tech-ai/pragmatic-identity'
 
 /** A file-declared external connection: flat string settings merged into the resolved Config, plus an optional
  *  by-reference secret (resolved from the per-environment secret store) or an environment-variable token. */

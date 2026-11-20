@@ -1,5 +1,5 @@
 #!/bin/sh
-# Points TODL's @pragmatic-tech-ai/graph at the sibling pragmatic-graph checkout.
+# Points TODL's @pragmatic-tech-ai/pragmatic-graph at the sibling pragmatic-graph checkout.
 #
 # Usage: link-graph-engine.sh <workspace-root>
 #
@@ -16,6 +16,6 @@ if [ ! -d "$root/pragmatic-graph" ]; then
     exit 1
 fi
 mkdir -p "$scope"
-rm -rf "$scope/graph"
-ln -s ../../../pragmatic-graph "$scope/graph"
-echo "link-graph-engine: TODL -> $(cd "$scope/graph" && pwd -P)"
+rm -rf "$scope/pragmatic-graph"
+ln -s ../../../pragmatic-graph "$scope/pragmatic-graph"
+echo "link-graph-engine: TODL -> $(cd "$scope/pragmatic-graph" && pwd -P)"

@@ -1,5 +1,5 @@
 import { appendFileSync } from 'node:fs'
-import { Action, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
+import { Action, ResourceKind } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { Counter } from '@opentelemetry/api'
 import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
 import { NullLogger } from '../observability/logger.js'

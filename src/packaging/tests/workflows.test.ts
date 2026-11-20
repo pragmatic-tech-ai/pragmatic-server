@@ -96,6 +96,7 @@ test('ci workflow builds TODL like every other sibling (no DOM workaround)', () 
 class SiblingLists
 {
     private static readonly ClonePattern = /for pair in ([^;]+);/
+    private static readonly PathSeparator = '/'
     private static readonly CopyPattern = /^COPY ([A-Za-z-]+)\/ \.\/\1\/$/gm
 
     public static Cloned(workflow: string): readonly string[]
@@ -103,6 +104,12 @@ class SiblingLists
         const match = SiblingLists.ClonePattern.exec(Workflows.Text(workflow))
         assert.ok(match !== null, `no sibling clone loop in ${workflow}`)
         return match[1].trim().split(/\s+/).map(pair => pair.split(':')[1]).sort()
+    }
+
+    /** The repo dirs behind the closure check's siblings: a package inside a workspace repo (pragmatic-shared/packages/<x>) counts as its repo. */
+    public static Repos(siblings: readonly string[]): readonly string[]
+    {
+        return [...new Set(siblings.map(s => s.split(SiblingLists.PathSeparator)[0]))].sort()
     }
 
     public static Copied(...dockerfile: string[]): readonly string[]
@@ -116,7 +123,7 @@ test('ci and release workflows clone exactly the siblings the Dockerfiles copy',
 {
     const copied = SiblingLists.Copied('images', 'Dockerfile')
     assert.deepEqual(SiblingLists.Copied('Dockerfile'), copied, 'the per-app images and the legacy dev image build the same siblings')
-    assert.deepEqual([...ClosureCheck.Siblings].sort(), copied, 'the closure check knows every sibling the image build copies')
+    assert.deepEqual(SiblingLists.Repos(ClosureCheck.Siblings), copied, 'the closure check knows every sibling the image build copies')
     assert.deepEqual(SiblingLists.Cloned('ci.yml'), copied)
     assert.deepEqual(SiblingLists.Cloned('release.yml'), copied)
 })

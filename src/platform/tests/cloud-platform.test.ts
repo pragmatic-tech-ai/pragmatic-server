@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { newDb } from 'pg-mem'
 import { Pool } from 'pg'
-import { Realm, RealmKind, IdentityConfig, DelegationDepth } from '@pragmatic-tech-ai/todl-identity'
-import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/todl-platform-cloud'
+import { Realm, RealmKind, IdentityConfig, DelegationDepth } from '@pragmatic-tech-ai/pragmatic-identity'
+import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { CloudPlatform } from '../cloud-platform.js'
 
 class CloudFixture

@@ -1,9 +1,9 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { AuthMethod, AuthenticatedResult, Credential, PresentedSecret, Realm, RealmKind } from '@pragmatic-tech-ai/todl-identity';
-import type { IdentityStoreSet } from '@pragmatic-tech-ai/todl-identity';
-import { Argon2PasswordHasher, LocalPasswordAuthenticator } from '@pragmatic-tech-ai/todl-identity-local';
-import { FileIdentityStores } from '@pragmatic-tech-ai/todl-identity-node';
+import { AuthMethod, AuthenticatedResult, Credential, PresentedSecret, Realm, RealmKind } from '@pragmatic-tech-ai/pragmatic-identity';
+import type { IdentityStoreSet } from '@pragmatic-tech-ai/pragmatic-identity';
+import { Argon2PasswordHasher, LocalPasswordAuthenticator } from '@pragmatic-tech-ai/pragmatic-identity-source-local';
+import { FileIdentityStores } from '@pragmatic-tech-ai/pragmatic-identity-store';
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node';
 
 /**
@@ -68,7 +68,7 @@ class PrincipalSideStore
 }
 
 /**
- * A tenant's human-account realm for the local IdP. Reuses the todl-identity stores,
+ * A tenant's human-account realm for the local IdP. Reuses the pragmatic-identity stores,
  * hasher and authenticator; keyed by the IdP's own master key (never the operator's).
  */
 export class IdpRealm

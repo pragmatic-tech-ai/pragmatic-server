@@ -1,5 +1,5 @@
-import { AccessScope, Cypher, ValueType } from '@pragmatic-tech-ai/graph'
-import type { CellValue, ConnectorContext, GraphEngine, GraphTransaction, IFetchedView, RowVersion } from '@pragmatic-tech-ai/graph'
+import { AccessScope, Cypher, ValueType } from '@pragmatic-tech-ai/pragmatic-graph'
+import type { CellValue, ConnectorContext, GraphEngine, GraphTransaction, IFetchedView, RowVersion } from '@pragmatic-tech-ai/pragmatic-graph'
 import type { DataSourceAdapterCatalog } from '@pragmatic-tech-ai/todl'
 import type { ExternalIdentity, IExternalBinding } from '@pragmatic-tech-ai/todl/engine'
 import type { IServiceProvider } from '@pragmatic-tech-ai/todl-runtime'
@@ -8,7 +8,7 @@ import type {
     ConnectionProbeDto, ConnectorMergeDecisionDto, ConnectorModelDto, ConnectorPagedWriteParams, ConnectorPagedWriteResultDto, ConnectorReadParams,
     ConnectorRefreshOutcomeDto, ConnectorWriteBackParams, ConnectorWriteOpDto, ConnectorWriteOpResultDto, EntityDto, FlushOutcomeDto, Page, PageParams,
 } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
+import type { AccessContext } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { PagingLimits } from '../../config/paging-limits.js'
 import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
 import { PageFingerprint } from '../paging/page-request.js'

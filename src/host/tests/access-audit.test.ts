@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Action, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
+import { Action, ResourceKind } from '@pragmatic-tech-ai/pragmatic-identity'
 import { AuditSurface, AuditOutcome, NullAccessAuditSink } from '../access-audit.js'
 import type { AccessAuditEvent, IAccessAuditSink } from '../access-audit.js'
 

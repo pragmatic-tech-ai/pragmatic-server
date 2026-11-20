@@ -1,4 +1,4 @@
-import type { ISecretStore } from '@pragmatic-tech-ai/todl-identity'
+import type { ISecretStore } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
 
 /** A named ref could not be supplied by the active provisioned-secret source nor the existing store. */

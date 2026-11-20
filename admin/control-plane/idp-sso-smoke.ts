@@ -28,13 +28,13 @@ import type { JSONWebKeySet } from 'jose'
 import {
     AuthMethod, AuthenticatedResult, Credential, DelegationDepth,
     IdentityConfig, PresentedSecret, Realm, RealmKind,
-} from '@pragmatic-tech-ai/todl-identity'
-import type { ISecretStore } from '@pragmatic-tech-ai/todl-identity'
+} from '@pragmatic-tech-ai/pragmatic-identity'
+import type { ISecretStore } from '@pragmatic-tech-ai/pragmatic-identity'
 import {
     AuthorizationRequest, ClaimArrayGroupStrategy, ClaimsMapper, InMemoryOidcFlowStateStore,
     JwksCache, OidcAuthenticator, OidcDiscovery, OidcProviderProfile, OidcResolvedConfig, PkceChallenge,
-} from '@pragmatic-tech-ai/todl-identity-cloud'
-import type { IHttpClient } from '@pragmatic-tech-ai/todl-identity-cloud'
+} from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
+import type { IHttpClient } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import { InMemoryAuthorizationCodeStore } from '../../src/idp/authorization-code-store.js'
 import { DevCa, IdpTlsMaterial } from '../../src/idp/dev-ca.js'
 import { IdpAdminEndpoint } from '../../src/idp/idp-admin-endpoint.js'

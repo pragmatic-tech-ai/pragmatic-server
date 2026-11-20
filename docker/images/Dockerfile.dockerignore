@@ -7,18 +7,9 @@
 !TODL
 !Mural
 !pragmatic-protocol
-!todl-identity
-!todl-identity-local
-!todl-identity-host
-!todl-identity-cloud
+!pragmatic-shared
 !todl-identity-engine
 !todl-connectors-host
-!todl-platform-node
-!todl-platform-cloud
-!todl-platform-aws
-!todl-platform-azure
-!todl-platform-gcp
-!todl-identity-node
 !pragmatic-server
 
 # Within the allowed dirs: build outputs and local state the image rebuilds or must never carry.

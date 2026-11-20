@@ -9,8 +9,8 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, write
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { NpmAdapterPackProvider, NpmCli, WorkerThreadSandboxFactory } from '@pragmatic-tech-ai/todl-connectors-host'
-import type { INpmCli } from '@pragmatic-tech-ai/todl-connectors-host'
+import { NpmAdapterPackProvider, NpmCli, WorkerThreadSandboxFactory } from '@pragmatic-tech-ai/pragmatic-connectors-host'
+import type { INpmCli } from '@pragmatic-tech-ai/pragmatic-connectors-host'
 import { PragmaticServer } from '../pragmatic-server.js'
 import { DevConnectorRead } from '../host/engine/tests/dev-connector-read.js'
 
@@ -29,7 +29,7 @@ class Gate
 /** Reference pack location, solution authoring, and the shared assertion. */
 class PackE2E
 {
-    public static readonly PackName = '@pragmatic-tech-ai/adapter-pack-example'
+    public static readonly PackName = '@pragmatic-tech-ai/pragmatic-adapter-pack-example'
     private static readonly FixtureRelative = '../../../todl-connectors-host/fixtures/adapter-pack-example'
     private static readonly Utf8 = 'utf8'
     private static readonly DirPrefix = 'plan9t5-'

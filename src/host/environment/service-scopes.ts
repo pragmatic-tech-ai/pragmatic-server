@@ -1,5 +1,5 @@
-import { EdgeDirection, IdIn, Related } from '@pragmatic-tech-ai/graph'
-import type { AccessScope } from '@pragmatic-tech-ai/graph'
+import { EdgeDirection, IdIn, Related } from '@pragmatic-tech-ai/pragmatic-graph'
+import type { AccessScope } from '@pragmatic-tech-ai/pragmatic-graph'
 import { SystemNames, TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import { WriteRule } from '../engine/access-scope-conjunction.js'
 import type { EngineSchemaCatalog } from '../engine/engine-schema-catalog.js'

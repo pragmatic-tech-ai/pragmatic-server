@@ -1,4 +1,4 @@
-import type { CellValue, GraphReader, INodeView } from '@pragmatic-tech-ai/graph'
+import type { CellValue, GraphReader, INodeView } from '@pragmatic-tech-ai/pragmatic-graph'
 import type { IInstanceView, Scalar } from '@pragmatic-tech-ai/todl'
 
 /**

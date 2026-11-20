@@ -13,7 +13,7 @@ import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import type { IGraphCypherQuery, IDevCypherRequest } from '../engine/engine-cypher-query.js'
-import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/todl-identity'
+import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/pragmatic-identity'
 
 /** The server's dev Cypher, counting the queries that reach the engine (the dev path's graph fetch). */
 class CountingDevCypher implements IGraphCypherQuery

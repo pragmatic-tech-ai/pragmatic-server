@@ -1,5 +1,5 @@
-import { DateTimeValue, DateValue, DurationValue } from '@pragmatic-tech-ai/graph'
-import type { CellValue, Cypher } from '@pragmatic-tech-ai/graph'
+import { DateTimeValue, DateValue, DurationValue } from '@pragmatic-tech-ai/pragmatic-graph'
+import type { CellValue, Cypher } from '@pragmatic-tech-ai/pragmatic-graph'
 import type { EntityDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { WireScalarValue } from '../wire-scalar.js'
 

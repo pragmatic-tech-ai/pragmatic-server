@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import { newDb } from 'pg-mem'
 import { Pool } from 'pg'
 import type { ISqlSession, SqlRow } from '@pragmatic-tech-ai/todl'
-import { AuditEvent, AuditEventKind } from '@pragmatic-tech-ai/todl-identity'
-import { AuditTamperDetected } from '@pragmatic-tech-ai/todl-identity-host'
-import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/todl-platform-cloud'
+import { AuditEvent, AuditEventKind } from '@pragmatic-tech-ai/pragmatic-identity'
+import { AuditTamperDetected } from '@pragmatic-tech-ai/pragmatic-identity-realm'
+import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { CloudPlatform } from '../cloud-platform.js'
 
 /** Reopen over an already-provisioned pg-mem db: pg-mem rejects a repeated constrained CREATE TABLE, so the

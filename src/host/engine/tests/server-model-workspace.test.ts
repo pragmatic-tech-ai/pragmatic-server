@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessScope, Cypher, GraphEngine, StorageKind } from '@pragmatic-tech-ai/graph'
+import { AccessScope, Cypher, GraphEngine, StorageKind } from '@pragmatic-tech-ai/pragmatic-graph'
 import { EngineBridgeError, EngineBridgeErrorCode, TodlFileConnector } from '@pragmatic-tech-ai/todl/engine'
 import type { ITodlDraftSession, ITodlModelWorkspace } from '@pragmatic-tech-ai/todl/engine'
 import { TodlSourceCollector } from '../../model/todl-source-collector.js'

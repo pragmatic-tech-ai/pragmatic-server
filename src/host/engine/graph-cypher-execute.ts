@@ -1,6 +1,6 @@
-import type { Cypher } from '@pragmatic-tech-ai/graph'
+import type { Cypher } from '@pragmatic-tech-ai/pragmatic-graph'
 import type { CypherExecuteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
+import type { AccessContext } from '@pragmatic-tech-ai/pragmatic-identity'
 import { StructuredLogger } from '../../observability/logger.js'
 import type { ILogger } from '../../observability/logger.js'
 

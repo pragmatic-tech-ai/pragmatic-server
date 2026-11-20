@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessLevel, BaseRole, PrivilegeAction } from '@pragmatic-tech-ai/todl-identity'
+import { AccessLevel, BaseRole, PrivilegeAction } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { SecurityCatalogDto, SecurityModelDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { RuntimeReaderSecurity } from '../runtime-reader-security.js'
 

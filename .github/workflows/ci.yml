@@ -14,7 +14,7 @@ jobs:
       - name: Clone siblings
         working-directory: ${{ github.workspace }}
         run: |
-          for pair in pragmatic-graph:pragmatic-graph todl-runtime:todl-runtime todl:TODL mural:Mural pragmatic-protocol:pragmatic-protocol todl-identity:todl-identity todl-identity-local:todl-identity-local todl-identity-host:todl-identity-host todl-identity-cloud:todl-identity-cloud todl-identity-engine:todl-identity-engine todl-connectors-host:todl-connectors-host todl-platform-node:todl-platform-node todl-platform-cloud:todl-platform-cloud todl-platform-aws:todl-platform-aws todl-platform-azure:todl-platform-azure todl-platform-gcp:todl-platform-gcp todl-identity-node:todl-identity-node; do
+          for pair in pragmatic-graph:pragmatic-graph todl-runtime:todl-runtime todl:TODL mural:Mural pragmatic-protocol:pragmatic-protocol pragmatic-shared:pragmatic-shared todl-identity-engine:todl-identity-engine todl-connectors-host:todl-connectors-host; do
             git clone --depth 1 "https://github.com/pragmatic-tech-ai/${pair%%:*}.git" "${pair#*:}"
           done
       - uses: actions/setup-node@v4
@@ -26,7 +26,7 @@ jobs:
       - name: Build siblings in dependency order
         working-directory: ${{ github.workspace }}
         run: |
-          for pkg in pragmatic-graph todl-runtime TODL Mural pragmatic-protocol todl-identity todl-identity-local todl-identity-host todl-identity-cloud todl-identity-engine todl-connectors-host todl-platform-node todl-platform-cloud todl-platform-aws todl-platform-azure todl-platform-gcp todl-identity-node; do
+          for pkg in pragmatic-graph todl-runtime TODL Mural pragmatic-protocol pragmatic-shared todl-identity-engine todl-connectors-host; do
             (cd "$pkg" && npm install --no-audit --no-fund && npm run build)
           done
       # TODL's lock resolves the graph engine from GitHub Packages (its own CI has no sibling checkout), which
@@ -83,7 +83,7 @@ jobs:
       - name: Clone siblings
         working-directory: ${{ github.workspace }}
         run: |
-          for pair in pragmatic-graph:pragmatic-graph todl-runtime:todl-runtime todl:TODL mural:Mural pragmatic-protocol:pragmatic-protocol todl-identity:todl-identity todl-identity-local:todl-identity-local todl-identity-host:todl-identity-host todl-identity-cloud:todl-identity-cloud todl-identity-engine:todl-identity-engine todl-connectors-host:todl-connectors-host todl-platform-node:todl-platform-node todl-platform-cloud:todl-platform-cloud todl-platform-aws:todl-platform-aws todl-platform-azure:todl-platform-azure todl-platform-gcp:todl-platform-gcp todl-identity-node:todl-identity-node; do
+          for pair in pragmatic-graph:pragmatic-graph todl-runtime:todl-runtime todl:TODL mural:Mural pragmatic-protocol:pragmatic-protocol pragmatic-shared:pragmatic-shared todl-identity-engine:todl-identity-engine todl-connectors-host:todl-connectors-host; do
             git clone --depth 1 "https://github.com/pragmatic-tech-ai/${pair%%:*}.git" "${pair#*:}"
           done
       - uses: docker/setup-buildx-action@v3

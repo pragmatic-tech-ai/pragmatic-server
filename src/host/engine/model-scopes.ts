@@ -1,5 +1,5 @@
-import { AccessDefault, AccessScope, ConceptIs, Or, OwnerIs } from '@pragmatic-tech-ai/graph'
-import type { ISchemaDescription } from '@pragmatic-tech-ai/graph'
+import { AccessDefault, AccessScope, ConceptIs, Or, OwnerIs } from '@pragmatic-tech-ai/pragmatic-graph'
+import type { ISchemaDescription } from '@pragmatic-tech-ai/pragmatic-graph'
 import { SystemNames, TodlNames } from '@pragmatic-tech-ai/todl/engine'
 import { AccessScopeConjunction } from './access-scope-conjunction.js'
 import { EngineSchemaCatalog } from './engine-schema-catalog.js'

@@ -13,7 +13,7 @@ SQL session) with the SDK clients pointed at local emulators. It skips unless al
 
 Optional: `PRAGMATIC_TEST_GCS_BUCKET` (default `pragmatic-test`) and `PRAGMATIC_TEST_GCP_PROJECT` (default
 `test-project`). Start the GCS emulator and bucket with `docker compose -f docker-compose.emulators.yml up -d`
-in `todl-platform-gcp`, run a Secret Manager emulator and a local Postgres, then:
+in `pragmatic-shared/packages/pragmatic-realm-gcp`, run a Secret Manager emulator and a local Postgres, then:
 
     npx tsx --test src/environments/tests/cloud-gcp-boot.test.ts
 

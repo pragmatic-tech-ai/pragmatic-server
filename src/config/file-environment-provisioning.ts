@@ -1,6 +1,6 @@
 import { DataSourceKind } from '@pragmatic-tech-ai/todl'
-import { DelegationDepth, IdentityConfig, Role } from '@pragmatic-tech-ai/todl-identity'
-import { OidcSettingKeys } from '@pragmatic-tech-ai/todl-identity-cloud'
+import { DelegationDepth, IdentityConfig, Role } from '@pragmatic-tech-ai/pragmatic-identity'
+import { OidcSettingKeys } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import { MachinePrincipalMap } from '../host/machine-principal-map.js'
 import type { MachinePrincipalEntry } from '../host/machine-principal-map.js'
 import { ConnectorsPolicy } from '../host/connector-policy.js'

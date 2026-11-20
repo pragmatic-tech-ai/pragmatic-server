@@ -192,11 +192,19 @@ export class ClosureCheck
 {
     /** The sibling dirs docker/images/Dockerfile copies and builds, in build order. */
     public static readonly Siblings: readonly string[] = [
-        'pragmatic-graph', 'todl-runtime', 'TODL', 'Mural', 'pragmatic-protocol', 'todl-identity', 'todl-identity-local',
-        'todl-identity-host', 'todl-identity-cloud', 'todl-identity-engine', 'todl-connectors-host', 'todl-platform-node',
-        'todl-platform-cloud', 'todl-platform-aws', 'todl-platform-azure', 'todl-platform-gcp', 'todl-identity-node',
+        'pragmatic-graph', 'todl-runtime', 'TODL', 'Mural', 'pragmatic-protocol',
+        'pragmatic-shared/packages/pragmatic-identity', 'pragmatic-shared/packages/pragmatic-identity-source-local',
+        'pragmatic-shared/packages/pragmatic-identity-realm', 'pragmatic-shared/packages/pragmatic-identity-store',
+        'pragmatic-shared/packages/pragmatic-identity-source-oidc', 'pragmatic-shared/packages/pragmatic-identity-source-entra',
+        'pragmatic-shared/packages/pragmatic-identity-source-google', 'pragmatic-shared/packages/pragmatic-realm-adapters',
+        'pragmatic-shared/packages/pragmatic-realm-custom', 'pragmatic-shared/packages/pragmatic-realm-gcp',
+        'pragmatic-shared/packages/pragmatic-realm-aws', 'pragmatic-shared/packages/pragmatic-realm-azure',
+        'todl-identity-engine', 'todl-connectors-host',
     ]
     public static readonly ServerModules = 'pragmatic-server/node_modules'
+    /** The pragmatic-shared workspace: its packages' third-party dependencies and sibling links are hoisted into its root node_modules. */
+    public static readonly SharedModules = 'pragmatic-shared/node_modules'
+    private static readonly SharedPrefix = 'pragmatic-shared/'
     private static readonly ServerDir = 'pragmatic-server'
     private static readonly ManifestPath = 'docker/images/closure.json'
     private static readonly DockerfilePath = 'docker/images/Dockerfile'
@@ -303,7 +311,9 @@ export class ClosureCheck
         const reached = new Set<string>()
         const compiled = new Set<string>()
         let serverModules = false
+        let sharedModules = false
         const serverModulesDir = join(server, C.NodeModules) + sep
+        const sharedModulesDir = join(root, ...C.SharedModules.split(C.Slash)) + sep
         const serverDir = server + sep
         const compiledRoot = C.CompiledRootOf(app, runs)
         for (const input of Object.keys(result.metafile.inputs))
@@ -323,6 +333,10 @@ export class ClosureCheck
             {
                 serverModules = true
             }
+            else if (file.startsWith(sharedModulesDir))
+            {
+                sharedModules = true
+            }
             else if (file.startsWith(serverDir) && C.TsSourceExtension.test(file))
             {
                 compiled.add(C.CompiledOf(relative(server, file).split(sep).join(C.Slash), compiledRoot))
@@ -341,6 +355,17 @@ export class ClosureCheck
         if (!serverModules && modulesListed)
         {
             extra.push(C.ServerModules)
+        }
+        // A pragmatic-shared package resolves its dependencies through the workspace's hoisted node_modules.
+        sharedModules = sharedModules || [...reached].some(p => p.startsWith(C.SharedPrefix))
+        const sharedListed = entry.files.includes(C.SharedModules)
+        if (sharedModules && !sharedListed)
+        {
+            missing.push(C.SharedModules)
+        }
+        if (!sharedModules && sharedListed)
+        {
+            extra.push(C.SharedModules)
         }
         for (const run of runs)
         {

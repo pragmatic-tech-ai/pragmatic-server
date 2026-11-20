@@ -4,8 +4,8 @@ import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { AuthenticatedResult } from '@pragmatic-tech-ai/todl-identity';
-import { FileIdentityStores } from '@pragmatic-tech-ai/todl-identity-node';
+import { AuthenticatedResult } from '@pragmatic-tech-ai/pragmatic-identity';
+import { FileIdentityStores } from '@pragmatic-tech-ai/pragmatic-identity-store';
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node';
 import { IdpRealm } from '../idp-realm.js';
 

@@ -10,7 +10,7 @@ import { InMemoryEnvironmentProvisioning } from '../../../environments/environme
 import { EnvironmentPurpose } from '../../../environments/environment-purpose.js'
 import type { EnvironmentProvisioning } from '../../../environments/environment-provisioning.js'
 import { PragmaticAppManifestParser } from '../pragmatic-app-manifest.js'
-import { PresentedSecret } from '@pragmatic-tech-ai/todl-identity'
+import { PresentedSecret } from '@pragmatic-tech-ai/pragmatic-identity'
 
 interface Reply
 {

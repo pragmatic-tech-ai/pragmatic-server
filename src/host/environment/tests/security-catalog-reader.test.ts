@@ -1,7 +1,7 @@
 import { before, after, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
-import { BaseRole } from '@pragmatic-tech-ai/todl-identity'
+import { BaseRole } from '@pragmatic-tech-ai/pragmatic-identity'
 import { SecurityRoleKind } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { PrivilegeDto, SecurityRoleDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { SecurityCatalogReader } from '../security-catalog-reader.js'

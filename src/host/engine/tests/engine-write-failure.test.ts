@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessError, AccessErrorCode, CommitError, CommitErrorCode, ConflictError, ConnectorError, ConnectorPhase, Cypher } from '@pragmatic-tech-ai/graph'
+import { AccessError, AccessErrorCode, CommitError, CommitErrorCode, ConflictError, ConnectorError, ConnectorPhase, Cypher } from '@pragmatic-tech-ai/pragmatic-graph'
 import { WriteFailureKind } from '@pragmatic-tech-ai/todl'
 import type { WriteFailure } from '@pragmatic-tech-ai/todl'
 import { EngineBridgeError, EngineBridgeErrorCode, ExternalVersionConflict, ExternalWriteError } from '@pragmatic-tech-ai/todl/engine'

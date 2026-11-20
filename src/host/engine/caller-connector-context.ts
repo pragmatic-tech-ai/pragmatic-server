@@ -1,6 +1,6 @@
-import { ConnectorContext } from '@pragmatic-tech-ai/graph'
-import { SystemPrincipal } from '@pragmatic-tech-ai/todl-identity'
-import type { Principal, Realm } from '@pragmatic-tech-ai/todl-identity'
+import { ConnectorContext } from '@pragmatic-tech-ai/pragmatic-graph'
+import { SystemPrincipal } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { Principal, Realm } from '@pragmatic-tech-ai/pragmatic-identity'
 
 /**
  * The engine ConnectorContext a server call runs its connector work under (spec section 6, PR12). The key is the acting

@@ -1,5 +1,5 @@
-import { AuthMethod, AuthenticatedResult, Principal, PrincipalKind, RejectedResult } from '@pragmatic-tech-ai/todl-identity'
-import type { AuthenticationResult, Credential, IAuthenticator, PresentedSecret, Realm } from '@pragmatic-tech-ai/todl-identity'
+import { AuthMethod, AuthenticatedResult, Principal, PrincipalKind, RejectedResult } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { AuthenticationResult, Credential, IAuthenticator, PresentedSecret, Realm } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { MachinePrincipalMap } from './machine-principal-map.js'
 
 /** Authenticates a machine by its (already TLS-verified) client-cert fingerprint, carried in Credential.Reference. */

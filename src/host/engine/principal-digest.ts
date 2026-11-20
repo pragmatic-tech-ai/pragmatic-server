@@ -1,4 +1,4 @@
-import type { AccessContext } from '@pragmatic-tech-ai/todl-identity'
+import type { AccessContext } from '@pragmatic-tech-ai/pragmatic-identity'
 
 /** Stable, secret-free digest of a principal's authorization identity (principal id, realm, sorted groups and per-resource role grants).
  *  Claims and credentials are deliberately excluded: only identifiers the evaluator keys on are used. */

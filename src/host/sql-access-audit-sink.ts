@@ -1,5 +1,5 @@
-import { AuditEvent, AuditEventKind, Action, ResourceKind } from '@pragmatic-tech-ai/todl-identity'
-import type { IAuditSink } from '@pragmatic-tech-ai/todl-identity'
+import { AuditEvent, AuditEventKind, Action, ResourceKind } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { IAuditSink } from '@pragmatic-tech-ai/pragmatic-identity'
 import { AuditSurface } from './access-audit.js'
 import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
 import { NullLogger } from '../observability/logger.js'

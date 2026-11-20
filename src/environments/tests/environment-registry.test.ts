@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { InMemoryEnvironmentCoordinator } from '../environment-coordinator.js'
 import { InMemoryEnvironmentProvisioning, EnvironmentRegistry } from '../environment-registry.js'
 import type { EnvironmentProvisioning } from '../environment-provisioning.js'
-import type { IdentityStoreSet } from '@pragmatic-tech-ai/todl-identity'
+import type { IdentityStoreSet } from '@pragmatic-tech-ai/pragmatic-identity'
 import { NodePlatform } from '../../platform/node-platform.js'
 import { DeploymentMode } from '../../platform/deployment-mode.js'
 
