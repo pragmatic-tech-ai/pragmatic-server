@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { mkdtemp, rm } from 'node:fs/promises'
-import { createServer, request, type ClientRequest, type IncomingMessage, type Server } from 'node:http'
+import { request, type ClientRequest, type IncomingMessage } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -19,7 +19,7 @@ import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import { DesktopAuthGate } from '../tenant-auth/desktop-auth-gate.js'
 import { DesktopRelay, DesktopRelayAllowlist, WsUpstreamDialer, type IRelayClock, type IRelayTimer, type IUpstreamDialer } from '../tenant-auth/desktop-relay.js'
 import { DesktopAction, DesktopTargets, type DesktopCapabilitiesSource } from '../tenant-auth/desktop-targets.js'
-import { SessionStore, SignedInIdentity } from '@pragmatic-tech-ai/pragmatic-app-host'
+import { AppHost, AppHostConfig, RouteAuth, RouteTable, SessionStore, SignedInIdentity } from '@pragmatic-tech-ai/pragmatic-app-host'
 import { TenantSessionClaims, TenantSessions, type TenantSession } from '../tenant-auth/tenant-sessions.js'
 import { TenantPrincipalSessions } from '../tenant-auth/tenant-principal-sessions.js'
 import type { IIdpService } from '../idp-service.js'
@@ -357,7 +357,7 @@ class HoldingGate extends DesktopAuthGate
     }
 }
 
-/** One relay under test: a real session store + audit file, the relay mounted on a bare http server's upgrade. */
+/** One relay under test: a real session store + audit file, the relay mounted as a public socket route on an AppHost. */
 class RelayKit
 {
     public static readonly TenantId = 'acme'
@@ -393,7 +393,7 @@ class RelayKit
     public readonly clock = new FakeRelayClock()
     public desktopToken = ''
     public consoleToken = ''
-    private server: Server | undefined
+    private host: AppHost | undefined
     private port = 0
 
     /** `reach` replaces the counting RelayEndpoints fake; the dialer then reaches the fake upstream in place of cluster DNS. */
@@ -428,25 +428,27 @@ class RelayKit
         this.service.clock = this.clock
         this.desktopToken = (await this.store.IssueDesktop(new SignedInIdentity(RelayKit.Principal, TenantSessionClaims.Of(RelayKit.TenantId, RelayKit.Email)))).Token
         this.consoleToken = (await this.store.Store.Issue(RelayKit.Principal, TenantSessionClaims.Of(RelayKit.TenantId, RelayKit.Email))).Token
-        const server = createServer((_req, res) => { res.statusCode = 404; res.end() })
-        server.on('upgrade', (req: IncomingMessage, socket, head: Buffer) => void this.relay.Upgrade(req, socket, head))
-        this.server = server
-        await new Promise<void>(res => server.listen(0, '127.0.0.1', () => res()))
-        this.port = (server.address() as AddressInfo).port
+        const routes = new RouteTable()
+        routes.AddSocket({ Pattern: DesktopRelay.Path, Auth: RouteAuth.Public, Admit: req => this.relay.Admit(req), Handler: (ws, ctx) => this.relay.Attach(ws, ctx.Request) })
+        const host = new AppHost(new AppHostConfig(), { Routes: routes })
+        await host.Listen(0, '127.0.0.1')
+        this.host = host
+        this.port = host.Address().port
     }
 
     public async Stop(): Promise<void>
     {
         await this.upstream.Stop()
-        const server = this.server
-        if (server !== undefined)
-        {
-            server.closeAllConnections()
-            await new Promise<void>(res => server.close(() => res()))
-        }
+        await this.host?.Close()
         // Last, as the tenant host does: Close resolves once every audit append (they run after the answer) has finished.
         await this.relay.Close()
         await rm(this.dir, { recursive: true, force: true })
+    }
+
+    /** The relay host's own origin: an Origin the host's guard lets through to the relay. */
+    public get Origin(): string
+    {
+        return 'http://127.0.0.1:' + String(this.port)
     }
 
     public Url(env: string, action: string): string
@@ -606,13 +608,21 @@ describe('DesktopRelay refusals', () =>
         assert.ok(audit.every(r => !JSON.stringify(r).includes(kit.consoleToken)))
     })
 
-    it('403 for any upgrade carrying an Origin header, even with a valid desktop bearer', async () =>
+    it('403 for any upgrade carrying an Origin header, even the host\'s own and with a valid desktop bearer', async () =>
     {
-        assert.equal((await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken, 'http://evil.test')).status, 403)
+        assert.equal((await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken, kit.Origin)).status, 403)
         assert.equal(kit.dialer.dials, 0)
         assert.equal(kit.service.mints.length, 0)
         assert.equal(kit.Audit()[0]?.status, 403)
         assert.equal(kit.Audit()[0]?.actor, AuditRegistry.AnonymousActor)
+    })
+
+    it('a foreign Origin is dropped by the host before the relay is asked: nothing audited, minted or dialed', async () =>
+    {
+        assert.equal((await kit.Dial(RelayKit.Dev, 'contribute', kit.desktopToken, 'http://evil.test')).status, -1)
+        assert.equal(kit.dialer.dials, 0)
+        assert.equal(kit.service.mints.length, 0)
+        assert.equal(kit.Audit().length, 0)
     })
 
     it('400 for a malformed handshake (no Sec-WebSocket-Key, bad version, not websocket); nothing minted, leased or dialed', async () =>

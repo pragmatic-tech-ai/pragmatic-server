@@ -4,10 +4,9 @@ import { request, type IncomingHttpHeaders, type IncomingMessage } from 'node:ht
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Duplex } from 'node:stream'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { WebSocket } from 'ws'
-import { AppHost, AppHostConfig, OidcRelyingParty, RouteTable, SessionClaims, SessionStore, SignedInIdentity, type IOidcClientConfig } from '@pragmatic-tech-ai/pragmatic-app-host'
+import { OidcRelyingParty, SessionClaims, SessionStore, SignedInIdentity, UpgradeRefusal, type IOidcClientConfig } from '@pragmatic-tech-ai/pragmatic-app-host'
 import { InMemoryOidcFlowStateStore } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import { FakeOidcHttpClient, FakeOidcIdp } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc/testing'
 import { AdvertOutcome, AdvertTrigger, ConsoleRegistration, ConsoleRegistrationState } from '../console-registration.js'
@@ -32,7 +31,6 @@ import { TenantPrincipalSessions } from '../tenant-auth/tenant-principal-session
 import { TenantSessionGate } from '../tenant-auth/tenant-session-gate.js'
 import { TenantSessionClaims, TenantSessions } from '../tenant-auth/tenant-sessions.js'
 import { TenantConsoleHost } from '../tenant-console-host.js'
-import { RelayUpgradeHook, RelayUpgradeHookError } from '../tenant-auth/relay-upgrade-hook.js'
 import type { TenantHealthMonitor } from '../tenant-health-monitor.js'
 
 type Reply = { status: number; headers: IncomingHttpHeaders; body: string }
@@ -162,19 +160,23 @@ class StubClients implements ITenantOidcClients
     }
 }
 
-/** Stands in for DesktopRelay: records the upgrade target and answers 418 so the route is observable. */
+/** Stands in for DesktopRelay: records the upgrade target and refuses it 418 so the route is observable. */
 class StubRelay
 {
-    private static readonly Teapot = ['HTTP/1.1 418 Teapot', 'Connection: close', 'Content-Length: 0', '', ''].join('\r\n')
+    private static readonly Teapot = 418
     public readonly Urls: string[] = []
     public readonly RetiredWith: number[] = []
     public Reinstated = 0
     public Closed = 0
 
-    public async Upgrade(req: IncomingMessage, socket: Duplex): Promise<void>
+    public async Admit(req: IncomingMessage): Promise<UpgradeRefusal | null>
     {
         this.Urls.push(String(req.url))
-        socket.end(StubRelay.Teapot)
+        return new UpgradeRefusal(StubRelay.Teapot, {})
+    }
+
+    public Attach(): void
+    {
     }
 
     public Retire(code: number): number
@@ -710,14 +712,5 @@ describe('TenantConsoleHost and the operator plane share no session', () =>
         {
             await kit.Stop()
         }
-    })
-})
-
-describe('RelayUpgradeHook', () =>
-{
-    it('refuses a host it cannot take upgrades from (not listening, or a host without its node server): the start fails loudly', () =>
-    {
-        const host = new AppHost(new AppHostConfig(), { Routes: new RouteTable() })
-        assert.throws(() => RelayUpgradeHook.Install(host, '/desktop/relay', { Upgrade: async () => undefined }), RelayUpgradeHookError)
     })
 })

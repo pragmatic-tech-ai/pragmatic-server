@@ -1,6 +1,5 @@
 import { existsSync } from 'node:fs'
 import type { IncomingMessage } from 'node:http'
-import type { Duplex } from 'node:stream'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import {
@@ -12,6 +11,7 @@ import {
     OidcLoginEndpoint,
     RouteAuth,
     RouteTable,
+    UpgradeRefusal,
     WsTicketEndpoint,
     type AppHostConfigOptions,
     type IAuditRepository,
@@ -24,7 +24,6 @@ import type { IEnvironmentService } from './control-plane-host.js'
 import { EnvironmentChangeKind } from './environment-record.js'
 import { DesktopEndpoint } from './tenant-auth/desktop-endpoint.js'
 import { DesktopRelay } from './tenant-auth/desktop-relay.js'
-import { RelayUpgradeHook } from './tenant-auth/relay-upgrade-hook.js'
 import type { IPrincipalConnections } from './tenant-auth/tenant-principal-sessions.js'
 import type { TenantHostResolver } from './tenant-auth/tenant-host-resolver.js'
 import type { TenantPlane } from './tenant-auth/tenant-plane.js'
@@ -137,6 +136,7 @@ export class TenantConsoleHost implements IPrincipalConnections
     private static readonly CloseEvent = 'close'
     private static readonly ErrorEvent = 'error'
     private static readonly StatusUnavailable = 503
+    private static readonly NoRelayMessage = 'This console has no desktop relay.'
     private static readonly PolicyViolation = 1008
     /** Request bodies are small JSON objects: 4 KiB unless a route declares more. */
     private static readonly MaxBodyBytes = 4096
@@ -220,7 +220,6 @@ export class TenantConsoleHost implements IPrincipalConnections
             Tickets: plane.sessions.Tickets,
         })
         await appHost.Listen(port, host)
-        RelayUpgradeHook.Install(appHost, DesktopRelay.Path, { Upgrade: (req, socket, head) => this.UpgradeRelay(req, socket, head) })
         this.appHost = appHost
         o.Monitor?.Start()
     }
@@ -287,27 +286,41 @@ export class TenantConsoleHost implements IPrincipalConnections
         plane.desktop?.Register(table, this.options.Registration)
         table.AddSocket({ Pattern: C.EventsPath, Auth: RouteAuth.Session, Handler: (ws, ctx) => this.AdmitEvents(ws, ctx) })
         table.AddSocket({ Pattern: C.LogsStreamPath, Auth: RouteAuth.Session, Handler: (ws, ctx) => this.AdmitLogs(ws, ctx) })
+        // Public on the host: the relay authenticates the desktop bearer itself and answers its own refusals before the handshake.
+        table.AddSocket({ Pattern: DesktopRelay.Path, Auth: RouteAuth.Public, Admit: req => this.AdmitRelay(req), Handler: (ws, ctx) => this.AttachRelay(ws, ctx) })
         return table
     }
 
-    /** The relay upgrade (taken off the host before its dispatch): refused 503 while the console is refused, else the relay's own. */
-    private async UpgradeRelay(req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void>
+    /**
+     * The relay upgrade's admission: refused 503 while the console is refused, else the relay's own. Without a relay the
+     * upgrade is destroyed (the seam's contract for a throwing admission).
+     */
+    private async AdmitRelay(req: IncomingMessage): Promise<UpgradeRefusal | null>
     {
-        const relay = this.options.Plane.relay
         // Refused before the relay is asked (and even when the console has none), so this answer is not audited: nothing is
         // leased, minted or dialed.
         if (this.options.Registration?.IsRefused === true)
         {
-            socket.on(TenantConsoleHost.ErrorEvent, () => undefined)
-            DesktopRelay.WriteRefusal(socket, TenantConsoleHost.StatusUnavailable, ConsoleRegistration.RefusedBody)
-            return
+            return new UpgradeRefusal(TenantConsoleHost.StatusUnavailable, ConsoleRegistration.RefusedBody)
         }
+        const relay = this.options.Plane.relay
         if (relay === undefined)
         {
-            socket.destroy()
+            throw new Error(TenantConsoleHost.NoRelayMessage)
+        }
+        return await relay.Admit(req)
+    }
+
+    /** The admitted relay's client socket joins the pipe its admission opened. */
+    private AttachRelay(ws: WebSocket, ctx: SocketContext): void
+    {
+        const relay = this.options.Plane.relay
+        if (relay === undefined)
+        {
+            ws.close(TenantConsoleHost.PolicyViolation)
             return
         }
-        await relay.Upgrade(req, socket, head)
+        relay.Attach(ws, ctx.Request)
     }
 
     /**

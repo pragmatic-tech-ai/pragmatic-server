@@ -1,6 +1,6 @@
-import { STATUS_CODES, type IncomingMessage } from 'node:http'
-import type { Duplex } from 'node:stream'
-import { WebSocket, WebSocketServer, type RawData } from 'ws'
+import type { IncomingMessage } from 'node:http'
+import { WebSocket, type RawData } from 'ws'
+import { UpgradeRefusal } from '@pragmatic-tech-ai/pragmatic-app-host'
 import { ApplicationDeployProtocol, AppWriteStatus, GraphProtocol, PragmaticAppProtocol, RunTestProtocol, type TokenIssuedDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AuditRegistry } from '../audit-record.js'
 import { AuditThrottle } from '../audit-throttle.js'
@@ -192,14 +192,11 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
     private static readonly StatusConflict = 409
     private static readonly StatusInternal = 500
     private static readonly StatusBadGateway = 502
-    private static readonly HttpVersion = 'HTTP/1.1 '
-    private static readonly HeaderSeparator = '\r\n'
-    private static readonly ResponseHeaders = 'Connection: close\r\nContent-Type: application/json\r\nContent-Length: '
-    private static readonly Space = ' '
+    /** The close an attach without an admitted pipe ends with (the route was wired without its admission). */
+    private static readonly InternalErrorClose = 1011
     private static readonly LogPrefix = '[desktop-relay] upstream failed:'
     private static readonly RevokeLogPrefix = '[desktop-relay] revoking the relay credential failed:'
     private static readonly ErrorEvent = 'error'
-    private static readonly FinishEvent = 'finish'
     private static readonly CloseEvent = 'close'
     private static readonly MethodGet = 'GET'
     private static readonly UpgradeHeader = 'upgrade'
@@ -218,8 +215,9 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         [DesktopRelay.StatusBadGateway, 'The environment server could not be reached.'],
     ])
 
-    private readonly wss = new WebSocketServer({ noServer: true })
     private readonly pipes = new Set<RelayPipe>()
+    /** Admitted upgrades awaiting their handshake: the pipe Attach hands the client to, by the upgrade's request. */
+    private readonly admitted = new WeakMap<IncomingMessage, RelayPipe>()
     /** Audit appends still running (each starts after its answer was written); Close waits for them. */
     private readonly pendingAudits = new Set<Promise<void>>()
     /** Set by Retire, cleared by Reinstate: the code a relay still connecting is closed with instead of opening. */
@@ -239,24 +237,27 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
     {
     }
 
-    public async Upgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void>
+    /**
+     * The relay's admission on the host's socket route (SocketRouteDefinition.Admit), before any handshake: checks the
+     * handshake, the bearer, the action and the target, leases the env's address, mints the action's credential and dials
+     * onward. A refusal is the plain HTTP answer the host writes; null admits the upgrade, whose client Attach then pipes.
+     */
+    public async Admit(req: IncomingMessage): Promise<UpgradeRefusal | null>
     {
         // The raw socket must not raise an unhandled error while the checks below are awaited.
-        socket.on(DesktopRelay.ErrorEvent, () => undefined)
+        req.socket.on(DesktopRelay.ErrorEvent, () => undefined)
         const query = DesktopRelay.QueryOf(req)
         const rawEnv = query?.get(DesktopRelay.EnvironmentParam) ?? DesktopRelay.NoValue
         const rawAction = query?.get(DesktopRelay.ActionParam) ?? DesktopRelay.NoValue
         // ws's handleUpgrade drops a malformed handshake without calling back; refuse it here, before anything is minted.
         if (!DesktopRelay.IsWebSocketHandshake(req))
         {
-            await this.Refuse(req, socket, DesktopRelay.StatusBadRequest, AuditRegistry.AnonymousActor, rawAction, rawEnv)
-            return
+            return this.Refuse(req, DesktopRelay.StatusBadRequest, AuditRegistry.AnonymousActor, rawAction, rawEnv)
         }
         // Desktop-only like the rest of `/desktop/*`: a browser page always sends Origin on a WebSocket, so it is refused.
         if (req.headers[PlaneHttp.OriginHeader] !== undefined)
         {
-            await this.Refuse(req, socket, DesktopRelay.StatusForbidden, AuditRegistry.AnonymousActor, rawAction, rawEnv)
-            return
+            return this.Refuse(req, DesktopRelay.StatusForbidden, AuditRegistry.AnonymousActor, rawAction, rawEnv)
         }
         let session: TenantSession | null
         try
@@ -265,20 +266,17 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         }
         catch
         {
-            await this.Refuse(req, socket, DesktopRelay.StatusInternal, AuditRegistry.AnonymousActor, rawAction, rawEnv)
-            return
+            return this.Refuse(req, DesktopRelay.StatusInternal, AuditRegistry.AnonymousActor, rawAction, rawEnv)
         }
         if (session === null)
         {
-            await this.Refuse(req, socket, DesktopRelay.StatusUnauthorized, AuditRegistry.AnonymousActor, rawAction, rawEnv)
-            return
+            return this.Refuse(req, DesktopRelay.StatusUnauthorized, AuditRegistry.AnonymousActor, rawAction, rawEnv)
         }
         const actor = TenantAuditEntry.ActorOf(session)
         const action = DesktopRelay.ActionOf(rawAction)
         if (action === undefined || rawEnv === DesktopRelay.NoValue)
         {
-            await this.Refuse(req, socket, DesktopRelay.StatusBadRequest, actor, rawAction, rawEnv)
-            return
+            return this.Refuse(req, DesktopRelay.StatusBadRequest, actor, rawAction, rawEnv)
         }
         let record: EnvironmentRecord
         try
@@ -287,17 +285,28 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
             if (check.verdict !== DesktopTargetVerdict.Allowed || check.record === undefined)
             {
                 const status = check.verdict === DesktopTargetVerdict.NotRunning ? DesktopRelay.StatusConflict : DesktopRelay.StatusForbidden
-                await this.Refuse(req, socket, status, actor, action, rawEnv)
-                return
+                return this.Refuse(req, status, actor, action, rawEnv)
             }
             record = check.record
         }
         catch
         {
-            await this.Refuse(req, socket, DesktopRelay.StatusInternal, actor, action, rawEnv)
+            return this.Refuse(req, DesktopRelay.StatusInternal, actor, action, rawEnv)
+        }
+        return await this.Connect(req, { session, actor, action, envName: record.name }, record)
+    }
+
+    /** The host completed an admitted upgrade: the client joins the pipe Admit opened for it. */
+    public Attach(client: WebSocket, req: IncomingMessage): void
+    {
+        const pipe = this.admitted.get(req)
+        this.admitted.delete(req)
+        if (pipe === undefined)
+        {
+            client.close(DesktopRelay.InternalErrorClose)
             return
         }
-        await this.Connect(req, socket, head, { session, actor, action, envName: record.name }, record)
+        pipe.Attach(client)
     }
 
     /**
@@ -425,8 +434,8 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
         await TenantAuditEntry.AppendBestEffort(this.audit, { actor, method, path, status, note })
     }
 
-    /** Leases the env's address, mints the action's credential, dials onward, and only then completes the client upgrade. */
-    private async Connect(req: IncomingMessage, socket: Duplex, head: Buffer, context: RelayContext, record: EnvironmentRecord): Promise<void>
+    /** Leases the env's address, mints the action's credential and dials onward; admits the upgrade only once that is open. */
+    private async Connect(req: IncomingMessage, context: RelayContext, record: EnvironmentRecord): Promise<UpgradeRefusal | null>
     {
         let lease: EnvironmentUrlsLease | undefined
         let upstream: WebSocket
@@ -451,42 +460,44 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
             }
             // Only the error's name: messages from lower layers are not vetted for secret material.
             console.error(DesktopRelay.LogPrefix, err instanceof Error ? err.name : typeof err)
-            await this.Refuse(req, socket, DesktopRelay.StatusBadGateway, context.actor, context.action, context.envName)
-            return
+            return this.Refuse(req, DesktopRelay.StatusBadGateway, context.actor, context.action, context.envName)
         }
         const deadlineMs = DesktopRelay.DeadlineOf(context.session, credential)
         const pipe = new RelayPipe(this, context, upstream, lease, () => this.pipes.delete(pipe), this.clock, deadlineMs, credential.tokenRef)
         // The session may have ended while the credential was minted and the upstream dialed (a sign-out or password change
-        // whose CloseSession / ClosePrincipal ran before this pipe existed): check again. From here to handleUpgrade there is
-        // no await, so a later CloseSession / ClosePrincipal sees the pipe and a socket closing later hits the guard below.
+        // whose CloseSession / ClosePrincipal ran before this pipe existed): check again. From here to the pipe's tracking
+        // there is no await, so a later CloseSession / ClosePrincipal sees the pipe (Attach then closes the client with its
+        // code) and a socket closing later hits the guard below.
         if (!await this.StillLive(req, context.session))
         {
             pipe.Close(RelayPipe.NormalClosure)
-            await this.Refuse(req, socket, DesktopRelay.StatusUnauthorized, context.actor, context.action, context.envName)
-            return
+            return this.Refuse(req, DesktopRelay.StatusUnauthorized, context.actor, context.action, context.envName)
         }
+        const socket = req.socket
         if (socket.destroyed)
         {
+            // Nobody reads this answer: the client is gone (not audited, as before).
             pipe.Close(RelayPipe.GoingAway)
-            return
+            return DesktopRelay.RefusalOf(DesktopRelay.StatusBadGateway)
         }
         // The pipe may have closed during that await (its deadline fell due, or the upstream closed or failed): it has
         // already released its lease and revoked its credential, so it is neither tracked nor upgraded; the client gets 502.
         if (pipe.IsClosed)
         {
-            await this.Refuse(req, socket, DesktopRelay.StatusBadGateway, context.actor, context.action, context.envName)
-            return
+            return this.Refuse(req, DesktopRelay.StatusBadGateway, context.actor, context.action, context.envName)
         }
         // Retired while this relay connected: it is closed now (lease released, credential revoked, never tracked) and the
-        // upgrade completes only so the client sees the retirement code, exactly as the relays Retire closed did.
+        // upgrade completes only so the client sees the retirement code (Attach closes it with that code), exactly as the
+        // relays Retire closed did.
         const retired = this.retiredWith
         if (retired !== undefined)
         {
             pipe.Close(retired)
-            this.wss.handleUpgrade(req, socket, head, client => pipe.Attach(client))
-            return
+            this.admitted.set(req, pipe)
+            return null
         }
         this.pipes.add(pipe)
+        this.admitted.set(req, pipe)
         // ws can still abort the handshake without calling back (a bad subprotocol or extension header, a socket that is no
         // longer writable): the socket then closes with no client attached, and the pipe must release its lease and upstream.
         socket.once(DesktopRelay.CloseEvent, () =>
@@ -496,7 +507,7 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
                 pipe.Close(RelayPipe.GoingAway)
             }
         })
-        this.wss.handleUpgrade(req, socket, head, client => pipe.Attach(client))
+        return null
     }
 
     /** Whether the request's bearer still resolves to the same live desktop session. */
@@ -544,34 +555,27 @@ export class DesktopRelay implements IPrincipalConnections, IDesktopSessionConne
     }
 
     /**
-     * Answers a refusal and audits it, but only while the client's address is under the refusal throttle: anonymous or
-     * signed in, no one address can flood the shared, capped audit log and evict the contribute and deploy outcome
-     * records (those are never throttled).
+     * A refusal for the host to write, audited only while the client's address is under the refusal throttle: anonymous
+     * or signed in, no one address can flood the shared, capped audit log and evict the contribute and deploy outcome
+     * records (those are never throttled). The audit append runs beside the answer (Close waits for it).
      */
-    private async Refuse(req: IncomingMessage, socket: Duplex, status: number, actor: string, method: string, path: string): Promise<void>
+    private Refuse(req: IncomingMessage, status: number, actor: string, method: string, path: string): UpgradeRefusal
     {
         const ip = TenantClientAddress.Of(req, this.trustedProxy)
         const audited = this.refusalThrottle.CheckAllowed(ip).allowed
-        // Counted before the awaited write so a parallel burst cannot slip past the throttle.
+        // Counted before the audit write so a parallel burst cannot slip past the throttle.
         this.refusalThrottle.RecordHit(ip)
-        DesktopRelay.WriteRefusal(socket, status)
         if (audited)
         {
-            await this.Record(actor, method, path, status)
+            void this.Record(actor, method, path, status)
         }
+        return DesktopRelay.RefusalOf(status)
     }
 
-    /** Writes a plain HTTP refusal on the not-yet-upgraded socket and ends it; `body` defaults to `{ error: <the status's sentence> }`. */
-    public static WriteRefusal(socket: Duplex, status: number, body: object = { error: DesktopRelay.Messages.get(status) }): void
+    /** The plain HTTP refusal of `status`: `{ error: <the status's sentence> }`. */
+    private static RefusalOf(status: number): UpgradeRefusal
     {
-        if (socket.destroyed)
-        {
-            return
-        }
-        const text = JSON.stringify(body)
-        socket.once(DesktopRelay.FinishEvent, () => socket.destroy())
-        socket.end(DesktopRelay.HttpVersion + String(status) + DesktopRelay.Space + String(STATUS_CODES[status]) + DesktopRelay.HeaderSeparator
-            + DesktopRelay.ResponseHeaders + String(Buffer.byteLength(text)) + DesktopRelay.HeaderSeparator + DesktopRelay.HeaderSeparator + text)
+        return new UpgradeRefusal(status, { error: DesktopRelay.Messages.get(status) })
     }
 
     /** A GET carrying `Upgrade: websocket`, a well-formed Sec-WebSocket-Key, and version 13 or 8. */
