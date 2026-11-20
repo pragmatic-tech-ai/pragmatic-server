@@ -208,7 +208,7 @@ class CatalogFixture
             images[app] = { repository: CatalogFixture.Repo(app), digest, signature: ReleaseSignature.Sign(digest, key.Private) }
         }
         return {
-            schema: 1,
+            schema: ReleaseDescriptorCodec.CurrentSchema,
             version,
             channel: ReleaseTag.FromVersion(version).Channel,
             serverCommit: CatalogFixture.ServerCommit,
@@ -240,7 +240,8 @@ describe('ReleaseCatalog.Refresh', () =>
             const result = await fx.Catalog().Refresh()
             assert.deepEqual(result, { imported: [CatalogFixture.V1], rejected: [], unchanged: 0, shadowed: [] })
             const envServer = descriptor.images[ReleaseApp.EnvServer].digest
-            const images = Object.fromEntries(ReleaseApps.All.map(app => [app, { repository: CatalogFixture.Repo(app), digest: descriptor.images[app].digest }]))
+            const images = Object.fromEntries(ReleaseDescriptorCodec.ImagesOf(descriptor).map(([app, image]) => [app, { repository: CatalogFixture.Repo(app), digest: image.digest }]))
+            assert.equal(Object.keys(images).length, ReleaseApps.All.length)
             assert.deepEqual(fx.Release(CatalogFixture.V1), {
                 id: CatalogFixture.V1,
                 channel: Channel.Stable,
@@ -269,10 +270,13 @@ describe('ReleaseCatalog.Refresh', () =>
         {
             fx.IndexApps.add(ReleaseApp.PlatformAdmin)
             fx.IndexApps.add(ReleaseApp.PlatformEdge)
+            fx.IndexApps.add(ReleaseApp.Postgres)
             const { descriptor } = await fx.Publish(CatalogFixture.V1)
-            for (const app of [ReleaseApp.PlatformAdmin, ReleaseApp.PlatformEdge])
+            const indexed = ReleaseDescriptorCodec.ImagesOf(descriptor).filter(([app]) => fx.IndexApps.has(app))
+            assert.equal(indexed.length, 3)
+            for (const [app, image] of indexed)
             {
-                assert.equal(descriptor.images[app].digest, await fx.Client().HeadManifest(CatalogFixture.Repo(app), CatalogFixture.V1), app)
+                assert.equal(image.digest, await fx.Client().HeadManifest(CatalogFixture.Repo(app), CatalogFixture.V1), app)
             }
             assert.deepEqual(await fx.Catalog().Refresh(), { imported: [CatalogFixture.V1], rejected: [], unchanged: 0, shadowed: [] })
         })
@@ -518,9 +522,9 @@ describe('ReleaseCatalog.Refresh', () =>
     {
         await CatalogFixture.Run(async fx =>
         {
-            await fx.PushDescriptor(CatalogFixture.V1, new TextEncoder().encode('{"schema":2}'))
+            await fx.PushDescriptor(CatalogFixture.V1, new TextEncoder().encode('{"schema":3}'))
             await fx.Catalog().Refresh()
-            assert.equal(fx.Reason(CatalogFixture.V1), 'descriptor invalid: schema must be 1')
+            assert.equal(fx.Reason(CatalogFixture.V1), 'descriptor invalid: schema must be 1 or 2')
         })
     })
 
@@ -675,10 +679,10 @@ describe('ReleaseCatalog countersigning', () =>
                 const signer = new ImageSigner(new RegistryRefImageDigest(), store, new FileKeyStore(keysDir))
                 const { descriptor } = await fx.Publish(CatalogFixture.V1)
                 await fx.Catalog(undefined, undefined, new PlatformReleaseCountersigner(signer, PlatformSigningKey.DefaultRef)).Refresh()
-                assert.equal(ReleaseApps.All.length, 8)
-                for (const app of ReleaseApps.All)
+                assert.equal(ReleaseApps.All.length, 9)
+                for (const [app, image] of ReleaseDescriptorCodec.ImagesOf(descriptor))
                 {
-                    assert.ok(await store.Get(descriptor.images[app].digest, PlatformSigningKey.DefaultRef) !== undefined, app)
+                    assert.ok(await store.Get(image.digest, PlatformSigningKey.DefaultRef) !== undefined, app)
                 }
             })
         }
@@ -703,13 +707,13 @@ describe('ReleaseCatalog countersigning', () =>
                 await fx.Catalog().Refresh()
                 const countersigner = new PlatformReleaseCountersigner(signer, PlatformSigningKey.DefaultRef, store)
                 await fx.Catalog(undefined, undefined, countersigner).Refresh()
-                assert.equal(signer.Calls, 8)
-                for (const app of ReleaseApps.All)
+                assert.equal(signer.Calls, 9)
+                for (const [app, image] of ReleaseDescriptorCodec.ImagesOf(descriptor))
                 {
-                    assert.ok(await store.HasKeyed(descriptor.images[app].digest, PlatformSigningKey.DefaultRef), app)
+                    assert.ok(await store.HasKeyed(image.digest, PlatformSigningKey.DefaultRef), app)
                 }
                 await fx.Catalog(undefined, undefined, countersigner).Refresh()
-                assert.equal(signer.Calls, 8)
+                assert.equal(signer.Calls, 9)
             })
         }
         finally
@@ -727,9 +731,36 @@ describe('ReleaseCatalog countersigning', () =>
             const signer = new RejectingSigner()
             const result = await fx.Catalog(undefined, undefined, new PlatformReleaseCountersigner(signer, PlatformSigningKey.DefaultRef)).Refresh()
             assert.deepEqual(result.imported, [CatalogFixture.V1])
-            assert.equal(signer.Calls, 8)
+            assert.equal(signer.Calls, 9)
             assert.equal(fx.Release(CatalogFixture.V1)?.release?.state, ReleaseState.Verified)
         })
+    })
+
+    it('a schema-1 release (published before pragmatic-postgres) imports and is countersigned with its eight images', async () =>
+    {
+        const dir = await mkdtemp(join(tmpdir(), CatalogFixture.TempPrefix))
+        try
+        {
+            await CatalogFixture.Run(async fx =>
+            {
+                const keysDir = join(dir, CatalogFixture.KeysDir)
+                await PlatformSigningKey.Ensure(keysDir, PlatformSigningKey.DefaultRef)
+                const store = new FileSignatureStore(join(dir, CatalogFixture.SignaturesFile))
+                const signer = new CountingSigner(new ImageSigner(new RegistryRefImageDigest(), store, new FileKeyStore(keysDir)))
+                const descriptor = { ...fx.Descriptor(CatalogFixture.V1), schema: 1 as const }
+                delete descriptor.images[ReleaseApp.Postgres]
+                await fx.PushDescriptor(CatalogFixture.V1, ReleaseDescriptorCodec.Encode(descriptor))
+                const result = await fx.Catalog(undefined, undefined, new PlatformReleaseCountersigner(signer, PlatformSigningKey.DefaultRef, store)).Refresh()
+                assert.deepEqual(result.imported, [CatalogFixture.V1])
+                const images = fx.Release(CatalogFixture.V1)?.release?.images ?? {}
+                assert.deepEqual(Object.keys(images).sort(), [...ReleaseApps.NodeApps].sort())
+                assert.equal(signer.Calls, 8)
+            })
+        }
+        finally
+        {
+            await rm(dir, { recursive: true, force: true })
+        }
     })
 
     it('a rejected release is not countersigned', async () =>

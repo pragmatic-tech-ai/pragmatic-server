@@ -1,4 +1,5 @@
-# One image per app, from docker/images/Dockerfile. Run from the workspace root (architecture-agent/), which is the
+# One image per app: the Node apps from docker/images/Dockerfile, pragmatic-postgres from docker/postgres/Dockerfile.
+# Run from the workspace root (architecture-agent/), which is the
 # build context holding pragmatic-server and its siblings:
 #   NPMRC_FILE=/path/to/.npmrc VERSION=1.2.3 SERVER_SHA=<sha> docker buildx bake -f pragmatic-server/docker/docker-bake.hcl
 # NPMRC_FILE names an .npmrc able to read @pragmatic-tech-ai packages from GitHub Packages; it reaches the build only
@@ -20,7 +21,7 @@ variable "NPMRC_FILE" {
   default = ""
 }
 
-# The control-plane images (admin, edge) are built per arch on native runners (release.yml, platform-images job):
+# The platform images (admin, edge, postgres) are built per arch on native runners (release.yml, platform-images job):
 # PLATFORMS=linux/arm64 there; comma-separated for a local multi-arch build. The other six stay linux/amd64.
 variable "PLATFORMS" {
   default = "linux/amd64"
@@ -41,10 +42,11 @@ group "default" {
     "pragmatic-tenant-admin",
     "pragmatic-tenant-idp",
     "pragmatic-ui-unpack",
+    "pragmatic-postgres",
   ]
 }
 
-# Everything except the two multi-arch control-plane images (release.yml bakes these on amd64 only).
+# Everything except the three multi-arch platform images (release.yml bakes these on amd64 only).
 group "amd64-only" {
   targets = [
     "pragmatic-env-server",
@@ -117,4 +119,15 @@ target "pragmatic-ui-unpack" {
   inherits = ["_app"]
   target   = "pragmatic-ui-unpack"
   tags     = tags("pragmatic-ui-unpack")
+}
+
+# Postgres with the per-application reconcile (docker/postgres). Its own context: no workspace siblings, no npm secret.
+target "pragmatic-postgres" {
+  context    = "pragmatic-server/docker/postgres"
+  dockerfile = "Dockerfile"
+  platforms  = split(",", PLATFORMS)
+  tags       = tags("pragmatic-postgres")
+  labels = {
+    "org.opencontainers.image.source" = "https://github.com/pragmatic-tech-ai/pragmatic-server"
+  }
 }

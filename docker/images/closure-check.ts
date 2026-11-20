@@ -66,7 +66,7 @@ export interface IClosureCheckOptions
 {
     /** The sibling dirs the image build copies; defaults to the Dockerfile's build list. */
     Siblings?: readonly string[]
-    /** The apps closure.json must describe; defaults to every release app. */
+    /** The apps closure.json must describe; defaults to every Node release app (pragmatic-postgres has its own image). */
     Apps?: readonly string[]
 }
 
@@ -458,7 +458,7 @@ export class ClosureCheck
         const C = ClosureCheck
         const root = resolve(workspaceRoot)
         const manifest = C.ReadManifest(join(root, C.ServerDir, C.ManifestPath))
-        const apps = options.Apps ?? ReleaseApps.All
+        const apps = options.Apps ?? ReleaseApps.NodeApps
         for (const app of Object.keys(manifest))
         {
             if (!apps.includes(app))

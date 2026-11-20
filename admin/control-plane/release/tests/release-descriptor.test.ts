@@ -15,7 +15,7 @@ class DescriptorFixture
             images[app] = { repository: `ghcr.io/pragmatic-tech-ai/${app}`, digest: `sha256:${'a'.repeat(64)}`, signature: 'c2ln' }
         }
         return {
-            schema: 1,
+            schema: ReleaseDescriptorCodec.CurrentSchema,
             version: '1.4.0',
             channel: Channel.Stable,
             serverCommit: 'b'.repeat(40),
@@ -90,8 +90,49 @@ describe('ReleaseDescriptorCodec', () =>
 
     it('rejects an unknown schema', () =>
     {
-        const d = { ...DescriptorFixture.Make(), schema: 2 }
+        const d = { ...DescriptorFixture.Make(), schema: 3 }
         assert.throws(() => ReleaseDescriptorCodec.Decode(DescriptorFixture.Bytes(d)), ReleaseDescriptorInvalidError)
+    })
+
+    it('writes schema 2, which carries every app including pragmatic-postgres', () =>
+    {
+        assert.equal(ReleaseDescriptorCodec.CurrentSchema, 2)
+        assert.ok(ReleaseApps.All.includes(ReleaseApp.Postgres))
+        assert.deepEqual(ReleaseDescriptorCodec.AppsOf(2), ReleaseApps.All)
+    })
+
+    it('a schema-2 descriptor without the pragmatic-postgres image is rejected naming it', () =>
+    {
+        const d = DescriptorFixture.Make() as unknown as { images: Record<string, unknown> }
+        delete d.images[ReleaseApp.Postgres]
+        assert.throws(() => ReleaseDescriptorCodec.Decode(DescriptorFixture.Bytes(d)),
+            (error: unknown) => error instanceof ReleaseDescriptorInvalidError && error.Reason === 'missing image: pragmatic-postgres')
+    })
+
+    it('a schema-1 descriptor (published before pragmatic-postgres) decodes with its eight images', () =>
+    {
+        const d = { ...DescriptorFixture.Make(), schema: 1 } as unknown as { images: Record<string, unknown> }
+        delete d.images[ReleaseApp.Postgres]
+        const decoded = ReleaseDescriptorCodec.Decode(DescriptorFixture.Bytes(d))
+        assert.equal(decoded.schema, 1)
+        assert.equal(decoded.images[ReleaseApp.Postgres], undefined)
+        assert.deepEqual(ReleaseDescriptorCodec.ImagesOf(decoded).map(([app]) => app), ReleaseApps.All.filter(app => app !== ReleaseApp.Postgres))
+        assert.deepEqual(ReleaseDescriptorCodec.Decode(ReleaseDescriptorCodec.Encode(decoded)), decoded)
+    })
+
+    it('a schema-1 descriptor still needs each of its eight images', () =>
+    {
+        const d = { ...DescriptorFixture.Make(), schema: 1 } as unknown as { images: Record<string, unknown> }
+        delete d.images[ReleaseApp.Postgres]
+        delete d.images[ReleaseApp.TenantIdp]
+        assert.throws(() => ReleaseDescriptorCodec.Decode(DescriptorFixture.Bytes(d)),
+            (error: unknown) => error instanceof ReleaseDescriptorInvalidError && error.Reason === 'missing image: pragmatic-tenant-idp')
+    })
+
+    it('ImagesOf lists the images of a schema-2 descriptor in ReleaseApps.All order', () =>
+    {
+        const d = DescriptorFixture.Make()
+        assert.deepEqual(ReleaseDescriptorCodec.ImagesOf(d).map(([app]) => app), ReleaseApps.All)
     })
 
     it('rejects a malformed commit', () =>

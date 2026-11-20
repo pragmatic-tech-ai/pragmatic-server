@@ -10,11 +10,16 @@ export enum ReleaseApp
     TenantAdmin = 'pragmatic-tenant-admin',
     TenantIdp = 'pragmatic-tenant-idp',
     UiUnpack = 'pragmatic-ui-unpack',
+    Postgres = 'pragmatic-postgres',
 }
 
 export class ReleaseApps
 {
-    public static readonly All: readonly ReleaseApp[] = [
+    /**
+     * The Node apps, each a target of docker/images/Dockerfile with an entry in closure.json (what the closure check
+     * measures). They are also the eight images a schema-1 release descriptor carries.
+     */
+    public static readonly NodeApps: readonly ReleaseApp[] = [
         ReleaseApp.PlatformAdmin,
         ReleaseApp.PlatformEdge,
         ReleaseApp.EnvServer,
@@ -24,6 +29,12 @@ export class ReleaseApps
         ReleaseApp.TenantIdp,
         ReleaseApp.UiUnpack,
     ]
+
+    /**
+     * Every image a release ships: the Node apps plus `pragmatic-postgres` (docker/postgres/Dockerfile, the Postgres a
+     * hive or the platform host runs; one database and role per application).
+     */
+    public static readonly All: readonly ReleaseApp[] = [...ReleaseApps.NodeApps, ReleaseApp.Postgres]
 }
 
 export class ReleaseTagInvalidError extends Error

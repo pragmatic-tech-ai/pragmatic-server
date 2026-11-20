@@ -1,2 +1,4 @@
 # Shell scripts run inside Linux images and containers: keep LF on every checkout (a CRLF copy fails `set -eu`).
 *.sh text eol=lf
+# The pragmatic-postgres image folder (Dockerfile, scripts, fixtures) is built and run on Linux: LF everywhere.
+docker/postgres/** text eol=lf

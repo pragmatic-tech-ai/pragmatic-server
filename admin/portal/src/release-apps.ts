@@ -12,5 +12,6 @@ export class ReleaseApps
         ReleaseApp.TenantAdmin,
         ReleaseApp.TenantIdp,
         ReleaseApp.UiUnpack,
+        ReleaseApp.Postgres,
     ]
 }

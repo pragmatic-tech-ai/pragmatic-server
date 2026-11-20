@@ -5,7 +5,7 @@ import type { ManifestRecord, ManifestRelease } from '../manifest-record.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { ManifestExistsError, ReleaseNotRejectedError, ReleaseRegistryUnavailableError, UnknownManifestError } from '../rollout-errors.js'
 import { ReleaseDescriptorCodec, ReleaseDescriptorInvalidError } from './release-descriptor.js'
-import type { ReleaseDescriptor } from './release-descriptor.js'
+import type { ReleaseDescriptor, ReleaseImage } from './release-descriptor.js'
 import { ReleasePublisher } from './release-publisher.js'
 import { ReleaseRegistry } from './release-registry.js'
 import { ReleaseSignature } from './release-signature.js'
@@ -187,7 +187,15 @@ export class ReleaseCatalog
         {
             return
         }
-        const refs = ReleaseApps.All.map(app => ReleaseRegistry.DigestReference(this.imageHost, images[app].repository, images[app].digest))
+        const refs: string[] = []
+        for (const app of ReleaseApps.All)
+        {
+            const image = images[app]
+            if (image !== undefined)
+            {
+                refs.push(ReleaseRegistry.DigestReference(this.imageHost, image.repository, image.digest))
+            }
+        }
         await this.countersigner.Countersign(refs)
     }
 
@@ -262,9 +270,9 @@ export class ReleaseCatalog
         {
             return S.ChannelMismatch
         }
-        for (const app of ReleaseApps.All)
+        for (const [app, image] of ReleaseDescriptorCodec.ImagesOf(descriptor))
         {
-            const reason = await this.VerifyImage(app, descriptor, publicKey)
+            const reason = await this.VerifyImage(app, image, descriptor.version, publicKey)
             if (reason !== undefined)
             {
                 return reason
@@ -273,16 +281,15 @@ export class ReleaseCatalog
         return undefined
     }
 
-    private async VerifyImage(app: ReleaseApp, descriptor: ReleaseDescriptor, publicKey: string): Promise<string | undefined>
+    private async VerifyImage(app: ReleaseApp, image: ReleaseImage, version: string, publicKey: string): Promise<string | undefined>
     {
         const S = ReleaseCatalog
-        const image = descriptor.images[app]
         const repository = this.Repo(app)
         if (image.repository !== repository)
         {
             return S.RepositoryMismatch + app
         }
-        const current = await this.registry.HeadManifest(repository, descriptor.version)
+        const current = await this.registry.HeadManifest(repository, version)
         if (current === undefined)
         {
             return S.ImageMissing + app
@@ -300,12 +307,12 @@ export class ReleaseCatalog
 
     private Verified(descriptor: ReleaseDescriptor): ManifestRecord
     {
-        const images = {} as NonNullable<ManifestRelease['images']>
-        for (const app of ReleaseApps.All)
+        const images: NonNullable<ManifestRelease['images']> = {}
+        for (const [app, image] of ReleaseDescriptorCodec.ImagesOf(descriptor))
         {
-            images[app] = { repository: descriptor.images[app].repository, digest: descriptor.images[app].digest }
+            images[app] = { repository: image.repository, digest: image.digest }
         }
-        const server = images[ReleaseApp.EnvServer]
+        const server = descriptor.images[ReleaseApp.EnvServer]
         return {
             id: descriptor.version,
             channel: descriptor.channel,

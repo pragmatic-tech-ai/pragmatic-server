@@ -126,6 +126,7 @@ export enum ReleaseApp
     TenantAdmin = 'pragmatic-tenant-admin',
     TenantIdp = 'pragmatic-tenant-idp',
     UiUnpack = 'pragmatic-ui-unpack',
+    Postgres = 'pragmatic-postgres',
 }
 
 // Provenance of a version imported from the release registry (mirrors the server's ManifestRelease); absent on
@@ -136,7 +137,8 @@ export type ManifestReleaseDto = {
     siblingCommits?: Record<string, string>
     builtAt?: string
     signingKeyId?: string
-    images?: Record<ReleaseApp, { repository: string; digest: string }>
+    // Releases published before pragmatic-postgres carry no image for it.
+    images?: Partial<Record<ReleaseApp, { repository: string; digest: string }>>
     rejectedReason?: string
 }
 

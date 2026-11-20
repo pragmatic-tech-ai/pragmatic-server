@@ -1,13 +1,13 @@
 # Publishes a release from a `release/X.Y.Z` (stable) or `release/X.Y.Z-early.N` (early access) tag on this repo:
-# builds the eight app images (docker/docker-bake.hcl), pushes them to ghcr.io/pragmatic-tech-ai tagged :X.Y.Z and
+# builds the nine app images (docker/docker-bake.hcl), pushes them to ghcr.io/pragmatic-tech-ai tagged :X.Y.Z and
 # :git-<server sha>, then signs each image digest and pushes the signed release descriptor (pragmatic-release:X.Y.Z).
-# The two control-plane images (platform-admin, platform-edge) are multi-arch: the platform-images job builds each arch
-# on its own native runner (no QEMU) and pushes it by digest; the release job joins both digests under the version tags
-# (docker buildx imagetools create), so the descriptor records and signs the multi-arch index digest. The other six
-# images are linux/amd64 only.
+# The three platform images (platform-admin, platform-edge, postgres) are multi-arch: the platform-images job builds
+# each arch on its own native runner (no QEMU) and pushes it by digest; the release job joins both digests under the
+# version tags (docker buildx imagetools create), so the descriptor records and signs the multi-arch index digest. The
+# other six images are linux/amd64 only.
 # Only this repo is tagged: every sibling builds from its default-branch head (cloned exactly as ci.yml clones it; some
 # siblings' default branch is `master`). The siblings job resolves those heads ONCE into siblings.json; every image
-# build fetches exactly those commits, and the descriptor records the same file, so all eight images and the signed
+# build fetches exactly those commits, and the descriptor records the same file, so all nine images and the signed
 # provenance agree even if a sibling moves during the run.
 # The publish-side release toolkit tests run first (they import only node builtins, so no npm install is needed); the
 # image closure check runs inside the shared build stage of docker/images/Dockerfile. tsx is pinned to the server's locked version.
@@ -121,10 +121,11 @@ jobs:
           NPMRC_FILE="$RUNNER_TEMP/npmrc" PLATFORMS=linux/${{ matrix.arch }} docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --allow=fs.read="$RUNNER_TEMP/npmrc" \
             --metadata-file "$RUNNER_TEMP/bake-meta.json" \
             --set pragmatic-platform-admin.tags=ghcr.io/pragmatic-tech-ai/pragmatic-platform-admin --set pragmatic-platform-edge.tags=ghcr.io/pragmatic-tech-ai/pragmatic-platform-edge \
+            --set pragmatic-postgres.tags=ghcr.io/pragmatic-tech-ai/pragmatic-postgres \
             --set '*.output=type=image,push-by-digest=true,name-canonical=true,push=true' \
-            pragmatic-platform-admin pragmatic-platform-edge
+            pragmatic-platform-admin pragmatic-platform-edge pragmatic-postgres
           rm -f "$RUNNER_TEMP/npmrc"
-          for app in pragmatic-platform-admin pragmatic-platform-edge; do
+          for app in pragmatic-platform-admin pragmatic-platform-edge pragmatic-postgres; do
             jq -r --arg app "$app" '.[$app]["containerimage.digest"]' "$RUNNER_TEMP/bake-meta.json" > "$RUNNER_TEMP/digests/$app"
             grep -Eq '^sha256:[0-9a-f]{64}$' "$RUNNER_TEMP/digests/$app"
           done
@@ -203,7 +204,7 @@ jobs:
       # One tag pair per platform image over both arches' digests: the version tag then names the multi-arch index.
       - name: Join the platform images' arches under the version tags
         run: |
-          for app in pragmatic-platform-admin pragmatic-platform-edge; do
+          for app in pragmatic-platform-admin pragmatic-platform-edge pragmatic-postgres; do
             amd64=$(cat "$RUNNER_TEMP/platform-digests/platform-digests-amd64/$app")
             arm64=$(cat "$RUNNER_TEMP/platform-digests/platform-digests-arm64/$app")
             docker buildx imagetools create -t "ghcr.io/pragmatic-tech-ai/$app:$VERSION" -t "ghcr.io/pragmatic-tech-ai/$app:git-$SERVER_SHA" \

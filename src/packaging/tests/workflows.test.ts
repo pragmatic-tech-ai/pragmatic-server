@@ -281,7 +281,7 @@ test('ci workflow clones the graph engine and points the siblings at it and at t
 
 class MultiArch
 {
-    public static readonly PlatformApps = ['pragmatic-platform-admin', 'pragmatic-platform-edge']
+    public static readonly PlatformApps = ['pragmatic-platform-admin', 'pragmatic-platform-edge', 'pragmatic-postgres']
     public static readonly Matrix = [{ arch: 'amd64', runner: 'ubuntu-latest' }, { arch: 'arm64', runner: 'ubuntu-24.04-arm' }]
 
     public static Jobs(name: string): Record<string, { 'runs-on'?: string; needs?: string | string[]; strategy?: { matrix?: { include?: unknown[] } }; steps?: IWorkflowStep[] }>
@@ -295,7 +295,7 @@ class MultiArch
     }
 }
 
-test('release builds platform-admin and platform-edge natively per arch, pushed by digest', () =>
+test('release builds platform-admin, platform-edge and postgres natively per arch, pushed by digest', () =>
 {
     const job = MultiArch.Jobs('release.yml')['platform-images']
     assert.ok(job !== undefined, 'a platform-images job')
@@ -324,7 +324,7 @@ test('the release job merges both arches into one tag per platform image before 
     assert.match(bake, /amd64-only/)
 })
 
-test('ci also bakes the two platform images for arm64 on a native runner, without pushing', () =>
+test('ci also bakes the three platform images for arm64 on a native runner, without pushing', () =>
 {
     const job = MultiArch.Jobs('ci.yml')['platform-images-arm64']
     assert.ok(job !== undefined, 'a platform-images-arm64 job')
@@ -332,6 +332,22 @@ test('ci also bakes the two platform images for arm64 on a native runner, withou
     const bake = MultiArch.Runs(job.steps).find(run => /docker buildx bake/.test(run)) ?? ''
     assert.match(bake, /PLATFORMS=linux\/arm64/)
     assert.doesNotMatch(bake, /--push|push=true/)
+    for (const app of MultiArch.PlatformApps)
+    {
+        assert.ok(bake.includes(app), app)
+    }
+})
+
+test('ci runs the pragmatic-postgres image test on the amd64 and the arm64 image', () =>
+{
+    const jobs = MultiArch.Jobs('ci.yml')
+    const imageTest = /bash pragmatic-server\/docker\/postgres\/tests\/image\.test\.sh ghcr\.io\/pragmatic-tech-ai\/pragmatic-postgres:ci/
+    const amd64 = MultiArch.Runs(jobs['build-test-package'].steps)
+    const bake = amd64.findIndex(run => /docker buildx bake/.test(run))
+    const amd64Test = amd64.findIndex(run => imageTest.test(run))
+    assert.ok(bake !== -1 && amd64Test > bake, 'the amd64 test runs on the image the bake built')
+    const arm64 = MultiArch.Runs(jobs['platform-images-arm64'].steps).find(run => imageTest.test(run)) ?? ''
+    assert.match(arm64, /PLATFORMS=linux\/arm64 .*docker buildx bake .*--load pragmatic-postgres/)
 })
 
 test('bake: the platform images take PLATFORMS; the six other apps form the amd64-only group', () =>

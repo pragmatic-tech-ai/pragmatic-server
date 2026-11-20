@@ -18,7 +18,7 @@ class ReleaseFixtures
     public static readonly ServerCommit = '0123456789abcdef0123456789abcdef01234567'
     public static readonly Apps = [
         'pragmatic-platform-admin', 'pragmatic-platform-edge', 'pragmatic-env-server', 'pragmatic-env-gateway',
-        'pragmatic-hive-agent', 'pragmatic-tenant-admin', 'pragmatic-tenant-idp', 'pragmatic-ui-unpack',
+        'pragmatic-hive-agent', 'pragmatic-tenant-admin', 'pragmatic-tenant-idp', 'pragmatic-ui-unpack', 'pragmatic-postgres',
     ]
 
     // A distinct digest per app index.
@@ -32,7 +32,7 @@ class ReleaseFixtures
     {
         // Deliberately not in release order: the detail orders the rows itself.
         const images: Record<string, { repository: string; digest: string }> = {}
-        for (const i of [7, 3, 0, 5, 1, 6, 2, 4])
+        for (const i of [7, 3, 0, 8, 5, 1, 6, 2, 4])
         {
             images[ReleaseFixtures.Apps[i]!] = { repository: 'ghcr.io/pragmatic-tech-ai/' + ReleaseFixtures.Apps[i], digest: ReleaseFixtures.Digest(i) }
         }
@@ -336,7 +336,7 @@ describe('Registry & Releases section', () =>
         assert.equal(detail.RejectedReason, '')
         assert.deepEqual(detail.ImageRows.ToArray().map(r => r.App), [
             'pragmatic-platform-admin', 'pragmatic-platform-edge', 'pragmatic-env-server', 'pragmatic-env-gateway',
-            'pragmatic-hive-agent', 'pragmatic-tenant-admin', 'pragmatic-tenant-idp', 'pragmatic-ui-unpack',
+            'pragmatic-hive-agent', 'pragmatic-tenant-admin', 'pragmatic-tenant-idp', 'pragmatic-ui-unpack', 'pragmatic-postgres',
         ])
         assert.deepEqual(detail.ImageRows.ToArray().map(r => r.DigestLabel), ReleaseFixtures.Apps.map((_, i) => ReleaseFixtures.Digest(i).slice(7, 19)))
         assert.equal(detail.ImageRows.Get(2)?.Digest, ReleaseFixtures.Digest(2))

@@ -75,7 +75,6 @@ export class ReleasePublisher
     public static readonly LayerMediaType = 'application/vnd.pragmatic.release.v1+json'
     public static readonly SignatureAnnotation = 'org.pragmatic.release.signature'
     public static readonly KeyAnnotation = 'org.pragmatic.release.key'
-    private static readonly SchemaVersion = 1
 
     public constructor(
         private readonly registry: OciRegistryClient,
@@ -111,7 +110,7 @@ export class ReleasePublisher
             images[app] = { repository, digest, signature: ReleaseSignature.Sign(digest, input.privateKeyPem) }
         }
         const descriptor: ReleaseDescriptor = {
-            schema: S.SchemaVersion,
+            schema: ReleaseDescriptorCodec.CurrentSchema,
             version,
             channel: input.tag.Channel,
             serverCommit: input.serverCommit,
@@ -143,9 +142,8 @@ export class ReleasePublisher
         {
             throw new ReleaseSigningKeyMismatchError(input.signingKeyId)
         }
-        for (const app of ReleaseApps.All)
+        for (const [, image] of ReleaseDescriptorCodec.ImagesOf(decoded))
         {
-            const image = decoded.images[app]
             if (!ReleaseSignature.Verifies(image.digest, image.signature, key))
             {
                 throw new ReleaseSigningKeyMismatchError(input.signingKeyId)

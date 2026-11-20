@@ -69,12 +69,17 @@ jobs:
           trap 'rm -f "$RUNNER_TEMP/npmrc"' EXIT
           (umask 077 && printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$PACKAGES_TOKEN" > "$RUNNER_TEMP/npmrc")
           NPMRC_FILE="$RUNNER_TEMP/npmrc" VERSION=ci SERVER_SHA="$GITHUB_SHA" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --allow=fs.read="$RUNNER_TEMP/npmrc"
+      # pragmatic-postgres end to end on the image just baked: two applications, isolation, a restart with a third, a
+      # changed password file, a refused start (docker/postgres/tests/image.test.sh removes what it creates).
+      - name: pragmatic-postgres image test
+        working-directory: ${{ github.workspace }}
+        run: bash pragmatic-server/docker/postgres/tests/image.test.sh ghcr.io/pragmatic-tech-ai/pragmatic-postgres:ci
       - name: Helm lint + template
         working-directory: ${{ github.workspace }}
         run: |
           helm lint pragmatic-server/helm/pragmatic-server
           helm template pragmatic-server/helm/pragmatic-server
-  # The two multi-arch control-plane images, built natively on arm64 (as release.yml does), without pushing.
+  # The three multi-arch platform images, built natively on arm64 (as release.yml does), without pushing.
   platform-images-arm64:
     runs-on: ubuntu-24.04-arm
     steps:
@@ -95,4 +100,10 @@ jobs:
         run: |
           trap 'rm -f "$RUNNER_TEMP/npmrc"' EXIT
           (umask 077 && printf '@pragmatic-tech-ai:registry=https://npm.pkg.github.com\n//npm.pkg.github.com/:_authToken=%s\n' "$PACKAGES_TOKEN" > "$RUNNER_TEMP/npmrc")
-          NPMRC_FILE="$RUNNER_TEMP/npmrc" PLATFORMS=linux/arm64 VERSION=ci SERVER_SHA="$GITHUB_SHA" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --allow=fs.read="$RUNNER_TEMP/npmrc" pragmatic-platform-admin pragmatic-platform-edge
+          NPMRC_FILE="$RUNNER_TEMP/npmrc" PLATFORMS=linux/arm64 VERSION=ci SERVER_SHA="$GITHUB_SHA" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --allow=fs.read="$RUNNER_TEMP/npmrc" pragmatic-platform-admin pragmatic-platform-edge pragmatic-postgres
+      # The arm64 pragmatic-postgres, loaded into the runner's docker and run through the same end-to-end test.
+      - name: pragmatic-postgres image test (arm64)
+        working-directory: ${{ github.workspace }}
+        run: |
+          PLATFORMS=linux/arm64 VERSION=ci SERVER_SHA="$GITHUB_SHA" docker buildx bake -f pragmatic-server/docker/docker-bake.hcl --load pragmatic-postgres
+          bash pragmatic-server/docker/postgres/tests/image.test.sh ghcr.io/pragmatic-tech-ai/pragmatic-postgres:ci

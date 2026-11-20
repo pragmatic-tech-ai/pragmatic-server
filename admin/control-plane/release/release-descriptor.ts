@@ -3,15 +3,21 @@ import { ReleaseApp, ReleaseApps } from './release-tag.js'
 
 export type ReleaseImage = { repository: string; digest: string; signature: string }
 
+/** Every app's image; a schema-1 descriptor (published before pragmatic-postgres existed) has none for it. */
+export type ReleaseImages = Omit<Record<ReleaseApp, ReleaseImage>, ReleaseApp.Postgres> & { [ReleaseApp.Postgres]?: ReleaseImage }
+
+/** Schema 1: the eight Node apps (ReleaseApps.NodeApps). Schema 2: every app (ReleaseApps.All), adding pragmatic-postgres. */
+export type ReleaseDescriptorSchema = 1 | 2
+
 export type ReleaseDescriptor = {
-    schema: 1
+    schema: ReleaseDescriptorSchema
     version: string
     channel: Channel
     serverCommit: string
     siblingCommits: Record<string, string>
     builtAt: string
     signingKeyId: string
-    images: Record<ReleaseApp, ReleaseImage>
+    images: ReleaseImages
 }
 
 export class ReleaseDescriptorInvalidError extends Error
@@ -30,14 +36,16 @@ export class ReleaseDescriptorInvalidError extends Error
 /** Canonical (sorted-key, whitespace-free) JSON codec so the descriptor's sha256 is stable. */
 export class ReleaseDescriptorCodec
 {
-    private static readonly SchemaVersion = 1
+    /** The schema the publisher writes. */
+    public static readonly CurrentSchema: ReleaseDescriptorSchema = 2
+    private static readonly SchemaApps = new Map<unknown, readonly ReleaseApp[]>([[1, ReleaseApps.NodeApps], [2, ReleaseApps.All]])
     private static readonly DigestPattern = /^sha256:[0-9a-f]{64}$/
     private static readonly CommitPattern = /^[0-9a-f]{40}$/
     /** A plain repository name: no separators, never a dot segment (`.`, `..`) nor `__proto__`. */
     private static readonly RepoNamePattern = /^(?!__proto__$)(?!\.{1,2}$)[A-Za-z0-9._-]+$/
     private static readonly NotObject = 'not an object'
     private static readonly NotJson = 'not valid JSON'
-    private static readonly BadSchema = 'schema must be 1'
+    private static readonly BadSchema = 'schema must be 1 or 2'
     private static readonly BadChannel = 'channel is not a known channel'
     private static readonly BadServerCommit = 'serverCommit is not a 40-hex commit'
     private static readonly BadSiblingCommits = 'siblingCommits must map names to 40-hex commits'
@@ -62,6 +70,28 @@ export class ReleaseDescriptorCodec
         return typeof commit === 'string' && ReleaseDescriptorCodec.CommitPattern.test(commit)
     }
 
+    /** The apps a descriptor of this schema carries, in ReleaseApps.All order. */
+    public static AppsOf(schema: ReleaseDescriptorSchema): readonly ReleaseApp[]
+    {
+        return ReleaseDescriptorCodec.SchemaApps.get(schema) ?? []
+    }
+
+    /** The descriptor's images, one per app its schema carries, in ReleaseApps.All order. */
+    public static ImagesOf(d: ReleaseDescriptor): [ReleaseApp, ReleaseImage][]
+    {
+        const images: Partial<Record<ReleaseApp, ReleaseImage>> = d.images
+        const result: [ReleaseApp, ReleaseImage][] = []
+        for (const app of ReleaseDescriptorCodec.AppsOf(d.schema))
+        {
+            const image = images[app]
+            if (image !== undefined)
+            {
+                result.push([app, image])
+            }
+        }
+        return result
+    }
+
     public static Encode(d: ReleaseDescriptor): Uint8Array
     {
         return new TextEncoder().encode(JSON.stringify(ReleaseDescriptorCodec.sortKeys(d)))
@@ -83,7 +113,8 @@ export class ReleaseDescriptorCodec
         {
             throw new ReleaseDescriptorInvalidError(ReleaseDescriptorCodec.NotObject)
         }
-        if (raw.schema !== ReleaseDescriptorCodec.SchemaVersion)
+        const apps = ReleaseDescriptorCodec.SchemaApps.get(raw.schema)
+        if (apps === undefined)
         {
             throw new ReleaseDescriptorInvalidError(ReleaseDescriptorCodec.BadSchema)
         }
@@ -99,9 +130,9 @@ export class ReleaseDescriptorCodec
         const siblingCommits = ReleaseDescriptorCodec.decodeSiblings(raw.siblingCommits)
         const builtAt = ReleaseDescriptorCodec.requireString(raw, ReleaseDescriptorCodec.FieldBuiltAt)
         const signingKeyId = ReleaseDescriptorCodec.requireString(raw, ReleaseDescriptorCodec.FieldSigningKeyId)
-        const images = ReleaseDescriptorCodec.decodeImages(raw.images)
+        const images = ReleaseDescriptorCodec.decodeImages(raw.images, apps)
         return {
-            schema: 1,
+            schema: raw.schema as ReleaseDescriptorSchema,
             version,
             channel: raw.channel as Channel,
             serverCommit: raw.serverCommit,
@@ -134,14 +165,14 @@ export class ReleaseDescriptorCodec
         return result
     }
 
-    private static decodeImages(value: unknown): Record<ReleaseApp, ReleaseImage>
+    private static decodeImages(value: unknown, apps: readonly ReleaseApp[]): ReleaseImages
     {
         if (!ReleaseDescriptorCodec.isRecord(value))
         {
             throw new ReleaseDescriptorInvalidError(ReleaseDescriptorCodec.MissingFieldPrefix + ReleaseDescriptorCodec.FieldImages)
         }
         const result: Partial<Record<ReleaseApp, ReleaseImage>> = {}
-        for (const app of ReleaseApps.All)
+        for (const app of apps)
         {
             const image = value[app]
             if (image === undefined)
@@ -163,7 +194,7 @@ export class ReleaseDescriptorCodec
             }
             result[app] = { repository: image.repository, digest: image.digest, signature: image.signature }
         }
-        return result as Record<ReleaseApp, ReleaseImage>
+        return result as ReleaseImages
     }
 
     private static requireString(raw: Record<string, unknown>, field: string): string

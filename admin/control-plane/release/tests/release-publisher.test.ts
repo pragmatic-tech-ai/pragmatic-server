@@ -235,9 +235,10 @@ describe('ReleasePublisher', () =>
         const decoded = ReleaseDescriptorCodec.Decode(pulled.layer)
         assert.deepEqual(decoded, descriptor)
         assert.equal(decoded.signingKeyId, PublisherFixture.KeyId)
-        for (const app of ReleaseApps.All)
+        assert.equal(decoded.schema, 2)
+        assert.deepEqual(ReleaseDescriptorCodec.ImagesOf(decoded).map(([app]) => app), ReleaseApps.All)
+        for (const [app, image] of ReleaseDescriptorCodec.ImagesOf(decoded))
         {
-            const image = decoded.images[app]
             assert.equal(image.repository, PublisherFixture.Repo(app))
             assert.equal(image.digest, FakeOciRegistry.DigestOf(new TextEncoder().encode(PublisherFixture.ImagePrefix + app)))
             assert.ok(ReleaseSignature.Verifies(image.digest, image.signature, f.Key.Public))
