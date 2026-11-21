@@ -1,6 +1,5 @@
-import type { IImageSigner } from '../image-signer.js'
+import type { IImageSigner, ISignatureStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { RegistryRefImageDigest } from '../image-digest.js'
-import type { ISignatureStore } from '../signature-store.js'
 
 /** Adds the platform's own signature to a verified release's images, so hives trusting the platform key accept them. */
 export interface IReleaseCountersigner

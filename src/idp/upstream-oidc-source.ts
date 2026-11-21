@@ -1,11 +1,8 @@
-import { AuthMethod, AuthenticatedResult, Credential, DelegationDepth, IdentityConfig, PresentedSecret, Realm, RealmKind } from '@pragmatic-tech-ai/pragmatic-identity';
-import type { ISecretStore, Principal } from '@pragmatic-tech-ai/pragmatic-identity';
-import { ClaimArrayGroupStrategy, ClaimsMapper, GenericOidcProfile, JwksCache, OidcAuthenticator, OidcDiscovery, OidcHttpClients, OidcResolvedConfig, OidcSettingKeys } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc';
-import type { IHttpClient, IOidcFlowStateStore, OidcProviderProfile } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc';
+import { AuthMethod, AuthenticatedResult, Credential, DelegationDepth, IdentityConfig, PresentedSecret, Realm, RealmKind, type ISecretStore, type Principal, RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity';
+import { ClaimArrayGroupStrategy, ClaimsMapper, GenericOidcProfile, JwksCache, OidcAuthenticator, OidcDiscovery, OidcHttpClients, OidcResolvedConfig, OidcSettingKeys, type IHttpClient, type IOidcFlowStateStore, type OidcProviderProfile } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc';
 import { GoogleIdentityProfile } from '@pragmatic-tech-ai/pragmatic-identity-source-google';
 import { MicrosoftEntraProfile } from '@pragmatic-tech-ai/pragmatic-identity-source-entra';
 import { PragmaticIdentityProfile } from '@pragmatic-tech-ai/pragmatic-identity-source-pragmatic';
-import { RealmIssuer } from './realm-issuer.js';
 import type { UpstreamSourceSettings } from './realm-settings.js';
 import { RealmSourceKind, TenantIdpOptions } from './tenant-idp-options.js';
 

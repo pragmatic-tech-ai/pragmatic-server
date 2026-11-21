@@ -4,10 +4,9 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Action, ResourceKind } from '@pragmatic-tech-ai/pragmatic-identity'
-import { AuditSurface, AuditOutcome } from '../access-audit.js'
-import type { AccessAuditEvent } from '../access-audit.js'
+import { AuditSurface, AuditOutcome, type AccessAuditEvent } from '../access-audit.js'
 import { FileAccessAuditSink } from '../file-access-audit-sink.js'
-import type { ILogger, LogFields } from '../../observability/logger.js'
+import type { ILogger, LogFields } from '@pragmatic-tech-ai/pragmatic-observability'
 import type { Counter } from '@opentelemetry/api'
 
 class CapturingLogger implements ILogger

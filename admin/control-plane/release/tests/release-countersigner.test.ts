@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import type { IImageSigner } from '../../image-signer.js'
+import type { IImageSigner } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { PlatformReleaseCountersigner } from '../release-countersigner.js'
 
 class RecordingSigner implements IImageSigner

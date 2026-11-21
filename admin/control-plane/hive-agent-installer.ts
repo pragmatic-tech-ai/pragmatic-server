@@ -1,11 +1,11 @@
 import { HiveBootstrapBundle, type HiveBootstrapDto } from './hive-bootstrap-bundle.js'
 import type { IHiveOrchestrator } from './hive-orchestrator.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-import { KubectlError } from './kubectl.js'
+import { KubectlError, SystemInstallClock, type IInstallClock } from '@pragmatic-tech-ai/pragmatic-kube'
 import { HiveBackend, type HiveRecord } from './platform-records.js'
-import { UnknownHiveError } from './rollout-errors.js'
+import { UnknownHiveError } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import { DevPlatformImages, PlatformImages, type IPlatformImages } from './platform-images.js'
-import { ReleaseApp } from './release/release-tag.js'
+import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 /** Where an automatic agent install stands. Values are the wire strings. */
 export enum InstallState
@@ -63,28 +63,7 @@ export interface IInstallCheckInSource
     LatestRecord(hiveId: string): { reportedAt: string } | undefined
 }
 
-/** Time for the installer: injectable so tests run the check-in wait in virtual time. */
-export interface IInstallClock
-{
-    Now(): number
-    Delay(ms: number): Promise<void>
-}
-
 export type InstallTiming = { pollIntervalMs: number; timeoutMs: number }
-
-/** The real clock: wall time and a timer that does not keep the process alive. */
-export class SystemInstallClock implements IInstallClock
-{
-    public Now(): number
-    {
-        return Date.now()
-    }
-
-    public Delay(ms: number): Promise<void>
-    {
-        return new Promise(resolve => setTimeout(resolve, ms).unref())
-    }
-}
 
 /** An automatic install cannot run for this hive (not Local, or the agent channel is off). Maps to 409. */
 export class AgentInstallUnavailableError extends Error

@@ -6,9 +6,8 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { OperatorRole } from '../../operator-identity.js'
 import { TenantRoles } from '../../tenant-auth/tenant-roles.js'
-import { ComponentDescriptorCli } from '../component-descriptor-cli.js'
+import { ComponentDescriptorCli, ReleaseApp, ReleaseApps } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { ReleaseComponents } from '../release-components.js'
-import { ReleaseApp, ReleaseApps } from '../release-tag.js'
 
 class ComponentsFixture
 {
@@ -21,6 +20,7 @@ class ComponentsFixture
     public static readonly Utf8 = 'utf8'
     public static readonly OtherDigest = 'sha256:' + '0'.repeat(64)
     public static readonly OneFile = 'one.json'
+    public static readonly PackageJson = join(import.meta.dirname, '..', '..', '..', '..', 'package.json')
 
     public readonly Out: string[] = []
     public readonly Err: string[] = []
@@ -51,6 +51,15 @@ class ComponentsFixture
 
 describe('ReleaseComponents', () =>
 {
+    it('declares every descriptor at the server package version', () =>
+    {
+        const manifest = JSON.parse(readFileSync(ComponentsFixture.PackageJson, ComponentsFixture.Utf8)) as { version: string }
+        for (const [app, descriptor] of ReleaseComponents.All())
+        {
+            assert.equal(descriptor.Version, manifest.version, app)
+        }
+    })
+
     it('has a descriptor for every release app, named for its image', () =>
     {
         assert.deepEqual(ReleaseComponents.All().map(([app, descriptor]) => [app, descriptor.Name]), ReleaseApps.All.map(app => [app, app]))
@@ -94,7 +103,7 @@ describe('ComponentDescriptorCli', () =>
         ComponentsFixture.InTemp(dir =>
         {
             const fx = new ComponentsFixture()
-            assert.equal(ComponentDescriptorCli.Run(['emit-all', '--out', dir], fx.Output), 0)
+            assert.equal(ComponentDescriptorCli.Run(['emit-all', '--out', dir], fx.Output, ReleaseComponents), 0)
             const digests = JSON.parse(readFileSync(join(dir, ComponentDescriptorCli.DigestsFile), ComponentsFixture.Utf8)) as Record<string, string>
             const bake = JSON.parse(readFileSync(join(dir, ComponentDescriptorCli.BakeFile), ComponentsFixture.Utf8)) as { target: Record<string, { args: Record<string, string> }> }
             for (const [app, descriptor] of ReleaseComponents.All())
@@ -117,7 +126,7 @@ describe('ComponentDescriptorCli', () =>
             const fx = new ComponentsFixture()
             const out = join(dir, ComponentsFixture.OneFile)
             const digest = ReleaseComponents.Of(ReleaseApp.EnvGateway).ContentDigest()
-            assert.equal(ComponentDescriptorCli.Run(['emit', '--app', ReleaseApp.EnvGateway, '--digest', digest, '--out', out], fx.Output), 0)
+            assert.equal(ComponentDescriptorCli.Run(['emit', '--app', ReleaseApp.EnvGateway, '--digest', digest, '--out', out], fx.Output, ReleaseComponents), 0)
             assert.equal(ComponentsFixture.FileDigest(out), digest)
         })
     })
@@ -130,7 +139,7 @@ describe('ComponentDescriptorCli', () =>
             for (const digest of [ComponentsFixture.OtherDigest, ''])
             {
                 const fx = new ComponentsFixture()
-                assert.equal(ComponentDescriptorCli.Run(['emit', '--app', ReleaseApp.EnvGateway, '--digest', digest, '--out', out], fx.Output), 1)
+                assert.equal(ComponentDescriptorCli.Run(['emit', '--app', ReleaseApp.EnvGateway, '--digest', digest, '--out', out], fx.Output, ReleaseComponents), 1)
                 assert.match(fx.Err.join('\n'), /digest mismatch for pragmatic-env-gateway/)
                 assert.ok(!existsSync(out))
             }
@@ -150,7 +159,7 @@ describe('ComponentDescriptorCli', () =>
         for (const argv of cases)
         {
             const fx = new ComponentsFixture()
-            assert.equal(ComponentDescriptorCli.Run(argv, fx.Output), 2, argv.join(' '))
+            assert.equal(ComponentDescriptorCli.Run(argv, fx.Output, ReleaseComponents), 2, argv.join(' '))
             assert.equal(fx.Err.length, 1)
         }
     })

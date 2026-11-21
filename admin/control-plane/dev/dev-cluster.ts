@@ -13,7 +13,7 @@
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { KindCli, type IKind } from '../kind.js'
-import { NodeExecFile, type IExecFile } from '../kubectl.js'
+import { NodeExecFile, type IExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 import { LocalDevCluster } from '../local-dev-cluster.js'
 
 export class DevCluster

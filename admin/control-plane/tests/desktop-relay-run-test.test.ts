@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { ApplicationDeployProtocol, AppWriteStatus, GraphProtocol, PragmaticAppProtocol, RunTestProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { DesktopAction } from '../tenant-auth/desktop-targets.js'
 import { DesktopRelayAllowlist } from '../tenant-auth/desktop-relay.js'
-import { RunTestMethods, TokenScope } from '../../../src/host/token-scope.js'
+import { RunTestMethods, TokenScope } from '@pragmatic-tech-ai/pragmatic-identity'
 
 class RunTestRelayFixture
 {

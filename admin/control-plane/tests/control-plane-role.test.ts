@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { ControlPlaneRole, ControlPlaneRoleInvalidError, ControlPlaneRoles, ControlPlaneStart, EdgeRoleRefusedError, type IControlPlaneListenerStarts } from '../control-plane-role.js'
-import { AgentChannelHost } from '../agent-channel-host.js'
+import { AgentChannelHost } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import { ControlPlaneServer } from '../server.js'
 
 /** Records which listeners the start sequence asked for, in order. */

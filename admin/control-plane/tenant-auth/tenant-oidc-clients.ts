@@ -1,14 +1,13 @@
 import { randomBytes } from 'node:crypto'
 import type { IncomingMessage } from 'node:http'
 import { CaTrustingHttpClient, SessionClaims, type IOidcClientConfig, type IOidcClientProvider } from '@pragmatic-tech-ai/pragmatic-app-host'
-import type { ISecretStore } from '@pragmatic-tech-ai/pragmatic-identity'
+import { type ISecretStore, RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { IIdpService } from '../idp-service.js'
 import type { IdpAdminClient } from '../idp-admin-client.js'
 import type { IdpConnection } from '../idp-workload-driver.js'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 import type { TenantAdminClientRegistry } from './tenant-admin-client-record.js'
 import { TenantSessionClaims } from './tenant-sessions.js'
-import { RealmIssuer } from '../../../src/idp/realm-issuer.js'
 
 /** Which confidential client a sign-in runs under: the tenant console's, or the Plexus desktop app's (RFC 8252 loopback). */
 export enum TenantOidcClientKind

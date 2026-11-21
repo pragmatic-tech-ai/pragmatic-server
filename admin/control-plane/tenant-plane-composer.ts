@@ -1,7 +1,7 @@
 import { OidcRelyingParty } from '@pragmatic-tech-ai/pragmatic-app-host'
 import type { IOidcFlowStateStore } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import type { AuditRegistry } from './audit-record.js'
-import { AuditThrottle } from './audit-throttle.js'
+import { AuditThrottle } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import type { IEnvironmentReach } from './environment-endpoints.js'
 import type { EnvironmentPlacement } from './environment-placement.js'
 import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'

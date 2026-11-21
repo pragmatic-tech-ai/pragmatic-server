@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { PinnedImageVerifier, InvalidVerifiedImagesError } from './pinned-image-verifier.js'
+import { PinnedImageVerifier, InvalidVerifiedImagesError } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import type { HiveRecord } from './platform-records.js'
 import { RecordSlot, type IRecordMap } from './record-map.js'
 import { SeededTenantDirectory, type TenantDirectorySeed } from './tenant-api/seeded-tenant-directory.js'

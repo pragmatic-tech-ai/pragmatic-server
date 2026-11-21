@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DeploymentMode } from '../../platform/deployment-mode.js'
 import { ServerBootstrap } from '../server-bootstrap.js'
-import { StructuredLogger, LogLevel } from '../../observability/logger.js'
+import { StructuredLogger, LogLevel } from '@pragmatic-tech-ai/pragmatic-observability'
 import type { ServerConfig } from '../../config/server-config.js'
 
 class Capture

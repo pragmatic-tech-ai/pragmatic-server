@@ -1,12 +1,10 @@
 import type { EnvironmentWorkload } from './environment-workload.js'
 import type { IHiveOrchestrator, WorkloadHealth } from './hive-orchestrator.js'
-import type { IKubectl } from './kubectl.js'
+import type { IKubectl, OrchestratorPolling } from '@pragmatic-tech-ai/pragmatic-kube'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import type { EffectiveRegistry } from './effective-registry.js'
-import type { IImageVerifier } from './image-verifier.js'
+import type { IImageVerifier } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { EnvNamespaceGuard } from './env-namespace-guard.js'
-
-export type OrchestratorPolling = { attempts: number; intervalMs: number }
 
 /** Drives a workload on a cluster through kubectl. Teardown removes only the environment namespace. */
 export class KubectlHiveOrchestrator implements IHiveOrchestrator

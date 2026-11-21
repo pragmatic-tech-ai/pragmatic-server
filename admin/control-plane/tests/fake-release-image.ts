@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { ComponentImageLabel } from '../release/component-image-label.js'
+import { ComponentImageLabel } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { FakeOciRegistry } from './fake-oci-registry.js'
 
 /** How a fake image is laid out: one image manifest, or an index of platform images (with a build attestation). */

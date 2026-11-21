@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SealedSecretStore } from '../sealed-secret-store.js'
 import { DevCaHostOutsideDomainError, DevCaKeyMissingError, DevCertificateAuthority } from '../dev-certificate-authority.js'
-import { DevCaError } from '../../../src/idp/dev-ca.js'
+import { DevCaError } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 
 class CaFixture
 {

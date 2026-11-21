@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { ApplicationDeployProtocol, GraphProtocol, LanguageProtocol, SolutionProtocol, StorageProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { DesktopAction } from '../tenant-auth/desktop-targets.js'
 import { DesktopRelayAllowlist } from '../tenant-auth/desktop-relay.js'
-import { TokenScope, TokenScopeGate } from '../../../src/host/token-scope.js'
+import { TokenScope, TokenScopeGate } from '@pragmatic-tech-ai/pragmatic-identity'
 
 class DevelopFixture
 {

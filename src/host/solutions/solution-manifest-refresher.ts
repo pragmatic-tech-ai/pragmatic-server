@@ -1,9 +1,7 @@
-import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
-import { PROJECT_MANIFEST_FILENAME } from '@pragmatic-tech-ai/todl'
+import { type SolutionManagerService, PROJECT_MANIFEST_FILENAME } from '@pragmatic-tech-ai/todl'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import { EnvSolutionRoots } from './env-solution-roots.js'
-import { StructuredLogger } from '../../observability/logger.js'
-import type { ILogger } from '../../observability/logger.js'
+import { StructuredLogger, type ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 
 /**
  * Closes the live-refresh gap after `storage/*` writes: when a write touches a solution's manifest (`<name>.pksln`), the

@@ -1,8 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { request } from 'node:http'
-import { spawn } from 'node:child_process'
-import type { ChildProcess } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, cpSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
@@ -15,7 +14,7 @@ import { InMemoryEnvironmentProvisioning } from '../../environments/environment-
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import { Observability, ObservabilityRole } from '../../observability/observability.js'
 import { FileAccessAuditSink } from '../../host/file-access-audit-sink.js'
-import { StructuredLogger } from '../../observability/logger.js'
+import { StructuredLogger } from '@pragmatic-tech-ai/pragmatic-observability'
 
 class Soak
 {

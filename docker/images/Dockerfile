@@ -106,7 +106,7 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     sh /workspace/pragmatic-server/docker/link-workspace-singletons.sh /workspace; \
     find /workspace -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete 2>/dev/null || true
 
-# Component descriptors (admin/control-plane/release/component-descriptor-cli.ts), emitted from the descriptor classes
+# Component descriptors (the release toolkit's ComponentDescriptorCli over admin/control-plane/release/release-components.ts), emitted from the descriptor classes
 # of the applications on the very tree the images are cut from. `components` writes every release app's descriptor; the
 # `pragmatic-components` bake target exports them (with the digests and the docker-bake.components.json override that
 # hands each image target its COMPONENT_APP and COMPONENT_DIGEST) before the images are baked, since a label value must be
@@ -124,7 +124,7 @@ ARG COMPONENT_DIGEST
 RUN node pragmatic-server/dist-tenant-admin/admin/control-plane/bin/pragmatic-component-descriptors.js emit --app "$COMPONENT_APP" --digest "$COMPONENT_DIGEST" --out /component/component.json
 
 # Per-image pragmatic-shared dependencies. The build's hoisted pragmatic-shared/node_modules holds the third-party deps of
-# all twelve shared packages (the realm adapters' cloud SDKs among them), so no image copies it. Each image that reaches a
+# all the shared packages (the realm adapters' cloud SDKs among them), so no image copies it. Each image that reaches a
 # shared package copies instead the node_modules of its own stage below: a fresh install from the same lock, of production
 # deps only, filtered with --workspace to the shared packages its closure.json entry lists (npm installs only those
 # workspaces and what they depend on). The tarballs come from the build's npm cache; nothing installed here runs a script.
@@ -135,37 +135,37 @@ FROM build AS pragmatic-platform-admin-shared-modules
 RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
     --workspace=packages/pragmatic-app-host --workspace=packages/pragmatic-component --workspace=packages/pragmatic-configuration \
     --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm --workspace=packages/pragmatic-identity-source-local \
-    --workspace=packages/pragmatic-identity-source-oidc --workspace=packages/pragmatic-identity-store --workspace=packages/pragmatic-realm-adapters \
-    --workspace=packages/pragmatic-realm-custom \
+    --workspace=packages/pragmatic-identity-source-oidc --workspace=packages/pragmatic-identity-store --workspace=packages/pragmatic-kube \
+    --workspace=packages/pragmatic-platform-link --workspace=packages/pragmatic-realm-adapters --workspace=packages/pragmatic-realm-custom \
+    --workspace=packages/pragmatic-release-toolkit \
     && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
 
 FROM build AS pragmatic-platform-edge-shared-modules
 RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
-    --workspace=packages/pragmatic-app-host \
-    --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
-    --workspace=packages/pragmatic-identity-source-oidc --workspace=packages/pragmatic-realm-adapters \
+    --workspace=packages/pragmatic-app-host --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
+    --workspace=packages/pragmatic-identity-source-oidc --workspace=packages/pragmatic-platform-link --workspace=packages/pragmatic-realm-adapters \
     && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
 
 FROM build AS pragmatic-env-server-shared-modules
 RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
-    --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
-    --workspace=packages/pragmatic-identity-source-entra --workspace=packages/pragmatic-identity-source-google \
-    --workspace=packages/pragmatic-identity-source-local --workspace=packages/pragmatic-identity-source-oidc \
-    --workspace=packages/pragmatic-identity-store --workspace=packages/pragmatic-realm-adapters \
-    --workspace=packages/pragmatic-realm-aws --workspace=packages/pragmatic-realm-azure \
-    --workspace=packages/pragmatic-realm-custom --workspace=packages/pragmatic-realm-gcp \
+    --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm --workspace=packages/pragmatic-identity-source-entra \
+    --workspace=packages/pragmatic-identity-source-google --workspace=packages/pragmatic-identity-source-local --workspace=packages/pragmatic-identity-source-oidc \
+    --workspace=packages/pragmatic-identity-store --workspace=packages/pragmatic-observability --workspace=packages/pragmatic-realm-adapters \
+    --workspace=packages/pragmatic-realm-aws --workspace=packages/pragmatic-realm-azure --workspace=packages/pragmatic-realm-custom \
+    --workspace=packages/pragmatic-realm-gcp \
     && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
 
 FROM build AS pragmatic-env-gateway-shared-modules
 RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
-    --workspace=packages/pragmatic-identity \
+    --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-observability \
     && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
 
 FROM build AS pragmatic-tenant-admin-shared-modules
 RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
     --workspace=packages/pragmatic-app-host --workspace=packages/pragmatic-component --workspace=packages/pragmatic-configuration \
     --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm --workspace=packages/pragmatic-identity-source-oidc \
-    --workspace=packages/pragmatic-realm-adapters --workspace=packages/pragmatic-realm-custom \
+    --workspace=packages/pragmatic-kube --workspace=packages/pragmatic-platform-link --workspace=packages/pragmatic-realm-adapters \
+    --workspace=packages/pragmatic-realm-custom --workspace=packages/pragmatic-release-toolkit \
     && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
 
 FROM build AS pragmatic-tenant-idp-shared-modules
@@ -177,6 +177,16 @@ RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline -
     --workspace=packages/pragmatic-identity-source-oidc --workspace=packages/pragmatic-identity-source-pragmatic \
     --workspace=packages/pragmatic-identity-store --workspace=packages/pragmatic-realm-adapters \
     --workspace=packages/pragmatic-realm-custom \
+    && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
+
+FROM build AS pragmatic-hive-agent-shared-modules
+RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
+    --workspace=packages/pragmatic-kube --workspace=packages/pragmatic-observability \
+    && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
+
+FROM build AS pragmatic-ui-unpack-shared-modules
+RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
+    --workspace=packages/pragmatic-component --workspace=packages/pragmatic-release-toolkit \
     && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
 
 # Shared runtime base: the app images below differ only in what they copy and how they start.
@@ -238,8 +248,11 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local /workspace/pragmatic-shared/packages/pragmatic-identity-source-local
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store /workspace/pragmatic-shared/packages/pragmatic-identity-store
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-kube /workspace/pragmatic-shared/packages/pragmatic-kube
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-platform-link /workspace/pragmatic-shared/packages/pragmatic-platform-link
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom /workspace/pragmatic-shared/packages/pragmatic-realm-custom
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit /workspace/pragmatic-shared/packages/pragmatic-release-toolkit
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-platform-admin-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
@@ -268,6 +281,7 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity /workspace/pragmatic-shared/packages/pragmatic-identity
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm /workspace/pragmatic-shared/packages/pragmatic-identity-realm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-platform-link /workspace/pragmatic-shared/packages/pragmatic-platform-link
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-platform-edge-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
@@ -298,6 +312,7 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local /workspace/pragmatic-shared/packages/pragmatic-identity-source-local
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store /workspace/pragmatic-shared/packages/pragmatic-identity-store
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability /workspace/pragmatic-shared/packages/pragmatic-observability
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-aws /workspace/pragmatic-shared/packages/pragmatic-realm-aws
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-azure /workspace/pragmatic-shared/packages/pragmatic-realm-azure
@@ -322,6 +337,7 @@ ENTRYPOINT ["node", "dist/bin/pragmatic-serverd.js"]
 FROM runtime AS pragmatic-env-gateway
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-protocol /workspace/pragmatic-protocol
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity /workspace/pragmatic-shared/packages/pragmatic-identity
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability /workspace/pragmatic-shared/packages/pragmatic-observability
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-env-gateway-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
@@ -336,9 +352,14 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD node -e "const r=require('node:http').request({host:'127.0.0.1',port:process.env.PRAGMATIC_PORT||8080,path:'/healthz'},x=>process.exit(x.statusCode===200?0:1));r.on('error',()=>process.exit(1));r.end()"
 ENTRYPOINT ["node", "dist/bin/pragmatic-gatewayd.js"]
 
-# The hive agent imports only node built-ins: no node_modules, no siblings.
+# The hive agent imports node built-ins and two dependency-free shared packages (pragmatic-kube, pragmatic-observability):
+# no TODL, Mural or other sibling.
 FROM runtime AS pragmatic-hive-agent
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-kube /workspace/pragmatic-shared/packages/pragmatic-kube
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability /workspace/pragmatic-shared/packages/pragmatic-observability
+COPY --from=pragmatic-hive-agent-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist /workspace/pragmatic-server/dist
 ARG COMPONENT_DIGEST
 COPY --from=component /component/component.json /pragmatic/component.json
@@ -356,8 +377,11 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity /workspace/pragmatic-shared/packages/pragmatic-identity
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm /workspace/pragmatic-shared/packages/pragmatic-identity-realm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-kube /workspace/pragmatic-shared/packages/pragmatic-kube
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-platform-link /workspace/pragmatic-shared/packages/pragmatic-platform-link
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom /workspace/pragmatic-shared/packages/pragmatic-realm-custom
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit /workspace/pragmatic-shared/packages/pragmatic-release-toolkit
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-tenant-admin-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
@@ -413,7 +437,10 @@ ENTRYPOINT ["node", "dist/bin/pragmatic-idpd.js"]
 # The UI-unpack init container: pulls, verifies and unpacks a signed UI artifact, then exits. Only its own compile
 # (dist-ui-unpack: the entry and the few modules it imports), no control plane, SPA or seed.
 FROM runtime AS pragmatic-ui-unpack
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component /workspace/pragmatic-shared/packages/pragmatic-component
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit /workspace/pragmatic-shared/packages/pragmatic-release-toolkit
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
+COPY --from=pragmatic-ui-unpack-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-ui-unpack /workspace/pragmatic-server/dist-ui-unpack

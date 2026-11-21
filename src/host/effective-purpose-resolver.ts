@@ -1,6 +1,5 @@
-import { AccessContext } from '@pragmatic-tech-ai/pragmatic-identity'
+import { AccessContext, ScopedAccessContext, TokenScope } from '@pragmatic-tech-ai/pragmatic-identity'
 import { EnvironmentPurpose } from '../environments/environment-purpose.js'
-import { ScopedAccessContext, TokenScope } from './token-scope.js'
 
 /**
  * Decides which service stack (development engine or runtime engine) one connection sees. Resolved once at

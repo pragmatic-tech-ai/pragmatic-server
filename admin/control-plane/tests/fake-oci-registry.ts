@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { OciFetch, OciRequestInit } from '../oci-registry-client.js'
+import type { OciFetch, OciRequestInit } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 export interface FakeOciRequest
 {

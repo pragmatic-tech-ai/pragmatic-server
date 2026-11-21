@@ -2,7 +2,7 @@ import type { EnvironmentRecord } from './environment-record.js'
 import { EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrlsLease, type IEnvironmentReach } from './environment-endpoints.js'
 import { EnvServerSeedSource } from './env-server-seed.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-import type { IKubectl } from './kubectl.js'
+import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 
 /**
  * How the tenant console, running as a pod inside its hive, reaches an environment: by cluster DNS (the environment's

@@ -1,11 +1,7 @@
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { AgentChannelHost } from './agent-channel-host.js'
-import type { IAgentChannelBackend } from './agent-channel-backend.js'
-import type { IDesktopDiscoveryBackend } from './desktop-discovery-contract.js'
-import { DesktopDiscoveryEndpoint } from './desktop-discovery-endpoint.js'
+import { AgentChannelHost, type IAgentChannelBackend, type IDesktopDiscoveryBackend, DesktopDiscoveryEndpoint, PlaneHttp } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import { EdgeClientAddress } from './edge-client-address.js'
-import { PlaneHttp } from './plane-http.js'
 
 /**
  * The edge's one public listener (behind Caddy): the agent channel, desktop discovery and a liveness probe, nothing

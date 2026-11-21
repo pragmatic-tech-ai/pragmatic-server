@@ -1,5 +1,4 @@
-import { SettingType, type ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component'
-import { ComponentDeclarations, type ComponentDeclaration } from '../component/component-declaration.js'
+import { SettingType, type ComponentDescriptor, ComponentDeclarations, type ComponentDeclaration } from '@pragmatic-tech-ai/pragmatic-component'
 import { ServerOptionDeclarations } from '../component/server-option-declarations.js'
 
 /**
@@ -9,9 +8,12 @@ import { ServerOptionDeclarations } from '../component/server-option-declaration
 export class EnvServerComponent
 {
     public static readonly Name = 'pragmatic-env-server'
+    /** The descriptor version: this application's package version (the release test pins it to package.json). */
+    public static readonly Version = '0.1.0'
 
     private static readonly Declaration: ComponentDeclaration = {
         name: EnvServerComponent.Name,
+        version: EnvServerComponent.Version,
         options: [
             {
                 name: 'core',

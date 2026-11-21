@@ -1,6 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { OpaqueToken } from './opaque-token.js';
-import { RealmIssuer } from './realm-issuer.js';
+import { RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity';
 
 /** What an upstream round trip carries: the browser binding's digest and the realm's authorize request. */
 export class BrokerReturn

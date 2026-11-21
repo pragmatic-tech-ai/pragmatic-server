@@ -6,10 +6,8 @@ import { join } from 'node:path'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
-import { HiveBackend, InfraMode, InvalidRecordIdError } from '../platform-records.js'
-import type { ClusterSpec, RegistrySpec } from '../platform-records.js'
-import { EnvStatus, EnvType, Template } from '../environment-record.js'
-import type { EnvironmentRecord } from '../environment-record.js'
+import { HiveBackend, InfraMode, InvalidRecordIdError, type ClusterSpec, type RegistrySpec } from '../platform-records.js'
+import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import {
     PlatformDirectory,
     RecordExistsError,
@@ -20,10 +18,9 @@ import {
     HiveHasEnvironmentsError,
     InHiveConsoleTakenError
 } from '../platform-directory.js'
-import { UnknownHiveError } from '../rollout-errors.js'
+import { UnknownHiveError } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import { IngressTlsSource } from '../ingress-tls.js'
-import { InvalidHiveConsoleError } from '../hive-console-spec.js'
-import type { HiveConsoleSpec } from '../hive-console-spec.js'
+import { InvalidHiveConsoleError, type HiveConsoleSpec } from '../hive-console-spec.js'
 import { HivePlacementError } from '../hive-placement-error.js'
 import { InvalidEmailDomainError } from '../email-domain-policy.js'
 import type { IEnvironmentLookup } from '../platform-directory.js'

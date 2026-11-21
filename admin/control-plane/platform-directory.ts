@@ -3,12 +3,11 @@ import type { TenantRegistry } from './tenant-registry.js'
 import type { HiveRegistry } from './hive-registry.js'
 import type { EnvironmentRecord } from './environment-record.js'
 import { HivePlacementError } from './hive-placement-error.js'
-import { RecordId } from './platform-records.js'
+import { RecordId, type ClientRecord, type TenantRecord, type HiveRecord, type ClusterSpec, type RegistrySpec } from './platform-records.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-import { UnknownHiveError } from './rollout-errors.js'
+import { UnknownHiveError } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import { EmailDomainPolicy } from './email-domain-policy.js'
 import { HiveConsoleSpecs, type HiveConsoleSpec } from './hive-console-spec.js'
-import type { ClientRecord, TenantRecord, HiveRecord, ClusterSpec, RegistrySpec } from './platform-records.js'
 
 export interface IEnvironmentLookup
 {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import type { IKind, KindClusterConfig } from '../../kind.js'
-import type { IExecFile } from '../../kubectl.js'
+import type { IExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 import { DevCluster } from '../dev-cluster.js'
 
 class FakeKind implements IKind

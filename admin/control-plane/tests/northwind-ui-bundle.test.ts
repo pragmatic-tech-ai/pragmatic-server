@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { NorthwindUiBundle } from '../northwind-ui-bundle.js'
-import { UiArtifact } from '../ui-artifact.js'
+import { UiArtifact } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 test('Load returns the northwind config and the two UI files', () =>
 {

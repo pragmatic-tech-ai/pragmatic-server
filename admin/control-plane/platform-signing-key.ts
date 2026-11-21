@@ -2,8 +2,7 @@ import { createPrivateKey, createPublicKey, generateKeyPairSync, randomUUID } fr
 import { existsSync, readFileSync } from 'node:fs'
 import { link, mkdir, unlink, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import type { IImageSigner } from './image-signer.js'
-import { FileKeyStore } from './key-store.js'
+import { type IImageSigner, FileKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import type { HiveRecord } from './platform-records.js'
 
 /** Only the public half of the platform key pair is on disk; it cannot be recovered and is never silently regenerated. */

@@ -2,7 +2,7 @@ import { strict as assert } from 'node:assert'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import { before, describe, it } from 'node:test'
-import { ReleaseApp } from '../../../admin/control-plane/release/release-tag.js'
+import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { AssignmentRules, SplitHome } from '../assignment-rules.js'
 import { ReachReport, SplitAssignment } from '../reach-report.js'
 
@@ -30,17 +30,17 @@ describe('AssignmentRules', () =>
         assert.throws(() => rules.Assign('admin/control-plane/client-registry.ts', [ReleaseApp.PlatformAdmin, ReleaseApp.PlatformEdge]), /client-registry\.ts/)
     })
 
-    it('a file reached by tenant-admin and platform-admin goes to pragmatic-tenant-plane unless a kube/release/link rule claims it', () =>
+    it('a file reached by tenant-admin and platform-admin goes to pragmatic-tenant-plane unless a rule names it', () =>
     {
         assert.equal(rules.Assign('admin/control-plane/tenant-api/tenant-api-endpoint.ts', [ReleaseApp.PlatformAdmin, ReleaseApp.TenantAdmin]).Home, SplitHome.TenantPlane)
-        assert.equal(rules.Assign('admin/control-plane/kube-api-client.ts', [ReleaseApp.PlatformAdmin, ReleaseApp.TenantAdmin]).Home, SplitHome.Kube)
-        assert.equal(rules.Assign('admin/control-plane/oci-registry-client.ts', [ReleaseApp.PlatformAdmin, ReleaseApp.TenantAdmin, ReleaseApp.UiUnpack]).Home, SplitHome.ReleaseToolkit)
-        assert.equal(rules.Assign('admin/control-plane/internal-api-routes.ts', [ReleaseApp.PlatformAdmin, ReleaseApp.PlatformEdge]).Home, SplitHome.PlatformLink)
+        assert.equal(rules.Assign('admin/control-plane/k8s-manifest-builder.ts', [ReleaseApp.PlatformAdmin, ReleaseApp.TenantAdmin]).Home, SplitHome.TenantPlane)
+        assert.equal(rules.Assign('admin/control-plane/release/release-components.ts', [ReleaseApp.PlatformAdmin, ReleaseApp.TenantAdmin]).Home, SplitHome.Archive)
     })
 
-    it('src/agent/kube-https-transport.ts goes to pragmatic-kube', () =>
+    it('the postgres image\'s tests go to pragmatic-postgres', () =>
     {
-        assert.equal(rules.Assign('src/agent/kube-https-transport.ts', [ReleaseApp.HiveAgent, ReleaseApp.PlatformAdmin, ReleaseApp.TenantAdmin]).Home, SplitHome.Kube)
+        assert.equal(rules.Assign('docker/postgres/tests/image.test.sh', []).Home, SplitHome.Postgres)
+        assert.equal(rules.Assign('docker/images/tests/postgres-image.test.ts', []).Home, SplitHome.Postgres)
     })
 
     it('the env-server and the env-gateway share pragmatic-env-cluster; the edge files go to the edge', () =>
@@ -78,7 +78,10 @@ describe('ReachReport over the repository', () =>
         const homes = Measured.Assignment.Homes
         assert.equal(homes['src/idp/token-endpoint.ts'], SplitHome.TenantIdp)
         assert.equal(homes['admin/control-plane/edge-host.ts'], SplitHome.PlatformEdge)
-        assert.equal(homes['admin/control-plane/k8s-manifest-builder.ts'], SplitHome.Kube)
+        assert.equal(homes['admin/control-plane/k8s-manifest-builder.ts'], SplitHome.TenantPlane)
+        // lifted into pragmatic-shared by Task 3: no longer tracked here
+        assert.equal(homes['src/agent/kube-https-transport.ts'], undefined)
+        assert.equal(homes['admin/control-plane/release/release-tag.ts'], undefined)
         assert.equal(homes['admin/control-plane/descriptors/digests.json'], SplitHome.TenantAdmin)
         assert.equal(homes['src/bin/gateway-main.ts'], SplitHome.EnvGateway)
     })
@@ -88,6 +91,9 @@ describe('ReachReport over the repository', () =>
         const homes = Measured.Assignment.Homes
         assert.equal(homes['src/idp/tests/tenant-idp-protocol.test.ts'], homes['src/idp/token-endpoint.ts'])
         assert.equal(homes['admin/control-plane/tests/desktop-relay.test.ts'], homes['admin/control-plane/tenant-auth/desktop-relay.ts'])
+        // an explicit exception names a test's home before its subject or its reach does
+        assert.equal(homes['admin/control-plane/tests/agent-channel-host.test.ts'], SplitHome.PlatformAdmin)
+        assert.equal(homes['admin/control-plane/release/tests/component-descriptor-set.test.ts'], SplitHome.Archive)
     })
 
     it('lists the tests whose imports span containers with no subject to follow, and not a one-container test', () =>

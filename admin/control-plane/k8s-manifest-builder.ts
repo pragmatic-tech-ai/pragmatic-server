@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { UiArtifact } from './ui-artifact.js'
+import { UiArtifact } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { EnvConventions } from '../../environments/seed/env-conventions.js'
 import type { EnvironmentWorkload, WorkloadAppDeployment, WorkloadDatabase } from './environment-workload.js'
 import { EnvServerSeedSource } from './env-server-seed.js'

@@ -1,7 +1,7 @@
 import type { EnvironmentWorkload } from './environment-workload.js'
 import type { IHiveOrchestrator, WorkloadHealth } from './hive-orchestrator.js'
 import type { IKind } from './kind.js'
-import type { IKubectl } from './kubectl.js'
+import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 
 /** Provisions a kind cluster on demand and delegates workload lifecycle to an inner orchestrator. */
 export class KindHiveOrchestrator implements IHiveOrchestrator

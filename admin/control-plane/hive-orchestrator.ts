@@ -1,4 +1,4 @@
-import type { IKubectl } from './kubectl.js'
+import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 import type { EnvironmentWorkload } from './environment-workload.js'
 import type { HiveBackend, InfraMode } from './platform-records.js'
 

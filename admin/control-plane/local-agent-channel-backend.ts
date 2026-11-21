@@ -5,9 +5,7 @@ import { DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerify
 import { InvalidEmailDomainError } from './email-domain-policy.js'
 import type { DomainVerificationAnswer } from './domain-verification-record.js'
 import type { HiveHealthDto } from './hive-health-producer.js'
-import { AgentChannelOperation, AgentChannelReplies, type AgentChannelReply, type AgentChannelRequest, type IAgentChannelBackend } from './agent-channel-backend.js'
-import { PlaneHttp } from './plane-http.js'
-import { AgentUnauthorizedError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestNotGatedError, ManifestWithdrawnError, ReleaseNotRunnableYetError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from './rollout-errors.js'
+import { AgentChannelOperation, AgentChannelReplies, type AgentChannelReply, type AgentChannelRequest, type IAgentChannelBackend, PlaneHttp, AgentUnauthorizedError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestNotGatedError, ManifestWithdrawnError, ReleaseNotRunnableYetError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from '@pragmatic-tech-ai/pragmatic-platform-link'
 
 /** The agent channel answered in-process over the platform registries: verifies the hive's bearer, runs the operation
  *  and maps every failure to its fixed-text reply (an unregistered hive is indistinguishable from a wrong token, and

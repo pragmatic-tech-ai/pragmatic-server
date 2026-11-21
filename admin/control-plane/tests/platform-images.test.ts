@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ManifestRegistry, ReleaseState, type ManifestRecord } from '../manifest-record.js'
 import { DevPlatformImages, ReleasePlatformImages } from '../platform-images.js'
-import { ReleaseApp, ReleaseApps } from '../release/release-tag.js'
+import { ReleaseApp, ReleaseApps } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 
 class Releases

@@ -1,6 +1,6 @@
 import type { ISqlSession } from '@pragmatic-tech-ai/todl'
 import { SqlRecordStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
-import type { ISignatureStore } from './signature-store.js'
+import type { ISignatureStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import type { SqlRecordMapRow } from './sql-record-map.js'
 
 /**

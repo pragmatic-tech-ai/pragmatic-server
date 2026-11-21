@@ -1,5 +1,4 @@
-import { SettingType, type ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component';
-import { ComponentDeclarations, type ComponentDeclaration, type OptionDeclaration } from '../component/component-declaration.js';
+import { SettingType, type ComponentDescriptor, ComponentDeclarations, type ComponentDeclaration, type OptionDeclaration } from '@pragmatic-tech-ai/pragmatic-component';
 import { RealmSourceKind, TenantIdpOptions as O } from './tenant-idp-options.js';
 
 /**
@@ -11,6 +10,8 @@ import { RealmSourceKind, TenantIdpOptions as O } from './tenant-idp-options.js'
 export class TenantIdpComponent
 {
     public static readonly Name = 'pragmatic-tenant-idp';
+    /** The descriptor version: this application's package version (the release test pins it to package.json). */
+    public static readonly Version = '0.1.0';
 
     private static readonly Core: OptionDeclaration = {
         name: O.Core,
@@ -115,6 +116,7 @@ export class TenantIdpComponent
 
     private static readonly Declaration: ComponentDeclaration = {
         name: TenantIdpComponent.Name,
+        version: TenantIdpComponent.Version,
         options: [
             TenantIdpComponent.Core,
             TenantIdpComponent.Tokens,

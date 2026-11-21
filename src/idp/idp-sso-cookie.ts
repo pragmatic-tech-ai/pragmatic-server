@@ -1,4 +1,4 @@
-import { RealmIssuer } from './realm-issuer.js';
+import { RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity';
 
 /**
  * The login domain's single sign-on cookie: the random session id, HttpOnly, SameSite=Lax (the authorize request is a

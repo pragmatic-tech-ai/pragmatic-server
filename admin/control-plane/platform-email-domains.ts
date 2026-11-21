@@ -1,4 +1,4 @@
-import { AuditThrottle } from './audit-throttle.js'
+import { AuditThrottle } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import { ConsoleAdvertRegistry, type ConsoleAdvertRecord, type IConsoleAdvertLookup } from './console-advert-registry.js'
 import { ConsoleDomainApprovals, type DomainStanding } from './console-domain-approvals.js'
 import { DomainClaims } from './domain-claims.js'

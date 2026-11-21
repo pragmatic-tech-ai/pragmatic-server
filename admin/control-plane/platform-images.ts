@@ -1,8 +1,6 @@
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-import { ReleaseState } from './manifest-record.js'
-import type { ManifestRecord, ManifestRegistry } from './manifest-record.js'
-import { ReleaseRegistry } from './release/release-registry.js'
-import { ReleaseApp } from './release/release-tag.js'
+import { ReleaseState, type ManifestRecord, type ManifestRegistry } from './manifest-record.js'
+import { ReleaseRegistry, ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 /** Where the platform's own images (the hive agent, the console's tenant-admin and IdP) come from. */
 export interface IPlatformImages

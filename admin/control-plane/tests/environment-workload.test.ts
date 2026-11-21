@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { OciRegistryClient } from '../oci-registry-client.js'
+import { OciRegistryClient } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { EnvironmentWorkloadFactory } from '../environment-workload.js'
 import { InClusterRegistry } from '../in-cluster-registry.js'
 import { EnvServerSeedSource } from '../env-server-seed.js'

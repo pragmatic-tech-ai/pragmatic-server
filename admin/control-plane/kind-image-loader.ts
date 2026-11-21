@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { KubectlError } from './kubectl.js'
+import { KubectlError } from '@pragmatic-tech-ai/pragmatic-kube'
 import { LocalDevCluster } from './local-dev-cluster.js'
 
 /**

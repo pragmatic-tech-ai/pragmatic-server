@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { decodeJwt } from 'jose';
-import { RealmIssuer } from '../realm-issuer.js';
+import { RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity';
 import type { IdpTestReply, TenantIdpTestHost } from './tenant-idp-test-host.js';
 
 /** One authorize request of a test relying party: its query and the PKCE verifier, state and nonce behind it. */

@@ -1,5 +1,5 @@
 import type { IAccessAuditSink } from '../host/access-audit.js'
-import type { ILogger } from '../observability/logger.js'
+import type { ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 
 /** What a shutdown stops first: the server or worker host (no new requests, so no new audit writes, after it). */
 export interface IShutdownHost

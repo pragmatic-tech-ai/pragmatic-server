@@ -1,5 +1,4 @@
-import { SettingType, type ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component'
-import { ComponentDeclarations, type ComponentDeclaration } from '../../src/component/component-declaration.js'
+import { SettingType, type ComponentDescriptor, ComponentDeclarations, type ComponentDeclaration } from '@pragmatic-tech-ai/pragmatic-component'
 
 /**
  * The component descriptor of the platform edge image (ControlPlaneServer in the edge role): what `EdgeComposition.Compose`
@@ -8,9 +7,12 @@ import { ComponentDeclarations, type ComponentDeclaration } from '../../src/comp
 export class PlatformEdgeComponent
 {
     public static readonly Name = 'pragmatic-platform-edge'
+    /** The descriptor version: this application's package version (the release test pins it to package.json). */
+    public static readonly Version = '0.1.0'
 
     private static readonly Declaration: ComponentDeclaration = {
         name: PlatformEdgeComponent.Name,
+        version: PlatformEdgeComponent.Version,
         options: [
             {
                 name: 'core',

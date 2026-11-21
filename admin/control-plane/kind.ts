@@ -1,8 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { KubectlError } from './kubectl.js'
-import type { IExecFile } from './kubectl.js'
+import { KubectlError, type IExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 
 /** Optional kind cluster config: host ports to map to the node (e.g. 443 for an ingress controller). */
 export interface KindClusterConfig

@@ -1,7 +1,7 @@
 {
   "pragmatic-platform-admin": {
     "entrypoint": ["node", "dist-tenant-admin/admin/control-plane/server.js"],
-    "packages": ["Mural", "TODL", "pragmatic-protocol", "pragmatic-shared/packages/pragmatic-app-host", "pragmatic-shared/packages/pragmatic-component", "pragmatic-shared/packages/pragmatic-configuration", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-local", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-identity-store", "pragmatic-shared/packages/pragmatic-realm-adapters", "pragmatic-shared/packages/pragmatic-realm-custom", "todl-runtime"],
+    "packages": ["Mural", "TODL", "pragmatic-protocol", "pragmatic-shared/packages/pragmatic-app-host", "pragmatic-shared/packages/pragmatic-component", "pragmatic-shared/packages/pragmatic-configuration", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-local", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-identity-store", "pragmatic-shared/packages/pragmatic-kube", "pragmatic-shared/packages/pragmatic-platform-link", "pragmatic-shared/packages/pragmatic-realm-adapters", "pragmatic-shared/packages/pragmatic-realm-custom", "pragmatic-shared/packages/pragmatic-release-toolkit", "todl-runtime"],
     "files": [
       "pragmatic-shared/node_modules",
       "pragmatic-server/package.json",
@@ -17,7 +17,7 @@
   },
   "pragmatic-platform-edge": {
     "entrypoint": ["node", "dist-tenant-admin/admin/control-plane/bin/pragmatic-platform-edged.js"],
-    "packages": ["pragmatic-shared/packages/pragmatic-app-host", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-realm-adapters", "todl-runtime"],
+    "packages": ["pragmatic-shared/packages/pragmatic-app-host", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-platform-link", "pragmatic-shared/packages/pragmatic-realm-adapters", "todl-runtime"],
     "files": [
       "pragmatic-shared/node_modules",
       "pragmatic-server/package.json",
@@ -28,22 +28,22 @@
   "pragmatic-env-server": {
     "entrypoint": ["node", "dist/bin/pragmatic-serverd.js"],
     "alsoRuns": ["dist/bin/pragmatic-workerd.js"],
-    "packages": ["Mural", "TODL", "pragmatic-graph", "pragmatic-protocol", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-entra", "pragmatic-shared/packages/pragmatic-identity-source-google", "pragmatic-shared/packages/pragmatic-identity-source-local", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-identity-store", "pragmatic-shared/packages/pragmatic-realm-adapters", "pragmatic-shared/packages/pragmatic-realm-aws", "pragmatic-shared/packages/pragmatic-realm-azure", "pragmatic-shared/packages/pragmatic-realm-custom", "pragmatic-shared/packages/pragmatic-realm-gcp", "todl-connectors-host", "todl-identity-engine", "todl-runtime"],
+    "packages": ["Mural", "TODL", "pragmatic-graph", "pragmatic-protocol", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-entra", "pragmatic-shared/packages/pragmatic-identity-source-google", "pragmatic-shared/packages/pragmatic-identity-source-local", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-identity-store", "pragmatic-shared/packages/pragmatic-observability", "pragmatic-shared/packages/pragmatic-realm-adapters", "pragmatic-shared/packages/pragmatic-realm-aws", "pragmatic-shared/packages/pragmatic-realm-azure", "pragmatic-shared/packages/pragmatic-realm-custom", "pragmatic-shared/packages/pragmatic-realm-gcp", "todl-connectors-host", "todl-identity-engine", "todl-runtime"],
     "files": ["pragmatic-shared/node_modules", "pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist"]
   },
   "pragmatic-env-gateway": {
     "entrypoint": ["node", "dist/bin/pragmatic-gatewayd.js"],
-    "packages": ["pragmatic-protocol", "pragmatic-shared/packages/pragmatic-identity", "todl-runtime"],
+    "packages": ["pragmatic-protocol", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-observability", "todl-runtime"],
     "files": ["pragmatic-shared/node_modules", "pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist"]
   },
   "pragmatic-hive-agent": {
     "entrypoint": ["node", "dist/bin/pragmatic-agentd.js"],
-    "packages": [],
-    "files": ["pragmatic-server/package.json", "pragmatic-server/dist"]
+    "packages": ["pragmatic-shared/packages/pragmatic-kube", "pragmatic-shared/packages/pragmatic-observability"],
+    "files": ["pragmatic-shared/node_modules", "pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist"]
   },
   "pragmatic-tenant-admin": {
     "entrypoint": ["node", "dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-admind.js"],
-    "packages": ["Mural", "TODL", "pragmatic-protocol", "pragmatic-shared/packages/pragmatic-app-host", "pragmatic-shared/packages/pragmatic-component", "pragmatic-shared/packages/pragmatic-configuration", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-realm-adapters", "pragmatic-shared/packages/pragmatic-realm-custom", "todl-runtime"],
+    "packages": ["Mural", "TODL", "pragmatic-protocol", "pragmatic-shared/packages/pragmatic-app-host", "pragmatic-shared/packages/pragmatic-component", "pragmatic-shared/packages/pragmatic-configuration", "pragmatic-shared/packages/pragmatic-identity", "pragmatic-shared/packages/pragmatic-identity-realm", "pragmatic-shared/packages/pragmatic-identity-source-oidc", "pragmatic-shared/packages/pragmatic-kube", "pragmatic-shared/packages/pragmatic-platform-link", "pragmatic-shared/packages/pragmatic-realm-adapters", "pragmatic-shared/packages/pragmatic-realm-custom", "pragmatic-shared/packages/pragmatic-release-toolkit", "todl-runtime"],
     "files": [
       "pragmatic-shared/node_modules",
       "pragmatic-server/package.json",
@@ -69,7 +69,7 @@
   },
   "pragmatic-ui-unpack": {
     "entrypoint": ["node", "dist-ui-unpack/admin/control-plane/bin/pragmatic-ui-unpack.js"],
-    "packages": ["todl-runtime"],
-    "files": ["pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist-ui-unpack"]
+    "packages": ["pragmatic-shared/packages/pragmatic-component", "pragmatic-shared/packages/pragmatic-release-toolkit", "todl-runtime"],
+    "files": ["pragmatic-shared/node_modules", "pragmatic-server/package.json", "pragmatic-server/node_modules", "pragmatic-server/dist-ui-unpack"]
   }
 }

@@ -1,10 +1,8 @@
 import { InClusterK8sApi } from './k8s-api.js'
 import { AgentWiring } from './agent-wiring.js'
 import { BoundedFetch } from './bounded-fetch.js'
-import { RolloutAgent } from './rollout-agent.js'
-import type { IEnvironmentState, IRolloutTarget, ISnapshotEnvironment } from './rollout-agent.js'
-import { StructuredLogger } from '../observability/logger.js'
-import type { ILogger } from '../observability/logger.js'
+import { RolloutAgent, type IEnvironmentState, type IRolloutTarget, type ISnapshotEnvironment } from './rollout-agent.js'
+import { StructuredLogger, type ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 
 class AgentMain
 {

@@ -1,6 +1,5 @@
-import { KubectlError, type IKubectl } from './kubectl.js'
+import { KubectlError, type IKubectl, KubeResourceCatalog, type KubeTypeRef } from '@pragmatic-tech-ai/pragmatic-kube'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-import { KubeResourceCatalog, type KubeTypeRef } from './kube-api-client.js'
 
 /** Why the console refused a namespace, an object or a workload. */
 export enum EnvNamespaceRefusal

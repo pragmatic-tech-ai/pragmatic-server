@@ -1,4 +1,4 @@
-import type { PortForwardResult } from './kubectl.js'
+import type { PortForwardResult } from '@pragmatic-tech-ai/pragmatic-kube'
 
 /** A hold on a pooled tunnel: its loopback port, kept open until every lease on it is released. */
 export interface ITunnelLease

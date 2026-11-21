@@ -1,5 +1,5 @@
 import { HttpMethod, RouteAuth, RouteBody, type RequestContext, type RouteTable } from '@pragmatic-tech-ai/pragmatic-app-host';
-import { RealmIssuer } from './realm-issuer.js';
+import { RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity';
 import type { ProtocolReply } from './token-endpoint.js';
 
 /** One form-bodied OAuth endpoint (token, revocation): the realm, the decoded form and the Authorization header in. */

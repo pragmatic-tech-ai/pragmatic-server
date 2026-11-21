@@ -4,7 +4,8 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { parse } from 'yaml'
-import { ClosureCheck } from '../../../docker/images/closure-check.js'
+import { ClosureCheck } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
+import { ServerClosureCheck } from '../../../docker/images/closure-check.js'
 import { ImportWalker } from '../../../admin/control-plane/tests/import-walker.js'
 
 class Workflows
@@ -63,8 +64,8 @@ test('release workflow publishes on release tags only, and never leaks its crede
     const steps = Object.values(doc.jobs).flatMap(job => job.steps ?? [])
     const runs = steps.map(step => step.run ?? '')
     const check = runs.findIndex(run => /pragmatic-release-publish\.ts check --tag "\$GITHUB_REF"/.test(run))
-    const clone = runs.findIndex(run => /git clone/.test(run))
-    assert.ok(check !== -1 && check < clone, 'the tag is checked before any sibling is cloned')
+    const clone = runs.findIndex(run => /git clone [^\n]*\$\{repo\}\.git/.test(run))
+    assert.ok(check !== -1 && check < clone, 'the tag is checked before the siblings are cloned')
     assert.ok(runs.some(run => /docker buildx bake -f pragmatic-server\/docker\/docker-bake\.hcl \\\s+-f pragmatic-server\/docker\/\.components\/docker-bake\.components\.json --push/.test(run)))
     assert.ok(runs.some(run => WorkflowCommands.BakeAllowsNpmrc.test(run)), 'bake is granted read access to the npmrc secret file')
     assert.ok(runs.some(run => /publish --tag .* --key-id release-2026-11/.test(run)))
@@ -123,7 +124,7 @@ test('ci and release workflows clone exactly the siblings the Dockerfiles copy',
 {
     const copied = SiblingLists.Copied('images', 'Dockerfile')
     assert.deepEqual(SiblingLists.Copied('Dockerfile'), copied, 'the per-app images and the legacy dev image build the same siblings')
-    assert.deepEqual(SiblingLists.Repos([...ClosureCheck.Siblings, ClosureCheck.SharedRepo]), copied, 'the closure check knows every sibling repo the image build copies (the shared packages come from the pragmatic-shared workspaces)')
+    assert.deepEqual(SiblingLists.Repos([...ServerClosureCheck.Siblings, ClosureCheck.SharedRepo]), copied, 'the closure check knows every sibling repo the image build copies (the shared packages come from the pragmatic-shared workspaces)')
     assert.deepEqual(SiblingLists.Cloned('ci.yml'), copied)
     assert.deepEqual(SiblingLists.Cloned('release.yml'), copied)
 })
@@ -135,7 +136,7 @@ class WorkflowCommands
     private static readonly DownloadFlag = /--yes|(?:^|\s)-y\b/
     private static readonly VersionMarker = '@'
     private static readonly ExactVersion = /^(?:@[a-z0-9-]+\/)?[a-z0-9.-]+@\d+\.\d+\.\d+$/
-    private static readonly TestFilesPattern = /--test((?:\s+"?pragmatic-server\/\S+?\.test\.ts"?)+)/
+    private static readonly TestFilesPattern = /--test((?:\s+"?pragmatic-(?:server|shared)\/\S+?\.test\.ts"?)+)/
     private static readonly Quote = /"/g
     private static readonly Whitespace = /\s+/
     private static readonly NoText = ''
@@ -431,7 +432,7 @@ test('ci checks every image carries the component descriptor its label names', (
 {
     const runs = MultiArch.Runs(MultiArch.Jobs('ci.yml')['build-test-package'].steps)
     const bake = runs.findIndex(run => /docker buildx bake/.test(run))
-    const check = runs.findIndex(run => run.includes('docker/images/check-component-label.sh'))
+    const check = runs.findIndex(run => run.includes('pragmatic-release-toolkit/scripts/check-component-label.sh'))
     assert.ok(bake !== -1 && check > bake)
     for (const app of ['pragmatic-platform-admin', 'pragmatic-platform-edge', 'pragmatic-env-server', 'pragmatic-env-gateway', 'pragmatic-hive-agent', 'pragmatic-tenant-admin', 'pragmatic-tenant-idp', 'pragmatic-ui-unpack', 'pragmatic-postgres'])
     {

@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EnvNamespaceGuard, EnvNamespaceRefusal, EnvNamespaceRefusedError } from '../env-namespace-guard.js'
-import type { IKubectl } from '../kubectl.js'
+import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 
 class RecordingKubectl implements IKubectl
 {

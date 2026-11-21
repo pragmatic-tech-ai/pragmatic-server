@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { join } from 'node:path'
 import { before, describe, it } from 'node:test'
-import { ReleaseApp } from '../../../admin/control-plane/release/release-tag.js'
+import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { SharedHomeUsers, SplitHome } from '../assignment-rules.js'
 import { ReachReport, SplitAssignment } from '../reach-report.js'
 

@@ -1,8 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
-import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-import type { K8sObject } from './k8s-manifest-builder.js'
-import type { IKubectl } from './kubectl.js'
+import { K8sManifestBuilder, type K8sObject } from './k8s-manifest-builder.js'
+import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 
 interface EnvSecretEntry
 {

@@ -4,7 +4,7 @@ import type { IdpRealm } from './idp-realm.js';
 import type { IdpRealmSet } from './idp-realm-set.js';
 import type { IdpSigningKey } from './idp-signing-key.js';
 import { IdpSsoCookie } from './idp-sso-cookie.js';
-import { RealmIssuer } from './realm-issuer.js';
+import { RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity';
 import type { SqlIdpClientStore } from './sql-idp-client-store.js';
 import type { SqlRefreshTokenStore } from './sql-refresh-token-store.js';
 import type { SqlSsoSessionStore } from './sql-sso-session-store.js';

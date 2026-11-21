@@ -7,7 +7,7 @@ import { PeriodicExportingMetricReader, InMemoryMetricExporter, AggregationTempo
 import { Observability, ObservabilityRole } from '../observability.js'
 import { RequestInstrumentation } from '../request-instrumentation.js'
 import { RequestCorrelation } from '../request-correlation.js'
-import { NullLogger, StructuredLogger } from '../logger.js'
+import { NullLogger, StructuredLogger } from '@pragmatic-tech-ai/pragmatic-observability'
 
 const KNOWN_TRACE_ID = '0af7651916cd43dd8448eb211c80319c'
 const TRACEPARENT = `00-${KNOWN_TRACE_ID}-b7ad6b7169203331-01`

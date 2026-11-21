@@ -9,7 +9,7 @@ import { IdpAdminError, type IdpAdminAccount, type IdpAdminClient } from '../idp
 import type { IdpConnection } from '../idp-workload-driver.js'
 import { InHiveIdpAdmin, InHiveIdpUnavailableError } from '../in-hive-idp-admin.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
-import type { IProcessSpawner, ISpawnedProcess, PortForwardResult } from '../kubectl.js'
+import type { IProcessSpawner, ISpawnedProcess, PortForwardResult } from '@pragmatic-tech-ai/pragmatic-kube'
 import type { TenantRecord } from '../platform-records.js'
 import { SealedSecretStore } from '../sealed-secret-store.js'
 import { OwnerAccountMissingError, OwnerNotRecordedError } from '../tenant-provisioning-service.js'

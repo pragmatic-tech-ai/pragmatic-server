@@ -2,8 +2,7 @@ import { appendFileSync } from 'node:fs'
 import { Action, ResourceKind } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { Counter } from '@opentelemetry/api'
 import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
-import { NullLogger } from '../observability/logger.js'
-import type { ILogger } from '../observability/logger.js'
+import { NullLogger, type ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 
 /** Appends one audit line to a path; the default binds node:fs appendFileSync, tests inject a throwing fake. */
 export type AuditAppender = (path: string, line: string) => void

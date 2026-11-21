@@ -1,12 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { OciRegistryClient, type OciFetch, type RegistryCredential } from '../oci-registry-client.js'
+import { OciRegistryClient, type OciFetch, type RegistryCredential, ReleaseRegistry, ReleaseTrustKeyInvalidError, ReleaseTrustKeys } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { ReleaseCatalog } from './release-catalog.js'
 import { ReleasePoll } from './release-poll.js'
 import { ReleaseRefresher } from './release-refresher.js'
-import { ReleaseRegistry } from './release-registry.js'
-import { ReleaseTrustKeyInvalidError, ReleaseTrustKeys } from './release-trust-keys.js'
 import type { IReleaseCountersigner } from './release-countersigner.js'
 
 /** A release setting is unusable. The sentence names only the variable: never its value or a file's contents. */

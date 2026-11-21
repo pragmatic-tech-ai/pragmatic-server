@@ -14,7 +14,7 @@ import { ControlPlaneServer } from '../server.js'
 import { InfraTargetMode } from '../infra-target-mode.js'
 import { ManifestRegistry } from '../manifest-record.js'
 import { DevPlatformImages, ReleasePlatformImages } from '../platform-images.js'
-import { ReleaseApp } from '../release/release-tag.js'
+import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 class HostedFixture
 {

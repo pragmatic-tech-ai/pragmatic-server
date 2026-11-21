@@ -1,13 +1,9 @@
 import type { ISignal, ISubscription } from '@pragmatic-tech-ai/pragmatic-graph'
 import type { IDataSourceAdapterFactory } from '@pragmatic-tech-ai/todl'
-import { Realm, RealmKind } from '@pragmatic-tech-ai/pragmatic-identity'
-import type { ISourceTokenProvider } from '@pragmatic-tech-ai/pragmatic-identity'
-import { UnsupportedSourceTokenProvider } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
-import type { UpstreamTokenVault } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
-import { CallerCredentialAdapterFactory } from './caller-credential-adapter-factory.js'
-import type { ICallerCredentialWrapper } from './caller-credential-adapter-factory.js'
-import { NullLogger } from '../../observability/logger.js'
-import type { ILogger } from '../../observability/logger.js'
+import { Realm, RealmKind, type ISourceTokenProvider } from '@pragmatic-tech-ai/pragmatic-identity'
+import { UnsupportedSourceTokenProvider, type UpstreamTokenVault } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
+import { CallerCredentialAdapterFactory, type ICallerCredentialWrapper } from './caller-credential-adapter-factory.js'
+import { NullLogger, type ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 import { CallerSourceTokens } from './caller-source-tokens.js'
 
 /** Revokes a principal's per-user source credentials (ruling R27): on deprovisioning and on sign-out. */

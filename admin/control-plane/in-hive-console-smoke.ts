@@ -35,12 +35,11 @@ import { request as httpRequest } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import type { TLSSocket } from 'node:tls'
 import { fileURLToPath } from 'node:url'
-import { chromium } from 'playwright'
-import type { Page } from 'playwright'
+import { chromium, type Page } from 'playwright'
 import { IdpLoginPage } from './idp-login-page.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KindImageLoader } from './kind-image-loader.js'
-import { KubectlError, NodeExecFile } from './kubectl.js'
+import { KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 
 /** Parsed command line. */
 type SmokeOptions = { operatorEmail: string; passwordFile: string; hiveId: string; baseDomain: string; controlPlane: string }

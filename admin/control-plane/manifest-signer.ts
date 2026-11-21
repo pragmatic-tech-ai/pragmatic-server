@@ -1,6 +1,4 @@
-import type { IImageDigest } from './image-digest.js'
-import type { IImageSigner } from './image-signer.js'
-import type { ISignatureStore } from './signature-store.js'
+import type { IImageDigest, IImageSigner, ISignatureStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 export type SignForPublishResult = { digest?: string; signed: boolean }
 

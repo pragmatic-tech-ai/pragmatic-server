@@ -1,7 +1,6 @@
 import { JsonRecordStore } from './json-record-store.js'
 import type { IRecordMap } from './record-map.js'
-import type { Channel } from './channel.js'
-import type { ReleaseApp } from './release/release-tag.js'
+import type { Channel, ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 /** Outcome of verifying a registry release on import. */
 export enum ReleaseState

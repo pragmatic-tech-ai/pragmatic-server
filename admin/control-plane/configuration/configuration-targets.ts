@@ -1,7 +1,7 @@
 import { ApplyTarget } from '@pragmatic-tech-ai/pragmatic-configuration'
 import type { EnvironmentRecord } from '../environment-record.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
-import { ReleaseApp } from '../release/release-tag.js'
+import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 /** One deployment a component's configuration can be applied to: the environment it serves and its place in the hive. */
 export type ConfigurationTargetDto = { environment: string; hive: string; namespace: string; deployment: string }

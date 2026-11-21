@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import type { ReleaseRefreshResult } from '../release-catalog.js'
 import { ReleaseRefresher, type IReleaseRefreshSource } from '../release-refresher.js'
 import { ReleasePoll, type IReleasePollLog } from '../release-poll.js'
-import { ReleaseRegistryUnavailableError } from '../../rollout-errors.js'
+import { ReleaseRegistryUnavailableError } from '@pragmatic-tech-ai/pragmatic-platform-link'
 
 class RecordingLog implements IReleasePollLog
 {

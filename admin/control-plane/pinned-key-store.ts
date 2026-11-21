@@ -1,5 +1,5 @@
 import { createPublicKey } from 'node:crypto'
-import type { IKeyStore } from './key-store.js'
+import type { IKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 /** Serves one key ref from a private key held in memory (e.g. a Podman secret file read at startup); every other ref
  *  comes from `inner`. The public half is derived, in the same SPKI PEM format PlatformSigningKey writes to `.pub`. */

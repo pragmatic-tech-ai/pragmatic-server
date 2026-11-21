@@ -28,11 +28,10 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { InClusterRegistry } from '../in-cluster-registry.js'
 import { KindCli } from '../kind.js'
-import { NodeExecFile } from '../kubectl.js'
+import { NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 import { NetPortProbe } from '../port-allocator.js'
 import { ProcessTree } from './process-tree.js'
-import type { IOperatorApi } from './operator-api-client.js'
-import { OperatorApiClient } from './operator-api-client.js'
+import { type IOperatorApi, OperatorApiClient } from './operator-api-client.js'
 import { TenantOwnerSession } from './tenant-owner-session.js'
 
 /** What `up` hands the orchestrator and the Plexus spec; secrets are FILE paths, never values. */

@@ -1,7 +1,5 @@
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import { OciRegistryClient } from './oci-registry-client.js'
-import { UiArtifact, type UiBundleFile } from './ui-artifact.js'
-import type { UiArtifactVerifier } from './ui-artifact-signer.js'
+import { OciRegistryClient, UiArtifact, type UiBundleFile, type UiArtifactVerifier } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 export type UiUnpackInput =
 {

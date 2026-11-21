@@ -1,5 +1,4 @@
-import { SettingType } from '@pragmatic-tech-ai/pragmatic-component'
-import type { OptionDeclaration } from './component-declaration.js'
+import { SettingType, type OptionDeclaration } from '@pragmatic-tech-ai/pragmatic-component'
 
 /** The options the env server and the gateway read through the same `ServerConfigLoader` code (one declaration for both). */
 export class ServerOptionDeclarations

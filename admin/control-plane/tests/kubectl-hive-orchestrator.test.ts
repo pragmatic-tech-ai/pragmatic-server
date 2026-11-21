@@ -5,9 +5,9 @@ import { UnsupportedBackendError } from '../hive-orchestrator.js'
 import { EnvNamespaceRefusedError } from '../env-namespace-guard.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
-import type { IKubectl } from '../kubectl.js'
+import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 import type { EffectiveRegistry } from '../effective-registry.js'
-import type { IImageVerifier } from '../image-verifier.js'
+import type { IImageVerifier } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import type { EnvironmentWorkload } from '../environment-workload.js'
 
 class FakeKubectl implements IKubectl

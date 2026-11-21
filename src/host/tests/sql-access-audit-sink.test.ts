@@ -1,10 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { AuditEvent, AuditEventKind, Action, ResourceKind } from '@pragmatic-tech-ai/pragmatic-identity'
-import type { IAuditSink } from '@pragmatic-tech-ai/pragmatic-identity'
+import { AuditEvent, AuditEventKind, Action, ResourceKind, type IAuditSink } from '@pragmatic-tech-ai/pragmatic-identity'
 import { AuditSurface, AuditOutcome } from '../access-audit.js'
 import { SqlAuditAccessSink } from '../sql-access-audit-sink.js'
-import type { ILogger, LogFields } from '../../observability/logger.js'
+import type { ILogger, LogFields } from '@pragmatic-tech-ai/pragmatic-observability'
 import { DrainController } from '../../observability/drain-controller.js'
 
 class CapturingStore implements IAuditSink

@@ -4,7 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-// Source scans for the no-inline-literal rule where reviews found breaches: error names, the openssl default and '/' joins.
+// Source scans for the no-inline-literal rule where reviews found breaches: error names and the openssl default.
 class Sources
 {
     public static readonly Root = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -31,10 +31,5 @@ describe('control-plane inline literals', () =>
     it('the development CA takes its openssl default from a constant', () =>
     {
         assert.ok(!/=\s*'openssl'\)/.test(Sources.Text('dev-certificate-authority.ts')))
-    })
-
-    it('ApiKubectl joins resource names with its Slash constant', () =>
-    {
-        assert.ok(!Sources.Text('api-kubectl.ts').includes("+ '/' +"))
     })
 })

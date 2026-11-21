@@ -1,11 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
-import { PrincipalKind, Realm, RealmKind, Principal, PresentedSecret } from '@pragmatic-tech-ai/pragmatic-identity'
+import { PrincipalKind, Realm, RealmKind, Principal, PresentedSecret, TokenScope, TokenScopeGate, ScopedAccessContext, ScopedMethods } from '@pragmatic-tech-ai/pragmatic-identity'
 import { FakeStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/pragmatic-identity-store'
-import { ApplicationDeployProtocol, GraphProtocol, PragmaticAppProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { TokenScope, TokenScopeGate, ScopedAccessContext } from '../token-scope.js'
+import { ApplicationDeployProtocol, GraphProtocol, LanguageProtocol, PragmaticAppProtocol, RunTestProtocol, SolutionProtocol, StorageProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { ConnectionAuthenticator } from '../connection-authenticator.js'
 
 class ScopeFixture
@@ -80,4 +79,33 @@ test('a service-token context carries its scopes; a session context is unscoped 
     const sessionContext = await new ConnectionAuthenticator().ResolveAsync(session.Id, realm, pack)
     assert.ok(sessionContext !== null && !(sessionContext instanceof ScopedAccessContext))
     assert.equal(TokenScopeGate.ForContext(sessionContext).Allows(GraphProtocol.Delete.method), true)
+})
+
+test('every method a scope names is the wire method pragmatic-protocol declares (the identity contracts hold them as text)', () =>
+{
+    const M = ScopedMethods
+    const pairs: [string, string][] = [
+        [M.SolutionList, SolutionProtocol.ListSolutions.method], [M.SolutionSelectAuthoring, SolutionProtocol.SelectAuthoring.method],
+        [M.SolutionCreate, SolutionProtocol.CreateSolution.method], [M.SolutionActive, SolutionProtocol.ActiveSolution.method],
+        [M.StorageReadText, StorageProtocol.ReadText.method], [M.StorageReadBytes, StorageProtocol.ReadBytes.method],
+        [M.StorageWriteText, StorageProtocol.WriteText.method], [M.StorageWriteBytes, StorageProtocol.WriteBytes.method],
+        [M.StorageExists, StorageProtocol.Exists.method], [M.StorageDelete, StorageProtocol.Delete.method],
+        [M.StorageCreateDirectory, StorageProtocol.CreateDirectory.method], [M.StorageRename, StorageProtocol.Rename.method],
+        [M.StorageList, StorageProtocol.List.method],
+        [M.LanguageCompletions, LanguageProtocol.CompletionsAt.method], [M.LanguageHover, LanguageProtocol.HoverAt.method],
+        [M.LanguageDefinition, LanguageProtocol.DefinitionAt.method], [M.LanguageReferences, LanguageProtocol.ReferencesAt.method],
+        [M.LanguagePrepareRename, LanguageProtocol.PrepareRename.method], [M.LanguageRename, LanguageProtocol.RenameEdits.method],
+        [M.LanguageDocumentSymbols, LanguageProtocol.DocumentSymbols.method], [M.LanguageFoldingRanges, LanguageProtocol.FoldingRanges.method],
+        [M.LanguageWorkspaceSymbols, LanguageProtocol.WorkspaceSymbols.method], [M.LanguageSemanticTokens, LanguageProtocol.SemanticTokens.method],
+        [M.LanguageSignatureHelp, LanguageProtocol.SignatureHelpAt.method], [M.LanguageCodeActions, LanguageProtocol.CodeActions.method],
+        [M.LanguageFormat, LanguageProtocol.FormatDocument.method], [M.LanguageDiagnostics, LanguageProtocol.DiagnosticsFor.method],
+        [M.GraphList, GraphProtocol.List.method], [M.GraphContribute, GraphProtocol.Contribute.method], [M.GraphLoaded, GraphProtocol.Loaded.method],
+        [M.RunTestLoad, RunTestProtocol.Load.method], [M.ApplicationList, PragmaticAppProtocol.List.method],
+        [M.ApplicationDeploy, ApplicationDeployProtocol.Deploy.method],
+    ]
+    assert.equal(pairs.length, Object.keys(M).length)
+    for (const [held, wire] of pairs)
+    {
+        assert.equal(held, wire)
+    }
 })

@@ -1,5 +1,4 @@
-import { SettingType, type ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component'
-import { ComponentDeclarations, type ComponentDeclaration } from '../component/component-declaration.js'
+import { SettingType, type ComponentDescriptor, ComponentDeclarations, type ComponentDeclaration } from '@pragmatic-tech-ai/pragmatic-component'
 
 /**
  * The component descriptor of the hive agent image (pragmatic-agentd): what `AgentMain` reads. It polls the platform's
@@ -8,9 +7,12 @@ import { ComponentDeclarations, type ComponentDeclaration } from '../component/c
 export class HiveAgentComponent
 {
     public static readonly Name = 'pragmatic-hive-agent'
+    /** The descriptor version: this application's package version (the release test pins it to package.json). */
+    public static readonly Version = '0.1.0'
 
     private static readonly Declaration: ComponentDeclaration = {
         name: HiveAgentComponent.Name,
+        version: HiveAgentComponent.Version,
         options: [
             {
                 name: 'core',

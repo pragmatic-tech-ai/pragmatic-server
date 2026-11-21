@@ -1,10 +1,7 @@
 import type { Counter } from '@opentelemetry/api'
-import type { ILogger } from '../observability/logger.js'
-import { NullRateLimiter } from './rate-limiter.js'
-import { RateLimitDecision } from './rate-limiter.js'
-import type { IRateLimiter, RateLimitRequest } from './rate-limiter.js'
-import { NullAccessAuditSink, AuditOutcome } from './access-audit.js'
-import type { IAccessAuditSink, AccessAuditEvent, AuditSurface } from './access-audit.js'
+import type { ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
+import { NullRateLimiter, RateLimitDecision, type IRateLimiter, type RateLimitRequest } from './rate-limiter.js'
+import { NullAccessAuditSink, AuditOutcome, type IAccessAuditSink, type AccessAuditEvent, type AuditSurface } from './access-audit.js'
 
 /** The non-limiter context a rejection needs to audit itself: surface, environment (metric label), the method/path,
  *  the optional principal (audit only, never a metric label), and the correlation id. */

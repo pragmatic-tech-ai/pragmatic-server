@@ -1,13 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/pragmatic-identity'
+import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, ResourceAuthorizationPolicy, ScopedAccessContext, TokenScope } from '@pragmatic-tech-ai/pragmatic-identity'
 import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
 import { InMemoryEnvironmentCoordinator } from '../../environments/environment-coordinator.js'
 import { InMemoryEnvironmentProvisioning, EnvironmentRegistry } from '../../environments/environment-registry.js'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { EffectivePurposeResolver } from '../effective-purpose-resolver.js'
-import { ScopedAccessContext, TokenScope } from '../token-scope.js'
 
 class PurposeRoutingFixture
 {

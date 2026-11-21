@@ -3,7 +3,7 @@ import { HiveBootstrapBundle } from './hive-bootstrap-bundle.js'
 import type { IInstallOrchestratorSource } from './hive-agent-installer.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KindError } from './kind.js'
-import { KubectlError, type IKubectl } from './kubectl.js'
+import { KubectlError, type IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 import { HiveBackend, InfraMode, type HiveRecord } from './platform-records.js'
 import { TenantConsoleAdmission } from './tenant-console-admission.js'
 

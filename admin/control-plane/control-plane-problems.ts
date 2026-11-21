@@ -32,8 +32,8 @@ import { InvalidRecordIdError } from './platform-records.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
 import { NoInfraTargetBackendError, NoInfraTargetError } from './no-infra-target.js'
 import { HostedClusterRefMissingError } from './hosted-hive-orchestrator-factory.js'
-import { KubectlError, PortForwardError } from './kubectl.js'
-import { BodyTooLargeError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, ManifestWithdrawnError, PolicyStoreUnavailableError, ReleaseNotRunnableYetError, ReleaseRegistryUnavailableError, ReleaseRejectedError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from './rollout-errors.js'
+import { KubectlError, PortForwardError } from '@pragmatic-tech-ai/pragmatic-kube'
+import { BodyTooLargeError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, ManifestWithdrawnError, PolicyStoreUnavailableError, ReleaseNotRunnableYetError, ReleaseRegistryUnavailableError, ReleaseRejectedError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from '@pragmatic-tech-ai/pragmatic-platform-link'
 
 /**
  * The platform admin console's domain error -> HTTP status table, as the host's ProblemMapper registration (the table the

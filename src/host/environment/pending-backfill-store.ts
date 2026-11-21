@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
-import { StructuredLogger } from '../../observability/logger.js'
-import type { ILogger } from '../../observability/logger.js'
+import { StructuredLogger, type ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 import { AsyncMutex } from '../cypher/async-mutex.js'
 
 /** Where the store reports a malformed pending list (listed as empty; the next write replaces it). */

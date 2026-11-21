@@ -1,11 +1,10 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { InClusterIdpDriver } from '../in-cluster-idp-driver.js'
-import type { IIdpSeedSource, IdpSeed } from '../in-cluster-idp-driver.js'
+import { InClusterIdpDriver, type IIdpSeedSource, type IdpSeed } from '../in-cluster-idp-driver.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 import { IdpDatabaseSecret } from '../idp-workload-driver.js'
 import { IdpStatus } from '../idp-record.js'
-import type { IKubectl } from '../kubectl.js'
+import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 
 class FakeKubectl implements IKubectl
 {

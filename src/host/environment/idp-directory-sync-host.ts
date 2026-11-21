@@ -1,10 +1,7 @@
 import type { ISignal, ISubscription } from '@pragmatic-tech-ai/pragmatic-graph'
-import { Disposable, Signal } from '@pragmatic-tech-ai/todl-runtime'
-import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
-import { UnreadableIdpDirectoryRecordError } from '@pragmatic-tech-ai/pragmatic-identity'
-import type { IdpDirectorySnapshot, IdpDirectorySync, Realm } from '@pragmatic-tech-ai/pragmatic-identity'
-import { StructuredLogger } from '../../observability/logger.js'
-import type { ILogger } from '../../observability/logger.js'
+import { Disposable, Signal, type IDisposable } from '@pragmatic-tech-ai/todl-runtime'
+import { UnreadableIdpDirectoryRecordError, type IdpDirectorySnapshot, type IdpDirectorySync, type Realm } from '@pragmatic-tech-ai/pragmatic-identity'
+import { StructuredLogger, type ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 import type { EnvironmentSecuritySetting } from './environment-security-setting.js'
 
 /** A repeating timer: calls `run` every `ms` for as long as the returned handle is not disposed. */

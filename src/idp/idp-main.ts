@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ComponentDescriptorCodec, type ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component';
-import { DevCa, IdpTlsMaterial } from './dev-ca.js';
+import { DevCa, IdpTlsMaterial } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc';
 import { IdpLoginPage } from './idp-login-page.js';
 import { IdpSigningKey } from './idp-signing-key.js';
 import { IdpTlsIdentity } from './idp-tls-identity.js';

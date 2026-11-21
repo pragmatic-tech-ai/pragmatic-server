@@ -1,6 +1,6 @@
 import { InClusterIdpSeedSource } from './in-cluster-idp-seed.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-import type { IKubectl } from './kubectl.js'
+import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 
 /**
  * What a console removal (or a hive delete) deliberately keeps of a tenant's console and its in-hive IdP: the console's data PVC and

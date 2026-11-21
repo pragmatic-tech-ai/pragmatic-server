@@ -13,18 +13,17 @@
  * asserts its data keys are exactly server.crt/server.key/ca.crt (the CA signing key ca.key is never shipped); the healthy pod above proves
  * DevCa.EnsureAt does not re-mint against that read-only mount. Operator-run only (needs a cluster). Finally re-applies (idempotency) and deletes the namespace.
  */
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { SmokeCluster } from './smoke-cluster.js'
-import type { ChildProcess } from 'node:child_process'
 import { request } from 'node:https'
 import { fileURLToPath } from 'node:url'
 import { InClusterIdpDriver } from './in-cluster-idp-driver.js'
 import { InClusterIdpSeedSource } from './in-cluster-idp-seed.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-import { KubectlCli, KubectlError, NodeExecFile } from './kubectl.js'
+import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 import { IdpStatus } from './idp-record.js'
 import type { IdpWorkloadResult } from './idp-workload-driver.js'
-import { RealmIssuer } from '../../src/idp/realm-issuer.js'
+import { RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity'
 
 interface HttpsResponse
 {

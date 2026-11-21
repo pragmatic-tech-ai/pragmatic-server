@@ -11,10 +11,9 @@ import { ServerConnectionHandler } from '../server-connection-handler.js'
 import type { IGraphConnectorService } from '../engine/engine-connector-service.js'
 import type { RequestInstrumentation } from '../../observability/request-instrumentation.js'
 import { ConnectorError, ConnectorPhase } from '@pragmatic-tech-ai/pragmatic-graph'
-import type { IDispatchDiagnostics } from '../dispatch-diagnostics.js'
-import { LoggerDispatchDiagnostics } from '../dispatch-diagnostics.js'
+import { type IDispatchDiagnostics, LoggerDispatchDiagnostics } from '../dispatch-diagnostics.js'
 import { DataSourceFailure } from '../engine/data-source-failure.js'
-import { StructuredLogger } from '../../observability/logger.js'
+import { StructuredLogger } from '@pragmatic-tech-ai/pragmatic-observability'
 
 /** Connector endpoints whose every call rejects with `thrown` (the dispatch path under test sees the raw error). */
 class FailingConnectors implements IGraphConnectorService

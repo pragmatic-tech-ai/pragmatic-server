@@ -10,7 +10,7 @@ import { PragmaticServerHost } from '../pragmatic-server-host.js'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import { ProvisionedSecretSource } from '../../config/provisioned-secret-source.js'
-import type { ILogger, LogFields } from '../../observability/logger.js'
+import type { ILogger, LogFields } from '@pragmatic-tech-ai/pragmatic-observability'
 import type { IAccessAuditSink, AccessAuditEvent } from '../access-audit.js'
 
 class CapturingLogger implements ILogger

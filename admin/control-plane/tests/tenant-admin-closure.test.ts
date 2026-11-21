@@ -3,7 +3,7 @@ import { describe, it } from 'node:test'
 import { tmpdir } from 'node:os'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { EsbuildLocator } from '../../../docker/images/closure-check.js'
+import { EsbuildLocator } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 /** Bundles one entry point (packages external) and returns every source file esbuild loaded for it. */
 class ClosureProbe
@@ -42,9 +42,9 @@ class ClosureProbe
  * its orchestrator and the platform orchestrator factory (which import kind.ts / image-digest.ts, so they are listed
  * themselves too). The full control plane (server.ts) composes those through PlatformHiveOrchestratorFactory.
  *
- * kubectl.ts stays on purpose: the in-pod path needs its KubectlError and IKubectl contract (env-namespace-guard.ts,
- * kube-api-client.ts, api-kubectl.ts, in-cluster-hive-orchestrator.ts all build on them), and KubectlCli in the same module
- * runs only off-pod, where an attached hive is driven through a kubectl context. kubectl is an allowed tool, not a dev-box driver.
+ * The Kubernetes client layer (KubectlError, IKubectl, KubeApiClient, ApiKubectl, and KubectlCli, which runs only off-pod
+ * where an attached hive is driven through a kubectl context) comes from @pragmatic-tech-ai/pragmatic-kube, outside this
+ * probe, which follows this repository's files only. kubectl is an allowed tool, not a dev-box driver.
  *
  * TODL (and Mural, which TODL's root entry pulls in) stay in the closure on purpose: environments/seed/bundle.ts calls
  * NorthwindApp.Compile (environments/seed/compile.ts -> @pragmatic-tech-ai/todl compilePackage) when it writes a Demo

@@ -4,9 +4,8 @@ import { RegistryRefImageDigest, TagReferenceError } from '../image-digest.js'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { CryptoImageVerifier, ImageVerificationError } from '../image-verifier.js'
+import { CryptoImageVerifier, ImageVerificationError, FileKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { FileSignatureStore } from '../signature-store.js'
-import { FileKeyStore } from '../key-store.js'
 
 class Refs
 {

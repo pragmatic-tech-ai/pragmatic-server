@@ -3,9 +3,9 @@ import assert from 'node:assert/strict'
 import { InClusterIdpSeedSource } from '../in-cluster-idp-seed.js'
 import { IngressTlsPolicy, IngressTlsSource } from '../ingress-tls.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
-import { KubectlError } from '../kubectl.js'
-import { HiveBackend, InfraMode } from '../platform-records.js'
-import { UnknownHiveError } from '../rollout-errors.js'
+import { KubectlError } from '@pragmatic-tech-ai/pragmatic-kube'
+import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
+import { UnknownHiveError } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import { TenantAdminBootstrap } from '../tenant-admin-bootstrap.js'
 import { IdpDatabaseSecret } from '../idp-workload-driver.js'
 import {
@@ -18,13 +18,10 @@ import {
 } from '../tenant-console-installer.js'
 import { ConsoleAdvertRegistry } from '../console-advert-registry.js'
 import { ConsoleInstallFixture, FakeAdvertLookup, FakeDevCa } from './console-install-fakes.js'
-import type { IImageVerifier } from '../image-verifier.js'
-import { DevCaError } from '../../../src/idp/dev-ca.js'
-import type { HiveRecord } from '../platform-records.js'
+import { type IImageVerifier, ReleaseApp, ImageVerificationError } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
+import { DevCaError } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import type { PlatformImageSigner } from '../platform-signing-key.js'
 import { PlatformImages, type IPlatformImages } from '../platform-images.js'
-import { ReleaseApp } from '../release/release-tag.js'
-import { ImageVerificationError } from '../image-verifier.js'
 
 type Item = { kind: string; type?: string; metadata: { name: string; namespace?: string }; spec?: { rules?: Array<{ host?: string }> }; data?: Record<string, string> }
 

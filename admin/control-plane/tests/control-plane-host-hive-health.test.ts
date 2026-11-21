@@ -16,13 +16,11 @@ import type { PlatformDeploymentRegistry } from '../platform-deployment-registry
 import { RolloutFixture } from './rollout-fixture.js'
 import { HiveObservationRegistry } from '../hive-observation-record.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
-import { UnsupportedBackendError } from '../hive-orchestrator.js'
-import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
-import type { IKubectl } from '../kubectl.js'
+import { UnsupportedBackendError, type IHiveOrchestrator, type WorkloadHealth } from '../hive-orchestrator.js'
+import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 import type { EnvironmentWorkload } from '../environment-workload.js'
 import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
-import { HiveBackend, InfraMode } from '../platform-records.js'
-import type { HiveRecord } from '../platform-records.js'
+import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 
 type Reply = { status: number; body: string }
 

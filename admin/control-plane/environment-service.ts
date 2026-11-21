@@ -13,7 +13,7 @@ import { AdminProxyError, type AdminConnectInfo, type AdminSnapshot, type IAdmin
 import { TransportFailure } from './transport-failure.js'
 import type { CreateAccountParams, GrantMutationDto, IdentityConfigDto, SecurityCatalogDto, SecurityChangesDto, SecurityModelDto, TeamMemberDto, TokenIssuedDto, ServiceTokenSummaryDto, IssueTokenParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
-import { UnknownHiveError } from './rollout-errors.js'
+import { UnknownHiveError } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import type { IIdpService, IdpConnection } from './idp-service.js'
 import type { IdpAdminClient } from './idp-admin-client.js'
@@ -26,7 +26,7 @@ import { InClusterOperationFailedError } from './in-cluster-environment-runtime.
 import { EnvironmentSecuritySeed, SecuritySeedError } from './environment-security-seed.js'
 import { EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrlsLease, type IEnvironmentReach } from './environment-endpoints.js'
 import { TenantIdpMode, TenantSignInInHiveError } from './tenant-idp-mode.js'
-import { RealmIssuer } from '../../src/idp/realm-issuer.js'
+import { RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity'
 
 export class EnvironmentExistsError extends Error
 {

@@ -1,7 +1,6 @@
 import { isIP } from 'node:net'
 import { EdgeHost } from './edge-host.js'
-import { InternalApiClient } from './internal-api-client.js'
-import { InternalApiLink } from './internal-api-link.js'
+import { InternalApiClient, InternalApiLink } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import { RemoteAgentChannelBackend } from './remote-agent-channel-backend.js'
 import { RemoteDesktopDiscoveryBackend } from './remote-desktop-discovery-backend.js'
 

@@ -1,7 +1,7 @@
 import { createPrivateKey } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { FileKeyStore, type IKeyStore } from './key-store.js'
+import { FileKeyStore, type IKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { PinnedKeyStore } from './pinned-key-store.js'
 import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
 

@@ -3,8 +3,7 @@ import { Gateway } from '../cluster/gateway.js'
 import { RedisWorkerRouter } from '../cluster/redis-worker-router.js'
 import type { IWorkerRouter } from '../cluster/worker-router.js'
 import { ServerBootstrap } from './server-bootstrap.js'
-import { StructuredLogger } from '../observability/logger.js'
-import type { ILogger } from '../observability/logger.js'
+import { StructuredLogger, type ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 import { Observability, ObservabilityRole } from '../observability/observability.js'
 
 class GatewayMain

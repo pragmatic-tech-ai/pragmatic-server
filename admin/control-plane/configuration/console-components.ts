@@ -1,8 +1,7 @@
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component'
-import { ComponentDescriptorSet } from '../release/component-descriptor-set.js'
-import { ReleaseApp } from '../release/release-tag.js'
+import { ComponentDescriptorSet, ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { TenantAdminComponent } from '../tenant-admin-component.js'
 
 /**

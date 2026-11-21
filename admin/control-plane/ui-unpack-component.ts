@@ -1,5 +1,4 @@
-import { SettingType, type ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component'
-import { ComponentDeclarations, type ComponentDeclaration } from '../../src/component/component-declaration.js'
+import { SettingType, type ComponentDescriptor, ComponentDeclarations, type ComponentDeclaration } from '@pragmatic-tech-ai/pragmatic-component'
 
 /**
  * The component descriptor of the UI-unpack init container (bin/pragmatic-ui-unpack): every variable it reads is required.
@@ -8,9 +7,12 @@ import { ComponentDeclarations, type ComponentDeclaration } from '../../src/comp
 export class UiUnpackComponent
 {
     public static readonly Name = 'pragmatic-ui-unpack'
+    /** The descriptor version: this application's package version (the release test pins it to package.json). */
+    public static readonly Version = '0.1.0'
 
     private static readonly Declaration: ComponentDeclaration = {
         name: UiUnpackComponent.Name,
+        version: UiUnpackComponent.Version,
         options: [
             {
                 name: 'core',

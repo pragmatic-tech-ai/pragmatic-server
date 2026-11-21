@@ -1,4 +1,4 @@
-import type { IExecFile } from '../kubectl.js'
+import type { IExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 
 /**
  * Stops a detached process and its children: `taskkill /T /F` on Windows, a SIGTERM to its process group elsewhere (the

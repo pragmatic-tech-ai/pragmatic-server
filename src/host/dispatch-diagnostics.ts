@@ -1,5 +1,4 @@
-import { StructuredLogger } from '../observability/logger.js'
-import type { ILogger } from '../observability/logger.js'
+import { StructuredLogger, type ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 
 /**
  * Where a connection's request dispatch reports the failures the client only sees scrubbed: an unexpected error (the

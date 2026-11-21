@@ -3,8 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { EsbuildLocator, type IEsbuild } from '../../docker/images/closure-check.js'
-import { ReleaseApp } from '../../admin/control-plane/release/release-tag.js'
+import { EsbuildLocator, type IEsbuild, ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { AssignmentRules, SplitHome } from './assignment-rules.js'
 
 /**
@@ -63,7 +62,8 @@ interface IOutputMetafile
 
 /**
  * Measures who reaches which file of pragmatic-server: esbuild bundles each image's entry points (packages external,
- * type-only imports dropped as in the image closure check) and every test, and AssignmentRules places each file. Tests
+ * type-only imports dropped as in the image closure check) and every test, and AssignmentRules places each file. A test
+ * an explicit exception names goes there; the others
  * follow their subject (`dir/tests/x.test.ts` goes where `x.ts` goes, found beside the tests folder or, failing that,
  * as the one file of that name in the same area); a test with no subject goes to the one container its imports reach,
  * to the shared home most of its reach lies in when it reaches no container, or by its path when it reaches none of
@@ -212,6 +212,12 @@ export class ReachReport
         const cross: string[] = []
         for (const test of tests)
         {
+            const named = AssignmentRules.Exceptions.get(test)
+            if (named !== undefined)
+            {
+                homes[test] = named
+                continue
+            }
             const subject = R.SubjectOf(test, homes)
             if (subject !== undefined)
             {

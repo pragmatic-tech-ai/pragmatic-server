@@ -1,6 +1,6 @@
 import { AppHost, AppHostConfig, AuditTrail, HttpMethod, ProblemMapper, RouteAuth, RouteTable, SecurityHeaders, type RequestContext } from '@pragmatic-tech-ai/pragmatic-app-host';
 import type { ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component';
-import { ApplicationDeclaration } from '@pragmatic-tech-ai/pragmatic-identity';
+import { ApplicationDeclaration, RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity';
 import { RealmRoleResolver, RoleMappingService, TenantRoleRegistry } from '@pragmatic-tech-ai/pragmatic-identity-realm';
 import { SecretStoreDirectory } from '@pragmatic-tech-ai/pragmatic-configuration';
 import { SignInEndpoints } from './authorize-endpoint.js';
@@ -15,7 +15,6 @@ import type { IdpSigningKey } from './idp-signing-key.js';
 import type { IdpTlsIdentity } from './idp-tls-identity.js';
 import { ProtocolEndpoints } from './protocol-endpoints.js';
 import type { IRealmSecretsHome, RealmConfiguration } from './realm-configuration-reader.js';
-import { RealmIssuer } from './realm-issuer.js';
 import type { RealmSettings } from './realm-settings.js';
 import { RealmTokenIssuer } from './realm-token-issuer.js';
 import { SignInCompletion } from './sign-in-completion.js';

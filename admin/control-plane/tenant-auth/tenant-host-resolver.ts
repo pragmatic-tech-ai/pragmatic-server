@@ -1,4 +1,4 @@
-import { PlaneHttp } from '../plane-http.js'
+import { PlaneHttp } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
 
 /** A host (not a tenant subdomain) that answers for one tenant: the tenant console's own host. */

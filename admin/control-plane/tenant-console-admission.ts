@@ -1,4 +1,4 @@
-import type { IKubectl } from './kubectl.js'
+import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 
 /** The names the console's admission fence is rendered from (all supplied by K8sManifestBuilder). */
 export interface TenantConsoleAdmissionSpec

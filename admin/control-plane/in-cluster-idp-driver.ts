@@ -1,9 +1,7 @@
-import { IdpStatus } from './idp-record.js'
-import type { IdpRecord } from './idp-record.js'
-import { IdpDatabaseSecret, IdpDriverMessages } from './idp-workload-driver.js'
-import type { IIdpWorkloadDriver, IdpWorkloadRequest, IdpWorkloadResult, IdpWorkloadSpec } from './idp-workload-driver.js'
+import { IdpStatus, type IdpRecord } from './idp-record.js'
+import { IdpDatabaseSecret, IdpDriverMessages, type IIdpWorkloadDriver, type IdpWorkloadRequest, type IdpWorkloadResult, type IdpWorkloadSpec } from './idp-workload-driver.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-import type { IKubectl } from './kubectl.js'
+import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 
 /** Bootstrap-seeded identity material for one tenant's IdP. The refs name Secret objects / keys; the bytes are only handed back in-process to IdpService consumers. */
 export interface IdpSeed

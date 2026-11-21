@@ -7,12 +7,12 @@ import type { ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component
 import { PgSession } from '@pragmatic-tech-ai/pragmatic-realm-adapters';
 import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing';
 import type { ISqlSession } from '@pragmatic-tech-ai/todl';
-import { DevCa, IdpTlsMaterial } from '../dev-ca.js';
+import { DevCa, IdpTlsMaterial } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc';
 import { IdpLoginPage } from '../idp-login-page.js';
 import type { IdpSourceClients } from '../idp-realm.js';
 import { IdpSigningKey } from '../idp-signing-key.js';
 import { IdpTlsIdentity } from '../idp-tls-identity.js';
-import { RealmIssuer } from '../realm-issuer.js';
+import { RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity';
 import type { RealmConfiguration } from '../realm-configuration-reader.js';
 import { TenantIdpDatabase } from '../tenant-idp-database.js';
 import { TenantIdpService } from '../tenant-idp-service.js';

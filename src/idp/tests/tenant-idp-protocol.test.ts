@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { ComponentDescriptorBuilder } from '@pragmatic-tech-ai/pragmatic-component';
-import { RealmIssuer } from '../realm-issuer.js';
+import { RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity';
 import { IdpTestFlow } from './idp-test-flow.js';
 import { TenantIdpTestHost } from './tenant-idp-test-host.js';
 

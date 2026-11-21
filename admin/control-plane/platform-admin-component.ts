@@ -1,5 +1,4 @@
-import { SettingType, type ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component'
-import { ComponentDeclarations, type ComponentDeclaration } from '../../src/component/component-declaration.js'
+import { SettingType, type ComponentDescriptor, ComponentDeclarations, type ComponentDeclaration } from '@pragmatic-tech-ai/pragmatic-component'
 import { OperatorRoleClaims } from './operator-sessions.js'
 
 /**
@@ -10,9 +9,12 @@ import { OperatorRoleClaims } from './operator-sessions.js'
 export class PlatformAdminComponent
 {
     public static readonly Name = 'pragmatic-platform-admin'
+    /** The descriptor version: this application's package version (the release test pins it to package.json). */
+    public static readonly Version = '0.1.0'
 
     private static readonly Declaration: ComponentDeclaration = {
         name: PlatformAdminComponent.Name,
+        version: PlatformAdminComponent.Version,
         options: [
             {
                 name: 'core',

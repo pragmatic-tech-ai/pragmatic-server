@@ -9,7 +9,7 @@ import { InClusterIdpDriver } from '../in-cluster-idp-driver.js'
 import { InClusterIdpSeedSource } from '../in-cluster-idp-seed.js'
 import { IdpDatabaseSecret } from '../idp-workload-driver.js'
 import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
-import type { IKubectl } from '../kubectl.js'
+import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 
 class FakeKubectl implements IKubectl
 {

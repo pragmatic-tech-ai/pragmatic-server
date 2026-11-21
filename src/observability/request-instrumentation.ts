@@ -1,8 +1,7 @@
-import { context, SpanStatusCode } from '@opentelemetry/api'
-import type { Tracer, Meter, Counter, Histogram, UpDownCounter, Context, Span } from '@opentelemetry/api'
+import { context, SpanStatusCode, type Tracer, type Meter, type Counter, type Histogram, type UpDownCounter, type Context, type Span } from '@opentelemetry/api'
 import { performance } from 'node:perf_hooks'
 import type { Observability } from './observability.js'
-import type { ILogger } from './logger.js'
+import type { ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 
 export enum RequestOutcome
 {

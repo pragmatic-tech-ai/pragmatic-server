@@ -7,7 +7,7 @@ import type { IdpRealm } from './idp-realm.js';
 import type { IdpRealmSet } from './idp-realm-set.js';
 import { IdpSsoCookie } from './idp-sso-cookie.js';
 import { IdpBrokerBinding } from './idp-broker-binding.js';
-import { RealmIssuer } from './realm-issuer.js';
+import { RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity';
 import { RealmSignIn } from './realm-sign-in.js';
 import { SignInCompletion, type SignInRedirect } from './sign-in-completion.js';
 import type { SqlIdpClientStore } from './sql-idp-client-store.js';

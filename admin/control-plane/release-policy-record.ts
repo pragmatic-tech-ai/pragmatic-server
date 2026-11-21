@@ -1,6 +1,6 @@
 import { JsonRecordStore } from './json-record-store.js'
 import type { IRecordMap } from './record-map.js'
-import type { Channel } from './channel.js'
+import type { Channel } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 export type ReleasePolicyRecord = {
     id: string

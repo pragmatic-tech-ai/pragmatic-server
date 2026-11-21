@@ -12,10 +12,9 @@ import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/pragm
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
-import { StructuredLogger } from '../../observability/logger.js'
-import { DrainController } from '../../observability/drain-controller.js'
+import { StructuredLogger } from '@pragmatic-tech-ai/pragmatic-observability'
+import { DrainController, type IInFlightSource } from '../../observability/drain-controller.js'
 import type { Observability } from '../../observability/observability.js'
-import type { IInFlightSource } from '../../observability/drain-controller.js'
 
 class DrainFixture
 {

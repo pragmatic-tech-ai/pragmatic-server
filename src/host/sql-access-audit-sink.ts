@@ -1,10 +1,7 @@
-import { AuditEvent, AuditEventKind, Action, ResourceKind } from '@pragmatic-tech-ai/pragmatic-identity'
-import type { IAuditSink } from '@pragmatic-tech-ai/pragmatic-identity'
-import { AuditSurface } from './access-audit.js'
-import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
-import { NullLogger } from '../observability/logger.js'
+import { AuditEvent, AuditEventKind, Action, ResourceKind, type IAuditSink } from '@pragmatic-tech-ai/pragmatic-identity'
+import { AuditSurface, type IAccessAuditSink, type AccessAuditEvent } from './access-audit.js'
+import { NullLogger, type ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 import { DrainController } from '../observability/drain-controller.js'
-import type { ILogger } from '../observability/logger.js'
 
 /** Bridges a server AccessAuditEvent onto the cloud identity SqlAuditStore (IAuditSink). Present only in cloud
  *  mode; a store failure logs and is swallowed so it never alters a decision. */

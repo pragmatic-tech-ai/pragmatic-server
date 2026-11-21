@@ -11,7 +11,8 @@ class PlatformEdgeComponentFixture
     public static readonly Here = dirname(fileURLToPath(import.meta.url))
     public static readonly Golden = join(PlatformEdgeComponentFixture.Here, 'fixtures', 'pragmatic-platform-edge.component.json')
     public static readonly Digest = 'sha256:f8e6ed26594d13a07d6a35f48ad93bcdbede400637a431f9c16a8a3305a4ad8c'
-    public static readonly Readers = [['..', 'edge-composition.ts'], ['..', 'internal-api-link.ts'], ['..', 'bin', 'pragmatic-platform-edged.ts']].map(path => join(PlatformEdgeComponentFixture.Here, ...path))
+    public static readonly Readers = [['..', 'edge-composition.ts'], ['..', 'bin', 'pragmatic-platform-edged.ts']].map(path => join(PlatformEdgeComponentFixture.Here, ...path))
+        .concat([join(dirname(fileURLToPath(import.meta.resolve('@pragmatic-tech-ai/pragmatic-platform-link'))), 'internal-api-link.js')])
     public static readonly Undeclared: readonly string[] = []
 }
 

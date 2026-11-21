@@ -6,7 +6,7 @@ import { describe, it } from 'node:test'
 import { EnvironmentUnreachableError } from '../environment-endpoints.js'
 import type { EnvironmentRecord } from '../environment-record.js'
 import { InClusterEnvironmentReach } from '../in-cluster-environment-reach.js'
-import type { IKubectl } from '../kubectl.js'
+import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 
 class Names
 {

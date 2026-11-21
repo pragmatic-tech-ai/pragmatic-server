@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import * as https from 'node:https';
 import type { IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { DevCa, IdpTlsMaterial } from '../../../src/idp/dev-ca.js';
+import { DevCa, IdpTlsMaterial } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc';
 import type { IdpRealmSet } from '../../../src/idp/idp-realm-set.js';
 import type { SqlIdpClientStore } from '../../../src/idp/sql-idp-client-store.js';
 import { TenantIdpTestHost } from '../../../src/idp/tests/tenant-idp-test-host.js';

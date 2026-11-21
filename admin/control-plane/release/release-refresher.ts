@@ -1,4 +1,4 @@
-import { ReleaseRegistryUnavailableError } from '../rollout-errors.js'
+import { ReleaseRegistryUnavailableError } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import type { ReleaseRefreshResult } from './release-catalog.js'
 
 /** What the refresher serializes: the release catalogue (or a test stand-in). */

@@ -15,7 +15,7 @@ import { PlatformDirectory } from '../platform-directory.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
-import { Channel } from '../channel.js'
+import { Channel } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { RolloutFixture } from './rollout-fixture.js'
 
 type Reply = { status: number; body: string }

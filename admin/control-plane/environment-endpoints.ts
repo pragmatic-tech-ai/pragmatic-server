@@ -8,7 +8,7 @@ import { EnvironmentWorkloadFactory } from './environment-workload.js'
 import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
 import { UnsupportedBackendError } from './hive-orchestrator.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-import { KubectlCli, type IKubectl, type IPortForwardingKubectl, type IProcessSpawner } from './kubectl.js'
+import { KubectlCli, type IKubectl, type IPortForwardingKubectl, type IProcessSpawner } from '@pragmatic-tech-ai/pragmatic-kube'
 import type { HiveRecord } from './platform-records.js'
 import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 

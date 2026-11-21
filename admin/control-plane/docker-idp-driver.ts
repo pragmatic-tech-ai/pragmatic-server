@@ -1,13 +1,10 @@
 import { randomBytes } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { DevCa } from '../../src/idp/dev-ca.js'
-import { IdpContainerEnv } from './idp-container-env.js'
-import type { StaleImage } from './idp-container-env.js'
-import { IdpStatus } from './idp-record.js'
-import type { IdpRecord } from './idp-record.js'
-import { IdpDatabaseSecret, IdpDriverMessages, IdpWorkloadNames } from './idp-workload-driver.js'
-import type { IdpConnection, IIdpWorkloadDriver, IdpWorkloadRequest, IdpWorkloadResult } from './idp-workload-driver.js'
+import { DevCa } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
+import { IdpContainerEnv, type StaleImage } from './idp-container-env.js'
+import { IdpStatus, type IdpRecord } from './idp-record.js'
+import { IdpDatabaseSecret, IdpDriverMessages, IdpWorkloadNames, type IdpConnection, type IIdpWorkloadDriver, type IdpWorkloadRequest, type IdpWorkloadResult } from './idp-workload-driver.js'
 import type { PortAllocator } from './port-allocator.js'
 
 /** What a reuse probe found: a reusable connection, a healthy IdP on an older build, or neither (recover it). */

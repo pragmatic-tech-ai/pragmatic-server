@@ -1,10 +1,5 @@
-import { NodeExecFile, type IExecFile } from './kubectl.js'
-import { ImageVerificationError } from './image-verifier.js'
-
-export interface IImageDigest
-{
-    Of(imageRef: string): Promise<string>
-}
+import { NodeExecFile, type IExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
+import { type IImageDigest, ImageVerificationError } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 /** Reads an image's content digest (its docker image id) from the local docker CLI. */
 export class DockerImageDigest implements IImageDigest

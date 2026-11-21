@@ -1,14 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { createServer } from 'node:https'
-import type { Server } from 'node:https'
+import { createServer, type Server } from 'node:https'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ExecFileDockerExec, IdpContainerEnv } from '../idp-container-env.js'
-import type { IDockerExec, IdpContainerSpec } from '../idp-container-env.js'
-import { DevCa, IdpTlsMaterial } from '../../../src/idp/dev-ca.js'
+import { ExecFileDockerExec, IdpContainerEnv, type IDockerExec, type IdpContainerSpec } from '../idp-container-env.js'
+import { DevCa, IdpTlsMaterial } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 
 class FakeExec implements IDockerExec
 {

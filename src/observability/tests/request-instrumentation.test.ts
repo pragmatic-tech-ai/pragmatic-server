@@ -1,8 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base'
-import { PeriodicExportingMetricReader, InMemoryMetricExporter, AggregationTemporality } from '@opentelemetry/sdk-metrics'
-import type { DataPoint } from '@opentelemetry/sdk-metrics'
+import { PeriodicExportingMetricReader, InMemoryMetricExporter, AggregationTemporality, type DataPoint } from '@opentelemetry/sdk-metrics'
 import { InMemoryMessageSocket, PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { mkdtempSync, cpSync, rmSync } from 'node:fs'
@@ -13,8 +12,7 @@ import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../../host/server-connection-handler.js'
 import { Observability, ObservabilityRole } from '../observability.js'
 import { RequestInstrumentation } from '../request-instrumentation.js'
-import { NullLogger } from '../logger.js'
-import type { ILogger } from '../logger.js'
+import { NullLogger, type ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 
 class ThrowingLogger implements ILogger
 {

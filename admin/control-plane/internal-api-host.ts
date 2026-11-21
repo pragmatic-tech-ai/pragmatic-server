@@ -1,11 +1,7 @@
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { AgentChannelOperation, type AgentChannelRequest, type IAgentChannelBackend } from './agent-channel-backend.js'
-import type { IDesktopDiscoveryBackend } from './desktop-discovery-contract.js'
+import { AgentChannelOperation, type AgentChannelRequest, type IAgentChannelBackend, type IDesktopDiscoveryBackend, InternalApiRoutes, PlaneHttp, BodyTooLargeError } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import type { InternalApiCredential } from '@pragmatic-tech-ai/pragmatic-app-host'
-import { InternalApiRoutes } from './internal-api-routes.js'
-import { PlaneHttp } from './plane-http.js'
-import { BodyTooLargeError } from './rollout-errors.js'
 
 /**
  * Admin's internal listener for the edge: the agent channel and desktop discovery, carried verbatim (request in, the

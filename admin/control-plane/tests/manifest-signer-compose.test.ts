@@ -8,11 +8,10 @@ import { HiveRegistry } from '../hive-registry.js'
 import { PlatformDirectory } from '../platform-directory.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
 import { TenantRegistry } from '../tenant-registry.js'
-import { ImageSigner } from '../image-signer.js'
+import { ImageSigner, FileKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { ManifestSigner } from '../manifest-signer.js'
 import { PlatformSigningKey, PlatformSigningKeyMissingError } from '../platform-signing-key.js'
 import { ControlPlaneServer } from '../server.js'
-import { FileKeyStore } from '../key-store.js'
 import { DockerImageDigest } from '../image-digest.js'
 
 class SignerComposeFixture

@@ -1,4 +1,4 @@
-import { KubeHttpsTransport, KubeServiceAccountDefaults } from './kube-https-transport.js'
+import { KubeHttpsTransport, KubeServiceAccountDefaults } from '@pragmatic-tech-ai/pragmatic-kube'
 
 interface IContainerSpec
 {

@@ -1,6 +1,4 @@
-import type { DiscoveryReply, IDesktopDiscoveryBackend } from './desktop-discovery-contract.js'
-import type { InternalApiClient } from './internal-api-client.js'
-import { InternalApiRoutes } from './internal-api-routes.js'
+import { type DiscoveryReply, type IDesktopDiscoveryBackend, type InternalApiClient, InternalApiRoutes } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import { RemoteAgentChannelBackend } from './remote-agent-channel-backend.js'
 
 /** The edge's desktop discovery: matching runs on admin (the fingerprint keys are sealed under its master key).

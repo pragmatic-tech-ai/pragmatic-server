@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { IStorage } from '@pragmatic-tech-ai/todl-runtime'
 import type { SecurityChangesDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { StructuredLogger } from '../../observability/logger.js'
-import type { ILogger } from '../../observability/logger.js'
+import { StructuredLogger, type ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 import { AsyncMutex } from '../cypher/async-mutex.js'
 
 /** Where the change log reports what it never throws: a malformed file and an append that did not land. */

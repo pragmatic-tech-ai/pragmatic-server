@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ReleaseApp, ReleaseApps } from '../../../admin/control-plane/release/release-tag.js'
+import { ReleaseApp, ReleaseApps } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 /** docker/postgres: the pragmatic-postgres image's Dockerfile, scripts and its place in the bake file. */
 class PostgresImage

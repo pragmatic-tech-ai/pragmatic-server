@@ -15,12 +15,10 @@ import { PlatformDirectory } from '../platform-directory.js'
 import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { HiveBackend, InfraMode } from '../platform-records.js'
-import { Channel } from '../channel.js'
+import { Channel, OciRegistryClient, type OciRequestInit, ReleaseTrustKeys } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { ReleaseState, type ManifestRecord } from '../manifest-record.js'
-import { OciRegistryClient, type OciRequestInit } from '../oci-registry-client.js'
 import { ReleaseCatalog, type ReleaseRefreshResult } from '../release/release-catalog.js'
 import { ReleaseRefresher, type IReleaseRefreshSource } from '../release/release-refresher.js'
-import { ReleaseTrustKeys } from '../release/release-trust-keys.js'
 import { RolloutFixture } from './rollout-fixture.js'
 
 type Reply = { status: number; body: string }

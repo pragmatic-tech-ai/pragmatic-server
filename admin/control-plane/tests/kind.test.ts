@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { KindCli, KindError } from '../kind.js'
-import type { IExecFile } from '../kubectl.js'
+import type { IExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 
 class FakeExecFile implements IExecFile
 {

@@ -101,6 +101,6 @@ The first step runs `pragmatic-component-descriptors emit-all` inside the build 
 `digests.json` and the bake override `docker-bake.components.json` (each image target's `COMPONENT_APP` and
 `COMPONENT_DIGEST`) into `pragmatic-server/docker/.components` (git- and build-context-ignored). In the second, each image
 writes its descriptor again from the same code and refuses the build unless it hashes to `COMPONENT_DIGEST`, so the file
-and the label always agree; `docker/images/check-component-label.sh <image>...` checks a built image. The release
+and the label always agree; `pragmatic-shared/packages/pragmatic-release-toolkit/scripts/check-component-label.sh <image>...` checks a built image. The release
 publisher reads every image's label and signs it beside the image digest (release descriptor schema 2); the platform's
 release catalogue checks each image's label against the signed digest.

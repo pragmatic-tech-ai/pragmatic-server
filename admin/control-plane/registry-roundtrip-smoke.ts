@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url'
 import { InClusterRegistry } from './in-cluster-registry.js'
 import { K8sManifestBuilder } from './k8s-manifest-builder.js'
 import { KindCli } from './kind.js'
-import { KubectlCli, KubectlError, NodeExecFile } from './kubectl.js'
+import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 
 export class RegistryRoundtripSmoke
 {

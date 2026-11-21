@@ -1,15 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { PeriodicExportingMetricReader, InMemoryMetricExporter, AggregationTemporality } from '@opentelemetry/sdk-metrics'
-import type { DataPoint } from '@opentelemetry/sdk-metrics'
+import { PeriodicExportingMetricReader, InMemoryMetricExporter, AggregationTemporality, type DataPoint } from '@opentelemetry/sdk-metrics'
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base'
 import { Observability, ObservabilityRole } from '../../observability/observability.js'
-import { RateLimitScope, TokenBucketRateLimiter, NullRateLimiter } from '../rate-limiter.js'
-import type { IRateLimiter, RateLimitDecision } from '../rate-limiter.js'
+import { RateLimitScope, TokenBucketRateLimiter, NullRateLimiter, type IRateLimiter, type RateLimitDecision } from '../rate-limiter.js'
 import { RateLimitGuard } from '../rate-limit-guard.js'
-import { AuditSurface, AuditOutcome } from '../access-audit.js'
-import type { IAccessAuditSink, AccessAuditEvent } from '../access-audit.js'
-import type { ILogger, LogFields } from '../../observability/logger.js'
+import { AuditSurface, AuditOutcome, type IAccessAuditSink, type AccessAuditEvent } from '../access-audit.js'
+import type { ILogger, LogFields } from '@pragmatic-tech-ai/pragmatic-observability'
 
 class CapturingSink implements IAccessAuditSink
 {

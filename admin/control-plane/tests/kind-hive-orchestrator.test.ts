@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { KindHiveOrchestrator } from '../kind-hive-orchestrator.js'
 import type { IKind, KindClusterConfig } from '../kind.js'
 import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
-import type { IKubectl } from '../kubectl.js'
+import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 import type { EnvironmentWorkload } from '../environment-workload.js'
 
 class FakeKind implements IKind

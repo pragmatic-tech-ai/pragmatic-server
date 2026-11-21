@@ -4,9 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, describe, it } from 'node:test'
 import { ConsoleComponents } from '../../configuration/console-components.js'
-import { ComponentDescriptorSet, ComponentDescriptorSetDigestError } from '../component-descriptor-set.js'
+import { ComponentDescriptorSet, ComponentDescriptorSetDigestError, ReleaseApps } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { ReleaseComponents } from '../release-components.js'
-import { ReleaseApps } from '../release-tag.js'
 
 class VendoredFixture
 {

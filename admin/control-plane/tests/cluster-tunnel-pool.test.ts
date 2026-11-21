@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
-import { KubectlCli, PortForwardError, type IExecFile, type IProcessSpawner, type ISpawnedProcess, type PortForwardResult } from '../kubectl.js'
+import { KubectlCli, PortForwardError, type IExecFile, type IProcessSpawner, type ISpawnedProcess, type PortForwardResult } from '@pragmatic-tech-ai/pragmatic-kube'
 import { ClusterTunnelPool, TunnelPoolClosedError } from '../cluster-tunnel-pool.js'
 
 class FakeProcess implements ISpawnedProcess

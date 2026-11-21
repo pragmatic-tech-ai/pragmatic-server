@@ -1,13 +1,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, createMessageConnection, NullLogger, RunTestProtocol, ApplicationDeployProtocol, AppDataProtocol, PragmaticAppProtocol, GraphProtocol, DataSharingProtocol, DataAssignmentProtocol, ErrorCodes } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { AppDeployResultDto, CypherAppDeployParamsDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/pragmatic-identity'
+import { InMemoryMessageSocket, WebSocketMessageReader, WebSocketMessageWriter, createMessageConnection, NullLogger, RunTestProtocol, ApplicationDeployProtocol, AppDataProtocol, PragmaticAppProtocol, GraphProtocol, DataSharingProtocol, DataAssignmentProtocol, ErrorCodes, type AppDeployResultDto, type CypherAppDeployParamsDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy, DevelopMethods, RunTestMethods, ScopedAccessContext, TokenScope, TokenScopeGate } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { SolutionManagerService } from '@pragmatic-tech-ai/todl'
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { EnvironmentPurpose } from '../../environments/environment-purpose.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
-import { DevelopMethods, RunTestMethods, ScopedAccessContext, TokenScope, TokenScopeGate } from '../token-scope.js'
 import { PolicyGate } from '../policy-gate.js'
 
 class RunTestFixture

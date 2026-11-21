@@ -3,15 +3,13 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ReleasePolicyRegistry } from '../release-policy-record.js'
-import type { ReleasePolicyRecord } from '../release-policy-record.js'
-import
-{
+import { ReleasePolicyRegistry, type ReleasePolicyRecord } from '../release-policy-record.js'
+import {
     ManifestWithdrawnError,
     TenantOnHoldError,
     ChannelNotSubscribedError,
     VersionBelowFloorError,
-} from '../rollout-errors.js'
+} from '@pragmatic-tech-ai/pragmatic-platform-link'
 
 class PolicyFixture
 {

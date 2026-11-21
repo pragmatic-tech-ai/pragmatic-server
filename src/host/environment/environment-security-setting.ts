@@ -1,12 +1,10 @@
 import type { ISignal } from '@pragmatic-tech-ai/pragmatic-graph'
-import { IdentityConfig, IdpDirectorySnapshot, InvalidSecurityModelError, UnreadableIdpDirectoryRecordError } from '@pragmatic-tech-ai/pragmatic-identity'
-import type { IIdpDirectoryStore, ISecurityModelConfig, IRealmConfigStore, Realm } from '@pragmatic-tech-ai/pragmatic-identity'
+import { IdentityConfig, IdpDirectorySnapshot, InvalidSecurityModelError, UnreadableIdpDirectoryRecordError, type IIdpDirectoryStore, type ISecurityModelConfig, type IRealmConfigStore, type Realm } from '@pragmatic-tech-ai/pragmatic-identity'
 import { RealmSecurityModel } from '@pragmatic-tech-ai/pragmatic-identity-engine-binding'
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
 import type { IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import { AsyncMutex } from '../cypher/async-mutex.js'
-import { StructuredLogger } from '../../observability/logger.js'
-import type { ILogger } from '../../observability/logger.js'
+import { StructuredLogger, type ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 import { VoidSignal } from '../engine/access-scope-source.js'
 
 /** Where an unreadable stored setting is reported (once per generation). */

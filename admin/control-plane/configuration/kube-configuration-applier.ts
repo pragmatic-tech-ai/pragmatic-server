@@ -1,5 +1,5 @@
 import { AppliedConfigurationCodec, type AppliedConfiguration, type ApplyTarget } from '@pragmatic-tech-ai/pragmatic-configuration'
-import { KubeContentType, KubeResourceCatalog, type KubeApiClient } from '../kube-api-client.js'
+import { KubeContentType, KubeResourceCatalog, type KubeApiClient } from '@pragmatic-tech-ai/pragmatic-kube'
 
 /** Writes an applied configuration next to its deployment and rolls the deployment. */
 export interface IConfigurationApplier

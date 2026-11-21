@@ -4,10 +4,8 @@ import { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
-import { Repository, toJSON } from '@pragmatic-tech-ai/todl'
-import type { PackageDocument } from '@pragmatic-tech-ai/todl'
-import { InMemoryMessageSocket, PragmaticClient, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { CypherAppDeployParamsDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { Repository, toJSON, type PackageDocument } from '@pragmatic-tech-ai/todl'
+import { InMemoryMessageSocket, PragmaticClient, AppWriteStatus, type CypherAppDeployParamsDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/pragmatic-identity'
 import { AppIngestService } from '../app-ingest-service.js'
 import { DeliveryChannel, EnvironmentCatalogError, EnvironmentCatalogErrorCode } from '@pragmatic-tech-ai/todl/engine'
@@ -16,7 +14,7 @@ import { EnvironmentUpgradeFailedError } from '../../environment/environment-eng
 import { PragmaticAppsRegistry } from '../pragmatic-apps-registry.js'
 import { PragmaticServer } from '../../../pragmatic-server.js'
 import { EnvironmentPurpose } from '../../../environments/environment-purpose.js'
-import { StructuredLogger } from '../../../observability/logger.js'
+import { StructuredLogger } from '@pragmatic-tech-ai/pragmatic-observability'
 import { ServerConnectionHandler } from '../../server-connection-handler.js'
 
 class RecordingStorage extends NodeFsStorage

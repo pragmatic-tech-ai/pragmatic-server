@@ -1,4 +1,4 @@
-import { ReleaseApp } from '../../admin/control-plane/release/release-tag.js'
+import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 /** Where a file of pragmatic-server goes in the split (dev-kit A3 plan, Target layout): a repository or a shared package. */
 export enum SplitHome
@@ -89,59 +89,25 @@ export class AssignmentRules
 
     /** Exact files whose home the plan names, whoever reaches them. */
     public static readonly Exceptions: ReadonlyMap<string, SplitHome> = new Map<string, SplitHome>([
-        // pragmatic-release-toolkit
-        ['admin/control-plane/release/release-tag.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/release/release-descriptor.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/release/release-signature.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/release/release-publisher.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/release/release-publish-cli.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/release/release-registry.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/release/release-components.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/release/component-descriptor-cli.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/release/component-image-label.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/bin/pragmatic-release-publish.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/bin/pragmatic-component-descriptors.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/oci-registry-client.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/image-signer.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/image-verifier.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/pinned-image-verifier.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/ui-artifact.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/ui-artifact-signer.ts', SplitHome.ReleaseToolkit],
-        ['admin/control-plane/key-store.ts', SplitHome.ReleaseToolkit],
-        ['docker/images/closure-check.ts', SplitHome.ReleaseToolkit],
-        ['docker/images/check-component-label.sh', SplitHome.ReleaseToolkit],
-        // pragmatic-kube
-        ['admin/control-plane/kube-api-client.ts', SplitHome.Kube],
-        ['src/agent/kube-https-transport.ts', SplitHome.Kube],
-        ['admin/control-plane/kubectl.ts', SplitHome.Kube],
-        ['admin/control-plane/api-kubectl.ts', SplitHome.Kube],
-        ['admin/control-plane/k8s-manifest-builder.ts', SplitHome.Kube],
-        ['admin/control-plane/environment-workload.ts', SplitHome.Kube],
-        ['admin/control-plane/tenant-admin-workload.ts', SplitHome.Kube],
-        ['admin/control-plane/idp-workload-driver.ts', SplitHome.Kube],
-        ['admin/control-plane/env-namespace-guard.ts', SplitHome.Kube],
-        ['admin/control-plane/in-cluster-hive-orchestrator.ts', SplitHome.Kube],
-        ['admin/control-plane/hive-orchestrator.ts', SplitHome.Kube],
-        // pragmatic-platform-link
-        ['admin/control-plane/internal-api-routes.ts', SplitHome.PlatformLink],
-        ['admin/control-plane/internal-api-client.ts', SplitHome.PlatformLink],
-        ['admin/control-plane/agent-channel-backend.ts', SplitHome.PlatformLink],
-        ['admin/control-plane/internal-api-link.ts', SplitHome.PlatformLink],
-        ['admin/control-plane/desktop-discovery-contract.ts', SplitHome.PlatformLink],
-        // the edge's hosts, which the console's single dev process (role `all`, the default) also serves, and the
-        // helpers the edge borrows (plan Task 2 Step 3: into the link bucket)
-        ['admin/control-plane/agent-channel-host.ts', SplitHome.PlatformLink],
-        ['admin/control-plane/desktop-discovery-endpoint.ts', SplitHome.PlatformLink],
-        ['admin/control-plane/plane-http.ts', SplitHome.PlatformLink],
-        ['admin/control-plane/rollout-errors.ts', SplitHome.PlatformLink],
-        ['admin/control-plane/audit-throttle.ts', SplitHome.PlatformLink],
-        // pragmatic-observability
-        ['src/observability/logger.ts', SplitHome.Observability],
-        // additions to existing shared packages
-        ['src/component/component-declaration.ts', SplitHome.Component],
-        ['src/idp/realm-issuer.ts', SplitHome.Identity],
-        ['src/host/token-scope.ts', SplitHome.Identity],
-        ['src/idp/dev-ca.ts', SplitHome.IdentitySourceOidc],
+        // Task 3 lifted the release toolkit, the kube client layer, the platform link, the logger and the additions to
+        // pragmatic-component / pragmatic-identity / pragmatic-identity-source-oidc into pragmatic-shared; what stays:
+        // the monorepo's own descriptor tooling (every image's declaration class; dev-kit A3 Ledger, Task 2) and its
+        // closure-check entry (this repository's settings for the toolkit's ClosureCheck)
+        ['admin/control-plane/release/release-components.ts', SplitHome.Archive],
+        ['admin/control-plane/bin/pragmatic-component-descriptors.ts', SplitHome.Archive],
+        ['admin/control-plane/release/tests/release-components.test.ts', SplitHome.Archive],
+        ['admin/control-plane/release/tests/component-descriptor-set.test.ts', SplitHome.Archive],
+        ['admin/control-plane/tests/tenant-admin-closure.test.ts', SplitHome.Archive],
+        ['src/packaging/tests/workflows.test.ts', SplitHome.Archive],
+        // the agent channel host's test drives it over the console's local and the edge's remote backend: the console's
+        ['admin/control-plane/tests/agent-channel-host.test.ts', SplitHome.PlatformAdmin],
+        // the shipped release trust key's check goes with release-keys
+        ['admin/control-plane/release/tests/release-keys.test.ts', SplitHome.PlatformRelease],
+        // the postgres image's shell and image tests are the postgres container's, not the toolkit's
+        ['docker/postgres/tests/harness.sh', SplitHome.Postgres],
+        ['docker/postgres/tests/image.test.sh', SplitHome.Postgres],
+        ['docker/postgres/tests/reconcile.test.sh', SplitHome.Postgres],
+        ['docker/images/tests/postgres-image.test.ts', SplitHome.Postgres],
         // the edge's own files
         ['admin/control-plane/edge-composition.ts', SplitHome.PlatformEdge],
         ['admin/control-plane/edge-host.ts', SplitHome.PlatformEdge],

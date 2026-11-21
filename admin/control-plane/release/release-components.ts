@@ -8,7 +8,7 @@ import { PlatformAdminComponent } from '../platform-admin-component.js'
 import { PlatformEdgeComponent } from '../platform-edge-component.js'
 import { TenantAdminComponent } from '../tenant-admin-component.js'
 import { UiUnpackComponent } from '../ui-unpack-component.js'
-import { ReleaseApp, ReleaseApps } from './release-tag.js'
+import { ReleaseApp, ReleaseApps } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 /** The component descriptor of every release app, each declared by its application's descriptor class. */
 export class ReleaseComponents
