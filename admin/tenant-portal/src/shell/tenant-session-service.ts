@@ -1,5 +1,5 @@
 import { ServiceKey, type IServiceProvider } from '@pragmatic-tech-ai/mural/runtime'
-import { AppSessionService, type AppSession, type IPageReloader } from '@pragmatic-tech-ai/pragmatic-app-shell'
+import { AppSessionService, type AppSession, type IPageNavigator, type IPageReloader } from '@pragmatic-tech-ai/pragmatic-app-shell'
 import { ActivityLog } from '../activity-log.js'
 import type { TenantApiClient } from '../tenant-api-client.js'
 import type { TenantEvent, TenantProfileDto } from '../tenant-types.js'
@@ -47,10 +47,10 @@ export class TenantSessionService extends AppSessionService
 
     // Binds the session and its profile. A missing profile (its read failed) leaves the capabilities permissive: the
     // server still refuses what is not allowed.
-    public override Initialize(client: TenantApiClient, session: AppSession, reloader: IPageReloader, profile?: TenantProfileDto): void
+    public override Initialize(client: TenantApiClient, session: AppSession, reloader: IPageReloader, navigator?: IPageNavigator, profile?: TenantProfileDto): void
     {
         const before = [this.Email, this.RoleLabel, this.OrganisationLabel, this.TenantLabel, this.HiveLabel, this.HasOrganisation] as const
-        super.Initialize(client, session, reloader)
+        super.Initialize(client, session, reloader, navigator)
         this.profile = profile
         this.capabilities = new AdminCapabilities(profile?.capabilities)
         const P = TenantSessionService

@@ -666,7 +666,7 @@ export class TenantTestHost
     {
         this.Provider.register(ContentHostService.Key, (p) => new ContentHostService(p))
         this.Session = new TenantSessionService(this.Provider)
-        this.Session.Initialize(api.AsClient(), TenantTestHost.SessionFor(), this.Reloader,
+        this.Session.Initialize(api.AsClient(), TenantTestHost.SessionFor(), this.Reloader, undefined,
             capabilities === null ? undefined : TenantTestHost.Profile(capabilities))
         this.Provider.registerInstance(TenantSessionService.Key, this.Session)
     }

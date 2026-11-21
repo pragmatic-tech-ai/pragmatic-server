@@ -423,11 +423,11 @@ describe('TenantSessionService', () =>
         assert.equal(withProfile.TenantId, 'tenant-1')
         assert.equal(withProfile.PrincipalId, 'principal-1')
         const session = new TenantSessionService(new ServiceProvider())
-        session.Initialize(new FakeTenantApi().AsClient(), TenantTestHost.SessionFor('someone@example.test'), new FakeReloader(), undefined)
+        session.Initialize(new FakeTenantApi().AsClient(), TenantTestHost.SessionFor('someone@example.test'), new FakeReloader(), undefined, undefined)
         assert.equal(session.Email, 'someone@example.test')
         assert.equal(session.PrincipalId, TenantTestHost.Subject)
         const noEmail = new TenantSessionService(new ServiceProvider())
-        noEmail.Initialize(new FakeTenantApi().AsClient(), TenantTestHost.SessionFor(null), new FakeReloader(), undefined)
+        noEmail.Initialize(new FakeTenantApi().AsClient(), TenantTestHost.SessionFor(null), new FakeReloader(), undefined, undefined)
         assert.equal(noEmail.Email, 'tenant-1')
     })
 

@@ -92,7 +92,7 @@ export class TenantApplications implements IShellApplications<Application>
         profile: TenantProfileDto | undefined, reloader: IPageReloader): void
     {
         const tenantSession = services.getRequired(TenantSessionService.Key)
-        tenantSession.Initialize(client, session, reloader, profile)
+        tenantSession.Initialize(client, session, reloader, undefined, profile)
         const bridge = new TenantLiveUpdateBridge(services.getRequired(NavigationService.Key), tenantSession)
         client.OnEvent(ev =>
         {
