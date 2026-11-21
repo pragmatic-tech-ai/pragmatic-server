@@ -1,5 +1,24 @@
 # pragmatic-server
 
+> **Archived (2026-11-21).** This repository was split into one repository per container. Nothing is built or
+> released from here any more; the platform releases up to `0.1.0-early.5` were cut from this repository and their
+> images stay linked to it. New homes (all in `pragmatic-tech-ai`):
+>
+> | Was here | Now |
+> |---|---|
+> | `admin/control-plane` (platform console), `admin/portal`, `release-keys/` (verification copy) | `pragmatic-platform-admin` |
+> | edge composition, agent channel, desktop discovery (`bin/pragmatic-platform-edged.ts`) | `pragmatic-platform-edge` |
+> | tenant admin console, `admin/tenant-portal` | `pragmatic-tenant-admin` |
+> | `src/idp`, `idp-login/` | `pragmatic-tenant-idp` |
+> | `src/agent` | `pragmatic-hive-agent` |
+> | env server and worker, `helm/pragmatic-server`, compose files | `pragmatic-env-server` (also holds the former `todl-identity-engine` and `todl-connectors-host` under `packages/`) |
+> | gateway (`src/cluster/gateway-main.ts`, `pragmatic-gatewayd`) | `pragmatic-env-gateway` |
+> | in-cluster UI unpacker | `pragmatic-ui-unpack` |
+> | `docker/postgres` | `pragmatic-postgres` |
+> | release assembly and signing (`release.yml`, `release-keys/`) | `pragmatic-platform-release` |
+> | `admin/control-plane/live-loop`, `admin/control-plane/dev`, the cross-container tests | `pragmatic-e2e` |
+> | code used by two or more containers | `pragmatic-shared` (`pragmatic-release-toolkit`, `pragmatic-kube`, `pragmatic-platform-link`, `pragmatic-observability`, `pragmatic-tenant-plane`, `pragmatic-env-cluster`, …) |
+
 ## Running the gated cloud-boot test against local emulators
 
 `src/environments/tests/cloud-gcp-boot.test.ts` always runs a deterministic cloud-mode boot over in-memory
