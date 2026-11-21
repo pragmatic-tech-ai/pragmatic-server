@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
 import { FakeRedisStore } from './fake-redis.js'
 import { RedisWorkerRouter, NoWorkersAvailableError } from '../redis-worker-router.js'
-import { WorkerRegistration } from '../worker-registration.js'
+import { WorkerRegistration } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 class Clock
 {

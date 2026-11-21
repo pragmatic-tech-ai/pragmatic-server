@@ -1,5 +1,5 @@
 import { SettingType, type ComponentDescriptor, ComponentDeclarations, type ComponentDeclaration } from '@pragmatic-tech-ai/pragmatic-component'
-import { ServerOptionDeclarations } from '../component/server-option-declarations.js'
+import { ServerOptionDeclarations } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 /**
  * The component descriptor of the env gateway image (pragmatic-gatewayd): what `ServerConfigLoader.LoadGateway` reads. A

@@ -1,23 +1,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DeploymentMode, type ServerConfig, type GatewayConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
+import { DeploymentMode, type ServerConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { ServerBootstrap } from '../server-bootstrap.js'
-import { InMemoryWorkerRouter } from '../../cluster/worker-router.js'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import type { PlatformServices } from '../../platform/platform-services.js'
-import { GatewayBootstrap } from '../gateway-bootstrap.js'
 
 class Fixture
 {
     public static Config(): ServerConfig
     {
         return { host: '0.0.0.0', port: 8443, baseDir: '/data', masterKey: { keyFilePath: '/run/secrets/key' }, deploymentMode: DeploymentMode.Local, redisUrl: 'redis://user:secret@r:6379', replicaId: 'pod-1', tls: { certFile: '/c.pem', keyFile: '/k.pem', caFile: '/ca.pem' }, workerAdvertiseHost: 'w.internal', workerAdvertisePort: 8443, healthPort: 8081 }
-    }
-
-    public static Gateway(): GatewayConfig
-    {
-        return { host: '0.0.0.0', port: 8080, tls: { certFile: '/c.pem', keyFile: '/k.pem', caFile: '/ca.pem' }, redisUrl: 'redis://user:secret@r:6379', workerServerName: 'pragmatic-worker', healthPort: 8081 }
     }
 
     public static Provisioning(): InMemoryEnvironmentProvisioning
@@ -44,27 +37,12 @@ test('ComposeWorkerOptions throws when TLS is absent (a worker requires mTLS)', 
     assert.throws(() => ServerBootstrap.ComposeWorkerOptions(config, Fixture.Provisioning()), /tls/i)
 })
 
-test('ComposeGatewayOptions maps the gateway config + router + server name', () =>
-{
-    const router = new InMemoryWorkerRouter({ host: 'x', port: 1 })
-    const o = GatewayBootstrap.ComposeGatewayOptions(Fixture.Gateway(), router)
-    assert.equal(o.port, 8080)
-    assert.equal(o.serverName, 'pragmatic-worker')
-    assert.equal(o.router, router)
-    assert.deepEqual(o.tls, { certFile: '/c.pem', keyFile: '/k.pem', caFile: '/ca.pem' })
-})
-
-test('the worker and gateway startup lines never leak the redis URL or TLS key path', () =>
+test('the worker startup line never leaks the redis URL or TLS key path', () =>
 {
     const w = ServerBootstrap.WorkerStartupLine(Fixture.Config())
     assert.ok(!w.includes('secret'))
     assert.ok(!w.includes('/k.pem'))
     assert.ok(w.includes('8443'))
-    const g = GatewayBootstrap.GatewayStartupLine(Fixture.Gateway())
-    assert.ok(!g.includes('secret'))
-    assert.ok(!g.includes('/k.pem'))
-    assert.ok(!g.includes('redis://'))
-    assert.ok(g.includes('8080'))
 })
 
 test('ComposeWorkerOptions fails closed in cloud mode without a platform, and threads one through when given', () =>

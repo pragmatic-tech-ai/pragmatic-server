@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { PinnedImageVerifier, InvalidVerifiedImagesError } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
-import { type HiveRecord, RecordSlot, type IRecordMap } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import { SeededTenantDirectory, type TenantDirectorySeed } from './tenant-api/seeded-tenant-directory.js'
+import { type HiveRecord, RecordSlot, type IRecordMap, type TenantDirectorySeed } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
+import { SeededTenantDirectory } from './tenant-api/seeded-tenant-directory.js'
 
 /** Neither a delivered seed.json nor a stored seed: the console cannot know its tenant. */
 export class ConsoleSeedMissingError extends Error

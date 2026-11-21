@@ -93,7 +93,7 @@ describe('ReachReport over the repository', () =>
         assert.equal(homes['src/idp/tests/tenant-idp-protocol.test.ts'], homes['src/idp/token-endpoint.ts'])
         assert.equal(homes['admin/control-plane/tests/client-registry.test.ts'], homes['admin/control-plane/client-registry.ts'])
         // an explicit exception names a test's home before its subject or its reach does
-        assert.equal(homes['admin/control-plane/tests/agent-channel-host.test.ts'], SplitHome.PlatformAdmin)
+        assert.equal(homes['admin/control-plane/tests/agent-channel-host.test.ts'], SplitHome.E2e)
         assert.equal(homes['admin/control-plane/release/tests/component-descriptor-set.test.ts'], SplitHome.Archive)
     })
 

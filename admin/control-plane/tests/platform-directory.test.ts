@@ -7,19 +7,9 @@ import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { HiveBackend, InfraMode, InvalidRecordIdError, type ClusterSpec, type RegistrySpec, EnvStatus, EnvType, Template, type EnvironmentRecord, IngressTlsSource, type HiveConsoleSpec, HivePlacementError, InvalidEmailDomainError } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-import {
-    PlatformDirectory,
-    RecordExistsError,
-    UnknownClientError,
-    UnknownTenantError,
-    ClientHasTenantsError,
-    TenantHasHivesError,
-    HiveHasEnvironmentsError,
-    InHiveConsoleTakenError
-} from '../platform-directory.js'
+import { PlatformDirectory, RecordExistsError, UnknownClientError, UnknownTenantError, ClientHasTenantsError, TenantHasHivesError, HiveHasEnvironmentsError, InHiveConsoleTakenError, type IEnvironmentLookup } from '../platform-directory.js'
 import { UnknownHiveError } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import { InvalidHiveConsoleError } from '../hive-console-spec.js'
-import type { IEnvironmentLookup } from '../platform-directory.js'
 
 class FakeEnvironments implements IEnvironmentLookup
 {

@@ -142,7 +142,7 @@ RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline -
 
 FROM build AS pragmatic-env-server-shared-modules
 RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
-    --workspace=packages/pragmatic-env-cluster --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
+    --workspace=packages/pragmatic-component --workspace=packages/pragmatic-env-cluster --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
     --workspace=packages/pragmatic-identity-source-entra --workspace=packages/pragmatic-identity-source-google --workspace=packages/pragmatic-identity-source-local \
     --workspace=packages/pragmatic-identity-source-oidc \
     --workspace=packages/pragmatic-identity-store --workspace=packages/pragmatic-observability --workspace=packages/pragmatic-realm-adapters \
@@ -152,7 +152,7 @@ RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline -
 
 FROM build AS pragmatic-env-gateway-shared-modules
 RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
-    --workspace=packages/pragmatic-env-cluster --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-observability \
+    --workspace=packages/pragmatic-component --workspace=packages/pragmatic-env-cluster --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-observability \
     && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
 
 FROM build AS pragmatic-tenant-admin-shared-modules
@@ -235,20 +235,48 @@ COPY --from=platform-admin-tools /tools/docker-cli /usr/local/bin/docker
 COPY --from=build --chown=10001:10001 /workspace/Mural /workspace/Mural
 COPY --from=build --chown=10001:10001 /workspace/TODL /workspace/TODL
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-protocol /workspace/pragmatic-protocol
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host /workspace/pragmatic-shared/packages/pragmatic-app-host
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component /workspace/pragmatic-shared/packages/pragmatic-component
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-configuration /workspace/pragmatic-shared/packages/pragmatic-configuration
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity /workspace/pragmatic-shared/packages/pragmatic-identity
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm /workspace/pragmatic-shared/packages/pragmatic-identity-realm
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local /workspace/pragmatic-shared/packages/pragmatic-identity-source-local
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store /workspace/pragmatic-shared/packages/pragmatic-identity-store
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-kube /workspace/pragmatic-shared/packages/pragmatic-kube
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-platform-link /workspace/pragmatic-shared/packages/pragmatic-platform-link
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom /workspace/pragmatic-shared/packages/pragmatic-realm-custom
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit /workspace/pragmatic-shared/packages/pragmatic-release-toolkit
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-tenant-plane /workspace/pragmatic-shared/packages/pragmatic-tenant-plane
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host/package.json /workspace/pragmatic-shared/packages/pragmatic-app-host/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host/dist /workspace/pragmatic-shared/packages/pragmatic-app-host/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host/README.md /workspace/pragmatic-shared/packages/pragmatic-app-host/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/package.json /workspace/pragmatic-shared/packages/pragmatic-component/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/dist /workspace/pragmatic-shared/packages/pragmatic-component/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/README.md /workspace/pragmatic-shared/packages/pragmatic-component/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-configuration/package.json /workspace/pragmatic-shared/packages/pragmatic-configuration/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-configuration/dist /workspace/pragmatic-shared/packages/pragmatic-configuration/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-configuration/README.md /workspace/pragmatic-shared/packages/pragmatic-configuration/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/package.json /workspace/pragmatic-shared/packages/pragmatic-identity/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/dist /workspace/pragmatic-shared/packages/pragmatic-identity/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/README.md /workspace/pragmatic-shared/packages/pragmatic-identity/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-realm/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm/dist /workspace/pragmatic-shared/packages/pragmatic-identity-realm/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/dist /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/README.md /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/dist /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/README.md /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-store/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store/dist /workspace/pragmatic-shared/packages/pragmatic-identity-store/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-kube/package.json /workspace/pragmatic-shared/packages/pragmatic-kube/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-kube/dist /workspace/pragmatic-shared/packages/pragmatic-kube/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-kube/README.md /workspace/pragmatic-shared/packages/pragmatic-kube/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-platform-link/package.json /workspace/pragmatic-shared/packages/pragmatic-platform-link/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-platform-link/dist /workspace/pragmatic-shared/packages/pragmatic-platform-link/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-platform-link/README.md /workspace/pragmatic-shared/packages/pragmatic-platform-link/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/package.json /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/dist /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom/package.json /workspace/pragmatic-shared/packages/pragmatic-realm-custom/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom/dist /workspace/pragmatic-shared/packages/pragmatic-realm-custom/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/package.json /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/dist /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/README.md /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/scripts /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/scripts
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/templates /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/templates
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/package.json /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/dist /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/templates /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/templates
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/environments /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/environments
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/README.md /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/README.md
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-platform-admin-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
@@ -271,12 +299,22 @@ ENTRYPOINT ["node", "dist-tenant-admin/admin/control-plane/server.js"]
 # The keyless public edge (its own entry, bin/pragmatic-platform-edged): agent channel + desktop discovery + /healthz on 7100, all
 # answered by admin over the internal API. The compiled code alone: no SPA, seed, trust key, data root or tool.
 FROM runtime AS pragmatic-platform-edge
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host /workspace/pragmatic-shared/packages/pragmatic-app-host
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity /workspace/pragmatic-shared/packages/pragmatic-identity
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm /workspace/pragmatic-shared/packages/pragmatic-identity-realm
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-platform-link /workspace/pragmatic-shared/packages/pragmatic-platform-link
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host/package.json /workspace/pragmatic-shared/packages/pragmatic-app-host/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host/dist /workspace/pragmatic-shared/packages/pragmatic-app-host/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host/README.md /workspace/pragmatic-shared/packages/pragmatic-app-host/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/package.json /workspace/pragmatic-shared/packages/pragmatic-identity/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/dist /workspace/pragmatic-shared/packages/pragmatic-identity/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/README.md /workspace/pragmatic-shared/packages/pragmatic-identity/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-realm/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm/dist /workspace/pragmatic-shared/packages/pragmatic-identity-realm/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/dist /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/README.md /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-platform-link/package.json /workspace/pragmatic-shared/packages/pragmatic-platform-link/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-platform-link/dist /workspace/pragmatic-shared/packages/pragmatic-platform-link/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-platform-link/README.md /workspace/pragmatic-shared/packages/pragmatic-platform-link/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/package.json /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/dist /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/dist
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-platform-edge-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
@@ -299,20 +337,44 @@ COPY --from=build --chown=10001:10001 /workspace/Mural /workspace/Mural
 COPY --from=build --chown=10001:10001 /workspace/TODL /workspace/TODL
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-graph /workspace/pragmatic-graph
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-protocol /workspace/pragmatic-protocol
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity /workspace/pragmatic-shared/packages/pragmatic-identity
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm /workspace/pragmatic-shared/packages/pragmatic-identity-realm
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-google /workspace/pragmatic-shared/packages/pragmatic-identity-source-google
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local /workspace/pragmatic-shared/packages/pragmatic-identity-source-local
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store /workspace/pragmatic-shared/packages/pragmatic-identity-store
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-env-cluster /workspace/pragmatic-shared/packages/pragmatic-env-cluster
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability /workspace/pragmatic-shared/packages/pragmatic-observability
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-aws /workspace/pragmatic-shared/packages/pragmatic-realm-aws
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-azure /workspace/pragmatic-shared/packages/pragmatic-realm-azure
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom /workspace/pragmatic-shared/packages/pragmatic-realm-custom
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-gcp /workspace/pragmatic-shared/packages/pragmatic-realm-gcp
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/package.json /workspace/pragmatic-shared/packages/pragmatic-identity/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/dist /workspace/pragmatic-shared/packages/pragmatic-identity/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/README.md /workspace/pragmatic-shared/packages/pragmatic-identity/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-realm/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm/dist /workspace/pragmatic-shared/packages/pragmatic-identity-realm/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra/dist /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra/README.md /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-google/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-source-google/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-google/dist /workspace/pragmatic-shared/packages/pragmatic-identity-source-google/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-google/README.md /workspace/pragmatic-shared/packages/pragmatic-identity-source-google/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/dist /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/README.md /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/dist /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/README.md /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-store/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store/dist /workspace/pragmatic-shared/packages/pragmatic-identity-store/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/package.json /workspace/pragmatic-shared/packages/pragmatic-component/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/dist /workspace/pragmatic-shared/packages/pragmatic-component/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/README.md /workspace/pragmatic-shared/packages/pragmatic-component/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-env-cluster/package.json /workspace/pragmatic-shared/packages/pragmatic-env-cluster/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-env-cluster/dist /workspace/pragmatic-shared/packages/pragmatic-env-cluster/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-env-cluster/README.md /workspace/pragmatic-shared/packages/pragmatic-env-cluster/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability/package.json /workspace/pragmatic-shared/packages/pragmatic-observability/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability/dist /workspace/pragmatic-shared/packages/pragmatic-observability/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability/README.md /workspace/pragmatic-shared/packages/pragmatic-observability/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/package.json /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/dist /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-aws/package.json /workspace/pragmatic-shared/packages/pragmatic-realm-aws/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-aws/dist /workspace/pragmatic-shared/packages/pragmatic-realm-aws/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-azure/package.json /workspace/pragmatic-shared/packages/pragmatic-realm-azure/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-azure/dist /workspace/pragmatic-shared/packages/pragmatic-realm-azure/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom/package.json /workspace/pragmatic-shared/packages/pragmatic-realm-custom/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom/dist /workspace/pragmatic-shared/packages/pragmatic-realm-custom/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-gcp/package.json /workspace/pragmatic-shared/packages/pragmatic-realm-gcp/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-gcp/dist /workspace/pragmatic-shared/packages/pragmatic-realm-gcp/dist
 COPY --from=build --chown=10001:10001 /workspace/todl-connectors-host /workspace/todl-connectors-host
 COPY --from=build --chown=10001:10001 /workspace/todl-identity-engine /workspace/todl-identity-engine
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
@@ -331,9 +393,18 @@ ENTRYPOINT ["node", "dist/bin/pragmatic-serverd.js"]
 
 FROM runtime AS pragmatic-env-gateway
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-protocol /workspace/pragmatic-protocol
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity /workspace/pragmatic-shared/packages/pragmatic-identity
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-env-cluster /workspace/pragmatic-shared/packages/pragmatic-env-cluster
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability /workspace/pragmatic-shared/packages/pragmatic-observability
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/package.json /workspace/pragmatic-shared/packages/pragmatic-identity/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/dist /workspace/pragmatic-shared/packages/pragmatic-identity/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/README.md /workspace/pragmatic-shared/packages/pragmatic-identity/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/package.json /workspace/pragmatic-shared/packages/pragmatic-component/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/dist /workspace/pragmatic-shared/packages/pragmatic-component/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/README.md /workspace/pragmatic-shared/packages/pragmatic-component/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-env-cluster/package.json /workspace/pragmatic-shared/packages/pragmatic-env-cluster/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-env-cluster/dist /workspace/pragmatic-shared/packages/pragmatic-env-cluster/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-env-cluster/README.md /workspace/pragmatic-shared/packages/pragmatic-env-cluster/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability/package.json /workspace/pragmatic-shared/packages/pragmatic-observability/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability/dist /workspace/pragmatic-shared/packages/pragmatic-observability/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability/README.md /workspace/pragmatic-shared/packages/pragmatic-observability/README.md
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-env-gateway-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
@@ -351,8 +422,12 @@ ENTRYPOINT ["node", "dist/bin/pragmatic-gatewayd.js"]
 # The hive agent imports node built-ins and two dependency-free shared packages (pragmatic-kube, pragmatic-observability):
 # no TODL, Mural or other sibling.
 FROM runtime AS pragmatic-hive-agent
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-kube /workspace/pragmatic-shared/packages/pragmatic-kube
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability /workspace/pragmatic-shared/packages/pragmatic-observability
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-kube/package.json /workspace/pragmatic-shared/packages/pragmatic-kube/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-kube/dist /workspace/pragmatic-shared/packages/pragmatic-kube/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-kube/README.md /workspace/pragmatic-shared/packages/pragmatic-kube/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability/package.json /workspace/pragmatic-shared/packages/pragmatic-observability/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability/dist /workspace/pragmatic-shared/packages/pragmatic-observability/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability/README.md /workspace/pragmatic-shared/packages/pragmatic-observability/README.md
 COPY --from=pragmatic-hive-agent-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
@@ -367,24 +442,48 @@ FROM runtime AS pragmatic-tenant-admin
 COPY --from=build --chown=10001:10001 /workspace/Mural /workspace/Mural
 COPY --from=build --chown=10001:10001 /workspace/TODL /workspace/TODL
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-protocol /workspace/pragmatic-protocol
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host /workspace/pragmatic-shared/packages/pragmatic-app-host
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component /workspace/pragmatic-shared/packages/pragmatic-component
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-configuration /workspace/pragmatic-shared/packages/pragmatic-configuration
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity /workspace/pragmatic-shared/packages/pragmatic-identity
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm /workspace/pragmatic-shared/packages/pragmatic-identity-realm
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-kube /workspace/pragmatic-shared/packages/pragmatic-kube
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-platform-link /workspace/pragmatic-shared/packages/pragmatic-platform-link
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom /workspace/pragmatic-shared/packages/pragmatic-realm-custom
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit /workspace/pragmatic-shared/packages/pragmatic-release-toolkit
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-tenant-plane /workspace/pragmatic-shared/packages/pragmatic-tenant-plane
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host/package.json /workspace/pragmatic-shared/packages/pragmatic-app-host/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host/dist /workspace/pragmatic-shared/packages/pragmatic-app-host/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host/README.md /workspace/pragmatic-shared/packages/pragmatic-app-host/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/package.json /workspace/pragmatic-shared/packages/pragmatic-component/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/dist /workspace/pragmatic-shared/packages/pragmatic-component/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/README.md /workspace/pragmatic-shared/packages/pragmatic-component/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-configuration/package.json /workspace/pragmatic-shared/packages/pragmatic-configuration/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-configuration/dist /workspace/pragmatic-shared/packages/pragmatic-configuration/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-configuration/README.md /workspace/pragmatic-shared/packages/pragmatic-configuration/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/package.json /workspace/pragmatic-shared/packages/pragmatic-identity/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/dist /workspace/pragmatic-shared/packages/pragmatic-identity/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/README.md /workspace/pragmatic-shared/packages/pragmatic-identity/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-realm/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm/dist /workspace/pragmatic-shared/packages/pragmatic-identity-realm/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/dist /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/README.md /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-kube/package.json /workspace/pragmatic-shared/packages/pragmatic-kube/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-kube/dist /workspace/pragmatic-shared/packages/pragmatic-kube/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-kube/README.md /workspace/pragmatic-shared/packages/pragmatic-kube/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-platform-link/package.json /workspace/pragmatic-shared/packages/pragmatic-platform-link/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-platform-link/dist /workspace/pragmatic-shared/packages/pragmatic-platform-link/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-platform-link/README.md /workspace/pragmatic-shared/packages/pragmatic-platform-link/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/package.json /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/dist /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom/package.json /workspace/pragmatic-shared/packages/pragmatic-realm-custom/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom/dist /workspace/pragmatic-shared/packages/pragmatic-realm-custom/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/package.json /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/dist /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/README.md /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/scripts /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/scripts
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/templates /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/templates
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/package.json /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/dist /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/templates /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/templates
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/environments /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/environments
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/README.md /workspace/pragmatic-shared/packages/pragmatic-tenant-plane/README.md
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-tenant-admin-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/node_modules /workspace/pragmatic-server/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane /workspace/pragmatic-server/dist-tenant-admin/admin/control-plane
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/seed /workspace/pragmatic-server/dist-tenant-admin/environments/seed
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/src /workspace/pragmatic-server/dist-tenant-admin/src
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/admin/tenant-portal /workspace/pragmatic-server/dist-tenant-admin/admin/tenant-portal
 ARG COMPONENT_DIGEST
@@ -400,20 +499,44 @@ ENTRYPOINT ["node", "dist-tenant-admin/admin/control-plane/bin/pragmatic-tenant-
 FROM runtime AS pragmatic-tenant-idp
 RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
 COPY --from=build --chown=10001:10001 /workspace/TODL /workspace/TODL
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host /workspace/pragmatic-shared/packages/pragmatic-app-host
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component /workspace/pragmatic-shared/packages/pragmatic-component
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-configuration /workspace/pragmatic-shared/packages/pragmatic-configuration
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity /workspace/pragmatic-shared/packages/pragmatic-identity
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm /workspace/pragmatic-shared/packages/pragmatic-identity-realm
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-google /workspace/pragmatic-shared/packages/pragmatic-identity-source-google
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-identity-platform /workspace/pragmatic-shared/packages/pragmatic-identity-source-identity-platform
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local /workspace/pragmatic-shared/packages/pragmatic-identity-source-local
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-pragmatic /workspace/pragmatic-shared/packages/pragmatic-identity-source-pragmatic
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store /workspace/pragmatic-shared/packages/pragmatic-identity-store
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom /workspace/pragmatic-shared/packages/pragmatic-realm-custom
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host/package.json /workspace/pragmatic-shared/packages/pragmatic-app-host/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host/dist /workspace/pragmatic-shared/packages/pragmatic-app-host/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-app-host/README.md /workspace/pragmatic-shared/packages/pragmatic-app-host/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/package.json /workspace/pragmatic-shared/packages/pragmatic-component/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/dist /workspace/pragmatic-shared/packages/pragmatic-component/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/README.md /workspace/pragmatic-shared/packages/pragmatic-component/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-configuration/package.json /workspace/pragmatic-shared/packages/pragmatic-configuration/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-configuration/dist /workspace/pragmatic-shared/packages/pragmatic-configuration/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-configuration/README.md /workspace/pragmatic-shared/packages/pragmatic-configuration/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/package.json /workspace/pragmatic-shared/packages/pragmatic-identity/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/dist /workspace/pragmatic-shared/packages/pragmatic-identity/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity/README.md /workspace/pragmatic-shared/packages/pragmatic-identity/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-realm/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-realm/dist /workspace/pragmatic-shared/packages/pragmatic-identity-realm/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra/dist /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra/README.md /workspace/pragmatic-shared/packages/pragmatic-identity-source-entra/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-google/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-source-google/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-google/dist /workspace/pragmatic-shared/packages/pragmatic-identity-source-google/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-google/README.md /workspace/pragmatic-shared/packages/pragmatic-identity-source-google/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-identity-platform/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-source-identity-platform/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-identity-platform/dist /workspace/pragmatic-shared/packages/pragmatic-identity-source-identity-platform/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-identity-platform/README.md /workspace/pragmatic-shared/packages/pragmatic-identity-source-identity-platform/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/dist /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/README.md /workspace/pragmatic-shared/packages/pragmatic-identity-source-local/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/dist /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/README.md /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-pragmatic/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-source-pragmatic/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-pragmatic/dist /workspace/pragmatic-shared/packages/pragmatic-identity-source-pragmatic/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-pragmatic/README.md /workspace/pragmatic-shared/packages/pragmatic-identity-source-pragmatic/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store/package.json /workspace/pragmatic-shared/packages/pragmatic-identity-store/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store/dist /workspace/pragmatic-shared/packages/pragmatic-identity-store/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/package.json /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/dist /workspace/pragmatic-shared/packages/pragmatic-realm-adapters/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom/package.json /workspace/pragmatic-shared/packages/pragmatic-realm-custom/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom/dist /workspace/pragmatic-shared/packages/pragmatic-realm-custom/dist
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-tenant-idp-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
@@ -432,8 +555,14 @@ ENTRYPOINT ["node", "dist/bin/pragmatic-idpd.js"]
 # The UI-unpack init container: pulls, verifies and unpacks a signed UI artifact, then exits. Only its own compile
 # (dist-ui-unpack: the entry and the few modules it imports), no control plane, SPA or seed.
 FROM runtime AS pragmatic-ui-unpack
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component /workspace/pragmatic-shared/packages/pragmatic-component
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit /workspace/pragmatic-shared/packages/pragmatic-release-toolkit
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/package.json /workspace/pragmatic-shared/packages/pragmatic-component/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/dist /workspace/pragmatic-shared/packages/pragmatic-component/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-component/README.md /workspace/pragmatic-shared/packages/pragmatic-component/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/package.json /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/package.json
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/dist /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/dist
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/README.md /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/README.md
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/scripts /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/scripts
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/templates /workspace/pragmatic-shared/packages/pragmatic-release-toolkit/templates
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-ui-unpack-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json

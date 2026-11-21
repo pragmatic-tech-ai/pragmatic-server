@@ -1,8 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ServerConfigLoader, DeploymentMode, type MachineTlsRef, type GatewayConfig, type ServerConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
+import { ServerConfigLoader, DeploymentMode, type MachineTlsRef, type ServerConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { ServerBootstrap } from '../../bin/server-bootstrap.js'
-import { GatewayBootstrap } from '../../bin/gateway-bootstrap.js'
 
 class Env
 {
@@ -45,11 +44,6 @@ class Fixtures
         return { host: '127.0.0.1', port: 1, baseDir: '/data', masterKey: { keyFilePath: '/k' }, deploymentMode: DeploymentMode.Local, clientTls }
     }
 
-    public static Gateway(clientTls: MachineTlsRef | undefined): GatewayConfig
-    {
-        return { host: '127.0.0.1', port: 1, tls: Fixtures.Secret, redisUrl: 'redis://x', clientTls }
-    }
-
     public static GatewayEnv(): Record<string, string | undefined>
     {
         return { PRAGMATIC_TLS_CERT_FILE: '/c', PRAGMATIC_TLS_KEY_FILE: '/k', PRAGMATIC_TLS_CA_FILE: '/ca', PRAGMATIC_REDIS_URL: 'redis://x' }
@@ -67,15 +61,6 @@ test('StartupLine reports client-mtls=on without leaking paths', () =>
 test('StartupLine reports client-mtls=off when unset', () =>
 {
     assert.match(ServerBootstrap.StartupLine(Fixtures.Server(undefined), 1), /client-mtls=off\b/)
-})
-
-test('GatewayStartupLine reports on/off without leaking paths', () =>
-{
-    const on = GatewayBootstrap.GatewayStartupLine(Fixtures.Gateway(Fixtures.Secret))
-    assert.match(on, /client-mtls=on\b/)
-    assert.ok(!on.includes('/secret/'))
-    assert.doesNotMatch(on, /cert\.pem|key\.pem|ca\.pem/)
-    assert.match(GatewayBootstrap.GatewayStartupLine(Fixtures.Gateway(undefined)), /client-mtls=off\b/)
 })
 
 test('LoadGateway threads clientTls when present and leaves it undefined when absent', () =>

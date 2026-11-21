@@ -2,20 +2,20 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import { StoragePackageSource } from '@pragmatic-tech-ai/todl'
 import { DeliveryChannel, EnvironmentCatalogComposer, type IEnvironmentCatalog } from '@pragmatic-tech-ai/todl/engine'
 import { RealmSecurityModel } from '@pragmatic-tech-ai/pragmatic-identity-engine-binding'
 import { IdpDirectorySnapshot, type ISecurityModelConfig } from '@pragmatic-tech-ai/pragmatic-identity'
 import { NodeFsStorage } from '@pragmatic-tech-ai/todl-runtime/node'
 import { SecuritySettingCatalogCheck } from '../../../src/host/environment/security-setting-catalog-check.js'
-import { NorthwindApp } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
+import { BundleBuilder, EnvKind, NorthwindApp } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** The demo Contoso tier-1 setting and the demo environment's composed catalog (the Northwind delivery). */
 class ContosoSeed
 {
-    /** The demo seed ships in pragmatic-tenant-plane beside the Northwind sample (environments/demo/seed). */
-    public static readonly ModelPath = join(dirname(NorthwindApp.SourcePath), '..', '..', 'demo', 'seed', 'security-model.json')
+    /** The demo seed ships in pragmatic-tenant-plane (BundleBuilder.SeedDirOf). */
+    public static readonly ModelPath = join(BundleBuilder.SeedDirOf(EnvKind.Demo), BundleBuilder.SecurityModelFile)
     public static readonly BusinessUnitCount = 6
     public static readonly Separator = ':'
     private static readonly TempPrefix = 'nw-sec-'

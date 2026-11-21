@@ -26,8 +26,6 @@ export class SeedCli
     private static readonly UnknownCommandPrefix = 'unknown command: '
     private static readonly UsageMessage = 'usage: seed.ts <up|down|status|logs|seed-users|build> <env>'
     private static readonly EnvFile = 'env.json'
-    private static readonly SeedDir = 'seed'
-    private static readonly UsersFile = 'users.json'
     private static readonly SecretsFile = 'provisioned-secrets.json'
     private static readonly Utf8 = 'utf8'
     private static readonly HttpScheme = 'http://'
@@ -68,6 +66,12 @@ export class SeedCli
     }
 
     /** Reads the generated provisioned-secrets.json (secretRef to value) for an environment. */
+    /** The users an environment's seed creates: in its seed folder, which pragmatic-tenant-plane ships (BundleBuilder.SeedDirOf). */
+    public static UsersFileOf(env: string): string
+    {
+        return join(BundleBuilder.SeedDirOf(env), BundleBuilder.UsersFile)
+    }
+
     public static LoadSecrets(env: string): Record<string, string>
     {
         return JSON.parse(readFileSync(join(SeedCli.EnvDir(env), SeedCli.SecretsFile), SeedCli.Utf8)) as Record<string, string>
@@ -176,7 +180,7 @@ export class SeedCli
         }
         console.log(SeedCli.SeedingUsersMessage)
         const secrets = SeedCli.LoadSecrets(def.name)
-        const users = JSON.parse(readFileSync(join(SeedCli.EnvDir(def.name), SeedCli.SeedDir, SeedCli.UsersFile), SeedCli.Utf8)) as UserSeed[]
+        const users = JSON.parse(readFileSync(SeedCli.UsersFileOf(def.name), SeedCli.Utf8)) as UserSeed[]
         for (const user of users)
         {
             user.password = SeedCli.Secret(secrets, user.passwordRef)

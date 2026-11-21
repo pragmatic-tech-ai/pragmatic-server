@@ -46,8 +46,8 @@ class ClosureProbe
  * where an attached hive is driven through a kubectl context) comes from @pragmatic-tech-ai/pragmatic-kube, outside this
  * probe, which follows this repository's files only. kubectl is an allowed tool, not a dev-box driver.
  *
- * TODL (and Mural, which TODL's root entry pulls in) stay in the closure on purpose: environments/seed/bundle.ts calls
- * NorthwindApp.Compile (environments/seed/compile.ts -> @pragmatic-tech-ai/todl compilePackage) when it writes a Demo
+ * TODL (and Mural, which TODL's root entry pulls in) stay in the closure on purpose: pragmatic-tenant-plane's BundleBuilder
+ * calls NorthwindApp.Compile (its src/seed/compile.ts -> @pragmatic-tech-ai/todl compilePackage) when it writes a Demo
  * environment's bundle, and the in-cluster runtime (InClusterEnvironmentRuntime.Prepare -> IBundleBuilder.Generate) runs
  * that for a hive-bound Template.DemoContoso create, which the console serves (in-cluster-env-create-smoke's demo phase).
  * Mural arrives through TODL's root entry (dist/index.js -> application/model-browser.mu.js, graph-api/browser/todl-app-bootstrap.js).

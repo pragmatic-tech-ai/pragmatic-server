@@ -1,7 +1,6 @@
 import type { ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
-import { type GatewayConfig, type Observability, type RateLimitGuard, HostBootstrap } from '@pragmatic-tech-ai/pragmatic-env-cluster'
+import { type GatewayConfig, type Observability, type RateLimitGuard, HostBootstrap, type IWorkerRouter } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import type { GatewayOptions } from '../cluster/gateway.js'
-import type { IWorkerRouter } from '../cluster/worker-router.js'
 
 /** The environment gateway's options and startup line from its configuration. */
 export class GatewayBootstrap

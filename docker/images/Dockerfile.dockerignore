@@ -28,7 +28,7 @@
 **/target
 **/graphify-out
 pragmatic-server/admin/control-plane/data
-# Local secrets the gitignore keeps out of the repo; the environments tree is copied into the control-plane images.
+# Local secrets the gitignore keeps out of the repo (the demo seed and the Northwind sample ship in pragmatic-tenant-plane).
 pragmatic-server/docker/*.key
 pragmatic-server/environments/*/data
 pragmatic-server/environments/*/master.key

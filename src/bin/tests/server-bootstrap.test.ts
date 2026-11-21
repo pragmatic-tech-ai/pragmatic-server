@@ -1,12 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DeploymentMode, type ServerConfig, type GatewayConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
+import { DeploymentMode, type ServerConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { ServerBootstrap } from '../server-bootstrap.js'
 import { ProvisionedSecretSource } from '../../config/provisioned-secret-source.js'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
-import type { IWorkerRouter } from '../../cluster/worker-router.js'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
-import { GatewayBootstrap } from '../gateway-bootstrap.js'
 
 class Fixture
 {
@@ -93,11 +91,6 @@ class DrainFixture
     {
         return { ...Fixture.Config(DeploymentMode.Local), tls: { certFile: '/c', keyFile: '/k', caFile: '/a' }, drainTimeoutMs: 31000 } as unknown as ServerConfig
     }
-
-    public static Gateway(): GatewayConfig
-    {
-        return { host: '0.0.0.0', port: 8080, tls: { certFile: '/c', keyFile: '/k', caFile: '/a' }, redisUrl: 'redis://x', drainTimeoutMs: 32000 }
-    }
 }
 
 test('ComposeWorkerOptions threads drainTimeoutMs', () =>
@@ -106,18 +99,7 @@ test('ComposeWorkerOptions threads drainTimeoutMs', () =>
     assert.equal(options.drainTimeoutMs, 31000)
 })
 
-test('ComposeGatewayOptions threads drainTimeoutMs', () =>
-{
-    const options = GatewayBootstrap.ComposeGatewayOptions(DrainFixture.Gateway(), {} as unknown as IWorkerRouter)
-    assert.equal(options.drainTimeoutMs, 32000)
-})
-
 test('WorkerStartupLine reports the drain window', () =>
 {
     assert.match(ServerBootstrap.WorkerStartupLine(DrainFixture.Worker()), / drain=31000/)
-})
-
-test('GatewayStartupLine reports the drain window', () =>
-{
-    assert.match(GatewayBootstrap.GatewayStartupLine(DrainFixture.Gateway()), / drain=32000/)
 })

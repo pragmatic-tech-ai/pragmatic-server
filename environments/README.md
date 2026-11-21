@@ -41,7 +41,7 @@ npx tsx environments/seed/seed.ts down demo
 
 ## Generated files
 
-`master.key`, `provisioned-secrets.json`, `environments.json`, `realm-config.json`, and `data/` under each environment dir are generated and gitignored. Copy `demo/seed/provisioned-secrets.example.json` to see the required secret refs; real secrets are generated fresh on first `up`.
+`master.key`, `provisioned-secrets.json`, `environments.json`, `realm-config.json`, and `data/` under each environment dir are generated and gitignored. See `environments/demo/seed/provisioned-secrets.example.json` in pragmatic-tenant-plane (`node_modules/@pragmatic-tech-ai/pragmatic-tenant-plane`, which ships the demo seed) for the required secret refs; real secrets are generated fresh on first `up`.
 
 ## Integration smoke
 

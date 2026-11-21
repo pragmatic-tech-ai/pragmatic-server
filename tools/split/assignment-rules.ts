@@ -99,8 +99,9 @@ export class AssignmentRules
         ['admin/control-plane/release/tests/component-descriptor-set.test.ts', SplitHome.Archive],
         ['admin/control-plane/tests/tenant-admin-closure.test.ts', SplitHome.Archive],
         ['src/packaging/tests/workflows.test.ts', SplitHome.Archive],
-        // the agent channel host's test drives it over the console's local and the edge's remote backend: the console's
-        ['admin/control-plane/tests/agent-channel-host.test.ts', SplitHome.PlatformAdmin],
+        // the agent channel host's test drives it over the console's local and the edge's remote backend: it spans both
+        // containers, so it is pragmatic-e2e's (pragmatic-platform-link has its own host tests)
+        ['admin/control-plane/tests/agent-channel-host.test.ts', SplitHome.E2e],
         // the shipped release trust key's check goes with release-keys
         ['admin/control-plane/release/tests/release-keys.test.ts', SplitHome.PlatformRelease],
         // the postgres image's shell and image tests are the postgres container's, not the toolkit's
@@ -156,6 +157,8 @@ export class AssignmentRules
         ['admin/control-plane/tests/fixtures/platform-admin-data-root/tenant-graph-audit.json', SplitHome.PlatformAdmin],
         ['admin/control-plane/tests/fixtures/platform-admin-data-root/tenant-sessions.json', SplitHome.PlatformAdmin],
         ['admin/control-plane/tests/fixtures/platform-admin-data-root/tenants.json', SplitHome.PlatformAdmin],
+        // the in-process cluster (workers + gateway in one process) only the cluster journeys start
+        ['src/cluster/pragmatic-cluster.ts', SplitHome.E2e],
         // the edge's own files
         ['admin/control-plane/edge-composition.ts', SplitHome.PlatformEdge],
         ['admin/control-plane/edge-host.ts', SplitHome.PlatformEdge],

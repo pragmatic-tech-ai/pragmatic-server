@@ -6,8 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { WebSocket } from 'ws'
 import { TransportCloseCode } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { Gateway } from '../gateway.js'
-import type { IWorkerRouter, WorkerEndpoint } from '../worker-router.js'
-import type { MachineTlsRef } from '@pragmatic-tech-ai/pragmatic-env-cluster'
+import type { IWorkerRouter, WorkerEndpoint, MachineTlsRef } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 class StubRouter implements IWorkerRouter
 {

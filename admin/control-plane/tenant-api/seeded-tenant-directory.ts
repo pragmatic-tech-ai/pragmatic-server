@@ -1,10 +1,4 @@
-import type { HiveRecord, TenantRecord, ITenantDirectory } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
-
-export type TenantDirectorySeed = {
-    readonly tenant: TenantRecord
-    readonly hives: readonly HiveRecord[]
-    readonly organisation?: string
-}
+import type { HiveRecord, TenantRecord, ITenantDirectory, TenantDirectorySeed } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /**
  * A read-only ITenantDirectory scoped to exactly one tenant and its hives, seeded from startup config.

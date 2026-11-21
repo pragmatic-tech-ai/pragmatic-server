@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { before, describe, it } from 'node:test'
 import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
@@ -12,6 +13,9 @@ class Boundaries
     public static readonly Root = join(import.meta.dirname, '..', '..', '..')
     public static readonly SharedPrefix = 'pragmatic-shared/'
     public static readonly TsExtension = '.ts'
+    public static readonly Untracked = 'untracked'
+    /** Homes that are no container: the archived monorepo's own tooling and the cross-container journeys of pragmatic-e2e. */
+    public static readonly Unchecked: ReadonlySet<string> = new Set<string>([SplitHome.Archive, SplitHome.E2e])
     public static Assignment: SplitAssignment
     public static Reach: ReadonlyMap<string, ReadonlySet<string>>
 
@@ -50,34 +54,26 @@ describe('container boundaries', () =>
         assert.deepEqual(crossings, [])
     })
 
-    it('a shared package\'s files import, type-only imports included, only shared packages (they must compile there)', () =>
+    it('each container\'s files import, type-only imports included, only their own home (and the test support they carry a copy of)', () =>
     {
         const B = Boundaries
         const imports = new SourceImports(B.Root)
         const support = new Set(B.Assignment.SharedSupport)
         const crossings: string[] = []
-        // a shared package's tests carry a copy of the support files they import, so those are checked as the package's
-        const queue = Object.entries(B.Assignment.Homes).filter(([file, home]) => home.startsWith(B.SharedPrefix) && file.endsWith(B.TsExtension))
-        const seen = new Set(queue.map(([file]) => file))
-        while (queue.length > 0)
+        for (const [file, home] of Object.entries(B.Assignment.Homes))
         {
-            const [file, home] = queue.shift() as [string, string]
+            if (!file.endsWith(B.TsExtension) || B.Unchecked.has(home) || home.startsWith(B.SharedPrefix))
+            {
+                continue
+            }
             for (const target of imports.Of(file))
             {
                 const targetHome = B.Assignment.Homes[target]
-                if (support.has(target))
+                if (targetHome === home || support.has(target) || (targetHome === undefined && !existsSync(join(B.Root, target))))
                 {
-                    if (!seen.has(target))
-                    {
-                        seen.add(target)
-                        queue.push([target, home])
-                    }
                     continue
                 }
-                if (targetHome === undefined || !targetHome.startsWith(B.SharedPrefix))
-                {
-                    crossings.push(file + ' (' + home + ') -> ' + target + ' (' + (targetHome ?? 'untracked') + ')')
-                }
+                crossings.push(file + ' (' + home + ') -> ' + target + ' (' + (targetHome ?? B.Untracked) + ')')
             }
         }
         assert.deepEqual(crossings, [])

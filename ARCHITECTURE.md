@@ -326,7 +326,7 @@ The tenant plane both consoles run and what the environment server and gateway s
 
 ## Tests
 
-- `src/host/tests/` — e2e through real `PragmaticClient` → socket pair → server (e.g. `cypher-surface.test.ts`). Node test runner; `npm test`. Suite ~1560 (18 env-gated skips).
+- `src/host/tests/` — e2e through real `PragmaticClient` → socket pair → server (e.g. `cypher-surface.test.ts`). Node test runner; `npm test`. Suite ~1400 (18 env-gated skips).
 
 ## Where does X live?
 

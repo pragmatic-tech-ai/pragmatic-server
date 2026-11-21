@@ -1,6 +1,5 @@
 import { createClient, type RedisClientType } from 'redis'
-import { ClusterKeys } from '@pragmatic-tech-ai/pragmatic-env-cluster'
-import type { IWorkerRouter, WorkerEndpoint } from './worker-router.js'
+import { ClusterKeys, type IWorkerRouter, type WorkerEndpoint } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 /** No live worker is available to serve an environment. */
 export class NoWorkersAvailableError extends Error

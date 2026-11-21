@@ -111,6 +111,8 @@ export class ReachReport
     ])
 
     private readonly esbuild: IEsbuild
+    /** Homes that are no container: a test there is never moved by what it reaches. */
+    private static readonly Uncontained: ReadonlySet<string> = new Set<string>([SplitHome.Archive, SplitHome.E2e])
     private readonly rules = new AssignmentRules()
     private readonly imports: SourceImports
 
@@ -252,9 +254,9 @@ export class ReachReport
     }
 
     /**
-     * A test placed in a shared package must compile there: one whose imports (types included, followed through the test
-     * support files it names) reach a container's own files goes to that container, or to pragmatic-e2e when it reaches
-     * several. Returns the ones moved to pragmatic-e2e.
+     * A test must compile in its home: one whose imports (types included, followed through the test support files it
+     * names) reach another container's own files than its home's goes to pragmatic-e2e (a test placed in a shared
+     * package that reaches exactly one container goes to that container). Returns the ones moved to pragmatic-e2e.
      */
     private PlaceByCompileReach(tests: readonly string[], homes: Record<string, string>): string[]
     {
@@ -262,11 +264,11 @@ export class ReachReport
         const cross: string[] = []
         for (const test of tests)
         {
-            if (!homes[test].startsWith(R.SharedPrefix) || AssignmentRules.Exceptions.has(test))
+            if (AssignmentRules.Exceptions.has(test) || R.Uncontained.has(homes[test]))
             {
                 continue
             }
-            const containers = new Set<string>()
+            const containers = new Set<string>(homes[test].startsWith(R.SharedPrefix) ? [] : [homes[test]])
             const seen = new Set<string>([test])
             const queue = [test]
             while (queue.length > 0)
@@ -283,7 +285,7 @@ export class ReachReport
                         continue
                     }
                     const home = homes[target]
-                    if (home !== undefined && !home.startsWith(R.SharedPrefix))
+                    if (home !== undefined && !home.startsWith(R.SharedPrefix) && !R.Uncontained.has(home))
                     {
                         containers.add(home)
                     }

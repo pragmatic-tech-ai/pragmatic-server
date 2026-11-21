@@ -1,7 +1,6 @@
-import { ServerConfigLoader, Observability, ObservabilityRole, HostBootstrap } from '@pragmatic-tech-ai/pragmatic-env-cluster'
+import { ServerConfigLoader, Observability, ObservabilityRole, HostBootstrap, type IWorkerRouter } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { Gateway } from '../cluster/gateway.js'
 import { RedisWorkerRouter } from '../cluster/redis-worker-router.js'
-import type { IWorkerRouter } from '../cluster/worker-router.js'
 import { StructuredLogger, type ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 import { GatewayBootstrap } from './gateway-bootstrap.js'
 

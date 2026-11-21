@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { existsSync } from 'node:fs'
 import { SeedCli, Command } from '../seed.js'
 
 test('CLI parses command + env', () =>
@@ -20,4 +21,9 @@ test('CLI rejects an unknown command', () =>
 test('CLI rejects a missing env', () =>
 {
     assert.throws(() => SeedCli.Parse(['up']))
+})
+
+test('the demo users file the seed CLI seeds from exists (pragmatic-tenant-plane ships the demo seed)', () =>
+{
+    assert.ok(existsSync(SeedCli.UsersFileOf('demo')), SeedCli.UsersFileOf('demo'))
 })

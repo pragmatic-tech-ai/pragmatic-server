@@ -10,7 +10,7 @@ import { WsMessageSocket, HeartbeatMonitor, BackpressurePolicy, TransportCloseCo
 import type { ILanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { AuthMethod, type AccessContext, type Realm } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { ServerIdentityPack } from '@pragmatic-tech-ai/pragmatic-identity-store'
-import { MachineTls, type MachineTlsRef, MachineCertIdentity, type MasterKeyRef, type PagingLimits, type AdapterPacksConfig, type WsResilienceConfig, RateLimitGuard, RateLimitScope, AuditSurface, NullAccessAuditSink, type IAccessAuditSink, HealthEndpoint, ClusterKeys, type DeploymentMode, type Observability, DrainController, type IInFlightSource, RequestCorrelation } from '@pragmatic-tech-ai/pragmatic-env-cluster'
+import { MachineTls, type MachineTlsRef, MachineCertIdentity, type MasterKeyRef, type PagingLimits, type AdapterPacksConfig, type WsResilienceConfig, RateLimitGuard, RateLimitScope, AuditSurface, NullAccessAuditSink, type IAccessAuditSink, HealthEndpoint, ClusterKeys, type DeploymentMode, type Observability, DrainController, type IInFlightSource, RequestCorrelation, type WebSocketAddress } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { type MachineAuthContext, AuthHttpEndpoint } from './auth-http-endpoint.js'
 import type { CypherLimits } from '../config/cypher-limits.js'
 import type { IProvisionedSecretSource } from '../config/provisioned-secret-source.js'
@@ -61,12 +61,6 @@ export interface PragmaticServerHostOptions
     wsResilience?: WsResilienceConfig
     /** Extra browser Origins (beyond same-origin) allowed to use the session cookie. */
     allowedOrigins?: readonly string[]
-}
-
-export interface WebSocketAddress
-{
-    host: string
-    port: number
 }
 
 /** Stateless multi-environment front door: the ?environment hint selects an environment's pack, the bearer authenticated against that pack binds the environment,
