@@ -6,17 +6,14 @@ import { afterEach, beforeEach, describe, it } from 'node:test'
 import { ClientRegistry } from '../client-registry.js'
 import { ConsoleAdvertRegistry } from '../console-advert-registry.js'
 import { ConsoleDomainApprovals } from '../console-domain-approvals.js'
-import { DomainApprovalState, DomainVerificationRecord, type DomainVerificationView } from '../domain-verification-record.js'
-import { InvalidEmailDomainError } from '../email-domain-policy.js'
+import { DomainApprovalState, DomainVerificationRecord, type DomainVerificationView, InvalidEmailDomainError, IngressTlsSource, HiveBackend, InfraMode } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { HiveRegistry } from '../hive-registry.js'
-import { IngressTlsSource } from '../ingress-tls.js'
 import { PlatformDirectory, UnknownTenantError } from '../platform-directory.js'
 import { EmailDomainApprovalRefusedError, EmailDomainSource, PlatformEmailDomains, type EmailDomainApproval } from '../platform-email-domains.js'
-import { HiveBackend, InfraMode } from '../platform-records.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import {
     DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerifyThrottledError, EmailDomainsNotEditableError, type TenantEmailDomainsView,
-} from '../tenant-api/tenant-email-domains.js'
+} from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { DomainTxtVerifier, TxtLookupStatus, type ITxtResolver, type TxtLookup } from '../txt-resolver.js'
 
 /** Answers every lookup with `answer` (or what `ours` builds from the stored token) and records each queried name. */

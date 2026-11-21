@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { IdpRegistry } from '../idp-registry.js'
-import { IdpStatus, type IdpRecord } from '../idp-record.js'
+import { IdpStatus, type IdpRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { WriteGate } from './write-gate.js'
 
 /** A registry whose file writes go through a WriteGate, so a test can hold one and see the order they ran in. */

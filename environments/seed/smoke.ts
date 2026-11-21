@@ -10,12 +10,9 @@
  * exits non-zero if any axis fails.
  */
 import { fileURLToPath } from 'node:url'
-import { PragmaticClient, ShareSubjectKind, ShareStatus, AssignStatus, CypherCells } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { CypherQueryPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { PragmaticClient, ShareSubjectKind, ShareStatus, AssignStatus, CypherCells, type CypherQueryPageDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { Command, SeedCli } from './seed.js'
-import { UserSeeder } from './users.js'
-import { NorthwindApp } from './compile.js'
-import type { EnvDefinition } from './bundle.js'
+import { UserSeeder, NorthwindApp, type EnvDefinition } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 type OrderRow = { id: string; orderNo: string; owner: string; owningBu: string }
 

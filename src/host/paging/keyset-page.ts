@@ -1,7 +1,6 @@
-import { CursorStaleError, PageCursorCodec, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
+import { CursorStaleError, PageCursorCodec, ResponseError, type PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { ExternalFieldValue } from '@pragmatic-tech-ai/todl'
-import type { PagingLimits } from '../../config/paging-limits.js'
+import type { PagingLimits } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { PageRequest } from './page-request.js'
 
 /** A validated keyset page window: the exclusive lower bound (After) and the effective page size. The cursor reuses the

@@ -1,6 +1,5 @@
-import type { PlatformDeploymentRegistry, HiveRolloutStatus } from '../platform-deployment-registry.js'
-import type { ManifestRecord } from '../manifest-record.js'
-import { AdoptionLedgerDtoMapper, type AdoptionLedgerDto, type IRolloutClient } from './rollout-client.js'
+import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
+import { type HiveRolloutStatus, type ManifestRecord, AdoptionLedgerDtoMapper, type AdoptionLedgerDto, type IRolloutClient } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** Collapsed-dev adapter: serves the tenant rollout seam in-process from the operator's `PlatformDeploymentRegistry`. */
 export class InProcessRolloutClient implements IRolloutClient

@@ -4,8 +4,7 @@ import type { IncomingMessage } from 'node:http'
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base'
 import { PeriodicExportingMetricReader, InMemoryMetricExporter, AggregationTemporality } from '@opentelemetry/sdk-metrics'
 import { Gateway } from '../gateway.js'
-import { Observability, ObservabilityRole } from '../../observability/observability.js'
-import { MachineFingerprintHeader } from '../machine-headers.js'
+import { Observability, ObservabilityRole, MachineFingerprintHeader } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 const TRACE_ID = '0af7651916cd43dd8448eb211c80319c'
 

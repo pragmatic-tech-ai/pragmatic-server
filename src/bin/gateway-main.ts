@@ -1,10 +1,9 @@
-import { ServerConfigLoader } from '../config/server-config-loader.js'
+import { ServerConfigLoader, Observability, ObservabilityRole, HostBootstrap } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { Gateway } from '../cluster/gateway.js'
 import { RedisWorkerRouter } from '../cluster/redis-worker-router.js'
 import type { IWorkerRouter } from '../cluster/worker-router.js'
-import { ServerBootstrap } from './server-bootstrap.js'
 import { StructuredLogger, type ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
-import { Observability, ObservabilityRole } from '../observability/observability.js'
+import { GatewayBootstrap } from './gateway-bootstrap.js'
 
 class GatewayMain
 {
@@ -31,13 +30,13 @@ class GatewayMain
     {
         const logger = StructuredLogger.ToStdout()
         const gw = ServerConfigLoader.LoadGateway(process.env)
-        const observabilityOptions = ServerBootstrap.ObservabilityOptions(gw, ObservabilityRole.Gateway)
+        const observabilityOptions = HostBootstrap.ObservabilityOptions(gw, ObservabilityRole.Gateway)
         const observability = observabilityOptions !== undefined ? Observability.Start(observabilityOptions) : undefined
         const router = new RedisWorkerRouter(gw.redisUrl)
-        const audit = ServerBootstrap.AuditSink(gw, logger, observability)
-        const rateLimit = ServerBootstrap.RateLimit(gw, audit, observability, logger)
-        const gateway = await Gateway.StartAsync(ServerBootstrap.ComposeGatewayOptions(gw, router, logger, rateLimit, observability))
-        logger.Info(ServerBootstrap.GatewayStartupLine(gw), { [GatewayMain.EventKey]: GatewayMain.StartupEvent })
+        const audit = HostBootstrap.AuditSink(gw, logger, observability)
+        const rateLimit = HostBootstrap.RateLimit(gw, audit, observability, logger)
+        const gateway = await Gateway.StartAsync(GatewayBootstrap.ComposeGatewayOptions(gw, router, logger, rateLimit, observability))
+        logger.Info(GatewayBootstrap.GatewayStartupLine(gw), { [GatewayMain.EventKey]: GatewayMain.StartupEvent })
         const main = new GatewayMain(gateway, router, logger)
         process.on(GatewayMain.SigTerm, () => void main.Shutdown())
         process.on(GatewayMain.SigInt, () => void main.Shutdown())

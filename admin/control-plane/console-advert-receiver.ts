@@ -1,10 +1,6 @@
-import { ConsoleAdvertLimits } from './console-advert-contract.js'
+import { ConsoleAdvertLimits, EmailDomainPolicy, type HiveRecord, type DomainVerificationAnswer, DomainVerificationUnavailableError } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { ConsoleAdvertRecord, ConsoleAdvertRegistry } from './console-advert-registry.js'
-import { EmailDomainPolicy } from './email-domain-policy.js'
 import { HiveConsoleSpecs } from './hive-console-spec.js'
-import type { HiveRecord } from './platform-records.js'
-import type { DomainVerificationAnswer } from './domain-verification-record.js'
-import { DomainVerificationUnavailableError } from './tenant-api/tenant-email-domains.js'
 
 /** A console advert that is malformed or claims an address that is not this hive's console (maps to 400). */
 export class InvalidConsoleAdvertError extends Error

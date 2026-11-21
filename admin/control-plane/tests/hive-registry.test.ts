@@ -4,8 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { HiveRegistry } from '../hive-registry.js'
-import { HiveBackend, InfraMode } from '../platform-records.js'
-import type { HiveRecord } from '../platform-records.js'
+import { HiveBackend, InfraMode, type HiveRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 class HiveFixture
 {

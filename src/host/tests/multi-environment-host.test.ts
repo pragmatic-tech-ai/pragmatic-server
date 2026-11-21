@@ -4,15 +4,14 @@ import { randomBytes } from 'node:crypto'
 import { mkdtempSync, cpSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/pragmatic-identity'
+import { Grant, Role, ResourceRef, ResourceKind, type IdentityStoreSet } from '@pragmatic-tech-ai/pragmatic-identity'
 import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
-import type { IdentityStoreSet } from '@pragmatic-tech-ai/pragmatic-identity'
 import { NodePlatform } from '../../platform/node-platform.js'
-import { DeploymentMode } from '../../platform/deployment-mode.js'
+import { DeploymentMode } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 class RecordingPlatform extends NodePlatform
 {

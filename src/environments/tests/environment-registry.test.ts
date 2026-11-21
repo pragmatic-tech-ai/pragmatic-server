@@ -9,7 +9,7 @@ import { InMemoryEnvironmentProvisioning, EnvironmentRegistry } from '../environ
 import type { EnvironmentProvisioning } from '../environment-provisioning.js'
 import type { IdentityStoreSet } from '@pragmatic-tech-ai/pragmatic-identity'
 import { NodePlatform } from '../../platform/node-platform.js'
-import { DeploymentMode } from '../../platform/deployment-mode.js'
+import { DeploymentMode } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 class RecordingPlatform extends NodePlatform
 {

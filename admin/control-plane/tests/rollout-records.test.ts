@@ -3,13 +3,10 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ManifestRegistry } from '../manifest-record.js'
+import { ManifestRegistry, type ManifestRecord, HiveBackend, InfraMode, type HiveRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { GatingRegistry } from '../gating-record.js'
 import { SelectionRegistry } from '../selection-record.js'
 import { RolloutRegistrationRegistry } from '../rollout-registration-record.js'
-import type { ManifestRecord } from '../manifest-record.js'
-import { HiveBackend, InfraMode } from '../platform-records.js'
-import type { HiveRecord } from '../platform-records.js'
 
 class RolloutFixture
 {

@@ -1,4 +1,4 @@
-import { LocalDevCluster } from './local-dev-cluster.js'
+import { LocalDevCluster } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /**
  * Which local cluster the gated real-cluster smokes run against. They default to the local development kind cluster

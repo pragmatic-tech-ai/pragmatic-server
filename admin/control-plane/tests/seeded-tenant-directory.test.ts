@@ -1,8 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { SeededTenantDirectory } from '../tenant-api/seeded-tenant-directory.js'
-import { HiveBackend, InfraMode } from '../platform-records.js'
-import type { HiveRecord, TenantRecord } from '../platform-records.js'
+import { HiveBackend, InfraMode, type HiveRecord, type TenantRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 class SeedFixture
 {

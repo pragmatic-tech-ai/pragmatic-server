@@ -1,9 +1,6 @@
-import { UnsupportedBackendError } from './hive-orchestrator.js'
-import type { IHiveOrchestrator } from './hive-orchestrator.js'
+import { UnsupportedBackendError, type IHiveOrchestrator, HiveBackend, InfraMode, type HiveRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { NoInfraTargetBackendError } from './no-infra-target.js'
 import { PlatformHiveOrchestratorFactory } from './platform-hive-orchestrator-factory.js'
-import { HiveBackend, InfraMode } from './platform-records.js'
-import type { HiveRecord } from './platform-records.js'
 
 /** A hosted hive was registered without the kubeconfig context of its cluster, so there is nothing to drive. Maps to 400. */
 export class HostedClusterRefMissingError extends UnsupportedBackendError

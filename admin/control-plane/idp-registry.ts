@@ -1,6 +1,4 @@
-import { SerialRuns } from './atomic-json-file.js'
-import type { IdpRecord } from './idp-record.js'
-import { FileRecordMap, RecordDocuments, type IRecordMap } from './record-map.js'
+import { SerialRuns, type IdpRecord, FileRecordMap, RecordDocuments, type IRecordMap } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 export class IdpRegistry
 {

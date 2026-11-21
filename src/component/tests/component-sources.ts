@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component'
 
 /**
@@ -13,6 +15,15 @@ export class ComponentSources
     private static readonly VariablePattern = /\b(?:PRAGMATIC|POSTGRES)_[A-Z0-9_]*[A-Z0-9]\b/g
     private static readonly SourceSeparator = ': '
     private static readonly Utf8 = 'utf8'
+
+    /**
+     * A reader that lives in a package: its compiled module under the package's dist (published, unlike its sources),
+     * found from the package entry (`dist/index.js`); `distPath` is relative to dist, e.g. `config/x.js`.
+     */
+    public static InPackage(specifier: string, ...distPath: string[]): string
+    {
+        return join(dirname(fileURLToPath(import.meta.resolve(specifier))), ...distPath)
+    }
 
     /** The environment sources the descriptor declares (settings read from a configuration document carry none). */
     public static Declared(descriptor: ComponentDescriptor): string[]

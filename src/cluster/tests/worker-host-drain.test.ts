@@ -10,12 +10,10 @@ import { trace, metrics } from '@opentelemetry/api'
 import { WebSocket } from 'ws'
 import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/pragmatic-identity'
 import { WorkerHost } from '../worker-host.js'
-import { MachineTls, type MachineTlsRef } from '../machine-tls.js'
+import { MachineTls, type MachineTlsRef, DrainController, type IInFlightSource, type Observability } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import { StructuredLogger } from '@pragmatic-tech-ai/pragmatic-observability'
-import { DrainController, type IInFlightSource } from '../../observability/drain-controller.js'
-import type { Observability } from '../../observability/observability.js'
 
 class Fixture
 {

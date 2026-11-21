@@ -5,11 +5,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConsoleOwnerResets } from '../console-owner-resets.js'
 import { ConsoleOwnerResetFollower, type IOwnerSessionEnder } from '../console-owner-reset-follower.js'
-import { TenantOwner, type OwnedTenant } from '../tenant-owner.js'
+import { TenantOwner, type OwnedTenant, TenantPrincipalSessions, type IPrincipalConnections, TenantSessionClaims, TenantSessions } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { TenantProvisioningService } from '../tenant-provisioning-service.js'
-import { TenantPrincipalSessions, type IPrincipalConnections } from '../tenant-auth/tenant-principal-sessions.js'
 import { SignedInIdentity } from '@pragmatic-tech-ai/pragmatic-app-host'
-import { TenantSessionClaims, TenantSessions } from '../tenant-auth/tenant-sessions.js'
 
 class Names
 {

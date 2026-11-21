@@ -7,8 +7,7 @@ import type { AddressInfo } from 'node:net'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { chromium } from 'playwright'
-import type { Browser } from 'playwright'
+import { chromium, type Browser } from 'playwright'
 import { WebSocket } from 'ws'
 import {
     PragmaticClient,
@@ -23,9 +22,8 @@ import {
 } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { MessageConnection, SecurityModelDto, AppWriteOpDto, AppWriteResultDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { BaseRole, PrivilegeAction, AccessLevel } from '@pragmatic-tech-ai/pragmatic-identity'
-import { BundleBuilder, EnvKind, EnvironmentPurposeName } from '../../../environments/seed/bundle.js'
-import { Sp1AppBuilder } from './sp1-app-builder.js'
-import type { BuiltSp1App } from './sp1-app-builder.js'
+import { BundleBuilder, EnvKind, EnvironmentPurposeName } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
+import { Sp1AppBuilder, type BuiltSp1App } from './sp1-app-builder.js'
 
 /** Opt-in gate for the SP1 capstone e2e (needs Docker + the pragmatic-server:sp1 image + a Playwright chromium). */
 class Gate

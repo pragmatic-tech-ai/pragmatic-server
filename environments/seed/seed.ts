@@ -1,11 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { BundleBuilder, EnvKind } from './bundle.js'
-import type { EnvDefinition, EnvironmentPurposeName } from './bundle.js'
+import { BundleBuilder, EnvKind, type EnvDefinition, type EnvironmentPurposeName, UserSeeder, type UserSeed } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { DockerEnv } from './docker.js'
-import { UserSeeder } from './users.js'
-import type { UserSeed } from './users.js'
 
 export enum Command
 {

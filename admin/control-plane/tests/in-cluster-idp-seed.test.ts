@@ -7,8 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { InClusterIdpDriver } from '../in-cluster-idp-driver.js'
 import { InClusterIdpSeedSource } from '../in-cluster-idp-seed.js'
-import { IdpDatabaseSecret } from '../idp-workload-driver.js'
-import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
+import { IdpDatabaseSecret, K8sManifestBuilder } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 
 class FakeKubectl implements IKubectl

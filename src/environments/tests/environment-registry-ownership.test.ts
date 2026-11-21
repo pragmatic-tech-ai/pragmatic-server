@@ -1,10 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { EnvironmentRegistry, InMemoryEnvironmentProvisioning } from '../environment-registry.js'
-import { EnvironmentOwnedElsewhereError } from '../environment-ownership.js'
-import type { IEnvironmentOwnership, EnvironmentLostHandler } from '../environment-ownership.js'
+import { EnvironmentOwnedElsewhereError, type IEnvironmentOwnership, type EnvironmentLostHandler } from '../environment-ownership.js'
 import { InMemoryEnvironmentCoordinator } from '../environment-coordinator.js'
-import { DeploymentMode } from '../../platform/deployment-mode.js'
+import { DeploymentMode } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import type { EnvironmentProvisioning } from '../environment-provisioning.js'
 import type { IWriteLock } from '../../host/cypher/write-lock.js'
 

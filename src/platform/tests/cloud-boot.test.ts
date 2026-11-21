@@ -5,7 +5,7 @@ import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/tes
 import { AuthMethod, Role, Credential, PresentedSecret, AuthenticatedResult } from '@pragmatic-tech-ai/pragmatic-identity'
 import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { CloudPlatform } from '../cloud-platform.js'
-import { DeploymentMode } from '../deployment-mode.js'
+import { DeploymentMode } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { PragmaticServer } from '../../pragmatic-server.js'
 
 class CloudServerFixture

@@ -1,7 +1,5 @@
-import { SerialRuns } from './atomic-json-file.js'
-import { FileRecordMap, RecordMapFormatError, type IRecordMap } from './record-map.js'
+import { SerialRuns, FileRecordMap, RecordMapFormatError, type IRecordMap, OwnerResetTime } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { IOwnerResetSource } from './console-advert-receiver.js'
-import { OwnerResetTime } from './tenant-owner.js'
 
 /** Where the console installer records an operator Owner reset (before it reaches the IdP) and forgets it with the tenant. */
 export interface IOwnerResetRecorder

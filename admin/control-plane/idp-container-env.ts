@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { get } from 'node:https'
 import { DockerEnv } from '../../environments/seed/docker.js'
-import { IdpDatabaseSecret, IdpWorkloadNames } from './idp-workload-driver.js'
+import { IdpDatabaseSecret, IdpWorkloadNames } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 export interface IdpContainerSpec
 {

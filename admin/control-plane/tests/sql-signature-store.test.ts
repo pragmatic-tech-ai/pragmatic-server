@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
 import { SqlSignatureStore } from '../sql-signature-store.js'
-import { SqlRecordMap } from '../sql-record-map.js'
+import { SqlRecordMap } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 class SqlSignatureFixture
 {

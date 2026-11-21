@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { KubectlError } from '@pragmatic-tech-ai/pragmatic-kube'
-import { LocalDevCluster } from './local-dev-cluster.js'
+import { LocalDevCluster } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /**
  * Loads host docker image refs into a kind node's containerd store (by default the local development cluster's,

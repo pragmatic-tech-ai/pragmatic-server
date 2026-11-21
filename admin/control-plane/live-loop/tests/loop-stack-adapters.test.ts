@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { EnvType, Template } from '../../environment-record.js'
+import { EnvType, Template } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { KubectlLoopDatabase, LoopApiAnswers, StackLoopGraphs, TenantApiLoopEnvironments, type ILoopApi } from '../loop-stack-adapters.js'
 import type { ApiAnswer } from '../operator-api-client.js'
 

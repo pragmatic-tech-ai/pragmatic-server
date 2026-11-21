@@ -5,7 +5,7 @@ import { NodeStorageProviderRegistry, HeadlessPromptService } from '@pragmatic-t
 import { FileIdentityStores, FileRealmConfigStore } from '@pragmatic-tech-ai/pragmatic-identity-store'
 import type { IdentityStoreSet, IRealmConfigStore } from '@pragmatic-tech-ai/pragmatic-identity'
 import { MasterKeyResolver } from '../identity/master-key-resolver.js'
-import type { MasterKeyRef } from '../identity/master-key-resolver.js'
+import type { MasterKeyRef } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import type { PlatformServices } from './platform-services.js'
 
 /** The default (local/self-hosted) platform bundle: NodeFs storage, headless prompts, file-backed identity —

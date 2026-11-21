@@ -1,5 +1,5 @@
 import { OciProtocolError, OciProtocolFault, OciResponseError, OciUnavailableError, type OciRegistryClient, ComponentImageLabel, ComponentLabelError, ReleaseDescriptorCodec, ReleaseDescriptorInvalidError, type ReleaseDescriptor, type ReleaseImage, ReleasePublisher, ReleaseRegistry, ReleaseSignature, ReleaseApp, ReleaseApps, ReleaseTag, ReleaseTagInvalidError, type ReleaseTrustKeys } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
-import { ReleaseState, type ManifestRecord, type ManifestRelease } from '../manifest-record.js'
+import { ReleaseState, type ManifestRecord, type ManifestRelease } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { ManifestExistsError, ReleaseNotRejectedError, ReleaseRegistryUnavailableError, UnknownManifestError } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import type { IReleaseCountersigner } from './release-countersigner.js'

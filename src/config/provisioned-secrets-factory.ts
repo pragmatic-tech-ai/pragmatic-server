@@ -1,6 +1,5 @@
-import type { ServerConfig } from './server-config.js'
-import type { IProvisionedSecretSource } from './provisioned-secret-source.js'
-import { ProvisionedSecretSource } from './provisioned-secret-source.js'
+import type { ServerConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
+import { type IProvisionedSecretSource, ProvisionedSecretSource } from './provisioned-secret-source.js'
 
 /** Builds the provisioned-secret source from the configured file, or undefined when none is configured. */
 export class ProvisionedSecretsFactory

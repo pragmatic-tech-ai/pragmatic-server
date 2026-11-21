@@ -8,7 +8,7 @@ import type { IStorageProviderRegistry } from '@pragmatic-tech-ai/todl'
 import type { IdentityStoreSet, IRealmConfigStore } from '@pragmatic-tech-ai/pragmatic-identity'
 import { NodePlatform } from '../node-platform.js'
 import type { PlatformServices } from '../platform-services.js'
-import type { MasterKeyRef } from '../../identity/master-key-resolver.js'
+import type { MasterKeyRef } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { PragmaticServer } from '../../pragmatic-server.js'
 
 class RecordingPlatform implements PlatformServices

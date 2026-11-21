@@ -12,8 +12,7 @@ import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { PragmaticServerHost } from '../../host/pragmatic-server-host.js'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
-import { Observability, ObservabilityRole } from '../../observability/observability.js'
-import { FileAccessAuditSink } from '../../host/file-access-audit-sink.js'
+import { Observability, ObservabilityRole, FileAccessAuditSink } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { StructuredLogger } from '@pragmatic-tech-ai/pragmatic-observability'
 
 class Soak

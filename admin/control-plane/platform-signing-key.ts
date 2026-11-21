@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { link, mkdir, unlink, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { type IImageSigner, FileKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
-import type { HiveRecord } from './platform-records.js'
+import type { HiveRecord, IHiveImageSigner } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** Only the public half of the platform key pair is on disk; it cannot be recovered and is never silently regenerated. */
 export class PlatformSigningKeyIncompleteError extends Error
@@ -137,7 +137,7 @@ export class PlatformSigningKey
  * bring-up trusts the control-plane host's local image (whatever the template tag names there) - the deliberate
  * trade-off of letting the platform run its own images without a separate build-time signing step.
  */
-export class PlatformImageSigner
+export class PlatformImageSigner implements IHiveImageSigner
 {
     public constructor(private readonly signer: IImageSigner, public readonly KeyRef: string)
     {

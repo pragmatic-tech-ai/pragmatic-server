@@ -10,10 +10,9 @@ import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base'
 import { PeriodicExportingMetricReader, InMemoryMetricExporter, AggregationTemporality } from '@opentelemetry/sdk-metrics'
-import { Observability, ObservabilityRole } from '../../observability/observability.js'
+import { Observability, ObservabilityRole, DrainController } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { RequestInstrumentation } from '../../observability/request-instrumentation.js'
 import { NullLogger } from '@pragmatic-tech-ai/pragmatic-observability'
-import { DrainController } from '../../observability/drain-controller.js'
 import { WsInFlightSource } from '../../observability/ws-in-flight-source.js'
 
 class Fixtures

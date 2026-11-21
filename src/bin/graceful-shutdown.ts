@@ -1,4 +1,4 @@
-import type { IAccessAuditSink } from '../host/access-audit.js'
+import type { IAccessAuditSink } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import type { ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 
 /** What a shutdown stops first: the server or worker host (no new requests, so no new audit writes, after it). */

@@ -4,8 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DevCa } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import type { IIdpSeedSource, IdpSeed } from './in-cluster-idp-driver.js'
-import { IdpDatabaseSecret } from './idp-workload-driver.js'
-import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import { IdpDatabaseSecret, K8sManifestBuilder } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 interface IdpSecretEntry
 {

@@ -4,14 +4,8 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
-import { InvalidRecordIdError } from '../platform-records.js'
-import { KindClusterName } from '../kind-cluster-name.js'
-import { EnvServerSeedSource } from '../env-server-seed.js'
-import { IngressTlsSource } from '../ingress-tls.js'
+import { K8sManifestBuilder, InvalidRecordIdError, KindClusterName, EnvServerSeedSource, IngressTlsSource, type EnvironmentWorkload, type IdpWorkloadSpec } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { InClusterIdpSeedSource } from '../in-cluster-idp-seed.js'
-import type { EnvironmentWorkload } from '../environment-workload.js'
-import type { IdpWorkloadSpec } from '../idp-workload-driver.js'
 
 type K8sObject = {
     kind: string

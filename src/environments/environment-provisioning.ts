@@ -1,6 +1,6 @@
 import type { BootstrapOptions, OidcServerOptions, PragmaticServerOptions } from '../pragmatic-server.js'
 import type { ConnectorsPolicy } from '../host/connector-policy.js'
-import type { MachinePrincipalMap } from '../host/machine-principal-map.js'
+import type { MachinePrincipalMap } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import type { EnvironmentPurpose } from './environment-purpose.js'
 import type { IdentityConfig } from '@pragmatic-tech-ai/pragmatic-identity'
 

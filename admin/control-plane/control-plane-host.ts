@@ -20,109 +20,33 @@ import {
     type RequestContext,
     type SocketContext,
 } from '@pragmatic-tech-ai/pragmatic-app-host'
-import type { EnvType, Template, EnvironmentChange, EnvironmentRecord } from './environment-record.js'
-import { EnvironmentDtoMapper, type EnvironmentDto } from './environment-dto.js'
+import { EnvironmentDtoMapper, type EnvironmentDto, type IIdpService, TenantEmailDomainsLimits, HiveBackend, InfraMode, type ClientRecord, type ClusterSpec, type HiveRecord, type RegistrySpec, type TenantRecord, type HiveRolloutStatus, type ManifestRecord, type IEnvironmentService, type IGraphService } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { HiveObservationRegistry } from './hive-observation-record.js'
-import type { IIdpService } from './idp-service.js'
 import type { OwnerPasswordReset, TenantProvisioningService } from './tenant-provisioning-service.js'
 import { OperatorRole, type IOperatorIdentity, type OperatorPrincipal } from './operator-identity.js'
 import { OperatorPasswordAuthenticator, OperatorRoleClaims, OperatorSessions, type OperatorSessionGate } from './operator-sessions.js'
 import { type DesktopDiscoveryEndpoint, ReleaseRegistryUnavailableError } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import { Channel, ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { OperatorSocketRegistry } from './operator-socket-registry.js'
-import type { AdminSnapshot } from './admin-proxy.js'
 import type { PlatformDirectory } from './platform-directory.js'
 import { HiveBootstrapBundle } from './hive-bootstrap-bundle.js'
 import { DevPlatformImages, PlatformImages, type IPlatformImages } from './platform-images.js'
 import type { ConsoleAdvertRegistry } from './console-advert-registry.js'
 import type { ConsoleDomainApprovals } from './console-domain-approvals.js'
 import type { PlatformEmailDomains } from './platform-email-domains.js'
-import { TenantEmailDomainsLimits } from './tenant-api/tenant-email-domains.js'
 import { HiveConsoleSpecs } from './hive-console-spec.js'
 import type { HiveAgentInstaller, InstallStatus } from './hive-agent-installer.js'
 import { ConsoleUninstallError, HiveClusterDestroyError, type HiveAgentUninstaller } from './hive-agent-uninstaller.js'
 import type { ConsoleInstallStatus, ConsoleRemovalOutcome, TenantConsoleInstaller } from './tenant-console-installer.js'
 import type { InHiveOwnerPassword } from './in-hive-idp-admin.js'
-import { HiveBackend, InfraMode, type ClientRecord, type ClusterSpec, type HiveRecord, type RegistrySpec, type TenantRecord } from './platform-records.js'
 import { ProvisioningOrchestrator, ProvisionFailedError } from './provisioning-orchestrator.js'
 import { KubectlError } from '@pragmatic-tech-ai/pragmatic-kube'
-import type { HiveRolloutStatus, PlatformDeploymentRegistry } from './platform-deployment-registry.js'
-import type { ManifestRecord } from './manifest-record.js'
+import type { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import { ReleaseRefresher } from './release/release-refresher.js'
 import type { ReleaseRefreshResult } from './release/release-catalog.js'
-import type { CreateAccountParams, GraphLoadedDto, GrantMutationDto, IdentityConfigDto, SecurityCatalogDto, SecurityChangesDto, SecurityModelDto, TeamMemberDto, TokenIssuedDto, ServiceTokenSummaryDto, IssueTokenParams } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { ILogProcess } from '../../environments/seed/docker.js'
 import { ControlPlaneProblems } from './control-plane-problems.js'
 
-export interface IEnvironmentService
-{
-    Create(name: string, template: Template, type: EnvType, hostPort?: number, hiveId?: string, creatorPrincipalId?: string): Promise<EnvironmentRecord>
-    Start(name: string): Promise<EnvironmentRecord>
-    Stop(name: string): Promise<EnvironmentRecord>
-    Restart(name: string): Promise<EnvironmentRecord>
-    Delete(name: string): Promise<void>
-    List(): readonly EnvironmentRecord[]
-    ListReconciled(): Promise<readonly EnvironmentRecord[]>
-    Logs(name: string): Promise<string>
-    LogStream(name: string, onData: (chunk: string) => void): ILogProcess
-    /** Additive lifecycle-change subscription (RULING 5): fires on create, every status change, and delete; returns an unsubscribe. */
-    OnChanged(cb: (change: EnvironmentChange) => void): () => void
-    AdminSnapshot(name: string): Promise<AdminSnapshot>
-    AdminCreateAccount(name: string, params: CreateAccountParams): Promise<void>
-    AdminDisableAccount(name: string, principalId: string): Promise<void>
-    AdminGrantRole(name: string, mutation: GrantMutationDto): Promise<void>
-    AdminRevokeRole(name: string, mutation: GrantMutationDto): Promise<void>
-    AdminGetConfig(name: string): Promise<IdentityConfigDto>
-    AdminSetConfig(name: string, config: IdentityConfigDto): Promise<void>
-    AdminGetSecurityModel(name: string): Promise<SecurityModelDto | undefined>
-    AdminSetSecurityModel(name: string, securityModel: SecurityModelDto): Promise<void>
-    AdminGetSecurityCatalog(name: string): Promise<SecurityCatalogDto>
-    AdminListTeamMembers(name: string, teamId: string): Promise<TeamMemberDto[]>
-    AdminListSecurityChanges(name: string): Promise<SecurityChangesDto[]>
-    AdminIssueMakerToken(name: string): Promise<TokenIssuedDto>
-    AdminIssueDeployToken(name: string): Promise<TokenIssuedDto>
-    AdminIssueDeveloperToken(name: string): Promise<TokenIssuedDto>
-    AdminIssueRunTestToken(name: string): Promise<TokenIssuedDto>
-    AdminIssueReaderToken(name: string): Promise<TokenIssuedDto>
-    AdminListTokens(name: string): Promise<ServiceTokenSummaryDto[]>
-    AdminIssueToken(name: string, params: IssueTokenParams): Promise<TokenIssuedDto>
-    AdminRevokeToken(name: string, tokenRef: string): Promise<void>
-    AdminGrantAppReader(name: string): Promise<void>
-}
-
-export interface IGraphService
-{
-    Create(envName: string, name: string, description: string): Promise<GraphDto>
-    List(envName: string): Promise<readonly GraphDto[]>
-    Get(envName: string, graphName: string): Promise<GraphDto>
-    Delete(envName: string, graphName: string): Promise<void>
-    Promote(sourceEnv: string, graphName: string, targetEnv: string): Promise<PromotionResultDto>
-    GetLoaded(runtimeEnv: string): Promise<GraphLoadedDto | null>
-}
-
 export type { EnvironmentDto }
-
-/** The only fields of an issued maker token revealed to the operator. */
-export interface MakerTokenDto
-{
-    token: string
-    principalId: string
-    expiresAt: string | null
-}
-
-export type GraphDto = {
-    name: string
-    description: string
-    packageCount: number
-    createdAt: string
-}
-
-/** The result of promoting a dev graph into a runtime environment: non-secret refs only. */
-export type PromotionResultDto = {
-    graphName: string
-    packageCount: number
-    targetEnv: string
-}
 
 /** Platform record DTOs mirror the stored records 1:1. */
 export type ClientDto = ClientRecord
@@ -139,7 +63,7 @@ export type TenantDto =
 }
 export type HiveDto = HiveRecord
 
-export type { HiveHealthDto } from './hive-health-producer.js'
+export type { HiveHealthDto } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** A published manifest as shown to the operator: version id, image reference, notes; no secrets. */
 export type ManifestDto = ManifestRecord

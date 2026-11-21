@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url'
 import type { ComponentDescriptor } from '@pragmatic-tech-ai/pragmatic-component'
 import { ComponentDescriptorSet, ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { TenantAdminComponent } from '../tenant-admin-component.js'
+import type { IComponentDescriptorSource } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /**
  * The component descriptors the tenant admin console validates configurations against: the components that run in a
@@ -14,7 +15,7 @@ import { TenantAdminComponent } from '../tenant-admin-component.js'
  * runtime reader checks the digest). Reading other releases' descriptors arrives with pull-only management (stage C
  * step 4: an intent carries the descriptor digest).
  */
-export class ConsoleComponents
+export class ConsoleComponents implements IComponentDescriptorSource
 {
     private readonly descriptors: ReadonlyMap<string, ComponentDescriptor>
 

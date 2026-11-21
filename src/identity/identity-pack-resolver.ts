@@ -1,12 +1,10 @@
-import { AuthMethod, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/pragmatic-identity'
-import type { IAccessPolicy, IAuthenticator, IdentityConfig, IdentityStoreSet, Realm } from '@pragmatic-tech-ai/pragmatic-identity'
-import { ClaimArrayGroupStrategy, FetchHttpClient, GenericOidcPack, GenericOidcProfile, InMemoryOidcFlowStateStore, OidcSettingKeys } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
+import { AuthMethod, ResourceAuthorizationPolicy, type IAccessPolicy, type IAuthenticator, type IdentityConfig, type IdentityStoreSet, type Realm } from '@pragmatic-tech-ai/pragmatic-identity'
+import { ClaimArrayGroupStrategy, FetchHttpClient, GenericOidcPack, GenericOidcProfile, InMemoryOidcFlowStateStore, OidcSettingKeys, type IHttpClient, type IOidcFlowStateStore, type OidcIdentityProviderPackBase, type OidcPackOptions } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import { MicrosoftEntraPack } from '@pragmatic-tech-ai/pragmatic-identity-source-entra'
 import { GoogleIdentityPack } from '@pragmatic-tech-ai/pragmatic-identity-source-google'
-import type { IHttpClient, IOidcFlowStateStore, OidcIdentityProviderPackBase, OidcPackOptions } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/pragmatic-identity-store'
 import { MachineCertAuthenticator } from '../host/machine-cert-authenticator.js'
-import type { MachinePrincipalMap } from '../host/machine-principal-map.js'
+import type { MachinePrincipalMap } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { IdentityPackKind, IdentityPackKinds } from './identity-pack-kind.js'
 
 export interface ResolvedPack

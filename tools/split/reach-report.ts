@@ -5,6 +5,7 @@ import { basename, dirname, extname, join, relative, resolve, sep } from 'node:p
 import { fileURLToPath } from 'node:url'
 import { EsbuildLocator, type IEsbuild, ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { AssignmentRules, SplitHome } from './assignment-rules.js'
+import { SourceImports } from './source-imports.js'
 
 /**
  * The split's assignment: every tracked file's home, the tests whose imports reach more than one container, and the
@@ -111,9 +112,11 @@ export class ReachReport
 
     private readonly esbuild: IEsbuild
     private readonly rules = new AssignmentRules()
+    private readonly imports: SourceImports
 
     public constructor(private readonly root: string)
     {
+        this.imports = new SourceImports(root)
         this.esbuild = EsbuildLocator.Load(root)
     }
 
@@ -201,6 +204,7 @@ export class ReachReport
         }
         const tests = tracked.filter(f => R.InTestsFolder(f) && R.IsTest(f))
         const cross = this.PlaceTests(tests, homes, await this.ForEach(tests))
+        cross.push(...this.PlaceByCompileReach(tests, homes))
         const shared = this.PlaceSupport(tracked.filter(f => R.InTestsFolder(f) && !R.IsTest(f)), tests, homes, reachedBy)
         return new SplitAssignment(homes, cross.sort(), shared.sort())
     }
@@ -247,7 +251,58 @@ export class ReachReport
         return cross
     }
 
-    /** Places every test-support file where the tests that name it go; returns the ones named from several homes. */
+    /**
+     * A test placed in a shared package must compile there: one whose imports (types included, followed through the test
+     * support files it names) reach a container's own files goes to that container, or to pragmatic-e2e when it reaches
+     * several. Returns the ones moved to pragmatic-e2e.
+     */
+    private PlaceByCompileReach(tests: readonly string[], homes: Record<string, string>): string[]
+    {
+        const R = ReachReport
+        const cross: string[] = []
+        for (const test of tests)
+        {
+            if (!homes[test].startsWith(R.SharedPrefix) || AssignmentRules.Exceptions.has(test))
+            {
+                continue
+            }
+            const containers = new Set<string>()
+            const seen = new Set<string>([test])
+            const queue = [test]
+            while (queue.length > 0)
+            {
+                for (const target of this.imports.Of(queue.shift() as string))
+                {
+                    if (R.InTestsFolder(target))
+                    {
+                        if (!seen.has(target) && existsSync(join(this.root, target)))
+                        {
+                            seen.add(target)
+                            queue.push(target)
+                        }
+                        continue
+                    }
+                    const home = homes[target]
+                    if (home !== undefined && !home.startsWith(R.SharedPrefix))
+                    {
+                        containers.add(home)
+                    }
+                }
+            }
+            if (containers.size === 1)
+            {
+                homes[test] = [...containers][0]
+            }
+            else if (containers.size > 1)
+            {
+                homes[test] = SplitHome.E2e
+                cross.push(test)
+            }
+        }
+        return cross
+    }
+
+    /** Places every test-support file where an exception or the tests that name it put it; returns the ones named from several homes. */
     private PlaceSupport(support: readonly string[], tests: readonly string[], homes: Record<string, string>, reachedBy: ReadonlyMap<string, ReleaseApp[]>): string[]
     {
         const R = ReachReport
@@ -255,6 +310,12 @@ export class ReachReport
         const shared: string[] = []
         for (const file of support)
         {
+            const named = AssignmentRules.Exceptions.get(file)
+            if (named !== undefined)
+            {
+                homes[file] = named
+                continue
+            }
             const name = R.ReferenceName(file)
             // The archive's own tests (the split tooling's) name files without being their readers.
             const readers = tests.filter(t => homes[t] !== SplitHome.Archive && (texts.get(t) as string).includes(name)).map(t => homes[t])

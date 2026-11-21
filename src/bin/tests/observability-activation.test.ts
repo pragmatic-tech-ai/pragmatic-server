@@ -1,12 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:net'
-import { DeploymentMode } from '../../platform/deployment-mode.js'
+import { DeploymentMode, Observability, ObservabilityRole, type ServerConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { ServerBootstrap } from '../server-bootstrap.js'
-import { Observability, ObservabilityRole } from '../../observability/observability.js'
-import { OtlpProtocol } from '../../observability/otlp-protocol.js'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
-import type { ServerConfig } from '../../config/server-config.js'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 
 class Fixtures
@@ -38,24 +35,6 @@ class Fixtures
     }
 }
 
-test('ObservabilityOptions is undefined when otel is off', () =>
-{
-    assert.equal(ServerBootstrap.ObservabilityOptions(Fixtures.Config(), ObservabilityRole.Host), undefined)
-})
-
-test('ObservabilityOptions maps fields and role when enabled', () =>
-{
-    const config = Fixtures.Config({ serviceName: 'svc', metricsPort: 9100, otlpEndpoint: 'http://collector:4318', otlpProtocol: OtlpProtocol.HttpProtobuf, otlpMetrics: true, traceSampling: 0.5 })
-    const o = ServerBootstrap.ObservabilityOptions(config, ObservabilityRole.Worker)
-    assert.deepEqual(o, { role: ObservabilityRole.Worker, serviceName: 'svc', replicaId: 'pod-1', metricsPort: 9100, otlpEndpoint: 'http://collector:4318', otlpProtocol: OtlpProtocol.HttpProtobuf, otlpMetrics: true, traceSampling: 0.5 })
-})
-
-test('ObservabilityOptions replicaId argument overrides config', () =>
-{
-    const o = ServerBootstrap.ObservabilityOptions(Fixtures.Config({ metricsPort: 9100 }), ObservabilityRole.Host, 'other')
-    assert.equal(o?.replicaId, 'other')
-})
-
 test('ComposeOptions and ComposeWorkerOptions thread observability through', async () =>
 {
     const port = await Fixtures.FreePort()
@@ -75,12 +54,4 @@ test('Compose* leave observability undefined when not passed', () =>
 {
     assert.equal(ServerBootstrap.ComposeOptions(Fixtures.Config(), Fixtures.Provisioning()).observability, undefined)
     assert.equal(ServerBootstrap.ComposeWorkerOptions(Fixtures.Config(), Fixtures.Provisioning()).observability, undefined)
-})
-
-test('Observability started from mapped options shuts down cleanly', async () =>
-{
-    const port = await Fixtures.FreePort()
-    const opts = ServerBootstrap.ObservabilityOptions(Fixtures.Config({ metricsPort: port }), ObservabilityRole.Host)
-    assert.ok(opts)
-    await Observability.Start(opts).Shutdown()
 })

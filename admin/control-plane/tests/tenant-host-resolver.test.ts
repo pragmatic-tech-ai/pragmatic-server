@@ -1,8 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { PlatformDirectory } from '../platform-directory.js'
-import type { TenantRecord } from '../platform-records.js'
-import { TenantHostResolver } from '../tenant-auth/tenant-host-resolver.js'
+import { type TenantRecord, TenantHostResolver } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 class StubDirectory
 {

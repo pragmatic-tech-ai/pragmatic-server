@@ -1,4 +1,4 @@
-import type { UiDeployBundle } from './ui-deploy-actuator.js'
+import type { UiDeployBundle } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** The minimal northwind demo UI the e2e deploys through the Spec-3 actuator. */
 export class NorthwindUiBundle

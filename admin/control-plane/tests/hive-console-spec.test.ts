@@ -1,9 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { HiveConsoleSpecs, InvalidHiveConsoleError } from '../hive-console-spec.js'
-import { HiveBackend, InfraMode } from '../platform-records.js'
-import type { HiveRecord } from '../platform-records.js'
-import { InvalidIngressTlsError, IngressTlsSource } from '../ingress-tls.js'
+import { HiveBackend, InfraMode, type HiveRecord, InvalidIngressTlsError, IngressTlsSource } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 test('parses a minimal development spec', () =>
 {

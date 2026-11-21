@@ -1,6 +1,6 @@
 import type { ModelViewPageDto, PageParams, ResolvedResourceDto } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { AccessContext } from '@pragmatic-tech-ai/pragmatic-identity'
-import type { PagingLimits } from '../../config/paging-limits.js'
+import type { PagingLimits } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 /** The page a model/view asks for: the wire paging params and the connection's paging limits. */
 export interface IModelViewPage

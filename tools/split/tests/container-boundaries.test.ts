@@ -4,12 +4,14 @@ import { before, describe, it } from 'node:test'
 import { ReleaseApp } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { SharedHomeUsers, SplitHome } from '../assignment-rules.js'
 import { ReachReport, SplitAssignment } from '../reach-report.js'
+import { SourceImports } from '../source-imports.js'
 
 /** The container line: what each image's entry points reach, measured once. */
 class Boundaries
 {
     public static readonly Root = join(import.meta.dirname, '..', '..', '..')
     public static readonly SharedPrefix = 'pragmatic-shared/'
+    public static readonly TsExtension = '.ts'
     public static Assignment: SplitAssignment
     public static Reach: ReadonlyMap<string, ReadonlySet<string>>
 
@@ -42,6 +44,39 @@ describe('container boundaries', () =>
                 if ((home !== own && !shared) || (shared && !SharedHomeUsers.Allows(home, app)))
                 {
                     crossings.push(app + ' -> ' + file + ' (' + home + ')')
+                }
+            }
+        }
+        assert.deepEqual(crossings, [])
+    })
+
+    it('a shared package\'s files import, type-only imports included, only shared packages (they must compile there)', () =>
+    {
+        const B = Boundaries
+        const imports = new SourceImports(B.Root)
+        const support = new Set(B.Assignment.SharedSupport)
+        const crossings: string[] = []
+        // a shared package's tests carry a copy of the support files they import, so those are checked as the package's
+        const queue = Object.entries(B.Assignment.Homes).filter(([file, home]) => home.startsWith(B.SharedPrefix) && file.endsWith(B.TsExtension))
+        const seen = new Set(queue.map(([file]) => file))
+        while (queue.length > 0)
+        {
+            const [file, home] = queue.shift() as [string, string]
+            for (const target of imports.Of(file))
+            {
+                const targetHome = B.Assignment.Homes[target]
+                if (support.has(target))
+                {
+                    if (!seen.has(target))
+                    {
+                        seen.add(target)
+                        queue.push([target, home])
+                    }
+                    continue
+                }
+                if (targetHome === undefined || !targetHome.startsWith(B.SharedPrefix))
+                {
+                    crossings.push(file + ' (' + home + ') -> ' + target + ' (' + (targetHome ?? 'untracked') + ')')
                 }
             }
         }

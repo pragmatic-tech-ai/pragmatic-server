@@ -1,6 +1,5 @@
 import { readFileSync } from 'node:fs'
-
-export type MasterKeyRef = { keyFilePath: string } | { base64Env: string }
+import type { MasterKeyRef } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 /** Resolves the 32-byte AES master key by reference. The key value is never logged or
  *  included in any error message (fail-closed, secret-by-reference). */

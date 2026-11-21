@@ -1,7 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { JsonRecordStore } from './json-record-store.js'
-import type { IRecordMap } from './record-map.js'
-import type { HiveHealthDto } from './hive-health-producer.js'
+import { JsonRecordStore, type IRecordMap, type HiveHealthDto } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 export type HiveObservationRecord = {
     id: string

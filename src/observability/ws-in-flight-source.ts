@@ -1,4 +1,4 @@
-import type { IInFlightSource } from './drain-controller.js'
+import type { IInFlightSource } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 /** Aggregates in-flight RPC counts across live connection handlers, plus an optional HTTP in-flight source. */
 export class WsInFlightSource implements IInFlightSource

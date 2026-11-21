@@ -5,8 +5,7 @@ import { Realm, RealmKind } from '@pragmatic-tech-ai/pragmatic-identity'
 import { FakeStorage } from '@pragmatic-tech-ai/todl-runtime'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/pragmatic-identity-store'
 import { ConnectionAuthenticator } from '../connection-authenticator.js'
-import { AuditSurface, AuditOutcome } from '../access-audit.js'
-import type { IAccessAuditSink, AccessAuditEvent } from '../access-audit.js'
+import { AuditSurface, AuditOutcome, type IAccessAuditSink, type AccessAuditEvent } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 class CapturingSink implements IAccessAuditSink
 {

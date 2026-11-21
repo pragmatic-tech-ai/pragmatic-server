@@ -1,5 +1,4 @@
-import type { IdpConnection } from './idp-workload-driver.js'
-import type { IIdpService } from './idp-service.js'
+import type { IdpConnection, IIdpService } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /**
  * The IdP service of a tenant admin that was given no IdP (no PRAGMATIC_IDP_* injection, so outside a provisioned console

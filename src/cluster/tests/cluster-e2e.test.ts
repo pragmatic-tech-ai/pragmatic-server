@@ -9,7 +9,7 @@ import { PragmaticClient } from '@pragmatic-tech-ai/pragmatic-protocol'
 import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-services/lsp'
 import { PragmaticCluster } from '../pragmatic-cluster.js'
 import type { WorkerHost } from '../worker-host.js'
-import type { MachineTlsRef } from '../machine-tls.js'
+import type { MachineTlsRef } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 

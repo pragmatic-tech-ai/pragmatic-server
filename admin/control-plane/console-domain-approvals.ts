@@ -1,7 +1,4 @@
-import { DomainApprovalState, DomainVerificationRecord } from './domain-verification-record.js'
-import { EmailDomainPolicy } from './email-domain-policy.js'
-import { JsonRecordStore } from './json-record-store.js'
-import type { IRecordMap } from './record-map.js'
+import { DomainApprovalState, DomainVerificationRecord, EmailDomainPolicy, JsonRecordStore, type IRecordMap } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** One domain's DNS verification: the platform-issued token, whether its TXT record was seen at the last check, and when that was. */
 export type DomainVerificationEntry = { token: string; verified: boolean; lastCheckedAt?: string }

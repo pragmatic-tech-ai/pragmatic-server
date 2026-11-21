@@ -1,5 +1,4 @@
-import type { EnvironmentWorkload } from './environment-workload.js'
-import type { IHiveOrchestrator, WorkloadHealth } from './hive-orchestrator.js'
+import type { EnvironmentWorkload, IHiveOrchestrator, WorkloadHealth } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { IKind } from './kind.js'
 import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 

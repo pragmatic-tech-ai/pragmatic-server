@@ -11,7 +11,7 @@ class EnvServerComponentFixture
     public static readonly Here = dirname(fileURLToPath(import.meta.url))
     public static readonly Golden = join(EnvServerComponentFixture.Here, 'fixtures', 'pragmatic-env-server.component.json')
     public static readonly Digest = 'sha256:3b6641cc6cfb1cefcbb400532f33916049ced3c2ff8acf729669ef68fc03bf69'
-    public static readonly Readers = [['..', '..', 'config', 'server-config-loader.ts']].map(path => join(EnvServerComponentFixture.Here, ...path))
+    public static readonly Readers = [ComponentSources.InPackage('@pragmatic-tech-ai/pragmatic-env-cluster', 'config', 'server-config-loader.js')]
     public static readonly Undeclared: readonly string[] = ['PRAGMATIC_MASTER_KEY_B64_ENV']
 }
 

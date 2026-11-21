@@ -78,7 +78,8 @@ describe('ReachReport over the repository', () =>
         const homes = Measured.Assignment.Homes
         assert.equal(homes['src/idp/token-endpoint.ts'], SplitHome.TenantIdp)
         assert.equal(homes['admin/control-plane/edge-host.ts'], SplitHome.PlatformEdge)
-        assert.equal(homes['admin/control-plane/k8s-manifest-builder.ts'], SplitHome.TenantPlane)
+        // lifted into pragmatic-shared by Task 4 (pragmatic-tenant-plane): no longer tracked here
+        assert.equal(homes['admin/control-plane/k8s-manifest-builder.ts'], undefined)
         // lifted into pragmatic-shared by Task 3: no longer tracked here
         assert.equal(homes['src/agent/kube-https-transport.ts'], undefined)
         assert.equal(homes['admin/control-plane/release/release-tag.ts'], undefined)
@@ -90,10 +91,19 @@ describe('ReachReport over the repository', () =>
     {
         const homes = Measured.Assignment.Homes
         assert.equal(homes['src/idp/tests/tenant-idp-protocol.test.ts'], homes['src/idp/token-endpoint.ts'])
-        assert.equal(homes['admin/control-plane/tests/desktop-relay.test.ts'], homes['admin/control-plane/tenant-auth/desktop-relay.ts'])
+        assert.equal(homes['admin/control-plane/tests/client-registry.test.ts'], homes['admin/control-plane/client-registry.ts'])
         // an explicit exception names a test's home before its subject or its reach does
         assert.equal(homes['admin/control-plane/tests/agent-channel-host.test.ts'], SplitHome.PlatformAdmin)
         assert.equal(homes['admin/control-plane/release/tests/component-descriptor-set.test.ts'], SplitHome.Archive)
+    })
+
+    it('a test whose subject is shared but whose imports, types included, need container files goes to that container, or to pragmatic-e2e for several', () =>
+    {
+        const homes = Measured.Assignment.Homes
+        // their subjects now live in pragmatic-tenant-plane (Task 4); the tests stay where their container imports are
+        assert.equal(homes['admin/control-plane/tests/tenant-account-index.test.ts'], SplitHome.PlatformAdmin)
+        assert.equal(homes['admin/control-plane/tests/desktop-relay.test.ts'], SplitHome.E2e)
+        assert.ok(Measured.Assignment.CrossHomeTests.includes('admin/control-plane/tests/desktop-relay.test.ts'))
     })
 
     it('lists the tests whose imports span containers with no subject to follow, and not a one-container test', () =>

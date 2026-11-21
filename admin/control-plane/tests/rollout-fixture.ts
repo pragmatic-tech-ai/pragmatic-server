@@ -1,14 +1,11 @@
 import { join } from 'node:path'
-import { ManifestRegistry } from '../manifest-record.js'
+import { ManifestRegistry, AdoptionLedgerRegistry, EnvironmentPlacement, type HiveOrchestratorFactory } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { GatingRegistry } from '../gating-record.js'
 import { SelectionRegistry } from '../selection-record.js'
 import { HiveObservationRegistry } from '../hive-observation-record.js'
 import { RolloutRegistrationRegistry } from '../rollout-registration-record.js'
 import { ReleasePolicyRegistry } from '../release-policy-record.js'
-import { AdoptionLedgerRegistry } from '../adoption-ledger-record.js'
 import { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
-import { EnvironmentPlacement } from '../environment-placement.js'
-import type { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
 import type { PlatformDirectory } from '../platform-directory.js'
 
 /** Test support: composes a real PlatformDeploymentRegistry over JSON files under a temp directory. */

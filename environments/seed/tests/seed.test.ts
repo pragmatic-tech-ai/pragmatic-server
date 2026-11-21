@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { BundleBuilder, EnvKind, EnvironmentPurposeName } from '../bundle.js'
-import type { EnvDefinition } from '../bundle.js'
+import { BundleBuilder, EnvKind, EnvironmentPurposeName, type EnvDefinition } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { DockerEnv } from '../docker.js'
 import { SeedCli } from '../seed.js'
 

@@ -1,6 +1,5 @@
-import { createClient } from 'redis'
-import type { RedisClientType } from 'redis'
-import { ClusterKeys } from './cluster-keys.js'
+import { createClient, type RedisClientType } from 'redis'
+import { ClusterKeys } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import type { IWorkerRouter, WorkerEndpoint } from './worker-router.js'
 
 /** No live worker is available to serve an environment. */

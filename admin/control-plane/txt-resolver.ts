@@ -1,6 +1,5 @@
 import { Resolver } from 'node:dns/promises'
-import { DomainVerificationRecord } from './domain-verification-record.js'
-import { InvalidEmailDomainError } from './email-domain-policy.js'
+import { DomainVerificationRecord, InvalidEmailDomainError } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** How one TXT lookup ended: records found, the name has no TXT record, or the lookup could not be completed. */
 export enum TxtLookupStatus

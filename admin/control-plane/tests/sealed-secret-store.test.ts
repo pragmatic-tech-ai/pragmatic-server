@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fstatSync } from 'node:fs'
-import { AtomicJsonFile, type AtomicWriteOptions } from '../atomic-json-file.js'
+import { AtomicJsonFile, type AtomicWriteOptions } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { SealedSecretStore, SealedSecretUnreadableError, SealedSecretFileError } from '../sealed-secret-store.js'
 
 class SealedFixture

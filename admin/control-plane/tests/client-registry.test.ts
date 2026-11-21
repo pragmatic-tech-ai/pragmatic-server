@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ClientRegistry } from '../client-registry.js'
-import type { ClientRecord } from '../platform-records.js'
+import type { ClientRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 class ClientFixture
 {

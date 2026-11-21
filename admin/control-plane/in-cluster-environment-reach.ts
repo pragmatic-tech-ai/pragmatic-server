@@ -1,7 +1,4 @@
-import type { EnvironmentRecord } from './environment-record.js'
-import { EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrlsLease, type IEnvironmentReach } from './environment-endpoints.js'
-import { EnvServerSeedSource } from './env-server-seed.js'
-import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import { type EnvironmentRecord, EnvironmentEndpoints, EnvironmentUnreachableError, type EnvironmentUrlsLease, type IEnvironmentReach, EnvServerSeedSource, K8sManifestBuilder } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 
 /**

@@ -1,10 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
-import type { TenantAdminWorkloadSpec } from '../tenant-admin-workload.js'
+import { K8sManifestBuilder, type TenantAdminWorkloadSpec, IngressTlsSource, type IngressTls, TenantConsoleAdmission } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { TenantAdminBootstrap } from '../tenant-admin-bootstrap.js'
-import { IngressTlsSource, type IngressTls } from '../ingress-tls.js'
-import { TenantConsoleAdmission } from '../tenant-console-admission.js'
 import { InClusterIdpSeedSource } from '../in-cluster-idp-seed.js'
 
 class TenantAdminFixture

@@ -1,10 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ServerConfigLoader } from '../server-config-loader.js'
+import { ServerConfigLoader, DeploymentMode, type MachineTlsRef, type GatewayConfig, type ServerConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { ServerBootstrap } from '../../bin/server-bootstrap.js'
-import { DeploymentMode } from '../../platform/deployment-mode.js'
-import type { MachineTlsRef } from '../../cluster/machine-tls.js'
-import type { GatewayConfig, ServerConfig } from '../server-config.js'
+import { GatewayBootstrap } from '../../bin/gateway-bootstrap.js'
 
 class Env
 {
@@ -73,11 +71,11 @@ test('StartupLine reports client-mtls=off when unset', () =>
 
 test('GatewayStartupLine reports on/off without leaking paths', () =>
 {
-    const on = ServerBootstrap.GatewayStartupLine(Fixtures.Gateway(Fixtures.Secret))
+    const on = GatewayBootstrap.GatewayStartupLine(Fixtures.Gateway(Fixtures.Secret))
     assert.match(on, /client-mtls=on\b/)
     assert.ok(!on.includes('/secret/'))
     assert.doesNotMatch(on, /cert\.pem|key\.pem|ca\.pem/)
-    assert.match(ServerBootstrap.GatewayStartupLine(Fixtures.Gateway(undefined)), /client-mtls=off\b/)
+    assert.match(GatewayBootstrap.GatewayStartupLine(Fixtures.Gateway(undefined)), /client-mtls=off\b/)
 })
 
 test('LoadGateway threads clientTls when present and leaves it undefined when absent', () =>

@@ -1,14 +1,6 @@
 import { DevCertificateAuthority } from './dev-certificate-authority.js'
 import { InClusterIdpSeedSource } from './in-cluster-idp-seed.js'
-import { IngressTlsPolicy, IngressTlsSource, type IngressTls } from './ingress-tls.js'
-import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-import type { HiveRecord } from './platform-records.js'
-
-/**
- * Where a hive's tenant console is served and how it is secured. `ingressNamespace` is the namespace the nginx ingress controller runs
- * in (the only one the console's NetworkPolicy admits); absent means ingress-nginx.
- */
-export type HiveConsoleSpec = { baseDomain: string; host?: string; tls: IngressTls; ingressNamespace?: string }
+import { IngressTlsPolicy, IngressTlsSource, K8sManifestBuilder, type HiveRecord, type HiveConsoleSpec } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** A console setting that cannot be used; the message is a plain sentence safe to show the operator (maps to 400). */
 export class InvalidHiveConsoleError extends Error

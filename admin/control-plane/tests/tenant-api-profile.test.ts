@@ -1,12 +1,8 @@
 import { strict as assert } from 'node:assert'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { describe, it } from 'node:test'
-import { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
+import { TenantApiEndpoint, TenantAdminCapabilities, type TenantProfileDto, HiveBackend, InfraMode, type HiveRecord, type TenantRecord, type TenantSession } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { SeededTenantDirectory } from '../tenant-api/seeded-tenant-directory.js'
-import { TenantAdminCapabilities } from '../tenant-api/tenant-admin-capabilities.js'
-import type { TenantProfileDto } from '../tenant-api/tenant-profile-dto.js'
-import { HiveBackend, InfraMode, type HiveRecord, type TenantRecord } from '../platform-records.js'
-import type { TenantSession } from '../tenant-auth/tenant-sessions.js'
 import { ResRecorder } from './res-recorder.js'
 import { TenantApiDispatch } from './tenant-test-sessions.js'
 

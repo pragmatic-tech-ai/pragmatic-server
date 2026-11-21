@@ -1,6 +1,4 @@
-import { JsonRecordStore } from './json-record-store.js'
-import type { IRecordMap } from './record-map.js'
-import type { TenantRecord } from './platform-records.js'
+import { JsonRecordStore, type IRecordMap, type TenantRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 export class TenantRegistry extends JsonRecordStore<TenantRecord>
 {

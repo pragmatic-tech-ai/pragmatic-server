@@ -1,13 +1,9 @@
 import type { ClientRegistry } from './client-registry.js'
 import type { TenantRegistry } from './tenant-registry.js'
 import type { HiveRegistry } from './hive-registry.js'
-import type { EnvironmentRecord } from './environment-record.js'
-import { HivePlacementError } from './hive-placement-error.js'
-import { RecordId, type ClientRecord, type TenantRecord, type HiveRecord, type ClusterSpec, type RegistrySpec } from './platform-records.js'
-import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import { type EnvironmentRecord, HivePlacementError, RecordId, type ClientRecord, type TenantRecord, type HiveRecord, type ClusterSpec, type RegistrySpec, K8sManifestBuilder, EmailDomainPolicy, type HiveConsoleSpec, type ITenantRecordSource } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { UnknownHiveError } from '@pragmatic-tech-ai/pragmatic-platform-link'
-import { EmailDomainPolicy } from './email-domain-policy.js'
-import { HiveConsoleSpecs, type HiveConsoleSpec } from './hive-console-spec.js'
+import { HiveConsoleSpecs } from './hive-console-spec.js'
 
 export interface IEnvironmentLookup
 {
@@ -121,7 +117,7 @@ export class InHiveConsoleTakenError extends Error
     }
 }
 
-export class PlatformDirectory
+export class PlatformDirectory implements ITenantRecordSource
 {
     private defaultTrustRootRef: string | undefined
 

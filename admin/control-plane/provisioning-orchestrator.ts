@@ -1,8 +1,5 @@
-import { RecordId } from './platform-records.js'
-import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-import type { ClientRecord, ClusterSpec, HiveRecord, RegistrySpec, TenantRecord } from './platform-records.js'
-import { RecordExistsError, RecordKind, TenantClientMismatchError, UnknownClientError, UnknownTenantError } from './platform-directory.js'
-import type { PlatformDirectory } from './platform-directory.js'
+import { RecordId, K8sManifestBuilder, type ClientRecord, type ClusterSpec, type HiveRecord, type RegistrySpec, type TenantRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
+import { RecordExistsError, RecordKind, TenantClientMismatchError, UnknownClientError, UnknownTenantError, type PlatformDirectory } from './platform-directory.js'
 import type { TenantProvisioningService } from './tenant-provisioning-service.js'
 import type { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 

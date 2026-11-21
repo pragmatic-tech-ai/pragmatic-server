@@ -1,13 +1,10 @@
 import { describe, it, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { InClusterIdpSeedSource } from '../in-cluster-idp-seed.js'
-import { IngressTlsPolicy, IngressTlsSource } from '../ingress-tls.js'
-import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
+import { IngressTlsPolicy, IngressTlsSource, K8sManifestBuilder, HiveBackend, InfraMode, type HiveRecord, IdpDatabaseSecret } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { KubectlError } from '@pragmatic-tech-ai/pragmatic-kube'
-import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 import { UnknownHiveError } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import { TenantAdminBootstrap } from '../tenant-admin-bootstrap.js'
-import { IdpDatabaseSecret } from '../idp-workload-driver.js'
 import {
     ConsoleInstallInProgressError,
     ConsoleInstallState,

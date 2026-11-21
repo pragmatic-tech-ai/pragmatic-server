@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ApiKubectl, KubeApiClient, SystemInstallClock, type IKubeTransport, type KubeContentType, type KubeMethod, type KubeResponse } from '@pragmatic-tech-ai/pragmatic-kube'
 import { HiveAgentUninstaller, AgentUninstallError } from '../hive-agent-uninstaller.js'
-import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
+import { HiveBackend, InfraMode, type HiveRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { IInstallOrchestratorSource } from '../hive-agent-installer.js'
 
 /** Answers every API call with one canned response. */

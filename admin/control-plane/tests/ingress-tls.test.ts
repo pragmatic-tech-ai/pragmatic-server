@@ -1,9 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { IngressTlsPolicy, IngressTlsSource, InvalidIngressTlsError } from '../ingress-tls.js'
-import type { IngressTls } from '../ingress-tls.js'
+import { IngressTlsPolicy, IngressTlsSource, InvalidIngressTlsError, type IngressTls, K8sManifestBuilder } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { InClusterIdpSeedSource } from '../in-cluster-idp-seed.js'
-import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
 
 class Samples
 {

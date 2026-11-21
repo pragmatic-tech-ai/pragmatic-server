@@ -1,12 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DeploymentMode } from '../../platform/deployment-mode.js'
+import { DeploymentMode, type ServerConfig, type GatewayConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { ServerBootstrap } from '../server-bootstrap.js'
 import { ProvisionedSecretSource } from '../../config/provisioned-secret-source.js'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
-import type { ServerConfig, GatewayConfig } from '../../config/server-config.js'
 import type { IWorkerRouter } from '../../cluster/worker-router.js'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
+import { GatewayBootstrap } from '../gateway-bootstrap.js'
 
 class Fixture
 {
@@ -108,7 +108,7 @@ test('ComposeWorkerOptions threads drainTimeoutMs', () =>
 
 test('ComposeGatewayOptions threads drainTimeoutMs', () =>
 {
-    const options = ServerBootstrap.ComposeGatewayOptions(DrainFixture.Gateway(), {} as unknown as IWorkerRouter)
+    const options = GatewayBootstrap.ComposeGatewayOptions(DrainFixture.Gateway(), {} as unknown as IWorkerRouter)
     assert.equal(options.drainTimeoutMs, 32000)
 })
 
@@ -119,5 +119,5 @@ test('WorkerStartupLine reports the drain window', () =>
 
 test('GatewayStartupLine reports the drain window', () =>
 {
-    assert.match(ServerBootstrap.GatewayStartupLine(DrainFixture.Gateway()), / drain=32000/)
+    assert.match(GatewayBootstrap.GatewayStartupLine(DrainFixture.Gateway()), / drain=32000/)
 })

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { MasterKeyFile } from '../master-key-file.js'
+import { MasterKeyFile } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { MasterKeyError } from '../operator-identity.js'
 
 describe('MasterKeyFile', () =>

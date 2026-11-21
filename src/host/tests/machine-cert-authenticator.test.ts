@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { X509Certificate, createHash } from 'node:crypto'
 import { AuthMethod, AuthenticatedResult, Credential, PresentedSecret, PrincipalKind, RejectedResult, Realm, RealmKind } from '@pragmatic-tech-ai/pragmatic-identity'
-import { MachineCertIdentity, MachinePrincipalMap } from '../machine-principal-map.js'
+import { MachineCertIdentity, MachinePrincipalMap } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { MachineCertAuthenticator } from '../machine-cert-authenticator.js'
 
 class Fixture

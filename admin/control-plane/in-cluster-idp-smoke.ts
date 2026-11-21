@@ -19,10 +19,8 @@ import { request } from 'node:https'
 import { fileURLToPath } from 'node:url'
 import { InClusterIdpDriver } from './in-cluster-idp-driver.js'
 import { InClusterIdpSeedSource } from './in-cluster-idp-seed.js'
-import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import { K8sManifestBuilder, IdpStatus, type IdpWorkloadResult } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { KubectlCli, KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
-import { IdpStatus } from './idp-record.js'
-import type { IdpWorkloadResult } from './idp-workload-driver.js'
 import { RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity'
 
 interface HttpsResponse

@@ -1,11 +1,9 @@
 import { DataSourceKind } from '@pragmatic-tech-ai/todl'
 import { DelegationDepth, IdentityConfig, Role } from '@pragmatic-tech-ai/pragmatic-identity'
 import { OidcSettingKeys } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
-import { MachinePrincipalMap } from '../host/machine-principal-map.js'
-import type { MachinePrincipalEntry } from '../host/machine-principal-map.js'
+import { MachinePrincipalMap, type MachinePrincipalEntry } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { ConnectorsPolicy } from '../host/connector-policy.js'
-import { FileConnectionResolver } from '../host/file-connection-resolver.js'
-import type { FileConnection } from '../host/file-connection-resolver.js'
+import { FileConnectionResolver, type FileConnection } from '../host/file-connection-resolver.js'
 import { EnvironmentPurpose } from '../environments/environment-purpose.js'
 import type { IEnvironmentProvisioning, EnvironmentProvisioning } from '../environments/environment-provisioning.js'
 

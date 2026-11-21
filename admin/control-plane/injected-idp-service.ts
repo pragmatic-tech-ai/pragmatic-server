@@ -1,8 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { basename, dirname } from 'node:path'
-import { TenantAdminEnv } from './tenant-admin-env.js'
-import type { IdpConnection } from './idp-workload-driver.js'
-import type { IIdpService } from './idp-service.js'
+import { TenantAdminEnv, type IdpConnection, type IIdpService } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 export interface InjectedIdpConfig
 {

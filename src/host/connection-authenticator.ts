@@ -1,7 +1,7 @@
 import { AuthMethod, Credential, PresentedSecret, AuthenticatedResult, SystemPrincipal, type AccessContext, type Realm, ScopedAccessContext } from '@pragmatic-tech-ai/pragmatic-identity'
 import { AccessContextAssembler, type ServerIdentityPack } from '@pragmatic-tech-ai/pragmatic-identity-store'
 import { trace, isSpanContextValid } from '@opentelemetry/api'
-import { NullAccessAuditSink, AuditSurface, AuditOutcome, type IAccessAuditSink, type AccessAuditEvent } from './access-audit.js'
+import { NullAccessAuditSink, AuditSurface, AuditOutcome, type IAccessAuditSink, type AccessAuditEvent } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 /** Resolves a bearer token to an AccessContext: session first, then service token. Fail-closed:
  *  an unresolved token returns null and no context is built. A principal in the reserved system namespace

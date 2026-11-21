@@ -1,7 +1,7 @@
 import type { ISqlSession } from '@pragmatic-tech-ai/todl'
 import { SqlRecordStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import type { ISignatureStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
-import type { SqlRecordMapRow } from './sql-record-map.js'
+import type { SqlRecordMapRow } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /**
  * The Postgres signature store of the platform admin console: one row per image digest (`records_signatures`, the

@@ -1,6 +1,6 @@
 import { InMemoryEnvironmentProvisioning } from '../environments/environment-registry.js'
 import type { IEnvironmentProvisioning, EnvironmentProvisioning } from '../environments/environment-provisioning.js'
-import type { ServerConfig } from './server-config.js'
+import type { ServerConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { FileEnvironmentProvisioning } from './file-environment-provisioning.js'
 
 export interface EnvironmentProvisioningResult

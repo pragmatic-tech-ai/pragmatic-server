@@ -1,7 +1,6 @@
 import { ConsoleAdvertRegistry, type IConsoleAdvertLookup } from './console-advert-registry.js'
-import { EmailDomainPolicy } from './email-domain-policy.js'
+import { EmailDomainPolicy, type HiveRecord, type TenantRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { HiveConsoleSpecs } from './hive-console-spec.js'
-import type { HiveRecord, TenantRecord } from './platform-records.js'
 
 /** The directory reads DomainClaims needs: every tenant, and each tenant's hives. */
 export interface IDomainClaimDirectory

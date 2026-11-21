@@ -8,8 +8,7 @@ import type { SolutionLanguageService } from '@pragmatic-tech-ai/todl/solution-s
 import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/pragmatic-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../server-connection-handler.js'
-import { AuditOutcome } from '../access-audit.js'
-import type { IAccessAuditSink, AccessAuditEvent } from '../access-audit.js'
+import { AuditOutcome, type IAccessAuditSink, type AccessAuditEvent } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 class CapturingSink implements IAccessAuditSink
 {

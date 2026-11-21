@@ -1,8 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DeploymentMode } from '../../platform/deployment-mode.js'
+import { DeploymentMode, type ServerConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { ServerBootstrap } from '../server-bootstrap.js'
-import type { ServerConfig } from '../../config/server-config.js'
+import { GatewayBootstrap } from '../gateway-bootstrap.js'
 
 class Fixtures
 {
@@ -35,13 +35,13 @@ test('worker and gateway startup lines carry the otel token without the endpoint
     const worker = ServerBootstrap.WorkerStartupLine({ ...Fixtures.Base(), otlpMetrics: true, otlpEndpoint: 'https://collector:4317' })
     assert.match(worker, / otel=on/)
     assert.ok(!worker.includes('https://collector:4317'))
-    const gw = ServerBootstrap.GatewayStartupLine({ host: '0.0.0.0', port: 8080, tls: { certFile: '/c', keyFile: '/k', caFile: '/a' }, redisUrl: 'redis://x' })
+    const gw = GatewayBootstrap.GatewayStartupLine({ host: '0.0.0.0', port: 8080, tls: { certFile: '/c', keyFile: '/k', caFile: '/a' }, redisUrl: 'redis://x' })
     assert.match(gw, / otel=off/)
 })
 
 test('gateway startup line is otel=on without echoing the endpoint', () =>
 {
-    const gw = ServerBootstrap.GatewayStartupLine({ host: '0.0.0.0', port: 8080, tls: { certFile: '/c', keyFile: '/k', caFile: '/a' }, redisUrl: 'redis://x', metricsPort: 9464, otlpEndpoint: 'https://collector:4317' })
+    const gw = GatewayBootstrap.GatewayStartupLine({ host: '0.0.0.0', port: 8080, tls: { certFile: '/c', keyFile: '/k', caFile: '/a' }, redisUrl: 'redis://x', metricsPort: 9464, otlpEndpoint: 'https://collector:4317' })
     assert.match(gw, / otel=on/)
     assert.ok(!gw.includes('https://collector:4317'))
 })

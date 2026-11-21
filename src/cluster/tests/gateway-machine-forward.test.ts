@@ -2,7 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import type { TLSSocket } from 'node:tls'
 import { Gateway } from '../gateway.js'
-import { MachineFingerprintHeader } from '../machine-headers.js'
+import { MachineFingerprintHeader } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 class FakeSocket
 {

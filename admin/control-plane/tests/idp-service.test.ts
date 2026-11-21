@@ -5,12 +5,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { IdpService } from '../idp-service.js'
 import { DockerIdpDriver } from '../docker-idp-driver.js'
-import type { IIdpWorkloadDriver, IdpWorkloadRequest, IdpWorkloadResult } from '../idp-workload-driver.js'
-import { IdpStatus } from '../idp-record.js'
-import type { IdpRecord } from '../idp-record.js'
+import { type IIdpWorkloadDriver, type IdpWorkloadRequest, type IdpWorkloadResult, IdpStatus, type IdpRecord, type PortAllocator } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { IdpRegistry } from '../idp-registry.js'
 import type { IdpContainerEnv, IdpContainerSpec, StaleImage } from '../idp-container-env.js'
-import type { PortAllocator } from '../port-allocator.js'
 
 class FakeContainers
 {

@@ -7,7 +7,7 @@ import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/tes
 import { AuthMethod, Credential, PresentedSecret, AuthenticatedResult } from '@pragmatic-tech-ai/pragmatic-identity'
 import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { CloudPlatform } from '../../platform/cloud-platform.js'
-import { DeploymentMode } from '../../platform/deployment-mode.js'
+import { DeploymentMode } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { EnvironmentRegistry, InMemoryEnvironmentProvisioning } from '../environment-registry.js'
 import { InMemoryEnvironmentCoordinator } from '../environment-coordinator.js'
 import type { PragmaticServer } from '../../pragmatic-server.js'

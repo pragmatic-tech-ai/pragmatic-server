@@ -6,12 +6,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { OciRegistryClient, FileKeyStore, UiArtifactSigner, UiArtifactVerifier, UiArtifact } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { UiDeployActuator, UiDeployError } from '../ui-deploy-actuator.js'
-import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
-import { EnvServerSeedSource } from '../env-server-seed.js'
-import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
-import { type HiveRecord, HiveBackend, InfraMode } from '../platform-records.js'
+import { K8sManifestBuilder, EnvServerSeedSource, EnvStatus, EnvType, Template, type EnvironmentRecord, type HiveRecord, HiveBackend, InfraMode, type IHiveOrchestrator } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
-import type { IHiveOrchestrator } from '../hive-orchestrator.js'
 
 class FakeOci extends OciRegistryClient
 {

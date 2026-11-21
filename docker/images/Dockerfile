@@ -56,10 +56,8 @@ RUN cd pragmatic-server && npx tsx docker/images/closure-check.ts
 #   dist-tenant-admin/admin/tenant-portal/dist  tenant portal SPA (the tenant admin's static root)        tenant-admin
 #   dist-tenant-admin/release-keys              release trust keys (default PRAGMATIC_RELEASE_TRUST_DIR,  platform-admin
 #                                               two levels above the compiled control plane)
-#   dist-tenant-admin/environments/demo/seed,   Demo seed and Northwind sample (BundleBuilder,            platform-admin,
-#   dist-tenant-admin/environments/sample-apps  NorthwindApp.Compile), read when an environment is made   tenant-admin
-#   dist-tenant-admin/admin/control-plane/templates  environment templates (TemplateCatalog): inside the compiled
-#                                               control plane, which every control-plane image copies whole
+#   (the demo seed, the Northwind sample and the environment templates ship inside pragmatic-tenant-plane, which
+#   reads them relative to itself)
 #   dist-tenant-admin/admin/control-plane/descriptors  the digest-pinned component descriptors the tenant console
 #                                               configures (ComponentDescriptorSet), same tree
 RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
@@ -74,10 +72,6 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc,required=true \
     && cp -r dist ../../dist-tenant-admin/admin/portal/dist \
     && rm -rf node_modules dist
 RUN cd pragmatic-server \
-    && mkdir -p dist-tenant-admin/environments/demo \
-    && cp -r environments/demo/seed dist-tenant-admin/environments/demo/seed \
-    && cp -r environments/sample-apps dist-tenant-admin/environments/sample-apps \
-    && cp -r admin/control-plane/templates dist-tenant-admin/admin/control-plane/templates \
     && cp -r admin/control-plane/descriptors dist-tenant-admin/admin/control-plane/descriptors \
     && cp -r release-keys dist-tenant-admin/release-keys
 
@@ -137,7 +131,7 @@ RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline -
     --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm --workspace=packages/pragmatic-identity-source-local \
     --workspace=packages/pragmatic-identity-source-oidc --workspace=packages/pragmatic-identity-store --workspace=packages/pragmatic-kube \
     --workspace=packages/pragmatic-platform-link --workspace=packages/pragmatic-realm-adapters --workspace=packages/pragmatic-realm-custom \
-    --workspace=packages/pragmatic-release-toolkit \
+    --workspace=packages/pragmatic-release-toolkit --workspace=packages/pragmatic-tenant-plane \
     && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
 
 FROM build AS pragmatic-platform-edge-shared-modules
@@ -148,8 +142,9 @@ RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline -
 
 FROM build AS pragmatic-env-server-shared-modules
 RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
-    --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm --workspace=packages/pragmatic-identity-source-entra \
-    --workspace=packages/pragmatic-identity-source-google --workspace=packages/pragmatic-identity-source-local --workspace=packages/pragmatic-identity-source-oidc \
+    --workspace=packages/pragmatic-env-cluster --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm \
+    --workspace=packages/pragmatic-identity-source-entra --workspace=packages/pragmatic-identity-source-google --workspace=packages/pragmatic-identity-source-local \
+    --workspace=packages/pragmatic-identity-source-oidc \
     --workspace=packages/pragmatic-identity-store --workspace=packages/pragmatic-observability --workspace=packages/pragmatic-realm-adapters \
     --workspace=packages/pragmatic-realm-aws --workspace=packages/pragmatic-realm-azure --workspace=packages/pragmatic-realm-custom \
     --workspace=packages/pragmatic-realm-gcp \
@@ -157,7 +152,7 @@ RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline -
 
 FROM build AS pragmatic-env-gateway-shared-modules
 RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline --no-audit --no-fund \
-    --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-observability \
+    --workspace=packages/pragmatic-env-cluster --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-observability \
     && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
 
 FROM build AS pragmatic-tenant-admin-shared-modules
@@ -165,7 +160,7 @@ RUN cd pragmatic-shared && npm ci --omit=dev --ignore-scripts --prefer-offline -
     --workspace=packages/pragmatic-app-host --workspace=packages/pragmatic-component --workspace=packages/pragmatic-configuration \
     --workspace=packages/pragmatic-identity --workspace=packages/pragmatic-identity-realm --workspace=packages/pragmatic-identity-source-oidc \
     --workspace=packages/pragmatic-kube --workspace=packages/pragmatic-platform-link --workspace=packages/pragmatic-realm-adapters \
-    --workspace=packages/pragmatic-realm-custom --workspace=packages/pragmatic-release-toolkit \
+    --workspace=packages/pragmatic-realm-custom --workspace=packages/pragmatic-release-toolkit --workspace=packages/pragmatic-tenant-plane \
     && find node_modules -type f \( -name '*.map' -o -name '*.tsbuildinfo' \) -delete
 
 FROM build AS pragmatic-tenant-idp-shared-modules
@@ -253,6 +248,7 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom /workspace/pragmatic-shared/packages/pragmatic-realm-custom
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit /workspace/pragmatic-shared/packages/pragmatic-release-toolkit
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-tenant-plane /workspace/pragmatic-shared/packages/pragmatic-tenant-plane
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-platform-admin-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
@@ -262,8 +258,6 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-ad
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/src /workspace/pragmatic-server/dist-tenant-admin/src
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/admin/portal /workspace/pragmatic-server/dist-tenant-admin/admin/portal
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/release-keys /workspace/pragmatic-server/dist-tenant-admin/release-keys
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/demo /workspace/pragmatic-server/dist-tenant-admin/environments/demo
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/sample-apps /workspace/pragmatic-server/dist-tenant-admin/environments/sample-apps
 ENV PRAGMATIC_CONTROL_PLANE_ROLE=admin
 ARG COMPONENT_DIGEST
 COPY --from=component /component/component.json /pragmatic/component.json
@@ -312,6 +306,7 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-local /workspace/pragmatic-shared/packages/pragmatic-identity-source-local
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc /workspace/pragmatic-shared/packages/pragmatic-identity-source-oidc
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity-store /workspace/pragmatic-shared/packages/pragmatic-identity-store
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-env-cluster /workspace/pragmatic-shared/packages/pragmatic-env-cluster
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability /workspace/pragmatic-shared/packages/pragmatic-observability
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-aws /workspace/pragmatic-shared/packages/pragmatic-realm-aws
@@ -337,6 +332,7 @@ ENTRYPOINT ["node", "dist/bin/pragmatic-serverd.js"]
 FROM runtime AS pragmatic-env-gateway
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-protocol /workspace/pragmatic-protocol
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-identity /workspace/pragmatic-shared/packages/pragmatic-identity
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-env-cluster /workspace/pragmatic-shared/packages/pragmatic-env-cluster
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-observability /workspace/pragmatic-shared/packages/pragmatic-observability
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-env-gateway-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
@@ -382,6 +378,7 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragm
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-adapters /workspace/pragmatic-shared/packages/pragmatic-realm-adapters
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-realm-custom /workspace/pragmatic-shared/packages/pragmatic-realm-custom
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-release-toolkit /workspace/pragmatic-shared/packages/pragmatic-release-toolkit
+COPY --from=build --chown=10001:10001 /workspace/pragmatic-shared/packages/pragmatic-tenant-plane /workspace/pragmatic-shared/packages/pragmatic-tenant-plane
 COPY --from=build --chown=10001:10001 /workspace/todl-runtime /workspace/todl-runtime
 COPY --from=pragmatic-tenant-admin-shared-modules --chown=10001:10001 /workspace/pragmatic-shared/node_modules /workspace/pragmatic-shared/node_modules
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/package.json /workspace/pragmatic-server/package.json
@@ -390,8 +387,6 @@ COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-ad
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/seed /workspace/pragmatic-server/dist-tenant-admin/environments/seed
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/src /workspace/pragmatic-server/dist-tenant-admin/src
 COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/admin/tenant-portal /workspace/pragmatic-server/dist-tenant-admin/admin/tenant-portal
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/demo /workspace/pragmatic-server/dist-tenant-admin/environments/demo
-COPY --from=build --chown=10001:10001 /workspace/pragmatic-server/dist-tenant-admin/environments/sample-apps /workspace/pragmatic-server/dist-tenant-admin/environments/sample-apps
 ARG COMPONENT_DIGEST
 COPY --from=component /component/component.json /pragmatic/component.json
 LABEL ai.pragmatic-tech.component.digest=$COMPONENT_DIGEST

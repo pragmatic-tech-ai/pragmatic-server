@@ -1,6 +1,4 @@
-import type { HiveRolloutStatus } from '../platform-deployment-registry.js'
-import type { ManifestRecord } from '../manifest-record.js'
-import { RolloutUnavailableError, type AdoptionLedgerDto, type IRolloutClient } from './rollout-client.js'
+import { type HiveRolloutStatus, type ManifestRecord, RolloutUnavailableError, type AdoptionLedgerDto, type IRolloutClient } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /**
  * Placeholder rollout client for a standalone tenant-admin process that has no operator link yet: every

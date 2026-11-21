@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConsoleDomainApprovals, type DomainStanding } from '../console-domain-approvals.js'
-import { DomainApprovalState, DomainVerificationRecord } from '../domain-verification-record.js'
+import { DomainApprovalState, DomainVerificationRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** Counts the file writes the store makes. */
 class CountingApprovals extends ConsoleDomainApprovals

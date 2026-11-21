@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { ServerConfig } from '../server-config.js'
-import { DeploymentMode } from '../../platform/deployment-mode.js'
+import { type ServerConfig, DeploymentMode } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { ProvisionedSecretsFactory } from '../provisioned-secrets-factory.js'
 
 class Configs

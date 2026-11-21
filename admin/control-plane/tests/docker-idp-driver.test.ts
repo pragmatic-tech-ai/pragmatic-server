@@ -4,9 +4,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DockerIdpDriver } from '../docker-idp-driver.js'
-import { IdpDatabaseSecret } from '../idp-workload-driver.js'
+import { IdpDatabaseSecret, type PortAllocator } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { IdpContainerEnv, IdpContainerSpec } from '../idp-container-env.js'
-import type { PortAllocator } from '../port-allocator.js'
 
 /** Records what the driver hands the container seam, and what the database files held when the volume was seeded. */
 class DatabaseContainers

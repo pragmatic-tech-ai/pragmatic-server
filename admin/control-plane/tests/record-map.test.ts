@@ -4,14 +4,9 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
-import { FileRecordMap, MemoryRecordMap, RecordDocuments, RecordMapFormatError, RecordUnstorableError, type IRecordMap } from '../record-map.js'
-import { EnvironmentRegistry, type PersistedEnvironmentRecord } from '../environment-registry.js'
-import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
+import { FileRecordMap, MemoryRecordMap, RecordDocuments, RecordMapFormatError, RecordUnstorableError, type IRecordMap, EnvironmentRegistry, type PersistedEnvironmentRecord, EnvStatus, EnvType, Template, type EnvironmentRecord, type IdpRecord, type ClientRecord, SqlRecordMap } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { IdpRegistry } from '../idp-registry.js'
-import type { IdpRecord } from '../idp-record.js'
 import { ClientRegistry } from '../client-registry.js'
-import type { ClientRecord } from '../platform-records.js'
-import { SqlRecordMap } from '../sql-record-map.js'
 
 type Thing = { name: string; tags?: string[]; nested?: { n: number } }
 

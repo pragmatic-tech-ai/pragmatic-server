@@ -1,22 +1,15 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
-import { InfraMode, type HiveRecord } from './platform-records.js'
+import { InfraMode, type HiveRecord, ReleaseState, type ManifestRecord, type ManifestRegistry, type HiveHealthDto, type HiveOrchestratorFactory, UnsupportedBackendError, type EnvironmentRecord, type EnvironmentWorkload, type AdoptionLedgerRegistry, type AdoptionLedgerRecord, type LedgerAction, type HiveRolloutStatus } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { KindHiveOrchestrator } from './kind-hive-orchestrator.js'
-import { ReleaseState, type ManifestRecord, type ManifestRegistry } from './manifest-record.js'
 import type { GatingRecord, GatingRegistry } from './gating-record.js'
 import type { SelectionRecord, SelectionRegistry } from './selection-record.js'
 import type { HiveObservationRegistry } from './hive-observation-record.js'
-import type { HiveHealthDto } from './hive-health-producer.js'
 import type { RolloutRegistrationRegistry } from './rollout-registration-record.js'
-import type { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
-import { UnsupportedBackendError } from './hive-orchestrator.js'
 import type { IEnvironmentLookup } from './platform-directory.js'
-import type { EnvironmentRecord } from './environment-record.js'
-import type { EnvironmentWorkload } from './environment-workload.js'
 import { Channel } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import type { IManifestSigner } from './manifest-signer.js'
 import { ReleasePolicyRegistry, type ReleasePolicyRecord } from './release-policy-record.js'
 import { PolicyStoreUnavailableError, AgentUnauthorizedError, HiveNotRegisteredError, ManifestExistsError, ManifestNotGatedError, UnknownHiveError, UnknownManifestError, ManifestWithdrawnError, TenantOnHoldError, ChannelNotSubscribedError, VersionBelowFloorError, ReleaseRejectedError, ReleaseNotRejectedError, ReleaseNotRunnableYetError } from '@pragmatic-tech-ai/pragmatic-platform-link'
-import type { AdoptionLedgerRegistry, AdoptionLedgerRecord, LedgerAction } from './adoption-ledger-record.js'
 import { VersionOrder } from './version-order.js'
 
 type PolicyBlock = 'not-gated' | 'withdrawn' | 'held' | 'channel' | 'floor'
@@ -32,10 +25,6 @@ export interface IWorkloadPlacement
 }
 
 export type RolloutTarget = { version: string; image: string }
-
-export type EnvironmentRolloutStatus = { environmentName: string; runningImage: string | undefined; obsolete: boolean; ready: boolean }
-
-export type HiveRolloutStatus = { targetVersion: string | undefined; environments: EnvironmentRolloutStatus[] }
 
 export class PlatformDeploymentRegistry
 {

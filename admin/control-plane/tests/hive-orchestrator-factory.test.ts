@@ -1,16 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { isAbsolute } from 'node:path'
-import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
-import { ForeignHiveError, UnsupportedBackendError } from '../hive-orchestrator.js'
-import { KubectlHiveOrchestrator } from '../kubectl-hive-orchestrator.js'
+import { HiveOrchestratorFactory, ForeignHiveError, UnsupportedBackendError, KubectlHiveOrchestrator, KindClusterName, HiveBackend, InfraMode, type HiveRecord, InClusterHiveOrchestrator, type InClusterOrchestration, EnvNamespaceGuard } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { KubectlCli, KubeApiClient } from '@pragmatic-tech-ai/pragmatic-kube'
-import { KindClusterName } from '../kind-cluster-name.js'
 import { KindHiveOrchestrator } from '../kind-hive-orchestrator.js'
 import { PlatformHiveOrchestratorFactory } from '../platform-hive-orchestrator-factory.js'
-import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
-import { InClusterHiveOrchestrator, type InClusterOrchestration } from '../in-cluster-hive-orchestrator.js'
-import { EnvNamespaceGuard } from '../env-namespace-guard.js'
 import { PinnedImageVerifier, CryptoImageVerifier, ImageVerificationError } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 
 class FactoryFixture

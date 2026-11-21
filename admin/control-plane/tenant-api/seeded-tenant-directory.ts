@@ -1,5 +1,4 @@
-import type { HiveRecord, TenantRecord } from '../platform-records.js'
-import type { ITenantDirectory } from './tenant-directory.js'
+import type { HiveRecord, TenantRecord, ITenantDirectory } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 export type TenantDirectorySeed = {
     readonly tenant: TenantRecord

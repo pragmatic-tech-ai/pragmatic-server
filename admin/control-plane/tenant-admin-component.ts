@@ -1,5 +1,5 @@
 import { SettingType, type ComponentDescriptor, ComponentDeclarations, type ComponentDeclaration } from '@pragmatic-tech-ai/pragmatic-component'
-import { TenantRoles } from './tenant-auth/tenant-roles.js'
+import { TenantRoles } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /**
  * The component descriptor of the tenant admin image (pragmatic-tenant-admind, the console that ships into a client hive):

@@ -1,7 +1,6 @@
 import { Cypher, GraphError, GraphErrorCode } from '@pragmatic-tech-ai/pragmatic-graph'
-import { CursorStaleError, PageCursorCodec, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { PagingLimits } from '../../config/paging-limits.js'
+import { CursorStaleError, PageCursorCodec, ResponseError, type PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { PagingLimits } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { PageRequest } from '../paging/page-request.js'
 
 /**

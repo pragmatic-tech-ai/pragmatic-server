@@ -11,7 +11,7 @@ import { Gateway } from '../gateway.js'
 import { RedisWorkerRouter } from '../redis-worker-router.js'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
-import type { MachineTlsRef } from '../machine-tls.js'
+import type { MachineTlsRef } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 class Fixture
 {

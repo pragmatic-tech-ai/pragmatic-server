@@ -1,10 +1,6 @@
 import { randomBytes } from 'node:crypto'
-import { ConsoleFingerprintKeys } from './console-fingerprint-keys.js'
-import { IdpDatabaseSecret, type IdpDatabaseSpec, type IdpWorkloadSpec } from './idp-workload-driver.js'
-import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import { ConsoleFingerprintKeys, IdpDatabaseSecret, type IdpDatabaseSpec, type IdpWorkloadSpec, K8sManifestBuilder, type HiveRecord, type TenantRecord, TenantAdminDatabaseSecret, type TenantAdminWorkloadSpec, type TenantConsoleExposure } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { VerifiedImage } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
-import type { HiveRecord, TenantRecord } from './platform-records.js'
-import { TenantAdminDatabaseSecret, type TenantAdminWorkloadSpec, type TenantConsoleExposure } from './tenant-admin-workload.js'
 import type { TenantDirectorySeed } from './tenant-api/seeded-tenant-directory.js'
 
 /** The slice of the platform deployment registry bootstrap needs: mint a hive's one-time agent bearer. */

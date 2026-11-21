@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import { AccessContext, Principal, PrincipalKind, Realm, RealmKind, Grant, Role, ResourceRef, ResourceKind, ResourceAuthorizationPolicy } from '@pragmatic-tech-ai/pragmatic-identity'
 import { PragmaticServer } from '../../pragmatic-server.js'
 import { ServerConnectionHandler } from '../../host/server-connection-handler.js'
-import { Observability, ObservabilityRole } from '../observability.js'
+import { Observability, ObservabilityRole } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { RequestInstrumentation } from '../request-instrumentation.js'
 import { NullLogger, type ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
 

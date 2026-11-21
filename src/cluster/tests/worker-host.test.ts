@@ -5,16 +5,14 @@ import { mkdtempSync, cpSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
-import { Grant, Role, ResourceRef, ResourceKind } from '@pragmatic-tech-ai/pragmatic-identity'
+import { Grant, Role, ResourceRef, ResourceKind, type IdentityStoreSet } from '@pragmatic-tech-ai/pragmatic-identity'
 import { PragmaticClient, WsMessageSocket } from '@pragmatic-tech-ai/pragmatic-protocol'
 import { RedisEnvironmentOwnership } from '../../environments/redis-environment-ownership.js'
-import { MachineTls } from '../machine-tls.js'
-import type { MachineTlsRef } from '../machine-tls.js'
+import { MachineTls, type MachineTlsRef } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { WorkerHost } from '../worker-host.js'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import { NodePlatform } from '../../platform/node-platform.js'
-import type { IdentityStoreSet } from '@pragmatic-tech-ai/pragmatic-identity'
 
 class RecordingPlatform extends NodePlatform
 {

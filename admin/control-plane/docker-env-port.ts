@@ -1,20 +1,5 @@
-import type { EnvDefinition } from '../../environments/seed/bundle.js'
-import { DockerEnv, type ILogProcess } from '../../environments/seed/docker.js'
-import type { IContainerProbe } from './environment-record.js'
-
-/** Docker seam. EnsureImage THROWS when the daemon is unreachable, resolves false when the image is missing. */
-export interface IDockerEnv
-{
-    EnsureImage(): Promise<boolean>
-    Up(def: EnvDefinition, bundleDir: string, caHostPath?: string): Promise<void>
-    Down(def: EnvDefinition, removeData?: boolean): Promise<void>
-    Logs(def: EnvDefinition): Promise<string>
-    LogStream(def: EnvDefinition, onData: (chunk: string) => void): ILogProcess
-    WaitHealthy(port: number, def: EnvDefinition): Promise<void>
-    Running(containerName: string): Promise<boolean>
-    RemoveVolume(def: EnvDefinition): Promise<void>
-    BuildCommand(): string
-}
+import type { EnvDefinition, ILogProcess, IContainerProbe, IDockerEnv } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
+import { DockerEnv } from '../../environments/seed/docker.js'
 
 export class DockerEnvAdapter implements IDockerEnv, IContainerProbe
 {

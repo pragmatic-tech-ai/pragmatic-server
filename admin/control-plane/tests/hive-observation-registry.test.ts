@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { HiveObservationRegistry } from '../hive-observation-record.js'
-import type { HiveHealthDto } from '../hive-health-producer.js'
+import type { HiveHealthDto } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 class ObservationFixture
 {

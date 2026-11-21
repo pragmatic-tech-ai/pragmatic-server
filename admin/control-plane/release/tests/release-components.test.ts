@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { OperatorRole } from '../../operator-identity.js'
-import { TenantRoles } from '../../tenant-auth/tenant-roles.js'
+import { TenantRoles } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { ComponentDescriptorCli, ReleaseApp, ReleaseApps } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { ReleaseComponents } from '../release-components.js'
 

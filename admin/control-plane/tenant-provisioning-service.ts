@@ -1,11 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { IdpAdminError, IdpAdminTransportError, type IdpAdminClient } from './idp-admin-client.js';
-import type { IdpConnection, IIdpService } from './idp-service.js';
+import { IdpAdminError, IdpAdminTransportError, type IdpAdminClient, type IIdpService, type TenantRecord, type TenantAccountIndex, TenantOwner, TenantIdpMode, type IOwnerSessionRevoker } from '@pragmatic-tech-ai/pragmatic-tenant-plane';
+import type { IdpConnection } from './idp-service.js';
 import { UnknownTenantError, type PlatformDirectory } from './platform-directory.js';
-import type { TenantRecord } from './platform-records.js';
-import type { TenantAccountIndex } from './tenant-account-index.js';
-import { TenantOwner } from './tenant-owner.js';
-import { TenantIdpMode } from './tenant-idp-mode.js';
 
 export type TenantProvisionInput = { id: string; clientId: string; displayName: string; ownerEmail: string };
 
@@ -17,15 +13,6 @@ export type TenantProvisionResult = { record: TenantRecord; ownerPassword?: stri
  * Owner's existing tenant-portal sessions could not be ended; `warning` then says so.
  */
 export type OwnerPasswordReset = { ownerEmail: string; ownerPassword: string; sessionsRevoked: boolean; warning?: string };
-
-/** Ends a tenant principal's, or a whole tenant's, tenant-plane sessions (host-free: no tenant-plane types). */
-export interface IOwnerSessionRevoker
-{
-    RevokeAllFor(tenantId: string, principalId: string): Promise<void>;
-
-    /** Ends every session of the tenant, console and desktop, and closes its open connections. */
-    RevokeTenant(tenantId: string): Promise<void>;
-}
 
 /** A reset of this tenant's Owner password is already running. Maps to 409. */
 export class OwnerResetInProgressError extends Error

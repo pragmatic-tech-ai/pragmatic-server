@@ -1,17 +1,5 @@
-import { UiArtifact, type UiArtifactConfig, type UiBundleFile, type OciRegistryClient, type UiArtifactSigner, type IKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
-import type { IHiveOrchestrator } from './hive-orchestrator.js'
-import type { EnvironmentRecord } from './environment-record.js'
-import type { HiveRecord } from './platform-records.js'
-import { EnvironmentWorkloadFactory } from './environment-workload.js'
-import { EnvServerSeedSource } from './env-server-seed.js'
-import { K8sManifestBuilder } from './k8s-manifest-builder.js'
-
-/** The bundle a deploy publishes: the artifact config plus its files. */
-export interface UiDeployBundle
-{
-    config: UiArtifactConfig
-    files: readonly UiBundleFile[]
-}
+import { UiArtifact, type OciRegistryClient, type UiArtifactSigner, type IKeyStore } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
+import { type IHiveOrchestrator, type EnvironmentRecord, type HiveRecord, EnvironmentWorkloadFactory, EnvServerSeedSource, K8sManifestBuilder, type UiDeployBundle, type IUiDeployActuator } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** Resolves the orchestrator (and so the kubectl) for a hive; satisfied by HiveOrchestratorFactory. */
 export interface IHiveOrchestratorSource
@@ -23,12 +11,6 @@ export interface IHiveOrchestratorSource
 export interface IEnvironmentRecordSink
 {
     Put(record: EnvironmentRecord): Promise<void>
-}
-
-/** The deploy seam EnvironmentService delegates to. */
-export interface IUiDeployActuator
-{
-    DeployAppToEnvironment(record: EnvironmentRecord, hive: HiveRecord, bundle: UiDeployBundle): Promise<EnvironmentRecord>
 }
 
 /** Raised when a deploy cannot proceed; fixed message, never carries key or signature material. */

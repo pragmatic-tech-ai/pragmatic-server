@@ -1,10 +1,4 @@
-import { HiveOrchestratorFactory } from './hive-orchestrator-factory.js'
-import { UnsupportedBackendError } from './hive-orchestrator.js'
-import type { IHiveOrchestrator } from './hive-orchestrator.js'
-import type { IdpRecord } from './idp-record.js'
-import type { IdpWorkloadRequest, IdpWorkloadResult, IIdpWorkloadDriver } from './idp-workload-driver.js'
-import { NoHostEnvironmentRuntime } from './no-host-environment-runtime.js'
-import type { HiveRecord } from './platform-records.js'
+import { HiveOrchestratorFactory, UnsupportedBackendError, type IHiveOrchestrator, type IdpRecord, type IdpWorkloadRequest, type IdpWorkloadResult, type IIdpWorkloadDriver, NoHostEnvironmentRuntime, type HiveRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** The one sentence every refusal in `PRAGMATIC_ADMIN_INFRA_TARGET=none` mode says (D28 interim). */
 export class NoInfraTarget

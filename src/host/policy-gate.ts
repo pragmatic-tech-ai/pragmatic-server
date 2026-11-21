@@ -1,8 +1,6 @@
-import { Action, ResourceKind, ResourceRef, AccessDecision } from '@pragmatic-tech-ai/pragmatic-identity'
-import type { AccessContext } from '@pragmatic-tech-ai/pragmatic-identity'
+import { Action, ResourceKind, ResourceRef, AccessDecision, type AccessContext } from '@pragmatic-tech-ai/pragmatic-identity'
 import { trace, isSpanContextValid } from '@opentelemetry/api'
-import { NullAccessAuditSink, AuditSurface, AuditOutcome } from './access-audit.js'
-import type { IAccessAuditSink, AccessAuditEvent } from './access-audit.js'
+import { NullAccessAuditSink, AuditSurface, AuditOutcome, type IAccessAuditSink, type AccessAuditEvent } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { LanguageProtocol, SolutionProtocol, ModelProtocol, ConnectorProtocol, AdminProtocol, CypherProtocol, PragmaticAppProtocol, ApplicationDeployProtocol, RunTestProtocol, AppDataProtocol, DataSharingProtocol, DataAssignmentProtocol, GraphProtocol, StorageProtocol } from '@pragmatic-tech-ai/pragmatic-protocol'
 
 interface MethodPolicy

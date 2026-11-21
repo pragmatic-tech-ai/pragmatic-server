@@ -37,7 +37,7 @@ import type { TLSSocket } from 'node:tls'
 import { fileURLToPath } from 'node:url'
 import { chromium, type Page } from 'playwright'
 import { IdpLoginPage } from './idp-login-page.js'
-import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import { K8sManifestBuilder } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { KindImageLoader } from './kind-image-loader.js'
 import { KubectlError, NodeExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
 

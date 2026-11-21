@@ -8,10 +8,7 @@ import { WebSocket } from 'ws'
 import { PragmaticServerHost } from '../pragmatic-server-host.js'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
-import { RateLimitGuard } from '../rate-limit-guard.js'
-import { TokenBucketRateLimiter } from '../rate-limiter.js'
-import { AuditSurface, AuditOutcome } from '../access-audit.js'
-import type { IAccessAuditSink, AccessAuditEvent } from '../access-audit.js'
+import { RateLimitGuard, TokenBucketRateLimiter, AuditSurface, AuditOutcome, type IAccessAuditSink, type AccessAuditEvent } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 class CapturingSink implements IAccessAuditSink
 {

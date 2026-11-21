@@ -1,10 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { afterEach, describe, it, mock } from 'node:test'
-import { TenantHealthMonitor, type IEnvStatusReconciler } from '../tenant-health-monitor.js'
-import { TenantEventBus, TenantEventType, type TenantEvent } from '../tenant-api/tenant-events.js'
-import type { HiveHealthDto, HiveHealthProducer } from '../hive-health-producer.js'
+import { TenantHealthMonitor, type IEnvStatusReconciler, TenantEventBus, TenantEventType, type TenantEvent, type HiveHealthDto, type HiveHealthProducer, HiveBackend, InfraMode, type HiveRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { PlatformDirectory } from '../platform-directory.js'
-import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 
 /** A `PlatformDirectory` stand-in whose `ListHives` returns a script the test swaps between ticks. */
 class FakeDirectory

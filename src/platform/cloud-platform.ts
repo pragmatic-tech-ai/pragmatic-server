@@ -6,7 +6,7 @@ import { AuditAnchor, AuditAnchoring, HmacAuditCheckpointSigner } from '@pragmat
 import { FileEncryptedSecretStore } from '@pragmatic-tech-ai/pragmatic-identity-store'
 import { HeadlessPromptService } from '@pragmatic-tech-ai/pragmatic-realm-custom'
 import type { PlatformServices } from './platform-services.js'
-import type { MasterKeyRef } from '../identity/master-key-resolver.js'
+import type { MasterKeyRef } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 /** The five multi-realm SQL identity stores opened once and shared across realms (Secrets is per-realm,
  *  composed separately in CreateIdentityStores). */

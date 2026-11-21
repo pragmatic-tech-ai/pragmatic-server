@@ -5,10 +5,8 @@ import { LanguageProtocol, SolutionProtocol } from '@pragmatic-tech-ai/pragmatic
 import { trace } from '@opentelemetry/api'
 import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base'
 import { PeriodicExportingMetricReader, InMemoryMetricExporter, AggregationTemporality } from '@opentelemetry/sdk-metrics'
-import { Observability, ObservabilityRole } from '../../observability/observability.js'
+import { Observability, ObservabilityRole, AuditSurface, AuditOutcome, type IAccessAuditSink, type AccessAuditEvent } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { PolicyGate } from '../policy-gate.js'
-import { AuditSurface, AuditOutcome } from '../access-audit.js'
-import type { IAccessAuditSink, AccessAuditEvent } from '../access-audit.js'
 
 class CapturingSink implements IAccessAuditSink
 {

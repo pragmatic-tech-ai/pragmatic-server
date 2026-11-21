@@ -1,20 +1,9 @@
-import { execFile, spawn } from 'node:child_process'
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { get } from 'node:http'
-import { EnvironmentPurposeName } from './bundle.js'
-import type { EnvDefinition, EnvDatabase } from './bundle.js'
-import { EnvConventions } from './env-conventions.js'
+import { EnvironmentPurposeName, type EnvDefinition, type EnvDatabase, EnvConventions, type ILogProcess } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
-export { EnvKind, EnvironmentPurposeName } from './bundle.js'
-export type { EnvDefinition } from './bundle.js'
-
-/** A long-lived child process whose combined stdout+stderr is streamed as utf8 text. */
-export interface ILogProcess
-{
-    OnData(cb: (chunk: string) => void): void
-    OnClose(cb: () => void): void
-    Kill(): void
-}
+export { EnvKind, EnvironmentPurposeName } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
+export type { EnvDefinition } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** Spawn seam so log-follow streaming is testable without a real docker process. */
 export interface IProcessSpawn

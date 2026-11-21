@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { ClientRegistry } from '../client-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { PlatformDirectory } from '../platform-directory.js'
-import { TenantAccountIndex } from '../tenant-account-index.js'
+import { TenantAccountIndex } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { TenantRegistry } from '../tenant-registry.js'
 
 class IndexFixture

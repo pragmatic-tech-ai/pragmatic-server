@@ -1,6 +1,5 @@
-import { AuthMethod, AuthenticatedResult, Principal, PrincipalKind, RejectedResult } from '@pragmatic-tech-ai/pragmatic-identity'
-import type { AuthenticationResult, Credential, IAuthenticator, PresentedSecret, Realm } from '@pragmatic-tech-ai/pragmatic-identity'
-import type { MachinePrincipalMap } from './machine-principal-map.js'
+import { AuthMethod, AuthenticatedResult, Principal, PrincipalKind, RejectedResult, type AuthenticationResult, type Credential, type IAuthenticator, type PresentedSecret, type Realm } from '@pragmatic-tech-ai/pragmatic-identity'
+import type { MachinePrincipalMap } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 /** Authenticates a machine by its (already TLS-verified) client-cert fingerprint, carried in Credential.Reference. */
 export class MachineCertAuthenticator implements IAuthenticator

@@ -2,7 +2,7 @@ import type { ISqlSession } from '@pragmatic-tech-ai/todl'
 import { PgSession, SqlOidcFlowStateStore, SqlSecretKeyRing, SqlSecretStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { PostgresPoolFactory } from '@pragmatic-tech-ai/pragmatic-realm-custom'
 import { SqlAuditRepository, SqlSessionRepository, SqlThrottleRepository, SqlTicketRepository } from '@pragmatic-tech-ai/pragmatic-app-host'
-import { SqlRecordMap } from './sql-record-map.js'
+import { SqlRecordMap } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { SqlSignatureStore } from './sql-signature-store.js'
 import type { OperatorSessionRepositories } from './operator-sessions.js'
 

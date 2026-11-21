@@ -2,12 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { KindHiveOrchestrator } from '../kind-hive-orchestrator.js'
-import { UnsupportedBackendError } from '../hive-orchestrator.js'
-import type { IHiveOrchestrator } from '../hive-orchestrator.js'
+import { UnsupportedBackendError, type IHiveOrchestrator, type HiveOrchestratorFactory, HiveBackend, InfraMode, type HiveRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { IKind, KindClusterConfig } from '../kind.js'
-import type { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
-import { HiveBackend, InfraMode } from '../platform-records.js'
-import type { HiveRecord } from '../platform-records.js'
 
 class FakeKind implements IKind
 {

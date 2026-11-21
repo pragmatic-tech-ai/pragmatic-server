@@ -6,20 +6,14 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { IdpRealmSet } from '../../../src/idp/idp-realm-set.js';
 import { TenantIdpTestHost } from '../../../src/idp/tests/tenant-idp-test-host.js';
-import { IdpAdminClient } from '../idp-admin-client.js';
-import type { IdpConnection, IIdpService } from '../idp-service.js';
+import { IdpAdminClient, type IIdpService, type IOwnerSessionRevoker, type TenantRecord, IdpAdminTransportError, TenantAccountIndex, TenantIdpMode, TenantSessionClaims, TenantSessions, TenantPrincipalSessions } from '@pragmatic-tech-ai/pragmatic-tenant-plane';
+import type { IdpConnection } from '../idp-service.js';
 import { ClientRegistry } from '../client-registry.js';
 import { TenantRegistry } from '../tenant-registry.js';
 import { HiveRegistry } from '../hive-registry.js';
 import { PlatformDirectory, RecordExistsError, UnknownClientError, UnknownTenantError } from '../platform-directory.js';
-import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, OwnerResetInProgressError, TenantIdpMissingError, TenantProvisioningService, type IOwnerSessionRevoker, type TenantProvisionResult } from '../tenant-provisioning-service.js';
-import type { TenantRecord } from '../platform-records.js';
-import { IdpAdminTransportError } from '../idp-admin-client.js';
-import { TenantAccountIndex } from '../tenant-account-index.js';
-import { TenantIdpMode } from '../tenant-idp-mode.js';
+import { IdpUnreachableError, OwnerAccountMissingError, OwnerIdpRefusedError, OwnerNotRecordedError, OwnerResetInProgressError, TenantIdpMissingError, TenantProvisioningService, type TenantProvisionResult } from '../tenant-provisioning-service.js';
 import { SignedInIdentity } from '@pragmatic-tech-ai/pragmatic-app-host';
-import { TenantSessionClaims, TenantSessions } from '../tenant-auth/tenant-sessions.js';
-import { TenantPrincipalSessions } from '../tenant-auth/tenant-principal-sessions.js';
 
 class FakeIdp implements IIdpService
 {

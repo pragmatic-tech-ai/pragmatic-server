@@ -1,10 +1,6 @@
-import type { TenantRecord } from '../platform-records.js'
+import { type TenantRecord, type ITenantDirectory, type TenantApiEndpoint, TenantRoleClaims, TenantSessionClaims, TenantSessionKind, type TenantSession } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { AuthorizationOutcome, ClaimsAuthorizer, RequestContext, RouteTable, SessionClaims, SessionPolicy, SessionRecord } from '@pragmatic-tech-ai/pragmatic-app-host'
-import type { ITenantDirectory } from '../tenant-api/tenant-directory.js'
-import type { TenantApiEndpoint } from '../tenant-api/tenant-api-endpoint.js'
-import { TenantRoleClaims } from '../tenant-auth/tenant-roles.js'
-import { TenantSessionClaims, TenantSessionKind, type TenantSession } from '../tenant-auth/tenant-sessions.js'
 
 /** Tenant-plane sessions for tests: the record a view stands for, and the view with the roles the gate would give it. */
 export class TenantTestSessions

@@ -7,14 +7,11 @@ import type { AddressInfo } from 'node:net'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { chromium } from 'playwright'
-import type { Browser } from 'playwright'
+import { chromium, type Browser } from 'playwright'
 import { PragmaticClient, AppWriteStatus } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { BaseRole } from '@pragmatic-tech-ai/pragmatic-identity'
-import type { ISecurityModelConfig } from '@pragmatic-tech-ai/pragmatic-identity'
-import { BundleBuilder, EnvKind, EnvironmentPurposeName } from '../../../environments/seed/bundle.js'
-import { HelloAppBuilder } from './hello-app-builder.js'
-import type { BuiltHelloApp } from './hello-app-builder.js'
+import { BaseRole, type ISecurityModelConfig } from '@pragmatic-tech-ai/pragmatic-identity'
+import { BundleBuilder, EnvKind, EnvironmentPurposeName } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
+import { HelloAppBuilder, type BuiltHelloApp } from './hello-app-builder.js'
 
 /** Opt-in gate for the SP0 capstone e2e (needs Docker + the pragmatic-server:sp0 image + a Playwright chromium). */
 class Gate

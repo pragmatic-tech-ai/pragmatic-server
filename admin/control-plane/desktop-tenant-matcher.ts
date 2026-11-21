@@ -1,14 +1,8 @@
-import { ConsoleFingerprint } from './console-advert-contract.js'
-import { ConsoleAdvertRegistry } from './console-advert-registry.js'
-import type { ConsoleAdvertRecord, IConsoleAdvertLookup } from './console-advert-registry.js'
-import { ConsoleDomainApprovals } from './console-domain-approvals.js'
-import type { DomainStanding } from './console-domain-approvals.js'
+import { ConsoleFingerprint, EmailDomainPolicy, type TenantRecord, type TenantAccountIndex, type ITenantDirectory } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
+import { ConsoleAdvertRegistry, type ConsoleAdvertRecord, type IConsoleAdvertLookup } from './console-advert-registry.js'
+import { ConsoleDomainApprovals, type DomainStanding } from './console-domain-approvals.js'
 import { DomainClaims } from './domain-claims.js'
-import { EmailDomainPolicy } from './email-domain-policy.js'
 import { HiveConsoleSpecs } from './hive-console-spec.js'
-import type { TenantRecord } from './platform-records.js'
-import type { TenantAccountIndex } from './tenant-account-index.js'
-import type { ITenantDirectory } from './tenant-api/tenant-directory.js'
 
 /** The directory reads discovery needs: the tenant-plane seam plus every tenant (for the domain tier). PlatformDirectory satisfies it. */
 export interface IDiscoveryDirectory extends ITenantDirectory

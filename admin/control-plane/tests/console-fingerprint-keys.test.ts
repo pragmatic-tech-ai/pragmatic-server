@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SealedSecretStore, SealedSecretUnreadableError } from '../sealed-secret-store.js'
-import { ConsoleFingerprintKeys } from '../console-fingerprint-keys.js'
+import { ConsoleFingerprintKeys } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 class KeysFixture
 {

@@ -11,11 +11,9 @@ import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
 import { PlatformDirectory } from '../platform-directory.js'
-import { HiveOrchestratorFactory } from '../hive-orchestrator-factory.js'
-import { HiveBackend, InfraMode } from '../platform-records.js'
+import { HiveOrchestratorFactory, HiveBackend, InfraMode, RolloutAdoptionRefusedError, RolloutUnavailableError } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
 import { HttpRolloutClient } from '../tenant-api/http-rollout-client.js'
-import { RolloutAdoptionRefusedError, RolloutUnavailableError } from '../tenant-api/rollout-client.js'
 import { RolloutFixture } from './rollout-fixture.js'
 
 class Names

@@ -1,17 +1,12 @@
 import { readFileSync } from 'node:fs'
-import type { ServerConfig } from '../config/server-config.js'
-import { ServerConfigLoader } from '../config/server-config-loader.js'
+import { type ServerConfig, ServerConfigLoader, type IAccessAuditSink, DeploymentMode, DeploymentProvider, Observability, ObservabilityRole, HostBootstrap } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { EnvironmentProvisioningFactory } from '../config/environment-provisioning-factory.js'
 import { ProvisionedSecretsFactory } from '../config/provisioned-secrets-factory.js'
 import { PragmaticServerHost } from '../host/pragmatic-server-host.js'
 import { ServerBootstrap } from './server-bootstrap.js'
 import { GracefulShutdown } from './graceful-shutdown.js'
-import type { IAccessAuditSink } from '../host/access-audit.js'
 import { StructuredLogger, type ILogger } from '@pragmatic-tech-ai/pragmatic-observability'
-import { DeploymentMode } from '../platform/deployment-mode.js'
-import { DeploymentProvider } from '../platform/deployment-provider.js'
 import type { ICloudBundle } from '../platform/cloud-bundle.js'
-import { Observability, ObservabilityRole } from '../observability/observability.js'
 
 class ServerMain
 {
@@ -41,14 +36,14 @@ class ServerMain
         const config = ServerConfigLoader.Load(process.env, read)
         const { provisioning, environmentCount } = EnvironmentProvisioningFactory.Build(config, read)
         const provisionedSecrets = ProvisionedSecretsFactory.Build(config, read)
-        const observabilityOptions = ServerBootstrap.ObservabilityOptions(config, ObservabilityRole.Host)
+        const observabilityOptions = HostBootstrap.ObservabilityOptions(config, ObservabilityRole.Host)
         const observability = observabilityOptions !== undefined ? Observability.Start(observabilityOptions) : undefined
         const bundle = config.deploymentMode === DeploymentMode.Cloud ? await ServerMain.BuildBundle(config) : undefined
         let main: ServerMain
         try
         {
-            const audit = ServerBootstrap.AuditSink(config, logger, observability, bundle !== undefined ? await bundle.Platform.AuditSink() : undefined)
-            const rateLimit = ServerBootstrap.RateLimit(config, audit, observability, logger)
+            const audit = HostBootstrap.AuditSink(config, logger, observability, bundle !== undefined ? await bundle.Platform.AuditSink() : undefined)
+            const rateLimit = HostBootstrap.RateLimit(config, audit, observability, logger)
             const options = ServerBootstrap.ComposeOptions(config, provisioning, bundle?.Platform, provisionedSecrets, logger, observability, audit, rateLimit)
             const host = await PragmaticServerHost.StartAsync(options)
             logger.Info(ServerBootstrap.StartupLine(config, environmentCount), { [ServerMain.EventKey]: ServerMain.StartupEvent })

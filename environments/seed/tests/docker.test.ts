@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ChildProcessSpawn, DockerEnv, EnvKind, EnvironmentPurposeName, type ILogProcess, type IProcessSpawn } from '../docker.js'
-import { EnvConventions } from '../env-conventions.js'
+import { ChildProcessSpawn, DockerEnv, EnvKind, EnvironmentPurposeName, type IProcessSpawn } from '../docker.js'
+import { type ILogProcess, EnvConventions } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 const Demo = { name: 'demo', kind: EnvKind.Demo, environmentId: 'contoso', purpose: EnvironmentPurposeName.Runtime, hostPort: 8081 }
 

@@ -6,13 +6,8 @@ import { join } from 'node:path'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
-import { HiveBackend, InfraMode } from '../platform-records.js'
-import { EnvStatus, EnvType, Template } from '../environment-record.js'
-import type { EnvironmentRecord } from '../environment-record.js'
+import { HiveBackend, InfraMode, EnvStatus, EnvType, Template, type EnvironmentRecord, HivePlacementError, EnvironmentPlacement, EnvironmentNotPlacedError, IngressTlsSource } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { PlatformDirectory } from '../platform-directory.js'
-import { HivePlacementError } from '../hive-placement-error.js'
-import { EnvironmentPlacement, EnvironmentNotPlacedError } from '../environment-placement.js'
-import { IngressTlsSource } from '../ingress-tls.js'
 
 class PlacementFixture
 {

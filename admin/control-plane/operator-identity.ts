@@ -5,7 +5,7 @@ import type { ISqlSession } from '@pragmatic-tech-ai/todl'
 import { ServerIdentityPack } from '@pragmatic-tech-ai/pragmatic-identity-store'
 import { Realm, RealmKind, DelegationDepth, AuthMethod, Credential, PresentedSecret, AuthenticatedResult, Grant, Role, ResourceRef, ResourceKind, type IdentityStoreSet } from '@pragmatic-tech-ai/pragmatic-identity'
 import { SqlAuditStore, SqlIdpDirectoryStore, SqlLocalAccountStore, SqlRoleGrantStore, SqlSecretKeyRing, SqlSecretStore, SqlServiceTokenStore, SqlSessionStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
-import { MasterKeyError } from './master-key-file.js'
+import { MasterKeyError } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 export { MasterKeyError }
 

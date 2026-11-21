@@ -5,9 +5,7 @@ import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore }
 import { AzurePlatformFactory } from '../azure-platform-factory.js'
 import type { ICloudBackends } from '../cloud-bundle.js'
 import { CloudPlatform } from '../cloud-platform.js'
-import { DeploymentMode } from '../deployment-mode.js'
-import { DeploymentProvider } from '../deployment-provider.js'
-import type { ServerConfig } from '../../config/server-config.js'
+import { DeploymentMode, DeploymentProvider, type ServerConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 class FakeBackends implements ICloudBackends
 {

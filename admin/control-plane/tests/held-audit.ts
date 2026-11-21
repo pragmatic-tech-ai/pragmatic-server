@@ -1,4 +1,4 @@
-import { AuditRegistry } from '../audit-record.js'
+import { AuditRegistry } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** An audit whose file write is held inside WriteText until Release runs; Entered resolves once a write gets there. */
 export class HeldAudit extends AuditRegistry

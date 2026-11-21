@@ -6,17 +6,10 @@ import { AuthorizationOutcome, ClaimsAuthorizer, RequestContext, RouteTable, Ses
 import { AppliedConfigurationCodec, InMemoryConfigurationRepository, type AppliedConfiguration, type ApplyTarget } from '@pragmatic-tech-ai/pragmatic-configuration'
 import { PgSession } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
-import { ConfigurationDiff, ConfigurationChangeKind } from '../configuration/configuration-diff.js'
-import { ConfigurationNoTargetError, ConfigurationService } from '../configuration/configuration-service.js'
-import { ConfigurationTargets } from '../configuration/configuration-targets.js'
+import { ConfigurationDiff, ConfigurationChangeKind, ConfigurationNoTargetError, ConfigurationService, ConfigurationTargets, ConfigurationApplyUnavailableError, KubeConfigurationApplier, UnavailableConfigurationApplier, type IConfigurationApplier, EnvStatus, EnvType, Template, type EnvironmentRecord, TenantConfigurationEndpoint, TenantRoles, TenantSessionClaims } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { ConsoleComponents } from '../configuration/console-components.js'
-import { ConfigurationApplyUnavailableError, KubeConfigurationApplier, UnavailableConfigurationApplier, type IConfigurationApplier } from '../configuration/kube-configuration-applier.js'
-import { EnvStatus, EnvType, Template, type EnvironmentRecord } from '../environment-record.js'
 import { KubeContentType, KubeMethod, KubeApiClient, type IKubeTransport, type KubeResponse } from '@pragmatic-tech-ai/pragmatic-kube'
 import { TenantAdminDatabase } from '../tenant-admin-database.js'
-import { TenantConfigurationEndpoint } from '../tenant-api/tenant-configuration-endpoint.js'
-import { TenantRoles } from '../tenant-auth/tenant-roles.js'
-import { TenantSessionClaims } from '../tenant-auth/tenant-sessions.js'
 import { ResRecorder } from './res-recorder.js'
 
 /** Records every apply; `Fail` makes the next one throw. */

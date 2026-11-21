@@ -2,8 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { ConsoleAdvertRecord, IConsoleAdvertLookup } from '../console-advert-registry.js'
 import { DomainClaims, type IDomainClaimDirectory } from '../domain-claims.js'
-import { IngressTlsSource } from '../ingress-tls.js'
-import { HiveBackend, InfraMode, type HiveRecord, type TenantRecord } from '../platform-records.js'
+import { IngressTlsSource, HiveBackend, InfraMode, type HiveRecord, type TenantRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** A directory held in memory: tenants and their hives, editable between Collect calls. */
 class FakeDirectory implements IDomainClaimDirectory

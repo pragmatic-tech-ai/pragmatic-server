@@ -1,6 +1,4 @@
-import { SerialRuns } from './atomic-json-file.js'
-import { RecordSlot, type IRecordMap } from './record-map.js'
-import { OwnerResetTime, TenantOwner, type OwnedTenant } from './tenant-owner.js'
+import { SerialRuns, RecordSlot, type IRecordMap, OwnerResetTime, TenantOwner, type OwnedTenant } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /**
  * What the follower ends: every session of a principal, console and desktop, with its open sockets and desktop relays

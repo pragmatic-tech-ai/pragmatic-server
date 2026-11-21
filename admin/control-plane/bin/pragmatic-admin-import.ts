@@ -1,9 +1,8 @@
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { MasterKeyFile } from '../master-key-file.js'
+import { MasterKeyFile, TenantPlaneComposer } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { PlatformAdminDatabase } from '../platform-admin-database.js'
 import { PlatformAdminImport, PlatformAdminImportRefusedError } from '../platform-admin-import.js'
-import { TenantPlaneComposer } from '../tenant-plane-composer.js'
 
 /** What the command line asked for. */
 export class AdminImportArguments

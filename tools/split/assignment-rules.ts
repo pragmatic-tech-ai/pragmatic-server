@@ -108,6 +108,54 @@ export class AssignmentRules
         ['docker/postgres/tests/image.test.sh', SplitHome.Postgres],
         ['docker/postgres/tests/reconcile.test.sh', SplitHome.Postgres],
         ['docker/images/tests/postgres-image.test.ts', SplitHome.Postgres],
+        // the request-correlation test drives the env-server's request instrumentation
+        ['src/observability/tests/request-correlation.test.ts', SplitHome.EnvServer],
+        // the seed CLI drives docker (DockerEnv): the platform console's dev tooling, not the shared seed bundle
+        ['environments/seed/seed.ts', SplitHome.PlatformAdmin],
+        ['environments/seed/smoke.ts', SplitHome.PlatformAdmin],
+        // the tenant plane's capstone journeys build a hello app on a remote TODL build registry (env-server side): they
+        // span the consoles and the environment server, so they go to pragmatic-e2e with their builders and fixture
+        ['src/tests/e2e/sp0-capstone-e2e.test.ts', SplitHome.E2e],
+        ['src/tests/e2e/sp1-capstone-e2e.test.ts', SplitHome.E2e],
+        ['src/tests/e2e/hello-app-builder.ts', SplitHome.E2e],
+        ['src/tests/e2e/sp1-app-builder.ts', SplitHome.E2e],
+        ['src/tests/e2e/todl-remote-build-registry.ts', SplitHome.E2e],
+        ['src/tests/e2e/fixtures/hello-app/hello.todl', SplitHome.E2e],
+        ['src/tests/e2e/fixtures/hello-app/project.plexus', SplitHome.E2e],
+        ['src/tests/e2e/fixtures/hello-app/src/app.mu', SplitHome.E2e],
+        ['src/tests/e2e/fixtures/hello-app/src/main.ts.fixture', SplitHome.E2e],
+        // the platform console importer's data-root fixture (its import tests read the whole folder; a file name like
+        // audit.json that other tests mention does not make it theirs)
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/adoption-ledger.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/audit.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/clients.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/console-adverts.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/console-domain-approvals.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/console-owner-resets.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/gating.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/hive-observations.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/hives.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/identity/accounts.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/identity/audit.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/identity/grants.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/identity/secrets.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/identity/sessions.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/idps.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/keys/platform-signing.pub', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/manifests.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/master.key', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/registry.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/release-policies.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/rollout-registrations.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/sealed-secrets.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/selections.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/signatures.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/tenant-accounts.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/tenant-admin-clients.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/tenant-desktop-audit.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/tenant-graph-audit.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/tenant-sessions.json', SplitHome.PlatformAdmin],
+        ['admin/control-plane/tests/fixtures/platform-admin-data-root/tenants.json', SplitHome.PlatformAdmin],
         // the edge's own files
         ['admin/control-plane/edge-composition.ts', SplitHome.PlatformEdge],
         ['admin/control-plane/edge-host.ts', SplitHome.PlatformEdge],
@@ -127,7 +175,6 @@ export class AssignmentRules
         ['src/agent/hive-agent-component.ts', SplitHome.HiveAgent],
         ['docker/postgres/pragmatic-postgres-component.ts', SplitHome.Postgres],
         // the vendored descriptor set: the consoles read it (ComponentDescriptorSet goes to the release toolkit)
-        ['admin/control-plane/release/component-descriptor-set.ts', SplitHome.ReleaseToolkit],
         ['release-keys/release-2026-11.pub.pem', SplitHome.PlatformRelease],
     ])
 
@@ -141,17 +188,15 @@ export class AssignmentRules
         ['docker/postgres/', SplitHome.Postgres],
         ['docker/images/', SplitHome.Archive],
         ['docker/', SplitHome.EnvServer],
-        // read from disk, so no bundle sees them: the vendored descriptors are the tenant console's (ConsoleComponents),
-        // the environment templates the tenant plane's (TemplateCatalog)
+        // read from disk, so no bundle sees them: the vendored descriptors are the tenant console's (ConsoleComponents);
+        // the environment templates, the demo seed and the Northwind sample ship in pragmatic-tenant-plane (Task 4)
         ['admin/control-plane/descriptors/', SplitHome.TenantAdmin],
-        ['admin/control-plane/templates/', SplitHome.TenantPlane],
         ['admin/control-plane/live-loop/', SplitHome.E2e],
         ['admin/control-plane/dev/', SplitHome.E2e],
         ['admin/control-plane/smoke-cluster.ts', SplitHome.E2e],
         ['admin/control-plane/kind-image-loader.ts', SplitHome.E2e],
         ['admin/control-plane/northwind-ui-bundle.ts', SplitHome.E2e],
         ['admin/control-plane/bin/pragmatic-tenant-admin-import.ts', SplitHome.TenantAdmin],
-        ['environments/seed/', SplitHome.TenantPlane],
         ['environments/', SplitHome.PlatformAdmin],
         ['admin/README.md', SplitHome.Archive],
         ['admin/control-plane/', SplitHome.PlatformAdmin],

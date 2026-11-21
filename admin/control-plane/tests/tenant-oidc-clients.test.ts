@@ -14,17 +14,13 @@ import { PgSession, type SqlSecretStore } from '@pragmatic-tech-ai/pragmatic-rea
 import { SqlTestSessions } from '@pragmatic-tech-ai/pragmatic-realm-adapters/testing'
 import { RealmIssuer } from '@pragmatic-tech-ai/pragmatic-identity'
 import { TenantIdpTestHost } from '../../../src/idp/tests/tenant-idp-test-host.js'
-import { IdpAdminClient, type IdpAdminClientOptions, type IdpAdminClientRegistration } from '../idp-admin-client.js'
-import type { IdpConnection, IIdpService } from '../idp-service.js'
+import { IdpAdminClient, type IdpAdminClientOptions, type IdpAdminClientRegistration, type IIdpService, type EnvironmentRecord, TenantAdminClientRegistry, TenantOidcClientKind, TenantOidcClients, UnknownTenantHostError, type ITenantCallbacks, type TenantOidcClientSecrets, TenantSessionClaims } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
+import type { IdpConnection } from '../idp-service.js'
 import { PlatformDirectory, type IEnvironmentLookup } from '../platform-directory.js'
 import { ClientRegistry } from '../client-registry.js'
 import { TenantRegistry } from '../tenant-registry.js'
 import { HiveRegistry } from '../hive-registry.js'
-import type { EnvironmentRecord } from '../environment-record.js'
 import { TenantAdminDatabase, TenantAdminRegistry } from '../tenant-admin-database.js'
-import { TenantAdminClientRegistry } from '../tenant-auth/tenant-admin-client-record.js'
-import { TenantOidcClientKind, TenantOidcClients, UnknownTenantHostError, type ITenantCallbacks, type TenantOidcClientSecrets } from '../tenant-auth/tenant-oidc-clients.js'
-import { TenantSessionClaims } from '../tenant-auth/tenant-sessions.js'
 
 /** A raw user-agent exchange result; redirects are read, never followed. */
 class BrowserResponse

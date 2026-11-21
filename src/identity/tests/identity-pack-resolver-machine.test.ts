@@ -5,7 +5,7 @@ import { X509Certificate, createHash } from 'node:crypto'
 import { AuthMethod, AuthenticatedResult, Credential, DelegationDepth, IdentityConfig, PresentedSecret, PrincipalKind, Realm, RealmKind } from '@pragmatic-tech-ai/pragmatic-identity'
 import { InMemoryOidcFlowStateStore } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import { FakeOidcHttpClient, FakeOidcIdp } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc/testing'
-import { MachinePrincipalMap } from '../../host/machine-principal-map.js'
+import { MachinePrincipalMap } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { IdentityPackResolver } from '../identity-pack-resolver.js'
 import { ResolverFixture } from './resolver-fixture.js'
 

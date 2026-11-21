@@ -1,7 +1,4 @@
-import type { ManifestRecord } from '../manifest-record.js'
-import type { HiveRolloutStatus } from '../platform-deployment-registry.js'
-import type { LedgerAction } from '../adoption-ledger-record.js'
-import { RolloutAdoptionRefusedError, RolloutUnavailableError, type AdoptionLedgerDto, type IRolloutClient } from './rollout-client.js'
+import { type ManifestRecord, type HiveRolloutStatus, type LedgerAction, RolloutAdoptionRefusedError, RolloutUnavailableError, type AdoptionLedgerDto, type IRolloutClient } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /**
  * The tenant-admin container's rollout seam over the hive-initiated agent channel: reads the adoptable versions and the

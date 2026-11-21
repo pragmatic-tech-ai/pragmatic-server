@@ -1,6 +1,6 @@
 import { AccessContext, Grant, Principal, PrincipalKind, ResourceAuthorizationPolicy, ResourceKind, ResourceRef, Role, Realm, RealmKind } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { EntityDto } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { PagingLimits } from '../../../config/paging-limits.js'
+import { PagingLimits } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import type { PragmaticServer } from '../../../pragmatic-server.js'
 
 /**

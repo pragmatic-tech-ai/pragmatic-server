@@ -1,7 +1,7 @@
 import type { IStorage, IPromptService } from '@pragmatic-tech-ai/todl-runtime'
 import type { IStorageProviderRegistry } from '@pragmatic-tech-ai/todl'
 import type { IdentityStoreSet, IRealmConfigStore } from '@pragmatic-tech-ai/pragmatic-identity'
-import type { MasterKeyRef } from '../identity/master-key-resolver.js'
+import type { MasterKeyRef } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 /** The platform-impl bundle a PragmaticServer composes its infrastructure from. NodePlatform is the
  *  local/default set; a cloud bundle supplies object-store storage, a cloud secret manager, and

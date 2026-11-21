@@ -1,8 +1,7 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { HiveBootstrapBundle } from '../hive-bootstrap-bundle.js'
-import { InvalidRecordIdError } from '../platform-records.js'
-import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
+import { InvalidRecordIdError, K8sManifestBuilder } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 describe('HiveBootstrapBundle', () =>
 {

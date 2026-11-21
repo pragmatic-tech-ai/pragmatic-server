@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { CursorStaleError, ErrorCodes, PageCursorCodec, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
-import { PagingLimits } from '../../../config/paging-limits.js'
+import { PagingLimits } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { PageFingerprint, PageRequest } from '../page-request.js'
 
 class Fixture

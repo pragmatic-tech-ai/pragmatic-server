@@ -7,13 +7,10 @@ import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import { Gateway } from '../gateway.js'
 import { WorkerHost } from '../worker-host.js'
-import { MachineTls } from '../machine-tls.js'
-import type { MachineTlsRef } from '../machine-tls.js'
+import { MachineTls, type MachineTlsRef, RateLimitGuard, TokenBucketRateLimiter } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import type { IWorkerRouter, WorkerEndpoint } from '../worker-router.js'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
-import { RateLimitGuard } from '../../host/rate-limit-guard.js'
-import { TokenBucketRateLimiter } from '../../host/rate-limiter.js'
 
 class CountingRouter implements IWorkerRouter
 {

@@ -9,9 +9,7 @@ import type { ConsoleAdvertRecord, IConsoleAdvertLookup } from '../console-adver
 import { LocalDesktopDiscoveryBackend, type IPlatformEnvironmentSource } from '../desktop-discovery-backend.js'
 import { type DiscoveryReply, type IDesktopDiscoveryBackend, DesktopDiscoveryEndpoint } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import type { IDiscoveryDirectory } from '../desktop-tenant-matcher.js'
-import { IngressTlsSource } from '../ingress-tls.js'
-import { HiveBackend, InfraMode, type HiveRecord, type TenantRecord } from '../platform-records.js'
-import { TenantAccountIndex } from '../tenant-account-index.js'
+import { IngressTlsSource, HiveBackend, InfraMode, type HiveRecord, type TenantRecord, TenantAccountIndex } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 type Reply = { status: number; body: unknown; retryAfter: string | undefined }
 

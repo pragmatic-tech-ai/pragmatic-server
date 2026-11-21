@@ -1,15 +1,9 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { AuditRegistry } from './audit-record.js'
+import { AuditRegistry, ConsoleEmailDomainStore, ConsoleRegistration, EnvironmentRegistry, FileRecordMap, RecordSlot, type FileRecordMapOptions, TenantAdminClientRegistry, TenantPlaneComposer } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { ConsoleDelivery } from './console-delivery.js'
-import { ConsoleEmailDomainStore } from './console-email-domain-store.js'
 import { ConsoleOwnerResetFollower } from './console-owner-reset-follower.js'
-import { ConsoleRegistration } from './console-registration.js'
-import { EnvironmentRegistry } from './environment-registry.js'
-import { FileRecordMap, RecordSlot, type FileRecordMapOptions } from './record-map.js'
 import { TenantAdminDatabase, TenantAdminRegistry } from './tenant-admin-database.js'
-import { TenantAdminClientRegistry } from './tenant-auth/tenant-admin-client-record.js'
-import { TenantPlaneComposer } from './tenant-plane-composer.js'
 
 /** One file of the console's pre-A5 data root and the table it goes to. */
 class ConsoleDataRootFile

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { Gateway } from '../gateway.js'
 import { InMemoryWorkerRouter } from '../worker-router.js'
-import type { MachineTlsRef } from '../machine-tls.js'
+import type { MachineTlsRef } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 class Tls
 {

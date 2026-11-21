@@ -1,9 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Role, ResourceKind, PresentedSecret, LocalAccount } from '@pragmatic-tech-ai/pragmatic-identity'
-import type { ResourceRef } from '@pragmatic-tech-ai/pragmatic-identity'
+import { Role, ResourceKind, PresentedSecret, LocalAccount, type ResourceRef } from '@pragmatic-tech-ai/pragmatic-identity'
 import type { AdminService } from '../../host/admin-service.js'
-import { DeploymentMode } from '../../platform/deployment-mode.js'
+import { DeploymentMode } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { RuntimePrincipals } from '../runtime-principals.js'
 
 class FakeAdmin

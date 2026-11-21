@@ -2,8 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ServerBootstrap } from '../server-bootstrap.js'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
-import { DeploymentMode } from '../../platform/deployment-mode.js'
-import type { ServerConfig } from '../../config/server-config.js'
+import { DeploymentMode, type ServerConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 
 class Fixtures

@@ -1,15 +1,8 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { inspect } from 'node:util'
-import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
-import { TenantAdminDatabaseSecret } from '../tenant-admin-workload.js'
-import { IdpDatabaseSecret } from '../idp-workload-driver.js'
-import { HiveBackend, InfraMode } from '../platform-records.js'
-import type { HiveRecord, TenantRecord } from '../platform-records.js'
-import { IngressTlsSource, type IngressTls } from '../ingress-tls.js'
-import { TenantAdminBootstrap } from '../tenant-admin-bootstrap.js'
-import type { IHiveRegistrar, TenantBootstrap, TenantBootstrapInput } from '../tenant-admin-bootstrap.js'
-import { TenantAdminEnv } from '../tenant-admin-env.js'
+import { K8sManifestBuilder, TenantAdminDatabaseSecret, IdpDatabaseSecret, HiveBackend, InfraMode, type HiveRecord, type TenantRecord, IngressTlsSource, type IngressTls, TenantAdminEnv } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
+import { TenantAdminBootstrap, type IHiveRegistrar, type TenantBootstrap, type TenantBootstrapInput } from '../tenant-admin-bootstrap.js'
 
 class FakeRegistrar implements IHiveRegistrar
 {

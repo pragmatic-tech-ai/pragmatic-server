@@ -3,11 +3,8 @@ import assert from 'node:assert/strict'
 import { AgentUninstallError, ConsoleUninstallError, HiveAgentUninstaller } from '../hive-agent-uninstaller.js'
 import { HiveBootstrapBundle } from '../hive-bootstrap-bundle.js'
 import { InClusterIdpSeedSource } from '../in-cluster-idp-seed.js'
-import { K8sManifestBuilder } from '../k8s-manifest-builder.js'
-import type { IHiveOrchestrator, WorkloadHealth } from '../hive-orchestrator.js'
+import { K8sManifestBuilder, type IHiveOrchestrator, type WorkloadHealth, type EnvironmentWorkload, HiveBackend, InfraMode, type HiveRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { KubectlError, type IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
-import type { EnvironmentWorkload } from '../environment-workload.js'
-import { HiveBackend, InfraMode, type HiveRecord } from '../platform-records.js'
 
 class FakeKubectl implements IKubectl
 {

@@ -11,11 +11,8 @@ import { fileURLToPath } from 'node:url'
 import { type IClosureEntry, ComponentDescriptorCli, ComponentImageLabel, ReleaseApps, ReleaseTrustKeys } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
 import { ControlPlaneRole, ControlPlaneRoles } from '../../../admin/control-plane/control-plane-role.js'
 import { ConsoleComponents } from '../../../admin/control-plane/configuration/console-components.js'
-import { Template } from '../../../admin/control-plane/environment-record.js'
+import { Template, TemplateCatalog, TenantPlaneComposer, NorthwindApp } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { ControlPlaneServer } from '../../../admin/control-plane/server.js'
-import { TemplateCatalog } from '../../../admin/control-plane/template-catalog.js'
-import { TenantPlaneComposer } from '../../../admin/control-plane/tenant-plane-composer.js'
-import { NorthwindApp } from '../../../environments/seed/compile.js'
 
 /** The compiled CLI the image build runs to emit the component descriptors. */
 class ComponentImageFiles
@@ -26,6 +23,7 @@ class ComponentImageFiles
 /** docker/images/Dockerfile split into its stages (continuation lines joined), plus closure.json and the bake file. */
 class ImageFiles
 {
+    public static readonly PackageJson = 'package.json'
     public static readonly ServerRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
     public static readonly ServerDir = 'pragmatic-server/'
     public static readonly TenantAdminTree = 'dist-tenant-admin/'
@@ -39,7 +37,7 @@ class ImageFiles
     private static readonly Continuation = /\\\r?\n/g
     private static readonly LineBreak = /\r?\n/
     private static readonly Space = ' '
-    private static readonly Utf8 = 'utf8'
+    public static readonly Utf8 = 'utf8'
 
     public static Text(...path: string[]): string
     {
@@ -90,6 +88,12 @@ class ImageFiles
         const path = ImageFiles.ServerDir + serverPath
         return ImageFiles.Closure()[app].files.some(f => path === f || path.startsWith(f + '/'))
     }
+
+    /** True when the app's closure copies the workspace package (its whole folder: code and the data it ships). */
+    public static ShipsPackage(app: string, workspacePath: string): boolean
+    {
+        return ImageFiles.Closure()[app].packages.includes(workspacePath)
+    }
 }
 
 /**
@@ -107,16 +111,36 @@ class RuntimeAssets
         return ImageFiles.TenantAdminTree + relative(ImageFiles.ServerRoot, sourcePath).split(sep).join('/')
     }
 
-    /** Every template's seed dir (the dev-blank template under admin/control-plane/templates, the demo seed under environments). */
+    /** The workspace path of pragmatic-tenant-plane, which ships the templates, the demo seed and the Northwind sample. */
+    public static readonly TenantPlanePackage = 'pragmatic-shared/packages/pragmatic-tenant-plane'
+    private static readonly TenantPlaneSpecifier = '@pragmatic-tech-ai/pragmatic-tenant-plane'
+    private static readonly ParentPrefix = '..'
+
+    /** Every template's seed dir (the dev-blank template and the demo seed, inside pragmatic-tenant-plane). */
     public static TemplateSeeds(): string[]
     {
         return Object.values(Template).map(t => RuntimeAssets.SeedOf(t))
     }
 
+    /** A template's seed dir relative to the tenant plane package's folder. */
     public static SeedOf(template: Template): string
     {
         const R = RuntimeAssets
-        return R.Compiled(TemplateCatalog.Resolve(template, R.ProbeName, R.ProbePort, TemplateCatalog.DefaultTypeFor(template)).seedDir)
+        return R.InTenantPlane(TemplateCatalog.Resolve(template, R.ProbeName, R.ProbePort, TemplateCatalog.DefaultTypeFor(template)).seedDir)
+    }
+
+    /** A path the tenant plane reads relative to itself, relative to its package folder (refuses one outside it). */
+    public static InTenantPlane(absolute: string): string
+    {
+        const inside = relative(RuntimeAssets.TenantPlaneRoot(), absolute).split(sep).join('/')
+        assert.ok(!inside.startsWith(RuntimeAssets.ParentPrefix), absolute)
+        return inside
+    }
+
+    /** The tenant plane package's folder (its entry is dist/index.js). */
+    public static TenantPlaneRoot(): string
+    {
+        return dirname(dirname(fileURLToPath(import.meta.resolve(RuntimeAssets.TenantPlaneSpecifier))))
     }
 
     /** The digest-pinned component descriptors the tenant console reads (ConsoleComponents). */
@@ -125,9 +149,10 @@ class RuntimeAssets
         return RuntimeAssets.Compiled(ConsoleComponents.VendoredDirectory())
     }
 
+    /** The Northwind sample relative to the tenant plane package's folder. */
     public static Northwind(): string
     {
-        return RuntimeAssets.Compiled(NorthwindApp.SourcePath)
+        return RuntimeAssets.InTenantPlane(NorthwindApp.SourcePath)
     }
 
     public static OperatorPortal(): string
@@ -283,33 +308,45 @@ describe('image HEALTHCHECKs', () =>
 
 describe('image contents', () =>
 {
-    it('platform-admin ships the operator portal, the release keys, the templates and the seeds it compiles, and no tenant portal', () =>
+    it('the templates, the demo seed and the Northwind sample ship inside pragmatic-tenant-plane, in its published files', () =>
+    {
+        const manifest = JSON.parse(readFileSync(join(RuntimeAssets.TenantPlaneRoot(), ImageFiles.PackageJson), ImageFiles.Utf8)) as { files: string[] }
+        for (const path of [RuntimeAssets.Northwind(), ...RuntimeAssets.TemplateSeeds()])
+        {
+            assert.ok(manifest.files.includes(path.split('/')[0]), path)
+        }
+    })
+
+    it('platform-admin ships the operator portal, the release keys and the tenant plane (templates, seeds), and no tenant portal', () =>
     {
         const app = ImageFiles.PlatformAdmin
-        for (const path of [RuntimeAssets.OperatorPortal(), RuntimeAssets.ReleaseKeys(), RuntimeAssets.Northwind(), ...RuntimeAssets.TemplateSeeds()])
+        for (const path of [RuntimeAssets.OperatorPortal(), RuntimeAssets.ReleaseKeys()])
         {
             assert.ok(ImageFiles.Ships(app, path), path)
         }
+        assert.ok(ImageFiles.ShipsPackage(app, RuntimeAssets.TenantPlanePackage))
         assert.ok(!ImageFiles.Ships(app, RuntimeAssets.TenantPortal()))
     })
 
-    it('tenant-admin ships the tenant portal, the templates, the seeds and the vendored descriptors, and never the Platform Admin SPA or the release keys', () =>
+    it('tenant-admin ships the tenant portal, the tenant plane (templates, seeds) and the vendored descriptors, and never the Platform Admin SPA or the release keys', () =>
     {
         const app = ImageFiles.TenantAdmin
-        for (const path of [RuntimeAssets.TenantPortal(), RuntimeAssets.Northwind(), ...RuntimeAssets.TemplateSeeds(), RuntimeAssets.Descriptors()])
+        for (const path of [RuntimeAssets.TenantPortal(), RuntimeAssets.Descriptors()])
         {
             assert.ok(ImageFiles.Ships(app, path), path)
         }
+        assert.ok(ImageFiles.ShipsPackage(app, RuntimeAssets.TenantPlanePackage))
         assert.ok(!ImageFiles.Ships(app, RuntimeAssets.OperatorPortal()))
         assert.ok(!ImageFiles.Ships(app, RuntimeAssets.ReleaseKeys()))
     })
 
     it('platform-edge ships no SPA, seed or trust key', () =>
     {
-        for (const path of [RuntimeAssets.OperatorPortal(), RuntimeAssets.TenantPortal(), RuntimeAssets.ReleaseKeys(), RuntimeAssets.Northwind(), RuntimeAssets.SeedOf(Template.DemoContoso)])
+        for (const path of [RuntimeAssets.OperatorPortal(), RuntimeAssets.TenantPortal(), RuntimeAssets.ReleaseKeys()])
         {
             assert.ok(!ImageFiles.Ships(ImageFiles.PlatformEdge, path), path)
         }
+        assert.ok(!ImageFiles.ShipsPackage(ImageFiles.PlatformEdge, RuntimeAssets.TenantPlanePackage))
     })
 
     it('ui-unpack ships only its own compile: nothing of the control-plane tree', () =>
@@ -337,9 +374,7 @@ describe('image contents', () =>
     it('the build stage stages every asset set at the path the compiled code reads it from', () =>
     {
         const build = ImageFiles.Stage(ImageFiles.BuildStage).join('\n')
-        const templates = dirname(RuntimeAssets.SeedOf(Template.DevBlank))
-        const sampleApps = dirname(dirname(RuntimeAssets.Northwind()))
-        for (const path of [RuntimeAssets.OperatorPortal(), RuntimeAssets.TenantPortal(), RuntimeAssets.ReleaseKeys(), templates, RuntimeAssets.SeedOf(Template.DemoContoso), sampleApps, RuntimeAssets.Descriptors()])
+        for (const path of [RuntimeAssets.OperatorPortal(), RuntimeAssets.TenantPortal(), RuntimeAssets.ReleaseKeys(), RuntimeAssets.Descriptors()])
         {
             assert.ok(build.includes(path), path)
         }

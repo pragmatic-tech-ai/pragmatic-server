@@ -15,12 +15,10 @@ import { AuthMethod, Credential, PresentedSecret, AuthenticatedResult } from '@p
 import { PgSession, ObjectStoreProviderRegistry, CloudSecretManagerSecretStore } from '@pragmatic-tech-ai/pragmatic-realm-adapters'
 import { AzurePlatformFactory } from '../../platform/azure-platform-factory.js'
 import type { ICloudBackends } from '../../platform/cloud-bundle.js'
-import { DeploymentMode } from '../../platform/deployment-mode.js'
-import { DeploymentProvider } from '../../platform/deployment-provider.js'
+import { DeploymentMode, DeploymentProvider, type ServerConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { ServerBootstrap } from '../../bin/server-bootstrap.js'
 import { PragmaticServerHost } from '../../host/pragmatic-server-host.js'
 import { InMemoryEnvironmentProvisioning } from '../environment-registry.js'
-import type { ServerConfig } from '../../config/server-config.js'
 import type { EnvironmentProvisioning } from '../environment-provisioning.js'
 import type { PragmaticServer } from '../../pragmatic-server.js'
 

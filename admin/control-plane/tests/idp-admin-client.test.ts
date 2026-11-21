@@ -11,7 +11,7 @@ import { DevCa, IdpTlsMaterial } from '@pragmatic-tech-ai/pragmatic-identity-sou
 import type { IdpRealmSet } from '../../../src/idp/idp-realm-set.js';
 import type { SqlIdpClientStore } from '../../../src/idp/sql-idp-client-store.js';
 import { TenantIdpTestHost } from '../../../src/idp/tests/tenant-idp-test-host.js';
-import { IdpAdminClient, IdpAdminError, IdpAdminTransportError } from '../idp-admin-client.js';
+import { IdpAdminClient, IdpAdminError, IdpAdminTransportError } from '@pragmatic-tech-ai/pragmatic-tenant-plane';
 
 class ClientFixture
 {

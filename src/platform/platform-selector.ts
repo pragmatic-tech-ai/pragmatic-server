@@ -1,4 +1,4 @@
-import { DeploymentMode } from './deployment-mode.js'
+import { DeploymentMode } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { NodePlatform } from './node-platform.js'
 import type { PlatformServices } from './platform-services.js'
 

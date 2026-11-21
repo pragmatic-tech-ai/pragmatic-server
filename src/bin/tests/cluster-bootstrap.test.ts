@@ -1,12 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DeploymentMode } from '../../platform/deployment-mode.js'
+import { DeploymentMode, type ServerConfig, type GatewayConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { ServerBootstrap } from '../server-bootstrap.js'
 import { InMemoryWorkerRouter } from '../../cluster/worker-router.js'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
-import type { ServerConfig, GatewayConfig } from '../../config/server-config.js'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import type { PlatformServices } from '../../platform/platform-services.js'
+import { GatewayBootstrap } from '../gateway-bootstrap.js'
 
 class Fixture
 {
@@ -47,7 +47,7 @@ test('ComposeWorkerOptions throws when TLS is absent (a worker requires mTLS)', 
 test('ComposeGatewayOptions maps the gateway config + router + server name', () =>
 {
     const router = new InMemoryWorkerRouter({ host: 'x', port: 1 })
-    const o = ServerBootstrap.ComposeGatewayOptions(Fixture.Gateway(), router)
+    const o = GatewayBootstrap.ComposeGatewayOptions(Fixture.Gateway(), router)
     assert.equal(o.port, 8080)
     assert.equal(o.serverName, 'pragmatic-worker')
     assert.equal(o.router, router)
@@ -60,7 +60,7 @@ test('the worker and gateway startup lines never leak the redis URL or TLS key p
     assert.ok(!w.includes('secret'))
     assert.ok(!w.includes('/k.pem'))
     assert.ok(w.includes('8443'))
-    const g = ServerBootstrap.GatewayStartupLine(Fixture.Gateway())
+    const g = GatewayBootstrap.GatewayStartupLine(Fixture.Gateway())
     assert.ok(!g.includes('secret'))
     assert.ok(!g.includes('/k.pem'))
     assert.ok(!g.includes('redis://'))

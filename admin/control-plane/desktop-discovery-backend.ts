@@ -1,7 +1,7 @@
 import type { IConsoleAdvertLookup } from './console-advert-registry.js'
 import { DesktopTenantMatcher, type IDiscoveryDirectory, type IDomainApprovalSource, type IFingerprintKeySource } from './desktop-tenant-matcher.js'
 import { PlaneHttp, type DiscoveryReply, type IDesktopDiscoveryBackend } from '@pragmatic-tech-ai/pragmatic-platform-link'
-import type { TenantAccountIndex } from './tenant-account-index.js'
+import type { TenantAccountIndex } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** Whether the platform manages environments for a tenant (EnvironmentRegistry satisfies it). */
 export interface IPlatformEnvironmentSource

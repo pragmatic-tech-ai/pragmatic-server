@@ -1,8 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { ServerBootstrap } from '../server-bootstrap.js'
-import { DeploymentMode } from '../../platform/deployment-mode.js'
-import type { ServerConfig } from '../../config/server-config.js'
+import { DeploymentMode, type ServerConfig } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 class Fixtures
 {

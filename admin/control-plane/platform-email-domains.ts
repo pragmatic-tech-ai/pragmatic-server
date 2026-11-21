@@ -2,15 +2,13 @@ import { AuditThrottle } from '@pragmatic-tech-ai/pragmatic-platform-link'
 import { ConsoleAdvertRegistry, type ConsoleAdvertRecord, type IConsoleAdvertLookup } from './console-advert-registry.js'
 import { ConsoleDomainApprovals, type DomainStanding } from './console-domain-approvals.js'
 import { DomainClaims } from './domain-claims.js'
-import { DomainVerificationRecord, type DomainApprovalState, type DomainVerificationAnswer, type DomainVerificationView } from './domain-verification-record.js'
-import { EmailDomainPolicy, InvalidEmailDomainError } from './email-domain-policy.js'
+import { DomainVerificationRecord, type DomainApprovalState, type DomainVerificationAnswer, type DomainVerificationView, EmailDomainPolicy, InvalidEmailDomainError, type TenantRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { HiveConsoleSpecs } from './hive-console-spec.js'
 import { UnknownTenantError, type PlatformDirectory } from './platform-directory.js'
-import type { TenantRecord } from './platform-records.js'
 import {
     DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerifyThrottledError, EmailDomainsNotEditableError, type ITenantEmailDomains,
     type TenantEmailDomainsView,
-} from './tenant-api/tenant-email-domains.js'
+} from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { DomainCheck, type DomainTxtVerifier } from './txt-resolver.js'
 
 /** Where a tenant's email domains come from: its platform record (control-plane tenant) or its in-hive console's advert. */

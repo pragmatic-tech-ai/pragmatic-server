@@ -14,10 +14,8 @@ import { WorkerHost } from '../worker-host.js'
 import { InMemoryEnvironmentProvisioning } from '../../environments/environment-registry.js'
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import type { IWorkerRouter, WorkerEndpoint } from '../worker-router.js'
-import type { MachineTlsRef } from '../machine-tls.js'
+import { type MachineTlsRef, DrainController, type IInFlightSource, type Observability } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { StructuredLogger } from '@pragmatic-tech-ai/pragmatic-observability'
-import { DrainController, type IInFlightSource } from '../../observability/drain-controller.js'
-import type { Observability } from '../../observability/observability.js'
 
 class StubRouter implements IWorkerRouter
 {

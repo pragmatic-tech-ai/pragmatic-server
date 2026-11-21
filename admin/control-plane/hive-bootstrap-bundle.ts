@@ -1,4 +1,4 @@
-import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import { K8sManifestBuilder } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /**
  * What a client applies in their own cluster so a hive's agent dials home: the agent's Kubernetes objects (a v1 List,

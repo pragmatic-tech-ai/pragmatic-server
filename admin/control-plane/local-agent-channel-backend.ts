@@ -1,10 +1,6 @@
 import type { PlatformDeploymentRegistry } from './platform-deployment-registry.js'
 import { ConsoleAdvertReceiver, ConsoleNotEnabledError, InvalidConsoleAdvertError } from './console-advert-receiver.js'
-import { AdoptionLedgerDtoMapper } from './tenant-api/rollout-client.js'
-import { DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerifyThrottledError } from './tenant-api/tenant-email-domains.js'
-import { InvalidEmailDomainError } from './email-domain-policy.js'
-import type { DomainVerificationAnswer } from './domain-verification-record.js'
-import type { HiveHealthDto } from './hive-health-producer.js'
+import { AdoptionLedgerDtoMapper, DomainNotClaimedError, DomainVerificationUnavailableError, DomainVerifyThrottledError, InvalidEmailDomainError, type DomainVerificationAnswer, type HiveHealthDto } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { AgentChannelOperation, AgentChannelReplies, type AgentChannelReply, type AgentChannelRequest, type IAgentChannelBackend, PlaneHttp, AgentUnauthorizedError, ChannelNotSubscribedError, HiveNotRegisteredError, ManifestNotGatedError, ManifestWithdrawnError, ReleaseNotRunnableYetError, TenantOnHoldError, UnknownHiveError, UnknownManifestError, VersionBelowFloorError } from '@pragmatic-tech-ai/pragmatic-platform-link'
 
 /** The agent channel answered in-process over the platform registries: verifies the hive's bearer, runs the operation

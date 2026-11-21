@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { GracefulShutdown } from '../graceful-shutdown.js'
 import { StructuredLogger } from '@pragmatic-tech-ai/pragmatic-observability'
-import type { AccessAuditEvent, IAccessAuditSink } from '../../host/access-audit.js'
+import type { AccessAuditEvent, IAccessAuditSink } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 class Steps
 {

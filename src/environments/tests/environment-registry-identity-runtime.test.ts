@@ -5,7 +5,7 @@ import type { IdentityConfig } from '@pragmatic-tech-ai/pragmatic-identity'
 import { EnvironmentRegistry, InMemoryEnvironmentProvisioning } from '../environment-registry.js'
 import { InMemoryEnvironmentCoordinator } from '../environment-coordinator.js'
 import type { IdentityRuntime } from '../../identity/identity-runtime.js'
-import type { MachinePrincipalMap } from '../../host/machine-principal-map.js'
+import type { MachinePrincipalMap } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import type { EnvironmentProvisioning } from '../environment-provisioning.js'
 
 class FakeRuntime implements IdentityRuntime

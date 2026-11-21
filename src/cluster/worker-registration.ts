@@ -1,6 +1,5 @@
-import { createClient } from 'redis'
-import type { RedisClientType } from 'redis'
-import { ClusterKeys } from './cluster-keys.js'
+import { createClient, type RedisClientType } from 'redis'
+import { ClusterKeys } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import type { WorkerEndpoint } from './worker-router.js'
 
 /** Heartbeats this worker's endpoint into a Redis sorted set (scored by an expiry timestamp) so the gateway's router

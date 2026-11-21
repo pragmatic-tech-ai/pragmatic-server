@@ -1,5 +1,5 @@
 import { InClusterIdpSeedSource } from './in-cluster-idp-seed.js'
-import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import { K8sManifestBuilder } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
 
 /**

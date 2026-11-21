@@ -1,11 +1,9 @@
 import { ConsoleRetention } from './console-retention.js'
 import { HiveBootstrapBundle } from './hive-bootstrap-bundle.js'
 import type { IInstallOrchestratorSource } from './hive-agent-installer.js'
-import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import { K8sManifestBuilder, HiveBackend, InfraMode, type HiveRecord, TenantConsoleAdmission } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { KindError } from './kind.js'
 import { KubectlError, type IKubectl } from '@pragmatic-tech-ai/pragmatic-kube'
-import { HiveBackend, InfraMode, type HiveRecord } from './platform-records.js'
-import { TenantConsoleAdmission } from './tenant-console-admission.js'
 
 /**
  * The hive's agent could not be removed from its cluster. Carries kubectl's (already redacted) text, or the fixed reason an

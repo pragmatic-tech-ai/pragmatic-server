@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DevCaError } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
-import { DnsNames } from './dns-names.js'
+import { DnsNames } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { SealedSecretStore } from './sealed-secret-store.js'
 
 export type IssuedCertificate = { cert: Buffer; key: Buffer }

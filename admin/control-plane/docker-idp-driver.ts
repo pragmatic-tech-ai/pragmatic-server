@@ -3,9 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { join } from 'node:path'
 import { DevCa } from '@pragmatic-tech-ai/pragmatic-identity-source-oidc'
 import { IdpContainerEnv, type StaleImage } from './idp-container-env.js'
-import { IdpStatus, type IdpRecord } from './idp-record.js'
-import { IdpDatabaseSecret, IdpDriverMessages, IdpWorkloadNames, type IdpConnection, type IIdpWorkloadDriver, type IdpWorkloadRequest, type IdpWorkloadResult } from './idp-workload-driver.js'
-import type { PortAllocator } from './port-allocator.js'
+import { IdpStatus, type IdpRecord, IdpDatabaseSecret, IdpDriverMessages, IdpWorkloadNames, type IdpConnection, type IIdpWorkloadDriver, type IdpWorkloadRequest, type IdpWorkloadResult, type PortAllocator } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** What a reuse probe found: a reusable connection, a healthy IdP on an older build, or neither (recover it). */
 interface ReuseOutcome

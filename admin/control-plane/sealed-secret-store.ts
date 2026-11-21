@@ -1,6 +1,5 @@
 import { EncryptedSecretStore } from '@pragmatic-tech-ai/pragmatic-identity-source-local'
-import { SerialRuns } from './atomic-json-file.js'
-import { FileRecordMap, RecordMapFormatError, type IRecordMap } from './record-map.js'
+import { FileRecordMap, RecordMapFormatError, SerialRuns, type IRecordMap, type ISealedSecrets } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 export class SealedSecretUnreadableError extends Error
 {
@@ -34,7 +33,7 @@ export class SealedSecretFileError extends Error
  * parent-directory sync that fails after the rename landed does not fail the Put/Delete (the new content is in place, so
  * memory follows the disk) and is logged as a fixed sentence plus the error's name.
  */
-export class SealedSecretStore
+export class SealedSecretStore implements ISealedSecrets
 {
     public static readonly FileName = 'sealed-secrets.json'
     public static readonly RootKey = 'sealed'

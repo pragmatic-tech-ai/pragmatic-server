@@ -11,7 +11,7 @@ import { InMemoryEnvironmentProvisioning } from '../../environments/environment-
 import type { EnvironmentProvisioning } from '../../environments/environment-provisioning.js'
 import { ProvisionedSecretSource } from '../../config/provisioned-secret-source.js'
 import type { ILogger, LogFields } from '@pragmatic-tech-ai/pragmatic-observability'
-import type { IAccessAuditSink, AccessAuditEvent } from '../access-audit.js'
+import type { IAccessAuditSink, AccessAuditEvent } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 
 class CapturingLogger implements ILogger
 {

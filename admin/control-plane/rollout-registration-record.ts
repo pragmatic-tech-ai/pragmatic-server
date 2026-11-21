@@ -1,5 +1,4 @@
-import { JsonRecordStore } from './json-record-store.js'
-import type { IRecordMap } from './record-map.js'
+import { JsonRecordStore, type IRecordMap } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 export type RolloutRegistrationRecord = {
     id: string

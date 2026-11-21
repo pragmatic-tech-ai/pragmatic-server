@@ -1,5 +1,5 @@
 import type { IDisposable } from '@pragmatic-tech-ai/todl-runtime'
-import { IntervalAdvertTimer, type IAdvertTimer } from './console-advert-sender.js'
+import { IntervalAdvertTimer, type IAdvertTimer } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import type { ConsoleDomainApprovals } from './console-domain-approvals.js'
 import { DomainCheck, type DomainTxtVerifier } from './txt-resolver.js'
 

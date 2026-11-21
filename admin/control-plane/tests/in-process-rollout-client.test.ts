@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { describe, it } from 'node:test'
 import type { PlatformDeploymentRegistry } from '../platform-deployment-registry.js'
-import type { AdoptionLedgerRecord } from '../adoption-ledger-record.js'
+import type { AdoptionLedgerRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { InProcessRolloutClient } from '../tenant-api/in-process-rollout-client.js'
 
 class Names

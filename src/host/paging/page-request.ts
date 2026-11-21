@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto'
-import { CursorStaleError, ErrorCodes, PageCursorCodec, ResponseError } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
-import type { PagingLimits } from '../../config/paging-limits.js'
+import { CursorStaleError, ErrorCodes, PageCursorCodec, ResponseError, type PageParams } from '@pragmatic-tech-ai/pragmatic-protocol'
+import type { PagingLimits } from '@pragmatic-tech-ai/pragmatic-env-cluster'
 import { InvalidParamsPrefix } from '../invalid-params-prefix.js'
 
 /** A stable digest over the inputs that define a paged result; a cursor is only valid for the same fingerprint. */

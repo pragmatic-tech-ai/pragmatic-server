@@ -1,8 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { DockerEnv, EnvKind, EnvironmentPurposeName } from '../docker.js'
-import type { EnvDefinition } from '../docker.js'
-import { EnvConventions } from '../env-conventions.js'
+import { DockerEnv, EnvKind, EnvironmentPurposeName, type EnvDefinition } from '../docker.js'
+import { EnvConventions } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 class RunArgsProbe
 {

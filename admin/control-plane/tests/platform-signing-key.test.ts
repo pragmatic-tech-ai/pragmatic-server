@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FileKeyStore, type IImageSigner } from '@pragmatic-tech-ai/pragmatic-release-toolkit'
-import type { HiveRecord } from '../platform-records.js'
+import type { HiveRecord } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 import { PlatformImageSigner, PlatformSigningKey, PlatformSigningKeyIncompleteError, PlatformSigningKeyMissingError } from '../platform-signing-key.js'
 
 class KeyFixture

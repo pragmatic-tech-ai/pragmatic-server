@@ -14,7 +14,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { KindCli, type IKind } from '../kind.js'
 import { NodeExecFile, type IExecFile } from '@pragmatic-tech-ai/pragmatic-kube'
-import { LocalDevCluster } from '../local-dev-cluster.js'
+import { LocalDevCluster } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 export class DevCluster
 {

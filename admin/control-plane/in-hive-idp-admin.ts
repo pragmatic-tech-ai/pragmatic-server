@@ -1,11 +1,7 @@
 import type { IInstallOrchestratorSource } from './hive-agent-installer.js'
-import { IdpAdminClient } from './idp-admin-client.js'
-import type { IdpConnection } from './idp-workload-driver.js'
-import { K8sManifestBuilder } from './k8s-manifest-builder.js'
+import { IdpAdminClient, type IdpConnection, K8sManifestBuilder, type HiveRecord, type TenantRecord, TenantOwner } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
+import { type SealedSecretStore } from './sealed-secret-store.js'
 import { KubectlCli, NodeProcessSpawner, type IProcessSpawner } from '@pragmatic-tech-ai/pragmatic-kube'
-import type { HiveRecord, TenantRecord } from './platform-records.js'
-import type { SealedSecretStore } from './sealed-secret-store.js'
-import { TenantOwner } from './tenant-owner.js'
 import { OwnerNotRecordedError, OwnerResetInProgressError, TenantProvisioningService } from './tenant-provisioning-service.js'
 
 /** A fresh in-hive Owner password, returned once to the operator (never logged, audited or stored). */

@@ -3,8 +3,7 @@ import { PgSession, SqlOidcFlowStateStore, SqlSecretKeyRing, SqlSecretStore } fr
 import { PostgresPoolFactory } from '@pragmatic-tech-ai/pragmatic-realm-custom'
 import { SqlAuditRepository, SqlSessionRepository, SqlThrottleRepository, SqlTicketRepository } from '@pragmatic-tech-ai/pragmatic-app-host'
 import { SqlConfigurationRepository } from '@pragmatic-tech-ai/pragmatic-configuration'
-import { SqlRecordMap } from './sql-record-map.js'
-import type { TenantSessionRepositories } from './tenant-auth/tenant-sessions.js'
+import { SqlRecordMap, type TenantSessionRepositories } from '@pragmatic-tech-ai/pragmatic-tenant-plane'
 
 /** The record registries of the tenant admin console, each one `records_<name>` table of its database. */
 export enum TenantAdminRegistry
